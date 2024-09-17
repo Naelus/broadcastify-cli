@@ -285,7 +285,7 @@ def transcribe_audio(directory):
 
     mp3_files = sorted(glob.glob(f"{directory}/*.mp3"))
     model_size = "large-v3"
-    model = WhisperModel(model_size, device="cpu", compute_type="int8")
+    model = WhisperModel(model_size, device="cuda", compute_type="fp16")
 
 
     for audio_file in track(mp3_files, description="transcribing audio"):
