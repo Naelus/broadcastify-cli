@@ -5,7 +5,8 @@ premium subscription.
 This is a fork of https://github.com/NotJoeMartinez/broadcastify-cli where I'm adding additional features and making tweaks to fit my use case
 
 ### Installation 
-
+You will need to install ffmpeg prior to installing broadcast-cli (in windows you can use winget install ffmpeg
+If you are going to use gpu transcoding currently I only have nvidia support implemented you will need to install the cuda 12 dlls, see [https://github.com/SYSTRAN/faster-whisper](https://github.com/SYSTRAN/faster-whisper#gpu) for instructions  
 ```bash
 pip install broadcastify-cli
 ```
