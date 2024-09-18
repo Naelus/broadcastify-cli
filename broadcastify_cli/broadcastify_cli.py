@@ -42,8 +42,10 @@ def cli():
 @click.option("--past-days", "-p", type=int, required=False, help="Download archives from the past n days")
 @click.option("--combine", is_flag=True, help="Combine downloaded MP3 files into a single file")
 @click.option("--transcribe", "-t", is_flag=True, help="Transcribe downloaded MP3 files")
+@click.option("--gpu", is_flag=True, help="Use GPU for transcription")
 @click.option("--jobs", "-j", type=int, default=1, help="Number of concurrent download jobs")
-def download(feed_id, date, range, past_days, combine, transcribe, jobs):
+@click.option("--model-size", type=click.Choice(["tiny", "base", "small", "medium", "large-v1", "large-v2", "large-v3", "distil-medium.en", "distil-large-v2", "distil-large-v3"]), default="distil-large-v3", help="Whisper model size to use for transcription")
+def download(feed_id, date, range, past_days, combine, transcribe, jobs, gpu, model_size):
 
     user_agent = get_urser_agent()
     login_cookie = get_login_cookie(user_agent)
@@ -54,35 +56,32 @@ def download(feed_id, date, range, past_days, combine, transcribe, jobs):
 
     if date:
         console.print(f"Downloading archives for feed id: {feed_id} on {date}")
-        download_archive_by_date(feed_id, date, "archives", user_agent, login_cookie, combine, transcribe, jobs)
+        download_archive_by_date(feed_id, date, "archives", user_agent, login_cookie, combine, transcribe, jobs, gpu, model_size)
         console.print(f"Download complete: archives/{feed_id}/{date.replace('/', '')}")
-        return
-    
-    if range:
+    elif range:
         start_date, end_date = range.split("-")
         console.print(f"Downloading archives for feed id: {feed_id} from {start_date} to {end_date}")
-        download_archives_by_range(feed_id, start_date, end_date, "archives", user_agent, login_cookie, combine, transcribe, jobs)
+        download_archives_by_range(feed_id, start_date, end_date, "archives", user_agent, login_cookie, combine, transcribe, jobs, gpu, model_size)
         console.print(f"Download complete: archives/{feed_id}")
-        return
-
-    if past_days:
+    elif past_days:
         console.print(f"Downloading archives for feed id: {feed_id} from the past {past_days} days")
-        download_past_n_days(feed_id, past_days, "archives", user_agent, login_cookie, combine, transcribe, jobs)
-        console.print(f"Download complete: archives/{feed_id}")
-        return
-
-    console.print(f"Downloading all archives for feed id: {feed_id}")    
-    download_all_archives(feed_id, "archives", user_agent, login_cookie, combine, transcribe, jobs)
+        download_past_n_days(feed_id, past_days, "archives", user_agent, login_cookie, combine, transcribe, jobs, gpu, model_size)
+    else:
+        console.print(f"Downloading all archives for feed id: {feed_id}")    
+        download_all_archives(feed_id, "archives", user_agent, login_cookie, combine, transcribe, jobs, gpu, model_size)
+    
     console.print(f"Download complete: archives/{feed_id}")
 
 
 @cli.command("transcribe", help="Transcribe directory of audio files")
 @click.option("--directory", "-d", required=True, help="Directory containing audio files")
-def transcribe(directory):
-    transcribe_audio(directory)
+@click.option("--gpu", is_flag=True, help="Use GPU for transcription")
+@click.option("--model-size", type=click.Choice(["tiny", "base", "small", "medium", "large-v1", "large-v2", "large-v3", "distil-medium.en", "distil-large-v2", "distil-large-v3"]), default="distil-large-v3", help="Whisper model size to use for transcription")
+def transcribe(directory, gpu, model_size):
+    transcribe_audio(directory, gpu, model_size)
 
 
-def download_archives_by_range(feed_id, start_date, end_date, output_dir, user_agent, login_cookie, combine, transcribe, jobs):
+def download_archives_by_range(feed_id, start_date, end_date, output_dir, user_agent, login_cookie, combine, transcribe, jobs, gpu, model_size):
 
     today = datetime.datetime.now().strftime("%Y/%m/%d")
 
@@ -105,10 +104,10 @@ def download_archives_by_range(feed_id, start_date, end_date, output_dir, user_a
         start_date += datetime.timedelta(days=1)
 
     for date in dates:
-        download_archive_by_date(feed_id, date, output_dir, user_agent, login_cookie, combine, transcribe, jobs)
+        download_archive_by_date(feed_id, date, output_dir, user_agent, login_cookie, combine, transcribe, jobs, gpu, model_size)
 
 
-def download_all_archives(feed_id, output_dir, user_agent, login_cookie, combine, transcribe, jobs, days=365):
+def download_all_archives(feed_id, output_dir, user_agent, login_cookie, combine, transcribe, jobs, gpu, model_size, days=365):
     dates = []
     current_date = datetime.datetime.now()
     start_date = current_date - datetime.timedelta(days=days)
@@ -118,10 +117,10 @@ def download_all_archives(feed_id, output_dir, user_agent, login_cookie, combine
         current_date -= datetime.timedelta(days=1)
 
     for date in dates:
-        download_archive_by_date(feed_id, date, output_dir, user_agent, login_cookie, combine, transcribe, jobs)
+        download_archive_by_date(feed_id, date, output_dir, user_agent, login_cookie, combine, transcribe, jobs, gpu, model_size)
 
 
-def download_archive_by_date(feed_id, date, output_dir, user_agent, login_cookie, combine, transcribe, jobs):
+def download_archive_by_date(feed_id, date, output_dir, user_agent, login_cookie, combine, transcribe, jobs, gpu, model_size):
 
     base_download_url = "https://www.broadcastify.com/archives/downloadv2"
     archive_ids = get_archive_ids(feed_id, date)
@@ -147,8 +146,9 @@ def download_archive_by_date(feed_id, date, output_dir, user_agent, login_cookie
     if combine:
         combine_mp3_files(f"{output_dir}/{feed_id}/{date_dir_name}", feed_id, date)
     
-    if transcribe:
-        transcribe_audio(f"{output_dir}/{feed_id}/{date_dir_name}")
+    # Remove the transcription from here
+    # if transcribe:
+    #     transcribe_audio(f"{output_dir}/{feed_id}/{date_dir_name}", gpu, model_size)
 
 
 def download_mp3(url, output_dir, user_agent, login_cookie):
@@ -279,7 +279,8 @@ def combine_mp3_files(directory, feed_id, date):
     date_obj = datetime.datetime.strptime(date, "%Y/%m/%d")
     date_str = date_obj.strftime("%Y%m%d")
 
-    mp3_files = sorted(glob.glob(f"{directory}/*.mp3"))
+    # Ignore files that start with "combined_"
+    mp3_files = sorted([f for f in glob.glob(f"{directory}/*.mp3") if not os.path.basename(f).startswith("combined_")])
     console.print(f"Found {len(mp3_files)} MP3 files to combine.")
     
     combined_audio = None
@@ -313,13 +314,20 @@ def combine_mp3_files(directory, feed_id, date):
             console.print("[yellow]Warning:[/yellow] No MP3 files were successfully combined.")
 
 
-def transcribe_audio(directory):
+def transcribe_audio(directory, use_gpu=False, model_size="distil-large-v3"):
     transcript_dir = f"{directory}/transcripts"
     os.makedirs(transcript_dir, exist_ok=True)
 
     mp3_files = sorted(glob.glob(f"{directory}/*.mp3"))
-    model_size = "distil-large-v3"
-    model = WhisperModel(model_size, device="cuda", compute_type="float16")
+    
+    if use_gpu:
+        device = "cuda"
+        compute_type = "float16"
+    else:
+        device = "cpu"
+        compute_type = "int8"
+    
+    model = WhisperModel(model_size, device=device, compute_type=compute_type)
 
 
     for audio_file in track(mp3_files, description="transcribing audio"):
@@ -350,17 +358,32 @@ def transcribe_audio(directory):
             json.dump(output, f, indent=4)
 
 
-def download_past_n_days(feed_id, past_days, output_dir, user_agent, login_cookie, combine, transcribe, jobs):
+def download_past_n_days(feed_id, past_days, output_dir, user_agent, login_cookie, combine, transcribe, jobs, gpu, model_size):
     end_date = datetime.datetime.now()
     start_date = end_date - datetime.timedelta(days=past_days)
 
-    dates = []
     current_date = end_date
+    directories_to_transcribe = []
 
     while current_date >= start_date:
-        dates.append(current_date.strftime("%Y/%m/%d"))
+        date_str = current_date.strftime("%Y/%m/%d")
+        date_dir_name = current_date.strftime("%Y%m%d")
+        console.print(f"Downloading archives for {date_str}")
+        
+        current_output_dir = f"{output_dir}/{feed_id}/{date_dir_name}"
+        download_archive_by_date(feed_id, date_str, output_dir, user_agent, login_cookie, combine, False, jobs, gpu, model_size)
+        
+        if transcribe:
+            directories_to_transcribe.append(current_output_dir)
+        
         current_date -= datetime.timedelta(days=1)
 
-    for date in dates:
-        download_archive_by_date(feed_id, date, output_dir, user_agent, login_cookie, combine, transcribe, jobs)
+    console.print(f"Download complete for the past {past_days} days: {output_dir}/{feed_id}")
+
+    if transcribe:
+        for directory in directories_to_transcribe:
+            console.print(f"Transcribing audio in {directory}")
+            transcribe_audio(directory, gpu, model_size)
+
+    console.print("All operations completed.")
 
