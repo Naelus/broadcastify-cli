@@ -7,7 +7,7 @@ click==8.1.7
 coloredlogs==15.0.1
 ctranslate2==4.2.1
 distro==1.9.0
-faster-whisper==1.0.1
+faster-whisper==1.0.3
 filelock==3.14.0
 flatbuffers==24.3.25
 fsspec==2024.3.1
