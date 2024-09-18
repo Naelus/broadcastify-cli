@@ -14,10 +14,13 @@ from rich.console import Console
 from rich.progress import track
 from pathlib import Path
 from pydub import AudioSegment
+from pydub.utils import which
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from dotenv import load_dotenv
 from pprint import pprint
+
+import shutil
 
 load_dotenv(".env")
 warnings.filterwarnings("ignore", module="whisper")
@@ -34,12 +37,13 @@ def cli():
 
 @cli.command("download", help="Download archives by date and feed id")
 @click.option("--feed-id", "-id", required=True, help="Broadcastify feed id")
-@click.option("--date", "-d", required=False, help="Date in format MM/DD/YYYY") 
-@click.option("--range", "-r", required=False, help="Date range in format MM/DD/YYYY-MM/DD/YYYY")
+@click.option("--date", "-d", required=False, help="Date in format YYYY/MM/DD") 
+@click.option("--range", "-r", required=False, help="Date range in format YYYY/MM/DD-YYYY/MM/DD")
+@click.option("--past-days", "-p", type=int, required=False, help="Download archives from the past n days")
 @click.option("--combine", is_flag=True, help="Combine downloaded MP3 files into a single file")
 @click.option("--transcribe", "-t", is_flag=True, help="Transcribe downloaded MP3 files")
 @click.option("--jobs", "-j", type=int, default=1, help="Number of concurrent download jobs")
-def download(feed_id, date, range, combine, transcribe, jobs):
+def download(feed_id, date, range, past_days, combine, transcribe, jobs):
 
     user_agent = get_urser_agent()
     login_cookie = get_login_cookie(user_agent)
@@ -61,9 +65,15 @@ def download(feed_id, date, range, combine, transcribe, jobs):
         console.print(f"Download complete: archives/{feed_id}")
         return
 
+    if past_days:
+        console.print(f"Downloading archives for feed id: {feed_id} from the past {past_days} days")
+        download_past_n_days(feed_id, past_days, "archives", user_agent, login_cookie, combine, transcribe, jobs)
+        console.print(f"Download complete: archives/{feed_id}")
+        return
+
     console.print(f"Downloading all archives for feed id: {feed_id}")    
     download_all_archives(feed_id, "archives", user_agent, login_cookie, combine, transcribe, jobs)
-    console.print(f"Download complete: archives/{feed_id}/{date.replace('/', '')}")
+    console.print(f"Download complete: archives/{feed_id}")
 
 
 @cli.command("transcribe", help="Transcribe directory of audio files")
@@ -74,7 +84,7 @@ def transcribe(directory):
 
 def download_archives_by_range(feed_id, start_date, end_date, output_dir, user_agent, login_cookie, combine, transcribe, jobs):
 
-    today = datetime.datetime.now().strftime("%m/%d/%Y")
+    today = datetime.datetime.now().strftime("%Y/%m/%d")
 
     if start_date > today or end_date > today:
         console.print("[red]Error:[/red] Invalid date range, start date and end date must be before today")
@@ -85,34 +95,30 @@ def download_archives_by_range(feed_id, start_date, end_date, output_dir, user_a
         exit(1)
 
 
-    start_date = datetime.datetime.strptime(start_date, "%m/%d/%Y")
-    end_date = datetime.datetime.strptime(end_date, "%m/%d/%Y")
+    start_date = datetime.datetime.strptime(start_date, "%Y/%m/%d")
+    end_date = datetime.datetime.strptime(end_date, "%Y/%m/%d")
 
     dates = []
 
     while start_date <= end_date:
-        dates.append(start_date.strftime("%m/%d/%Y"))
+        dates.append(start_date.strftime("%Y/%m/%d"))
         start_date += datetime.timedelta(days=1)
 
     for date in dates:
         download_archive_by_date(feed_id, date, output_dir, user_agent, login_cookie, combine, transcribe, jobs)
 
 
-def download_all_archives(feed_id, output_dir, user_agent, login_cookie, combine, transcribe, jobs):
-
-    # get all dates between today and exactly one year ago
+def download_all_archives(feed_id, output_dir, user_agent, login_cookie, combine, transcribe, jobs, days=365):
     dates = []
     current_date = datetime.datetime.now()
-    one_year_ago = current_date - datetime.timedelta(days=365)
+    start_date = current_date - datetime.timedelta(days=days)
 
-    while current_date >= one_year_ago:
-        dates.append(current_date.strftime("%m/%d/%Y"))
+    while current_date >= start_date:
+        dates.append(current_date.strftime("%Y/%m/%d"))
         current_date -= datetime.timedelta(days=1)
 
-
     for date in dates:
-        download_archive_by_date(feed_id, date, output_dir, user_agent, login_cookie, combine, transcribe, jobs) 
-    console.print(f"Download complete: {output_dir}/{feed_id}")
+        download_archive_by_date(feed_id, date, output_dir, user_agent, login_cookie, combine, transcribe, jobs)
 
 
 def download_archive_by_date(feed_id, date, output_dir, user_agent, login_cookie, combine, transcribe, jobs):
@@ -120,7 +126,9 @@ def download_archive_by_date(feed_id, date, output_dir, user_agent, login_cookie
     base_download_url = "https://www.broadcastify.com/archives/downloadv2"
     archive_ids = get_archive_ids(feed_id, date)
 
-    date_dir_name = date.replace("/", "")
+    # Convert date to YYYYMMDD format for directory name
+    date_obj = datetime.datetime.strptime(date, "%Y/%m/%d")
+    date_dir_name = date_obj.strftime("%Y%m%d")
 
     os.makedirs(f"{output_dir}/{feed_id}", exist_ok=True)
     os.makedirs(f"{output_dir}/{feed_id}/{date_dir_name}", exist_ok=True)
@@ -128,8 +136,7 @@ def download_archive_by_date(feed_id, date, output_dir, user_agent, login_cookie
     with ThreadPoolExecutor(max_workers=jobs) as executor:
         futures = []
         for id in archive_ids:
-            split_date = date.split("/")
-            url_date = f"{split_date[2]}{split_date[0]}{split_date[1]}"
+            url_date = date_obj.strftime("%Y%m%d")
             url = f"{base_download_url}/{feed_id}/{url_date}/{id}"
             current_output_dir = f"{output_dir}/{feed_id}/{date_dir_name}"
             futures.append(executor.submit(download_mp3, url, current_output_dir, user_agent, login_cookie))
@@ -174,7 +181,8 @@ def download_mp3(url, output_dir, user_agent, login_cookie):
 def get_archive_ids(feedId, date):
     base_url = 'https://www.broadcastify.com/archives/ajax.php'
 
-    query_params = f"feedId={feedId}&date={date}"
+    url_date = datetime.datetime.strptime(date, "%Y/%m/%d").strftime("%m/%d/%Y")
+    query_params = f"feedId={feedId}&date={url_date}"
     full_url = f"{base_url}?{query_params}" 
 
 
@@ -257,26 +265,52 @@ def get_login_cookie(user_agent):
 
 
 def combine_mp3_files(directory, feed_id, date):
+    # Set the path to FFmpeg executable
+    ffmpeg_path = which("ffmpeg")
+    if ffmpeg_path is None:
+        console.print("[red]Error:[/red] FFmpeg not found. Please install FFmpeg and add it to your system PATH.")
+        return
 
-    date = date.replace("/", "")
+    AudioSegment.converter = ffmpeg_path
+    AudioSegment.ffmpeg = ffmpeg_path
+    AudioSegment.ffprobe = which("ffprobe")
+
+    # Convert date to YYYYMMDD format for file name
+    date_obj = datetime.datetime.strptime(date, "%Y/%m/%d")
+    date_str = date_obj.strftime("%Y%m%d")
 
     mp3_files = sorted(glob.glob(f"{directory}/*.mp3"))
+    console.print(f"Found {len(mp3_files)} MP3 files to combine.")
     
     combined_audio = None
-    for mp3_file in track(mp3_files, description=f"combining audio"):
-        audio = AudioSegment.from_mp3(mp3_file)
-        if combined_audio is None:
-            combined_audio = audio
-        else:
-            combined_audio += audio
+    for mp3_file in track(mp3_files, description="Combining audio"):
+        try:
+            audio = AudioSegment.from_mp3(mp3_file)
+            if combined_audio is None:
+                combined_audio = audio
+            else:
+                combined_audio += audio
+        except Exception as e:
+            console.print(f"[yellow]Warning:[/yellow] Error processing {mp3_file}: {str(e)}")
 
     with console.status("Exporting combined MP3 file...") as status:
         if combined_audio is not None:
-            output_file = f"{directory}/combined_{feed_id}_{date}.mp3"
+            output_file = f"{directory}/combined_{feed_id}_{date_str}.mp3"
             combined_audio.export(output_file, format="mp3")
-            print(f"Combined MP3 saved to: {output_file}")
+            console.print(f"Combined MP3 saved to: {output_file}")
+
+            # Remove individual MP3 files
+            for mp3_file in mp3_files:
+                os.remove(mp3_file)
+            console.print("Removed individual MP3 files.")
+
+            # Copy combined file to feed directory
+            feed_directory = os.path.dirname(directory)
+            destination_file = os.path.join(feed_directory, f"combined_{feed_id}_{date_str}.mp3")
+            shutil.copy2(output_file, destination_file)
+            console.print(f"Copied combined MP3 to: {destination_file}")
         else:
-            console.print("No MP3 files found to combine.")
+            console.print("[yellow]Warning:[/yellow] No MP3 files were successfully combined.")
 
 
 def transcribe_audio(directory):
@@ -284,8 +318,8 @@ def transcribe_audio(directory):
     os.makedirs(transcript_dir, exist_ok=True)
 
     mp3_files = sorted(glob.glob(f"{directory}/*.mp3"))
-    model_size = "large-v3"
-    model = WhisperModel(model_size, device="cuda", compute_type="fp16")
+    model_size = "distil-large-v3"
+    model = WhisperModel(model_size, device="cuda", compute_type="float16")
 
 
     for audio_file in track(mp3_files, description="transcribing audio"):
@@ -316,20 +350,17 @@ def transcribe_audio(directory):
             json.dump(output, f, indent=4)
 
 
+def download_past_n_days(feed_id, past_days, output_dir, user_agent, login_cookie, combine, transcribe, jobs):
+    end_date = datetime.datetime.now()
+    start_date = end_date - datetime.timedelta(days=past_days)
 
-    # model = whisper.load_model("base") 
-    # for mp3_file in track(mp3_files, description="transcribing audio"):
-    #     audio = whisper.load_audio(mp3_file)
+    dates = []
+    current_date = end_date
 
+    while current_date >= start_date:
+        dates.append(current_date.strftime("%Y/%m/%d"))
+        current_date -= datetime.timedelta(days=1)
 
-    #     prompt = "you are listening to police scanner radio traffic"
-    #     result = model.transcribe(audio, no_speech_threshold=2, initial_prompt=prompt,  condition_on_previous_text=False, language="en")
-        
-    #     transcript_fname = Path(mp3_file).stem + ".json"
-    #     transcript_path = f"{transcript_dir}/{transcript_fname}"
-
-    #     write_json = WriteJSON(transcript_dir)
-
-    #     with open(transcript_path, "w", encoding="utf-8") as f:
-    #         write_json.write_result(result, f)
+    for date in dates:
+        download_archive_by_date(feed_id, date, output_dir, user_agent, login_cookie, combine, transcribe, jobs)
 
