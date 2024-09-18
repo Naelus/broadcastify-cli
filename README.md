@@ -2,6 +2,7 @@
 This is a tool to download brodcastify archives. It requires a broadcastify.com
 premium subscription.
 
+This is a fork of https://github.com/NotJoeMartinez/broadcastify-cli where I'm adding additional features and making tweaks to fit my use case
 
 ### Installation 
 
