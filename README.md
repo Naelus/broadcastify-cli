@@ -62,3 +62,8 @@ archives
 ...
 ```
 
+### TODO:
+Need to make changes to transcription to give timestamped outputs
+Would be nice to also do diarization, need to look into that
+Need to update readme with further info on other flags I added
+
