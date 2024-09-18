@@ -13,7 +13,7 @@ pip install broadcastify-cli
 git clone https://github.com/NotJoeMartinez/broadcastify-cli
 cd broadcastify-cli
 python3 -m venv .venv
-source .venv/bin/activate
+.\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 pip install -e .
 ```
@@ -38,14 +38,14 @@ feed id: 5318
 Once you have the feed id you can pass it to the `download` command using the 
 `--feed-id` flag and you should specify a date with the `--date` flag in the 
 format `MM/DD/YY`. **It will download all available archives if `--date` is not
-specified.** 
+specified. Or you can use the flag --past-days <n> to download the past N number of days** 
 
 This command will download all recordings from [Dallas City Police](https://www.broadcastify.com/archives/feed/5318) on April 17th 2024:
 ```bash
 broadcastify-cli download --feed-id 5318 --date 04/17/2024
 ```
 
-This will create a new directory tree formated like `archives/feed_id/MMDDYYY`
+This will create a new directory tree formated like `archives/feed_id/YYYYMMDD`
 
 ```
 archives
