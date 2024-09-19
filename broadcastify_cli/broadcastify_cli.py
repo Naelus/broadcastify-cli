@@ -13,14 +13,15 @@ from faster_whisper import WhisperModel
 from rich.console import Console
 from rich.progress import track
 from pathlib import Path
-from pydub import AudioSegment
 from pydub.utils import which
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from dotenv import load_dotenv
-from pprint import pprint
 
 import shutil
+
+import ffmpeg
+import tempfile
 
 load_dotenv(".env")
 warnings.filterwarnings("ignore", module="whisper")
@@ -45,7 +46,8 @@ def cli():
 @click.option("--gpu", is_flag=True, help="Use GPU for transcription")
 @click.option("--jobs", "-j", type=int, default=1, help="Number of concurrent download jobs")
 @click.option("--model-size", type=click.Choice(["tiny", "base", "small", "medium", "large-v1", "large-v2", "large-v3", "distil-medium.en", "distil-large-v2", "distil-large-v3"]), default="distil-large-v3", help="Whisper model size to use for transcription")
-def download(feed_id, date, range, past_days, combine, transcribe, jobs, gpu, model_size):
+@click.option("--output-dir", "-o", type=click.Path(file_okay=False, dir_okay=True), default="archives", help="Custom output directory for downloaded files")
+def download(feed_id, date, range, past_days, combine, transcribe, jobs, gpu, model_size, output_dir):
 
     user_agent = get_urser_agent()
     login_cookie = get_login_cookie(user_agent)
@@ -56,21 +58,21 @@ def download(feed_id, date, range, past_days, combine, transcribe, jobs, gpu, mo
 
     if date:
         console.print(f"Downloading archives for feed id: {feed_id} on {date}")
-        download_archive_by_date(feed_id, date, "archives", user_agent, login_cookie, combine, transcribe, jobs, gpu, model_size)
-        console.print(f"Download complete: archives/{feed_id}/{date.replace('/', '')}")
+        download_archive_by_date(feed_id, date, output_dir, user_agent, login_cookie, combine, transcribe, jobs, gpu, model_size)
+        console.print(f"Download complete: {output_dir}/{feed_id}/{date.replace('/', '')}")
     elif range:
         start_date, end_date = range.split("-")
         console.print(f"Downloading archives for feed id: {feed_id} from {start_date} to {end_date}")
-        download_archives_by_range(feed_id, start_date, end_date, "archives", user_agent, login_cookie, combine, transcribe, jobs, gpu, model_size)
-        console.print(f"Download complete: archives/{feed_id}")
+        download_archives_by_range(feed_id, start_date, end_date, output_dir, user_agent, login_cookie, combine, transcribe, jobs, gpu, model_size)
+        console.print(f"Download complete: {output_dir}/{feed_id}")
     elif past_days:
         console.print(f"Downloading archives for feed id: {feed_id} from the past {past_days} days")
-        download_past_n_days(feed_id, past_days, "archives", user_agent, login_cookie, combine, transcribe, jobs, gpu, model_size)
+        download_past_n_days(feed_id, past_days, output_dir, user_agent, login_cookie, combine, transcribe, jobs, gpu, model_size)
     else:
         console.print(f"Downloading all archives for feed id: {feed_id}")    
-        download_all_archives(feed_id, "archives", user_agent, login_cookie, combine, transcribe, jobs, gpu, model_size)
+        download_all_archives(feed_id, output_dir, user_agent, login_cookie, combine, transcribe, jobs, gpu, model_size)
     
-    console.print(f"Download complete: archives/{feed_id}")
+    console.print(f"Download complete: {output_dir}/{feed_id}")
 
 
 @cli.command("transcribe", help="Transcribe directory of audio files")
@@ -265,53 +267,57 @@ def get_login_cookie(user_agent):
 
 
 def combine_mp3_files(directory, feed_id, date):
-    # Set the path to FFmpeg executable
     ffmpeg_path = which("ffmpeg")
     if ffmpeg_path is None:
         console.print("[red]Error:[/red] FFmpeg not found. Please install FFmpeg and add it to your system PATH.")
         return
 
-    AudioSegment.converter = ffmpeg_path
-    AudioSegment.ffmpeg = ffmpeg_path
-    AudioSegment.ffprobe = which("ffprobe")
-
-    # Convert date to YYYYMMDD format for file name
     date_obj = datetime.datetime.strptime(date, "%Y/%m/%d")
     date_str = date_obj.strftime("%Y%m%d")
 
-    # Ignore files that start with "combined_"
     mp3_files = sorted([f for f in glob.glob(f"{directory}/*.mp3") if not os.path.basename(f).startswith("combined_")])
     console.print(f"Found {len(mp3_files)} MP3 files to combine.")
+
+    if not mp3_files:
+        console.print("[yellow]Warning:[/yellow] No MP3 files found to combine.")
+        return
+
+    output_file = f"{directory}/combined_{feed_id}_{date_str}.mp3"
     
-    combined_audio = None
-    for mp3_file in track(mp3_files, description="Combining audio"):
-        try:
-            audio = AudioSegment.from_mp3(mp3_file)
-            if combined_audio is None:
-                combined_audio = audio
-            else:
-                combined_audio += audio
-        except Exception as e:
-            console.print(f"[yellow]Warning:[/yellow] Error processing {mp3_file}: {str(e)}")
+    # Create a temporary file with the list of input files
+    with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.txt') as temp_file:
+        for file in mp3_files:
+            temp_file.write(f"file '{file}'\n")
+        temp_file_name = temp_file.name
 
-    with console.status("Exporting combined MP3 file...") as status:
-        if combined_audio is not None:
-            output_file = f"{directory}/combined_{feed_id}_{date_str}.mp3"
-            combined_audio.export(output_file, format="mp3")
-            console.print(f"Combined MP3 saved to: {output_file}")
+    try:
+        with console.status(f"Combining MP3 files to {output_file}..."):
+            # Use ffmpeg-python to combine the files
+            (
+                ffmpeg
+                .input(temp_file_name, format='concat', safe=0)
+                .output(output_file, c='copy')
+                .overwrite_output()
+                .run(quiet=True, capture_stdout=True, capture_stderr=True)
+            )
+        console.print(f"Combined MP3 saved to: {output_file}")
 
-            # Remove individual MP3 files
-            for mp3_file in mp3_files:
-                os.remove(mp3_file)
-            console.print("Removed individual MP3 files.")
+        # Remove individual MP3 files
+        for mp3_file in mp3_files:
+            os.remove(mp3_file)
+        console.print("Removed individual MP3 files.")
 
-            # Copy combined file to feed directory
-            feed_directory = os.path.dirname(directory)
-            destination_file = os.path.join(feed_directory, f"combined_{feed_id}_{date_str}.mp3")
-            shutil.copy2(output_file, destination_file)
-            console.print(f"Copied combined MP3 to: {destination_file}")
-        else:
-            console.print("[yellow]Warning:[/yellow] No MP3 files were successfully combined.")
+        # Copy combined file to feed directory
+        feed_directory = os.path.dirname(directory)
+        destination_file = os.path.join(feed_directory, f"combined_{feed_id}_{date_str}.mp3")
+        shutil.copy2(output_file, destination_file)
+        console.print(f"Copied combined MP3 to: {destination_file}")
+
+    except ffmpeg.Error as e:
+        console.print(f"[red]Error:[/red] FFmpeg encountered an error: {e.stderr.decode()}")
+    finally:
+        # Clean up the temporary file
+        os.unlink(temp_file_name)
 
 
 def transcribe_audio(directory, use_gpu=False, model_size="distil-large-v3"):
