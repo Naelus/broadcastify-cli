@@ -23,6 +23,8 @@ import shutil
 import ffmpeg
 import tempfile
 
+from pyannote.audio import Pipeline
+
 load_dotenv(".env")
 warnings.filterwarnings("ignore", module="whisper")
 
@@ -333,35 +335,93 @@ def transcribe_audio(directory, use_gpu=False, model_size="distil-large-v3"):
         device = "cpu"
         compute_type = "int8"
     
-    model = WhisperModel(model_size, device=device, compute_type=compute_type)
+    whisper_model = WhisperModel(model_size, device=device, compute_type=compute_type)
+    
+    # Initialize the diarization pipeline
+    diarization_pipeline = Pipeline.from_pretrained("pyannote/speaker-diarization-3.1", use_auth_token=os.getenv("HUGGINGFACE_TOKEN"))
 
+    for audio_file in track(mp3_files, description="Transcribing and diarizing audio"):
+        # Perform diarization
+        diarization = diarization_pipeline(audio_file)
+        
+        # Perform transcription
+        segments, info = whisper_model.transcribe(
+            audio_file, 
+            beam_size=5, 
+            condition_on_previous_text=False, 
+            language="en", 
+            no_speech_threshold=2, 
+            initial_prompt="you are listening to police scanner radio traffic"
+        )
 
-    for audio_file in track(mp3_files, description="transcribing audio"):
-        segments, info = model.transcribe(audio_file, beam_size=5, condition_on_previous_text=False, language="en", no_speech_threshold=2, initial_prompt="you are listening to police scanner radio traffic")
+        transcript_json_fname = Path(audio_file).stem + ".json"
+        transcript_json_path = f"{transcript_dir}/{transcript_json_fname}"
 
-        transcript_fname = Path(audio_file).stem + ".json"
-        transcript_path = f"{transcript_dir}/{transcript_fname}"
+        transcript_txt_fname = Path(audio_file).stem + ".txt"
+        transcript_txt_path = f"{transcript_dir}/{transcript_txt_fname}"
 
+        # Prepare JSON output
+        output_json = {
+            "text": "",
+            "segments": []
+        }
 
-        output  = {
-                    "text": "",
-                    "segments": []
-                }
+        # Prepare TXT output
+        output_txt = ""
+
+        # Map diarization segments to transcription segments
+        diarization_segments = list(diarization.itersegments())
+        speaker_map = {}
+        speaker_counter = 0
 
         for segment in segments:
-            print(segment.text)
+            # Find the corresponding diarization speaker
+            overlap = None
+            for dia_segment in diarization_segments:
+                if (segment.start >= dia_segment.start and segment.start < dia_segment.end) or \
+                   (segment.end > dia_segment.start and segment.end <= dia_segment.end) or \
+                   (segment.start <= dia_segment.start and segment.end >= dia_segment.end):
+                    overlap = dia_segment
+                    break
+            
+            if overlap:
+                speaker = overlap.get_label()
+            else:
+                speaker = "SPEAKER_UNK"
 
-            output["text"] += segment.text + " "
+            # Assign a unique speaker ID
+            if speaker not in speaker_map:
+                speaker_map[speaker] = f"SPEAKER_{speaker_counter:02d}"
+                speaker_counter += 1
 
-            output["segments"].append({
+            speaker_id = speaker_map[speaker]
+
+            # Format timestamp
+            start_time = str(datetime.timedelta(seconds=int(segment.start)))
+            start_time_formatted = f"[{start_time}]"
+
+            # Append to JSON output
+            output_json["text"] += segment.text + " "
+            output_json["segments"].append({
                 "text": segment.text,
                 "start": segment.start,
                 "end": segment.end,
-                "seek": segment.seek
+                "seek": segment.seek,
+                "speaker": speaker_id
             })
 
-        with open(transcript_path, "w", encoding="utf-8") as f:
-            json.dump(output, f, indent=4)
+            # Append to TXT output
+            if not output_txt.endswith(f"{speaker_id}\n"):
+                output_txt += f"{speaker_id}\n"
+            output_txt += f"{start_time_formatted} - {segment.text}\n"
+
+        # Save JSON transcript
+        with open(transcript_json_path, "w", encoding="utf-8") as f_json:
+            json.dump(output_json, f_json, indent=4)
+
+        # Save TXT transcript
+        with open(transcript_txt_path, "w", encoding="utf-8") as f_txt:
+            f_txt.write(output_txt)
 
 
 def download_past_n_days(feed_id, past_days, output_dir, user_agent, login_cookie, combine, transcribe, jobs, gpu, model_size):

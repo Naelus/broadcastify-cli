@@ -18,3 +18,6 @@ requests==2.31.0
 rich==13.7.1
 tqdm==4.66.4
 urllib3==2.2.1
+pyannote.audio==3.1.1
+torch==2.4.1
+torchaudio==2.4.1
