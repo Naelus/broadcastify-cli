@@ -13,12 +13,6 @@ Use this file for reproducible defects and concrete blockers, not the general ro
 - **Control:** The C# helper, Python streaming adapter, and a CPU FP32 model successfully transcribed a real 23-second radio clip. The profile becomes ready only when its configured model passes an actual decode self-test; the broken DML models remain unavailable.
 - **Next:** Test a compatible published DML model or upstream fix; add self-test/model discovery before enabling the profile.
 
-### B-002 — Vulkan ASR has not completed a real decode on AMD hardware
-
-- **Severity:** High for Vulkan parity.
-- **Observed:** The whisper.cpp adapter, backend inspection, and model lookup are implemented, but no local `whisper-cli` Vulkan build/model is installed on the Windows reference machine.
-- **Next:** Inspect the permitted TrueNAS AMD host, build/install a Vulkan-enabled whisper.cpp non-destructively, and run the retained short evidence clip or a synthetic fixture.
-
 ### B-003 — Portable diarization is CPU-only outside CUDA
 
 - **Severity:** Medium; functionally correct but potentially slow.
@@ -31,11 +25,11 @@ Use this file for reproducible defects and concrete blockers, not the general ro
 - **Observed:** CPU components and profile exist, but the complete multi-hour pipeline has not been benchmarked on the retained corpus.
 - **Next:** Use a bounded representative slice first, then a full day if practical; record ASR, diarization, and analysis time separately.
 
-### B-005 — Cross-platform runtime is not yet validated or packaged on Linux/macOS
+### B-005 — Complete cross-platform workflow is not yet validated or packaged on Linux/macOS
 
 - **Severity:** Medium for product portability; no impact on native Windows use.
-- **Observed:** The loopback-only Python service and responsive browser UI now mirror Library, New Archive, Review, Area, Settings, media, and worker actions against real retained data on Windows. Linux/macOS entry points are defined, but neither platform has completed a real install, media stream, ASR/diarization fallback, model job, or packaging run. Cross-platform credential persistence is `.env`/session-only rather than an OS keychain.
-- **Next:** Exercise clean Linux and macOS installs, record backend-specific diagnostics and real short-clip processing, then add a supervised launcher/package and platform keychain adapter without weakening the loopback/session-token boundary.
+- **Observed:** Linux AMD Vulkan ASR and quantized LLM components now pass real runs through the app adapter, including an immutable-host container path. The complete Web UI install, media stream, pyannote CPU continuation, analysis server lifecycle, and packaging have not run together on Linux; no real Mac run has occurred. Cross-platform credential persistence is `.env`/session-only rather than an OS keychain.
+- **Next:** Exercise a clean ordinary-user Linux install and full short workflow, then a macOS install/CPU-or-Metal workflow; add a supervised launcher/package and platform keychain adapter without weakening the loopback/session-token boundary.
 
 ### B-006 — Feed display names are missing for some retained legacy days
 
@@ -77,3 +71,7 @@ Library detection now requires completion evidence and new transcripts write `di
 ### F-005 — Native analysis actions always used local Gemma
 
 The separate **Analysis & AI** Settings tab now selects local Gemma, OpenAI Responses, an OpenAI-compatible endpoint, or a saved-login Codex CLI harness. Every native analysis action receives the selected provider settings, external transcript sharing is an explicit opt-in, optional API-key persistence uses Windows Credential Locker, and readiness checks do not send transcript text.
+
+### F-006 — Vulkan readiness was inferred without a real AMD run
+
+The exact whisper.cpp adapter now completed a real AMD Radeon 890M decode after a direct container CLI control run, and llama.cpp offloaded all layers of a public Q4_K Gemma test model to the same Vulkan device. Diagnostics now require an actual Vulkan llama.cpp device instead of treating any `llama-server` executable as Vulkan-ready. Linux/macOS binary discovery, explicit pre-pulled container support, MP3-to-WAV preparation, rootless cache fallbacks, clamped progress, and retained backend evidence are covered by tests.

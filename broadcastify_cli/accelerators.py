@@ -29,6 +29,9 @@ def find_whisper_cpp() -> str | None:
             return discovered
 
     candidates = [
+        Path.cwd() / "tools" / "whisper.cpp" / "whisper-cli",
+        Path.cwd() / "tools" / "whisper.cpp" / "build" / "bin" / "whisper-cli",
+        Path.cwd() / "whisper.cpp" / "build" / "bin" / "whisper-cli",
         Path.cwd() / "tools" / "whisper.cpp" / "whisper-cli.exe",
         Path.cwd() / "whisper.cpp" / "build" / "bin" / "Release" / "whisper-cli.exe",
         Path.cwd() / "whisper.cpp" / "build" / "bin" / "whisper-cli.exe",
@@ -45,6 +48,75 @@ def find_whisper_cpp() -> str | None:
         if candidate.is_file():
             return str(candidate.resolve())
     return None
+
+
+def find_container_runtime(explicit: str | Path | None = None) -> str | None:
+    configured = str(
+        explicit
+        or os.getenv("WHISPER_CPP_CONTAINER_RUNTIME")
+        or os.getenv("BROADCASTIFY_CONTAINER_RUNTIME")
+        or ""
+    ).strip()
+    if configured:
+        candidate = Path(configured).expanduser()
+        if candidate.is_file():
+            return str(candidate.resolve())
+        discovered = shutil.which(configured)
+        return discovered
+    for name in ("podman", "docker"):
+        discovered = shutil.which(name)
+        if discovered:
+            return discovered
+    return None
+
+
+def whisper_cpp_container_diagnostics(
+    *,
+    image: str | None = None,
+    runtime: str | Path | None = None,
+    backend: str | None = None,
+    device: str | Path | None = None,
+) -> dict[str, Any]:
+    """Inspect an explicitly configured image without pulling or starting it."""
+
+    image_name = str(image or os.getenv("WHISPER_CPP_CONTAINER_IMAGE") or "").strip()
+    backend_name = str(
+        backend or os.getenv("WHISPER_CPP_CONTAINER_BACKEND") or "vulkan"
+    ).strip().lower()
+    runtime_path = find_container_runtime(runtime)
+    device_path = Path(
+        device or os.getenv("WHISPER_CPP_CONTAINER_DEVICE") or "/dev/dri"
+    )
+    result: dict[str, Any] = {
+        "configured": bool(image_name),
+        "image": image_name,
+        "runtime": runtime_path,
+        "backend": backend_name,
+        "device": str(device_path),
+        "image_present": False,
+        "device_present": backend_name != "vulkan" or device_path.exists(),
+        "ready": False,
+    }
+    if not image_name or not runtime_path:
+        return result
+    try:
+        inspected = subprocess.run(
+            [runtime_path, "image", "inspect", "--format", "{{.Id}}", image_name],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        )
+        result["image_present"] = inspected.returncode == 0
+        if inspected.returncode == 0:
+            result["image_id"] = inspected.stdout.strip()
+        elif inspected.stderr.strip():
+            result["error"] = inspected.stderr.strip().splitlines()[-1]
+    except (OSError, subprocess.SubprocessError) as exc:
+        result["error"] = str(exc)
+    result["ready"] = bool(result["image_present"] and result["device_present"])
+    return result
 
 
 def find_windows_ml_helper() -> str | None:
@@ -293,6 +365,7 @@ def collect_accelerator_diagnostics(llama_server: str | Path | None) -> dict[str
     windows_ml = _windows_ml_diagnostics()
     whisper_executable = find_whisper_cpp()
     whisper_backends = whisper_cpp_backends(whisper_executable)
+    whisper_container = whisper_cpp_container_diagnostics()
     llama_devices = inspect_llama_devices(llama_server)
     llama_backends = {str(value.get("backend") or "") for value in llama_devices}
     token_ready = bool(os.getenv("HUGGINGFACE_TOKEN") or os.getenv("HF_TOKEN"))
@@ -300,7 +373,13 @@ def collect_accelerator_diagnostics(llama_server: str | Path | None) -> dict[str
     faster_whisper_ready = module_available("faster_whisper")
 
     cuda_ready = bool(torch["cuda_available"] and faster_whisper_ready)
-    vulkan_asr = bool(whisper_executable and "vulkan" in whisper_backends)
+    if whisper_container["configured"]:
+        vulkan_asr = bool(
+            whisper_container["ready"]
+            and whisper_container["backend"] == "vulkan"
+        )
+    else:
+        vulkan_asr = bool(whisper_executable and "vulkan" in whisper_backends)
     vulkan_llm = "vulkan" in llama_backends
     openvino_devices = [str(value).upper() for value in openvino.get("devices", [])]
     openvino_asr = bool(openvino["genai_installed"] and openvino_devices)
@@ -331,7 +410,7 @@ def collect_accelerator_diagnostics(llama_server: str | Path | None) -> dict[str
         _profile(
             "vulkan",
             "Cross-vendor Vulkan",
-            vulkan_asr and pyannote_ready and llama_ready,
+            vulkan_asr and pyannote_ready and vulkan_llm,
             "whisper.cpp / Vulkan" if vulkan_asr else "needs a Vulkan whisper.cpp build",
             cpu_diarization,
             "llama.cpp / Vulkan" if vulkan_llm else "needs a Vulkan llama.cpp build",
@@ -396,6 +475,7 @@ def collect_accelerator_diagnostics(llama_server: str | Path | None) -> dict[str
         "whisper_cpp": {
             "executable": whisper_executable,
             "backends": whisper_backends,
+            "container": whisper_container,
         },
         "llama_cpp": {
             "executable": str(llama_server) if llama_server else None,

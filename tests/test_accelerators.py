@@ -2,6 +2,8 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from broadcastify_cli.accelerators import (
+    collect_accelerator_diagnostics,
+    find_whisper_cpp,
     inspect_llama_devices,
     whisper_cpp_backends,
 )
@@ -47,3 +49,96 @@ def test_whisper_cpp_backend_dlls_are_detected(tmp_path: Path) -> None:
     (tmp_path / "ggml-sycl.dll").write_bytes(b"sycl")
 
     assert whisper_cpp_backends(executable) == ["cpu", "sycl", "vulkan"]
+
+
+def test_whisper_cpp_finds_portable_local_build(monkeypatch, tmp_path: Path) -> None:
+    executable = tmp_path / "tools" / "whisper.cpp" / "build" / "bin" / "whisper-cli"
+    executable.parent.mkdir(parents=True)
+    executable.write_bytes(b"binary")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("WHISPER_CPP_PATH", raising=False)
+    monkeypatch.setattr("broadcastify_cli.accelerators.shutil.which", lambda _name: None)
+
+    assert find_whisper_cpp() == str(executable.resolve())
+
+
+def test_vulkan_profile_requires_vulkan_llama_backend(monkeypatch) -> None:
+    monkeypatch.setenv("HUGGINGFACE_TOKEN", "test-token")
+    monkeypatch.delenv("WHISPER_CPP_CONTAINER_IMAGE", raising=False)
+    monkeypatch.setattr(
+        "broadcastify_cli.accelerators._torch_diagnostics",
+        lambda: {"installed": True, "cuda_available": False, "cuda_devices": []},
+    )
+    monkeypatch.setattr(
+        "broadcastify_cli.accelerators._openvino_diagnostics",
+        lambda: {"runtime_installed": False, "genai_installed": False, "devices": []},
+    )
+    monkeypatch.setattr(
+        "broadcastify_cli.accelerators._onnx_diagnostics", lambda: {"installed": False}
+    )
+    monkeypatch.setattr(
+        "broadcastify_cli.accelerators._windows_ml_diagnostics",
+        lambda: {"runtime_ready": False, "decode_ready": False},
+    )
+    monkeypatch.setattr("broadcastify_cli.accelerators.find_whisper_cpp", lambda: "/bin/whisper-cli")
+    monkeypatch.setattr(
+        "broadcastify_cli.accelerators.whisper_cpp_backends",
+        lambda _path: ["cpu", "vulkan"],
+    )
+    monkeypatch.setattr(
+        "broadcastify_cli.accelerators.inspect_llama_devices",
+        lambda _path: [{"id": "CPU", "backend": "cpu", "name": "CPU"}],
+    )
+    monkeypatch.setattr("broadcastify_cli.accelerators.module_available", lambda _name: True)
+
+    diagnostics = collect_accelerator_diagnostics("/bin/llama-server")
+    vulkan = next(value for value in diagnostics["profiles"] if value["id"] == "vulkan")
+
+    assert vulkan["ready"] is False
+    assert vulkan["analysis"] == "needs a Vulkan llama.cpp build"
+
+
+def test_explicit_missing_container_does_not_fall_back_to_native_profile(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("WHISPER_CPP_CONTAINER_IMAGE", "local/missing-vulkan")
+    monkeypatch.setenv("HUGGINGFACE_TOKEN", "test-token")
+    monkeypatch.setattr(
+        "broadcastify_cli.accelerators._torch_diagnostics",
+        lambda: {"installed": True, "cuda_available": False, "cuda_devices": []},
+    )
+    monkeypatch.setattr(
+        "broadcastify_cli.accelerators._openvino_diagnostics",
+        lambda: {"runtime_installed": False, "genai_installed": False, "devices": []},
+    )
+    monkeypatch.setattr(
+        "broadcastify_cli.accelerators._onnx_diagnostics", lambda: {"installed": False}
+    )
+    monkeypatch.setattr(
+        "broadcastify_cli.accelerators._windows_ml_diagnostics",
+        lambda: {"runtime_ready": False, "decode_ready": False},
+    )
+    monkeypatch.setattr("broadcastify_cli.accelerators.find_whisper_cpp", lambda: "/bin/whisper-cli")
+    monkeypatch.setattr(
+        "broadcastify_cli.accelerators.whisper_cpp_backends",
+        lambda _path: ["cpu", "vulkan"],
+    )
+    monkeypatch.setattr(
+        "broadcastify_cli.accelerators.whisper_cpp_container_diagnostics",
+        lambda: {
+            "configured": True,
+            "ready": False,
+            "backend": "vulkan",
+        },
+    )
+    monkeypatch.setattr(
+        "broadcastify_cli.accelerators.inspect_llama_devices",
+        lambda _path: [{"id": "Vulkan0", "backend": "vulkan", "name": "GPU"}],
+    )
+    monkeypatch.setattr("broadcastify_cli.accelerators.module_available", lambda _name: True)
+
+    diagnostics = collect_accelerator_diagnostics("/bin/llama-server")
+    vulkan = next(value for value in diagnostics["profiles"] if value["id"] == "vulkan")
+
+    assert vulkan["ready"] is False
+    assert vulkan["transcription"] == "needs a Vulkan whisper.cpp build"

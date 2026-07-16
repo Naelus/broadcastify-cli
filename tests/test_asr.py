@@ -24,7 +24,7 @@ def test_whisper_cpp_json_is_normalized(monkeypatch, tmp_path: Path) -> None:
     (tmp_path / "ggml-vulkan.dll").write_bytes(b"backend")
     model = tmp_path / "ggml-large-v3-turbo-q5_0.bin"
     model.write_bytes(b"model")
-    audio = tmp_path / "radio.mp3"
+    audio = tmp_path / "radio.wav"
     audio.write_bytes(b"audio")
 
     class FakeProcess:
@@ -64,6 +64,151 @@ def test_whisper_cpp_json_is_normalized(monkeypatch, tmp_path: Path) -> None:
     assert result.text == "Unit responding."
     assert result.segments[0].start == 1.25
     assert result.segments[0].end == 4.5
+    assert "whisper.cpp transcription: 100%" in messages
+
+
+def test_whisper_cpp_prepares_non_wav_audio(monkeypatch, tmp_path: Path) -> None:
+    executable = tmp_path / "whisper-cli.exe"
+    executable.write_bytes(b"binary")
+    model = tmp_path / "ggml-tiny.en-q5_1.bin"
+    model.write_bytes(b"model")
+    audio = tmp_path / "radio.mp3"
+    audio.write_bytes(b"compressed audio")
+    invoked_with: list[str] = []
+
+    def fake_convert(arguments, **_kwargs):
+        Path(arguments[-1]).write_bytes(b"prepared wav")
+        return SimpleNamespace(returncode=0, stderr="")
+
+    class FakeProcess:
+        def __init__(self, arguments, **_kwargs) -> None:
+            invoked_with.extend(arguments)
+            output = Path(arguments[arguments.index("--output-file") + 1]).with_suffix(
+                ".json"
+            )
+            output.write_text(
+                json.dumps(
+                    {
+                        "result": {"language": "en"},
+                        "transcription": [
+                            {
+                                "offsets": {"from": 0, "to": 1000},
+                                "text": " Dispatch.",
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            self.stderr = io.StringIO("")
+
+        @staticmethod
+        def wait() -> int:
+            return 0
+
+    monkeypatch.setattr("broadcastify_cli.asr.find_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr("broadcastify_cli.asr.subprocess.run", fake_convert)
+    monkeypatch.setattr("broadcastify_cli.asr.subprocess.Popen", FakeProcess)
+    engine = WhisperCppAsr(
+        "tiny", device="cpu", executable=executable, model_path=model
+    )
+
+    result = engine.transcribe(audio)
+
+    prepared = Path(invoked_with[invoked_with.index("--file") + 1])
+    assert prepared.name == "radio.whisper.cpp.wav"
+    assert not prepared.exists()
+    assert result.text == "Dispatch."
+
+
+def test_whisper_cpp_container_is_rootless_offline_and_bind_limited(
+    monkeypatch, tmp_path: Path
+) -> None:
+    model = tmp_path / "ggml-tiny.en-q5_1.bin"
+    model.write_bytes(b"model")
+    audio = tmp_path / "radio.wav"
+    audio.write_bytes(b"audio")
+    dri = tmp_path / "dri"
+    dri.mkdir()
+    (dri / "renderD128").write_bytes(b"device")
+    invoked_with: list[str] = []
+
+    monkeypatch.setattr(
+        "broadcastify_cli.accelerators.shutil.which", lambda name: name
+    )
+    monkeypatch.setattr(
+        "broadcastify_cli.accelerators.subprocess.run",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            returncode=0, stdout="sha256:test-image\n", stderr=""
+        ),
+    )
+
+    class FakeContainer:
+        def __init__(self, arguments, **_kwargs) -> None:
+            invoked_with.extend(arguments)
+            mounts = [
+                arguments[index + 1]
+                for index, value in enumerate(arguments[:-1])
+                if value == "--mount"
+            ]
+            output_mount = next(value for value in mounts if "dst=/output" in value)
+            output_directory = Path(
+                output_mount.split("src=", 1)[1].split(",dst=/output", 1)[0]
+            )
+            (output_directory / "result.json").write_text(
+                json.dumps(
+                    {
+                        "systeminfo": "VULKAN = 1",
+                        "result": {"language": "en"},
+                        "transcription": [
+                            {
+                                "offsets": {"from": 0, "to": 1000},
+                                "text": " Vulkan ready.",
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            self.stderr = io.StringIO(
+                "ggml_vulkan: Found 1 Vulkan devices\n"
+                "whisper_print_progress: progress = 131%\n"
+            )
+
+        @staticmethod
+        def wait() -> int:
+            return 0
+
+    monkeypatch.setattr("broadcastify_cli.asr.subprocess.Popen", FakeContainer)
+    engine = WhisperCppAsr(
+        "tiny",
+        device="vulkan",
+        model_path=model,
+        container_image="ghcr.io/ggml-org/whisper.cpp@sha256:test",
+        container_runtime="docker",
+        container_device=dri,
+    )
+
+    messages: list[str] = []
+    result = engine.transcribe(audio, progress=messages.append)
+
+    assert invoked_with[:3] == ["docker", "run", "--rm"]
+    assert ["--network", "none"] == invoked_with[3:5]
+    assert "--read-only" in invoked_with
+    assert "no-new-privileges" in invoked_with
+    assert ["--cap-drop", "ALL"] == invoked_with[
+        invoked_with.index("--cap-drop") : invoked_with.index("--cap-drop") + 2
+    ]
+    assert str(dri) in invoked_with
+    assert invoked_with[invoked_with.index("--entrypoint") + 1] == (
+        "/app/build/bin/whisper-cli"
+    )
+    assert all("dst=/" in value for value in invoked_with if value.startswith("type=bind"))
+    assert result.text == "Vulkan ready."
+    assert result.backend == "vulkan (container)"
+    assert result.metadata["runtime_evidence"] == [
+        "ggml_vulkan: Found 1 Vulkan devices"
+    ]
     assert "whisper.cpp transcription: 100%" in messages
 
 

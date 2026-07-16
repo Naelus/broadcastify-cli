@@ -160,6 +160,42 @@ def find_llama_server() -> str | None:
     return str(candidates[0]) if candidates else None
 
 
+def prepare_llama_environment(
+    environment: dict[str, str],
+    runtime_root: str | Path,
+    *,
+    platform_name: str | None = None,
+) -> dict[str, str]:
+    """Give rootless/containerized llama.cpp a writable home and model caches."""
+
+    prepared = environment.copy()
+    if prepared.get("HUGGINGFACE_TOKEN") and not prepared.get("HF_TOKEN"):
+        prepared["HF_TOKEN"] = prepared["HUGGINGFACE_TOKEN"]
+    if (platform_name or os.name) == "nt":
+        return prepared
+
+    configured_root = prepared.get("BROADCASTIFY_RUNTIME_DIR", "").strip()
+    fallback_root = Path(configured_root) if configured_root else Path(runtime_root)
+    home_value = prepared.get("HOME", "").strip()
+    home = Path(home_value).expanduser() if home_value else None
+    home_usable = bool(home and home.is_dir() and os.access(home, os.W_OK))
+    if not home_usable:
+        home = fallback_root / "home"
+        home.mkdir(parents=True, exist_ok=True)
+        prepared["HOME"] = str(home.resolve())
+
+    assert home is not None
+    cache_root = Path(prepared.get("XDG_CACHE_HOME") or home / ".cache")
+    cache_root.mkdir(parents=True, exist_ok=True)
+    llama_cache = Path(prepared.get("LLAMA_CACHE") or cache_root / "llama.cpp")
+    hf_home = Path(prepared.get("HF_HOME") or cache_root / "huggingface")
+    llama_cache.mkdir(parents=True, exist_ok=True)
+    hf_home.mkdir(parents=True, exist_ok=True)
+    prepared.setdefault("LLAMA_CACHE", str(llama_cache.resolve()))
+    prepared.setdefault("HF_HOME", str(hf_home.resolve()))
+    return prepared
+
+
 class LlamaServerError(RuntimeError):
     pass
 
@@ -201,13 +237,14 @@ class LlamaServerProcess:
         executable = find_llama_server()
         if not executable:
             raise LlamaServerError(
-                "llama-server was not found. Install it with: winget install llama.cpp"
+                "llama-server was not found. Install llama.cpp with your platform's "
+                "package manager or official release, or set LLAMA_SERVER_PATH."
             )
         self.log_path.parent.mkdir(parents=True, exist_ok=True)
         self._log_handle = self.log_path.open("a", encoding="utf-8")
-        environment = os.environ.copy()
-        if environment.get("HUGGINGFACE_TOKEN") and not environment.get("HF_TOKEN"):
-            environment["HF_TOKEN"] = environment["HUGGINGFACE_TOKEN"]
+        environment = prepare_llama_environment(
+            os.environ.copy(), self.log_path.parent / ".runtime"
+        )
         arguments = [
             executable,
             "-hf",

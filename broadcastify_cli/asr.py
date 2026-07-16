@@ -11,8 +11,10 @@ from pathlib import Path
 from typing import Any, Callable, Iterator, Sequence
 
 from .accelerators import (
+    find_container_runtime,
     find_whisper_cpp,
     find_windows_ml_helper,
+    whisper_cpp_container_diagnostics,
     whisper_cpp_backends,
 )
 from .audio import find_ffmpeg
@@ -125,7 +127,7 @@ def find_whisper_cpp_model(
 
 
 class WhisperCppAsr:
-    """Runs an installed whisper.cpp CLI and normalizes its JSON output."""
+    """Runs native or explicitly configured containerized whisper.cpp."""
 
     def __init__(
         self,
@@ -134,18 +136,75 @@ class WhisperCppAsr:
         device_index: int = 0,
         executable: str | Path | None = None,
         model_path: str | Path | None = None,
+        container_image: str | None = None,
+        container_runtime: str | Path | None = None,
+        container_device: str | Path | None = None,
     ) -> None:
         self.model_name = model_name
         self.device = (device or "vulkan").lower()
         self.device_index = max(0, int(device_index))
-        self.executable = str(executable or find_whisper_cpp() or "")
-        if not self.executable or not Path(self.executable).is_file():
+        self.container_image = str(
+            container_image or os.getenv("WHISPER_CPP_CONTAINER_IMAGE") or ""
+        ).strip()
+        self.executable = str(
+            executable
+            or (find_whisper_cpp() if not self.container_image else "")
+            or ""
+        )
+        self.container_runtime = find_container_runtime(container_runtime)
+        self.container_backend = str(
+            os.getenv("WHISPER_CPP_CONTAINER_BACKEND") or "vulkan"
+        ).strip().lower()
+        self.container_device = str(
+            container_device
+            or os.getenv("WHISPER_CPP_CONTAINER_DEVICE")
+            or "/dev/dri"
+        )
+        self.container_executable = str(
+            os.getenv("WHISPER_CPP_CONTAINER_EXECUTABLE")
+            or "/app/build/bin/whisper-cli"
+        ).strip()
+        self.containerized = bool(
+            (not self.executable or not Path(self.executable).is_file())
+            and self.container_image
+        )
+        if self.containerized:
+            container = whisper_cpp_container_diagnostics(
+                image=self.container_image,
+                runtime=self.container_runtime,
+                backend=self.container_backend,
+                device=self.container_device,
+            )
+            if not container["runtime"]:
+                raise AsrDependencyError(
+                    "A whisper.cpp container image is configured, but Docker or Podman "
+                    "was not found. Set BROADCASTIFY_CONTAINER_RUNTIME."
+                )
+            if not container["image_present"]:
+                raise AsrDependencyError(
+                    f"The configured whisper.cpp image {self.container_image!r} is not "
+                    "present locally. Pull and verify it explicitly before processing."
+                )
+            if self.device == "vulkan" and not container["device_present"]:
+                raise AsrDependencyError(
+                    f"The Vulkan device {self.container_device!r} is unavailable to the "
+                    "container runtime."
+                )
+        elif not self.executable or not Path(self.executable).is_file():
             raise AsrDependencyError(
                 "whisper-cli was not found. Install or build whisper.cpp and set "
-                "WHISPER_CPP_PATH to whisper-cli.exe. A Vulkan build must be compiled "
-                "with GGML_VULKAN=1."
+                "WHISPER_CPP_PATH to whisper-cli, or explicitly configure a pre-pulled "
+                "WHISPER_CPP_CONTAINER_IMAGE. A Vulkan build must use GGML_VULKAN=1."
             )
         resolved_model = find_whisper_cpp_model(model_name, model_path)
+        if resolved_model is None and self.executable:
+            adjacent_model = (
+                Path(self.executable).resolve().parent
+                / "models"
+                / whisper_cpp_model_filename(model_name)
+            )
+            if adjacent_model.is_file():
+                resolved_model = adjacent_model
         if resolved_model is None:
             expected = whisper_cpp_model_filename(model_name)
             raise AsrDependencyError(
@@ -153,13 +212,151 @@ class WhisperCppAsr:
                 f"{_default_model_root() / 'whisper.cpp'} or set WHISPER_CPP_MODEL_PATH."
             )
         self.model_path = resolved_model
-        self.backends = whisper_cpp_backends(self.executable)
+        self.backends = (
+            sorted({"cpu", self.container_backend})
+            if self.containerized
+            else whisper_cpp_backends(self.executable)
+        )
         if self.device == "vulkan" and "vulkan" not in self.backends:
             raise AsrDependencyError(
                 "The selected whisper.cpp executable does not expose ggml-vulkan. "
                 "Use a build compiled with GGML_VULKAN=1 or select CPU."
             )
-        self.backend = self.device if self.device != "auto" else ",".join(self.backends)
+        selected_backend = (
+            self.device if self.device != "auto" else ",".join(self.backends)
+        )
+        self.backend = (
+            f"{selected_backend} (container)"
+            if self.containerized
+            else selected_backend
+        )
+
+    @staticmethod
+    def _mount(source: Path, destination: str, *, readonly: bool = False) -> str:
+        resolved = str(source.resolve())
+        if "," in resolved:
+            raise AsrDependencyError(
+                "Containerized whisper.cpp cannot bind a path containing a comma."
+            )
+        value = f"type=bind,src={resolved},dst={destination}"
+        return value + (",readonly" if readonly else "")
+
+    def _container_group_id(self) -> int | None:
+        configured = os.getenv("WHISPER_CPP_CONTAINER_GROUP_ID", "").strip()
+        if configured:
+            try:
+                return int(configured)
+            except ValueError as exc:
+                raise AsrDependencyError(
+                    "WHISPER_CPP_CONTAINER_GROUP_ID must be a numeric group ID."
+                ) from exc
+        device = Path(self.container_device)
+        candidates = sorted(device.glob("renderD*")) if device.is_dir() else [device]
+        for candidate in candidates:
+            try:
+                return candidate.stat().st_gid
+            except OSError:
+                continue
+        return None
+
+    def _container_arguments(
+        self, source: Path, output_directory: Path
+    ) -> tuple[list[str], str, str, str]:
+        assert self.container_runtime is not None
+        arguments = [
+            self.container_runtime,
+            "run",
+            "--rm",
+            "--network",
+            "none",
+            "--read-only",
+            "--security-opt",
+            "no-new-privileges",
+            "--cap-drop",
+            "ALL",
+            "--env",
+            "HOME=/tmp",
+            "--tmpfs",
+            "/tmp:rw,nosuid,nodev,size=512m",
+        ]
+        if hasattr(os, "getuid") and hasattr(os, "getgid"):
+            arguments.extend(["--user", f"{os.getuid()}:{os.getgid()}"])
+        if self.device == "vulkan":
+            arguments.extend(["--device", self.container_device])
+            group_id = self._container_group_id()
+            if group_id is not None:
+                arguments.extend(["--group-add", str(group_id)])
+        arguments.extend(
+            [
+                "--mount",
+                self._mount(source, "/input/audio.wav", readonly=True),
+                "--mount",
+                self._mount(self.model_path, "/models/model.bin", readonly=True),
+                "--mount",
+                self._mount(output_directory, "/output"),
+                "--entrypoint",
+                self.container_executable,
+                self.container_image,
+            ]
+        )
+        return arguments, "/input/audio.wav", "/models/model.bin", "/output/result"
+
+    def _prepare_audio(
+        self,
+        source: Path,
+        cache_dir: Path,
+        progress: Callable[[str], None] | None,
+    ) -> tuple[Path, bool]:
+        if source.suffix.lower() == ".wav":
+            return source, False
+        prepared = cache_dir / f"{source.stem}.whisper.cpp.wav"
+        partial = prepared.with_suffix(".part.wav")
+        partial.unlink(missing_ok=True)
+        if (
+            prepared.is_file()
+            and prepared.stat().st_size > 0
+            and prepared.stat().st_mtime_ns >= source.stat().st_mtime_ns
+        ):
+            if progress:
+                progress(f"Reusing prepared whisper.cpp audio for {source.name}")
+            return prepared, True
+        ffmpeg = find_ffmpeg()
+        if not ffmpeg:
+            raise AsrDependencyError(
+                "FFmpeg is required to prepare 16 kHz WAV input for whisper.cpp."
+            )
+        if progress:
+            progress(f"Preparing 16 kHz audio for whisper.cpp: {source.name}")
+        converted = subprocess.run(
+            [
+                ffmpeg,
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-i",
+                str(source),
+                "-ar",
+                "16000",
+                "-ac",
+                "1",
+                "-c:a",
+                "pcm_s16le",
+                "-y",
+                str(partial),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        )
+        if converted.returncode != 0 or not partial.is_file() or partial.stat().st_size == 0:
+            partial.unlink(missing_ok=True)
+            raise RuntimeError(
+                converted.stderr.strip()
+                or "FFmpeg could not prepare whisper.cpp audio."
+            )
+        partial.replace(prepared)
+        return prepared, True
 
     def transcribe(
         self,
@@ -169,63 +366,94 @@ class WhisperCppAsr:
         source = Path(audio_path)
         cache_dir = source.parent / "transcripts" / ".cache"
         cache_dir.mkdir(parents=True, exist_ok=True)
-        with tempfile.TemporaryDirectory(prefix="whisper-cpp-", dir=cache_dir) as temporary:
-            output_base = Path(temporary) / source.stem
-            arguments = [
-                self.executable,
-                "--model",
-                str(self.model_path),
-                "--file",
-                str(source),
-                "--language",
-                "en",
-                "--beam-size",
-                "5",
-                "--no-speech-thold",
-                "0.6",
-                "--prompt",
-                "Police, fire, EMS, and public safety radio traffic.",
-                "--suppress-nst",
-                "--output-json",
-                "--output-file",
-                str(output_base),
-                "--print-progress",
-                "--no-prints",
-                "--device",
-                str(self.device_index),
-            ]
-            if self.device == "cpu":
-                arguments.append("--no-gpu")
-            if progress:
-                progress(
-                    f"Running whisper.cpp {self.model_name} on {self.backend or 'auto'}"
+        prepared_source, remove_prepared = self._prepare_audio(
+            source, cache_dir, progress
+        )
+        completed = False
+        runtime_evidence: list[str] = []
+        try:
+            with tempfile.TemporaryDirectory(prefix="whisper-cpp-", dir=cache_dir) as temporary:
+                output_directory = Path(temporary)
+                if self.containerized:
+                    arguments, input_path, model_path, output_path = (
+                        self._container_arguments(prepared_source, output_directory)
+                    )
+                    output_base = output_directory / "result"
+                else:
+                    arguments = [self.executable]
+                    input_path = str(prepared_source)
+                    model_path = str(self.model_path)
+                    output_base = output_directory / source.stem
+                    output_path = str(output_base)
+                arguments.extend(
+                    [
+                        "--model",
+                        model_path,
+                        "--file",
+                        input_path,
+                        "--language",
+                        "en",
+                        "--beam-size",
+                        "5",
+                        "--no-speech-thold",
+                        "0.6",
+                        "--prompt",
+                        "Police, fire, EMS, and public safety radio traffic.",
+                        "--suppress-nst",
+                        "--output-json",
+                        "--output-file",
+                        output_path,
+                        "--print-progress",
+                        "--device",
+                        str(self.device_index),
+                    ]
                 )
-            process = subprocess.Popen(
-                arguments,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
-            )
-            error_lines: list[str] = []
-            assert process.stderr is not None
-            for line in process.stderr:
-                line = line.strip()
-                if line:
-                    error_lines.append(line)
-                match = re.search(r"progress\s*=\s*(\d+)%", line)
-                if match and progress:
-                    progress(f"whisper.cpp transcription: {match.group(1)}%")
-            return_code = process.wait()
-            json_path = output_base.with_suffix(".json")
-            if return_code != 0 or not json_path.is_file():
-                detail = "\n".join(error_lines[-20:])
-                raise RuntimeError(
-                    detail or f"whisper.cpp exited with code {return_code}."
+                if self.device == "cpu":
+                    arguments.append("--no-gpu")
+                if progress:
+                    progress(
+                        f"Running whisper.cpp {self.model_name} on {self.backend or 'auto'}"
+                    )
+                process = subprocess.Popen(
+                    arguments,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
                 )
-            payload = json.loads(json_path.read_text(encoding="utf-8"))
+                error_lines: list[str] = []
+                assert process.stderr is not None
+                for line in process.stderr:
+                    line = line.strip()
+                    if line:
+                        error_lines.append(line)
+                    match = re.search(r"progress\s*=\s*(\d+)%", line)
+                    if match and progress:
+                        percent = min(100, max(0, int(match.group(1))))
+                        progress(f"whisper.cpp transcription: {percent}%")
+                return_code = process.wait()
+                json_path = output_base.with_suffix(".json")
+                if return_code != 0 or not json_path.is_file():
+                    detail = "\n".join(error_lines[-20:])
+                    raise RuntimeError(
+                        detail or f"whisper.cpp exited with code {return_code}."
+                    )
+                runtime_evidence = [
+                    line
+                    for line in error_lines
+                    if re.search(
+                        r"(?:vulkan|cuda|sycl|openvino|metal|device|backend)",
+                        line,
+                        re.IGNORECASE,
+                    )
+                ][-40:]
+                payload = json.loads(json_path.read_text(encoding="utf-8"))
+                completed = True
+        finally:
+            if completed and remove_prepared:
+                prepared_source.unlink(missing_ok=True)
 
         segments: list[AsrSegment] = []
         for value in payload.get("transcription", []):
@@ -249,6 +477,11 @@ class WhisperCppAsr:
                 "system_info": system_info,
                 "model_path": str(self.model_path),
                 "available_backends": self.backends,
+                "container_image": self.container_image if self.containerized else "",
+                "container_runtime": (
+                    self.container_runtime if self.containerized else ""
+                ),
+                "runtime_evidence": runtime_evidence,
             },
         )
 

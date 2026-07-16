@@ -32,6 +32,20 @@ This is the dated verification and delivery log for `GOAL.md`. Keep forward-look
 - Verified the native Settings flow: selecting Windows ML plus the validated model path changed the profile from runtime-only to ready after the real decode check; recommended automatic/CUDA defaults were restored afterward.
 - DML/WinML exports remain gated after reproducible graph-capture/fused-node errors; tracked as B-001.
 
+#### AMD Vulkan / immutable Linux host
+
+- Validated on an isolated TrueNAS/Debian 12 host with an AMD Radeon 890M (`RADV GFX1150`). No host package, service, storage, or group configuration was changed; artifacts remain in one user-owned test directory.
+- Pulled the official `ghcr.io/ggml-org/whisper.cpp:main-vulkan` image. Recorded image ID `sha256:2f8d2507ee587a8b94c514d27545089234810e6da3e6dd0f2e1327f2f96de861` and repository digest `sha256:3ac0269a3752513c64c31ee8000b1a3354ed68cab790f51008a832a56b3e461a`.
+- Verified the 77,704,715-byte `ggml-tiny.en.bin` model at SHA-256 `921e4cf8686fdd993dcd081a5da5b6c365bfde1162e72b08d75ac75289920b1f`.
+- The first direct CLI run decoded the 22.7-second retained fixture in 1.023 seconds and emitted normalized JSON. The exact Python app adapter then passed with `--network none`, read-only root, dropped capabilities, no-new-privileges, bounded tmpfs, exact read-only audio/model mounts, and one writable output mount.
+- The final app-adapter run completed in 1.022 seconds, produced one 159-character segment, clamped upstream's short-input progress to 100%, and retained initialization evidence naming `AMD Radeon 890M Graphics`, `Vulkan0`, and `using Vulkan0 backend`.
+- Native Linux/macOS `whisper-cli` discovery now covers PATH and common local build trees. Non-WAV inputs are atomically converted to a 16 kHz mono PCM WAV so a build without optional FFmpeg decoding does not fail on combined MP3s.
+- Downloaded the official llama.cpp b9637 Ubuntu Vulkan release (38,391,553 bytes, SHA-256 `6ca268d758aae9e8518afa43042678e8b60b47f0d34df7d6efff4ca622c74313`) and ran it inside the already-validated Vulkan container because the immutable host intentionally lacks a Vulkan loader on its no-exec user dataset.
+- Public `ggml-org/gemma-3-1b-it-GGUF:Q4_K_M` (806,058,240 bytes) offloaded all 27/27 layers. Vulkan model memory was 762.49 MiB; prompt evaluation measured 320.05 tokens/second and cached generation measured 105.39 tokens/second.
+- A numeric-user container initially failed before model load because it lacked a writable home. The managed llama.cpp launcher now supplies private `HOME`, `LLAMA_CACHE`, and `HF_HOME` fallbacks only when the inherited POSIX home is absent/unwritable.
+- Fixed an honesty bug: Vulkan profile readiness now requires a detected llama.cpp Vulkan device rather than any `llama-server` executable. The container image is never pulled implicitly; diagnostics only inspect an explicitly configured image already present locally.
+- Complete Python suite after the native/container runtime work: **87 passed**.
+
 ### Archive quota reset run
 
 - Completed a guarded feed 90001 resume for July 3–16 after downloads became available again.

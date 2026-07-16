@@ -10,6 +10,7 @@ from broadcastify_cli.analysis import (
     find_llama_server,
     normalize_event_type,
     normalize_priority,
+    prepare_llama_environment,
 )
 from broadcastify_cli.storage import AnalysisStore
 
@@ -57,6 +58,21 @@ def test_llama_lookup_tolerates_inaccessible_winget_cache(
     monkeypatch.setattr(Path, "glob", denied)
 
     assert find_llama_server() is None
+
+
+def test_llama_environment_provides_rootless_cache_paths(
+    tmp_path: Path,
+) -> None:
+    prepared = prepare_llama_environment(
+        {"HOME": str(tmp_path / "missing"), "HUGGINGFACE_TOKEN": "test-token"},
+        tmp_path / "runtime",
+        platform_name="posix",
+    )
+
+    assert Path(prepared["HOME"]).is_dir()
+    assert Path(prepared["LLAMA_CACHE"]).is_dir()
+    assert Path(prepared["HF_HOME"]).is_dir()
+    assert prepared["HF_TOKEN"] == "test-token"
 
 
 def test_windows_cover_full_timeline() -> None:
