@@ -45,6 +45,13 @@ Use this file for reproducible defects and concrete blockers, not the general ro
 - **Control:** Sequential pacing, exact cache reuse, and immediate stop on explicit exhaustion.
 - **Next:** Ask Broadcastify support for authoritative details and prioritize future regional acquisition by user distance/importance rather than a guessed quota size.
 
+### B-009 — `dotnet publish` collides on duplicated Windows App SDK assets
+
+- **Severity:** Low for current source/private builds; blocking for installer packaging.
+- **Observed:** The WinUI app's build-only Windows ML project reference causes `NETSDK1152` during `dotnet publish` because both projects contribute the same Windows App SDK `MsixContent` paths.
+- **Control:** `dotnet build` produces the validated runnable unpackaged app. A dedicated `bin/Private/win-x64` build successfully bundles the ignored `.env`; a subsequent ordinary Release build was verified to remove the credential file from its own output.
+- **Next:** Replace the build-only project reference with an explicit helper build/copy target or separate packaged artifact before claiming publish/MSIX/installer support.
+
 ## Recently fixed
 
 ### F-008 — Area jobs could continue after a feed exhausted the archive quota

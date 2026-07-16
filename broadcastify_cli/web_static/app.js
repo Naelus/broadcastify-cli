@@ -567,12 +567,15 @@ function renderFeedResults(results) {
 }
 
 function renderAreaResults(results) {
-  state.areaDiscovered = results;
-  if (!results.length) {
+  if (results !== state.areaDiscovered) state.areaDiscovered = results;
+  const visible = state.areaDiscovered
+    .map((feed, index) => ({ feed, index }))
+    .filter(({ feed }) => !byId("areaPublicSafetyOnly").checked || String(feed.genre || "").toLowerCase() === "public safety");
+  if (!visible.length) {
     byId("areaSearchResults").innerHTML = '<div class="empty-compact">No public-safety feeds were found for those ZIPs.</div>';
     return;
   }
-  byId("areaSearchResults").innerHTML = results.map((feed, index) => {
+  byId("areaSearchResults").innerHTML = `<div class="result-summary">Showing ${visible.length} of ${state.areaDiscovered.length} discovered feeds · no archive audio requested</div>` + visible.map(({ feed, index }) => {
     const priority = Number(feed.priority_rank) || index + 1;
     const distance = feed.distance_miles == null ? `ZIP ${html(feed.nearest_zip_code || "priority")}` : `about ${Number(feed.distance_miles).toFixed(1)} mi`;
     return `<label class="feed-result"><input type="checkbox" data-area-feed-index="${index}" checked><div><h3>${html(feed.name || `Feed ${feed.feed_id}`)}</h3><p>Priority ${priority} · ${distance} · Feed ${html(feed.feed_id)}${feed.location ? ` · ${html(feed.location)}` : ""}</p></div><span class="listener-count">${Number(feed.listeners) || 0} listeners</span></label>`;
@@ -783,7 +786,13 @@ byId("saveAreaProfileForm").addEventListener("submit", async (event) => {
   const zipCodes = searched.map((value) => value.zip_code).filter(Boolean).length
     ? searched.map((value) => value.zip_code).filter(Boolean)
     : byId("areaZipCodes").value.split(/[\s,;]+/).filter(Boolean);
-  await startJob("save-area-profile", { name: byId("areaProfileName").value, zip_codes: zipCodes, feeds, coverage: state.areaCoverage }, { label: "Saving area profile", onComplete: refreshBootstrap });
+  const profileName = byId("areaProfileName").value;
+  await startJob("save-area-profile", { name: profileName, zip_codes: zipCodes, feeds, coverage: state.areaCoverage }, { label: "Saving area profile", onComplete: async () => {
+    await refreshBootstrap();
+    byId("areaProfileSelect").value = profileName;
+    applySelectedAreaProfile();
+    renderAreaQueue();
+  } });
 });
 byId("buildAreaBriefButton").addEventListener("click", async () => {
   const profileName = byId("areaProfileSelect").value;
@@ -824,6 +833,7 @@ byId("areaProfileSelect").addEventListener("change", async () => {
   await openSavedArea();
 });
 byId("areaCoverageMode").addEventListener("change", updateAreaCoverageControls);
+byId("areaPublicSafetyOnly").addEventListener("change", () => renderAreaResults(state.areaDiscovered));
 
 byId("providerCheckButton").addEventListener("click", async () => {
   await startJob("analysis-provider-diagnostics", providerPayload(), { label: "Checking analysis provider", onComplete: (job) => {

@@ -31,7 +31,7 @@ This fork uses Broadcastify's website login and the same private web endpoints a
 - Automatic transcript import, incident extraction, summary, and semantic indexing after a completed UI job
 - Saved-day review, priority-filtered incident timeline, and evidence-grounded date-range questions in the UI
 - Persisted seven-day activity briefs with explicit coverage gaps, exact category counts, and deterministic notable-record IDs
-- Center-plus-radius or ordered-ZIP area watch that follows Broadcastify's ZIP-to-county results, deduplicates feeds, and saves explicit nearest-first newsroom feed profiles
+- Center-plus-radius or ordered-ZIP area watch that follows Broadcastify's ZIP-to-county results, deduplicates feeds, defaults to a live public-safety filter, and saves explicit nearest-first newsroom feed profiles
 - Persisted nearest-first multi-feed archive queues that recover interrupted work, skip completed feeds, and stop every lower priority at the first explicit quota response
 - Sequential post-transcription analysis plus persisted cross-feed story briefs with deterministic source references and coverage gaps
 - Newsworthiness ranking separate from dispatch priority, with conservative time/location clustering and routine single-person calls suppressed
@@ -141,12 +141,15 @@ dotnet build .\BroadcastifyCli.WinUI\BroadcastifyCli.WinUI.csproj -c Release
 For a private personal build that carries the ignored repository `.env` alongside the executable, opt in explicitly:
 
 ```powershell
+$privateOutput = "$PWD\BroadcastifyCli.WinUI\bin\Private\win-x64\"
 dotnet build .\BroadcastifyCli.WinUI\BroadcastifyCli.WinUI.csproj `
   -c Release `
+  -p:OutDir=$privateOutput `
   -p:BundleLocalEnv=true
+& "$privateOutput\Broadcastify Desktop.exe"
 ```
 
-This writes `broadcastify-desktop.env` into that build output. It is ignored by Git and the worker loads it before starting a job, but it is still a plaintext credential file inside the private build directory. Do not distribute or upload that build. Omit `BundleLocalEnv` for a normal shareable build; a normal build also removes any stale private env copy from its output.
+This writes `broadcastify-desktop.env` into the dedicated private build output. It is ignored by Git and the worker loads it before starting a job, but it is still a plaintext credential file inside the private build directory. Do not distribute or upload that build. Omit `BundleLocalEnv` for a normal shareable build; a normal build also removes any stale private env copy from its own output. The current runnable delivery is `dotnet build`, not `dotnet publish`; see B-009 in [BUGS.md](BUGS.md).
 
 ## Cross-platform local Web UI
 

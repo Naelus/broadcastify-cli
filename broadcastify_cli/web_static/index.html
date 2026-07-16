@@ -6,7 +6,7 @@
   <meta name="app-token" content="__SESSION_TOKEN__">
   <meta name="color-scheme" content="light dark">
   <title>Radio Archive Intelligence</title>
-  <link rel="stylesheet" href="/static/app.css?v=6">
+  <link rel="stylesheet" href="/static/app.css?v=7">
 </head>
 <body>
   <div class="app-shell">
@@ -162,6 +162,7 @@
                 <label><span>Radius (miles)</span><input id="areaRadiusMiles" type="number" min="1" max="100" value="25"></label>
                 <label><span>ZIP search cap</span><input id="areaMaxZipCodes" type="number" min="1" max="20" value="12"></label>
               </div>
+              <label class="check-row"><input id="areaPublicSafetyOnly" type="checkbox" checked><span><strong>Public-safety feeds only</strong><small>Recommended for police, fire, EMS, and dispatch coverage</small></span></label>
               <p class="field-help">Radius mode caches the Census ZIP centroid file once. Discovery never downloads archive audio.</p>
               <button class="button secondary" type="submit">Discover nearest feeds</button>
             </form>
@@ -264,6 +265,6 @@
   </aside>
 
   <div class="toast-region" id="toastRegion" aria-live="polite"></div>
-  <script src="/static/app.js?v=6" defer></script>
+  <script src="/static/app.js?v=7" defer></script>
 </body>
 </html>

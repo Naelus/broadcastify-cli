@@ -88,6 +88,8 @@ def test_loopback_web_app_serves_library_transcript_and_media(tmp_path: Path) ->
         token_match = re.search(rb'<meta name="app-token" content="([^"]+)">', body)
         assert cookie.startswith("radio_archive_session=")
         assert token_match is not None
+        assert b'id="areaPublicSafetyOnly"' in body
+        assert b'/static/app.js?v=7' in body
         token = token_match.group(1).decode()
 
         response, body = _request(connection, "GET", "/api/bootstrap", cookie=cookie)

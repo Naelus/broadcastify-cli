@@ -464,7 +464,8 @@
                                                 <NumberBox x:Name="AreaMaxZipCodesBox" Grid.Column="1" Header="ZIP search cap" Value="12" Minimum="1" Maximum="20" SpinButtonPlacementMode="Compact" />
                                                 <TextBlock Grid.Column="2" Text="Radius mode caches Census ZIP centroids once, checks nearby ZIP areas first, and never starts archive downloads." TextWrapping="Wrap" VerticalAlignment="Bottom" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                             </Grid>
-                                            <CheckBox x:Name="AreaPublicSafetyOnlyCheckBox" Grid.Row="3" Content="Show public-safety feeds only" IsChecked="True" />
+                                            <CheckBox x:Name="AreaPublicSafetyOnlyCheckBox" Grid.Row="3" Content="Show public-safety feeds only (recommended)" IsChecked="True"
+                                                      Checked="AreaPublicSafetyOnly_Changed" Unchecked="AreaPublicSafetyOnly_Changed" />
                                             <ListView x:Name="AreaFeedResults" Grid.Row="4" SelectionMode="Multiple" IsMultiSelectCheckBoxEnabled="True">
                                                 <ListView.ItemTemplate>
                                                     <DataTemplate x:DataType="local:FeedSearchResult">

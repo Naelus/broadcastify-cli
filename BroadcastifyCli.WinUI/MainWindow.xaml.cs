@@ -22,6 +22,7 @@ public sealed partial class MainWindow : Window
     private const string DefaultAnalysisModel = "ggml-org/gemma-4-12B-it-GGUF:Q4_K_M";
     private readonly ObservableCollection<FeedSearchResult> _feeds = [];
     private readonly ObservableCollection<FeedSearchResult> _areaFeeds = [];
+    private List<FeedSearchResult> _allAreaFeeds = [];
     private readonly ObservableCollection<AreaProfile> _areaProfiles = [];
     private readonly ObservableCollection<AreaStory> _areaStories = [];
     private readonly ObservableCollection<AnalysisDay> _analysisDays = [];
@@ -1982,6 +1983,27 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    private void AreaPublicSafetyOnly_Changed(object sender, RoutedEventArgs e)
+        => RefreshAreaFeedFilter();
+
+    private void RefreshAreaFeedFilter()
+    {
+        if (AreaFeedResults is null)
+        {
+            return;
+        }
+        var visible = AreaPublicSafetyOnlyCheckBox?.IsChecked == true
+            ? _allAreaFeeds.Where(value => string.Equals(
+                value.Genre, "Public Safety", StringComparison.OrdinalIgnoreCase))
+            : _allAreaFeeds;
+        _areaFeeds.Clear();
+        foreach (var feed in visible)
+        {
+            _areaFeeds.Add(feed);
+        }
+        AreaFeedResults.SelectAll();
+    }
+
     private async void DiscoverAreaFeeds_Click(object sender, RoutedEventArgs e)
     {
         if (_worker is null)
@@ -2025,21 +2047,14 @@ public sealed partial class MainWindow : Window
                 cancellation.Token);
             _currentAreaCoverage = response.Coverage;
             var results = response.Results;
-            var visibleResults = AreaPublicSafetyOnlyCheckBox.IsChecked == true
-                ? results.Where(value => string.Equals(
-                    value.Genre, "Public Safety", StringComparison.OrdinalIgnoreCase)).ToList()
-                : results.ToList();
-            _areaFeeds.Clear();
-            foreach (var result in visibleResults)
-            {
-                _areaFeeds.Add(result);
-            }
-            AreaFeedResults.SelectAll();
+            _allAreaFeeds = results.ToList();
+            RefreshAreaFeedFilter();
+            var visibleCount = _areaFeeds.Count;
             var searchedCount = _currentAreaCoverage.SearchedZipCodes.Count;
             AreaCoverageText.Text =
-                $"Showing {visibleResults.Count} of {results.Count} unique feeds from {searchedCount} ZIP area{(searchedCount == 1 ? "" : "s")}, already ordered nearest first. Uncheck agencies this desk should not monitor.";
+                $"Showing {visibleCount} of {results.Count} unique feeds from {searchedCount} ZIP area{(searchedCount == 1 ? "" : "s")}, already ordered nearest first. Uncheck agencies this desk should not monitor.";
             AppendLog(
-                $"Area search returned {results.Count} unique feed(s); showing {visibleResults.Count} in quota priority order.");
+                $"Area search returned {results.Count} unique feed(s); showing {visibleCount} in quota priority order.");
         }
         catch (Exception exception)
         {
@@ -2101,12 +2116,8 @@ public sealed partial class MainWindow : Window
             ? _currentAreaCoverage.MaxZipCodes
             : Math.Min(20, profile.ZipCodes.Count);
         UpdateAreaCoverageControls();
-        _areaFeeds.Clear();
-        foreach (var feed in profile.Feeds)
-        {
-            _areaFeeds.Add(feed);
-        }
-        AreaFeedResults.SelectAll();
+        _allAreaFeeds = profile.Feeds.ToList();
+        RefreshAreaFeedFilter();
         AreaCoverageText.Text =
             $"Loaded {profile.DisplayName} for {profile.CoverageArea}. Selected feeds are explicit and can be changed before saving.";
         await LoadLatestAreaQueueAsync(profile.Name);

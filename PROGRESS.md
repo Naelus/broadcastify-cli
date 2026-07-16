@@ -138,6 +138,15 @@ This is the dated verification and delivery log for `GOAL.md`. Keep forward-look
 - Real browser smoke: a one-feed July 11 queue reused all 48 cached blocks and completed with model work disabled; the exact rerun logged only `already complete`. No media download could have occurred because all 48 cache resolutions finished inside five seconds despite the five-second network pacing guard. Mobile 390×844 had 375/375 px document width, and browser console logs were empty.
 - Renamed ambiguous archive progress from `Downloaded` to `Ready (cached or downloaded)` so cache reuse is not mistaken for fresh quota consumption.
 
+### Area Watch UX polish
+
+- Visually inspected the current native build at its real 1240×900 window. Local Library remains a non-scrolling master/detail workspace; Area Watch keeps discovery/queue controls in a two-column card and story evidence in its own tab, with the retained queue visible beside the saved profile.
+- Made the native public-safety checkbox a live filter rather than a one-time search option. The Web client now has the same checked-by-default filter, retains all discovered results in memory, and can reveal optional weather/rail categories immediately without another website request.
+- The real 12345 radius result showed **6 of 8** public-safety feeds by default; opting out showed all 8 including NOAA weather and Example City-area rail, then the UI was restored to the recommended filter. Browser console logs remained empty.
+- A saved Web area profile now reselects and reopens after saving instead of dropping the user back to an unselected profile state.
+- Produced the current private runnable Windows build at `BroadcastifyCli.WinUI/bin/Private/win-x64` with the ignored `.env` verified byte-for-byte by SHA-256 comparison without displaying it. A normal Release rebuild then verified its output contains no bundled environment file. Both builds completed with **0 warnings, 0 errors**.
+- Attempted `dotnet publish` and documented the real `NETSDK1152` duplicate Windows App SDK asset collision as B-009 rather than treating an unpackaged build as a successful publish.
+
 ## Earlier validated work
 
 - Feed 90001 completed July 11–12 end to end with 97 retained archive blocks, continuous daily audio, 1,716 transcript segments, 87 incidents, daily summaries, semantic Q&A, and a seven-day brief with explicit missing coverage.
