@@ -23,7 +23,7 @@ Status labels: **Validated**, **Implemented**, **Foundation**, or **Planned**.
 | faster-whisper CUDA/CPU | Validated | CUDA is the Windows reference default; CPU is slower fallback. |
 | OpenVINO Whisper | Validated | Real CPU decode passed; exposed GPU failure retries on CPU. |
 | whisper.cpp Vulkan | Foundation | Adapter and diagnostics exist; a Vulkan whisper-cli/model install and real AMD test remain. |
-| Windows ML Whisper | Foundation | C# ONNX Runtime GenAI helper has completed a real CPU decode; DML model-builder output still fails and integration is gated. |
+| Windows ML Whisper | Implemented | Integrated streaming C# helper and real CPU decode/self-test pass; DML model-builder output still fails and stays gated. |
 | pyannote diarization CUDA/CPU | Validated | Existing transcripts can gain labels without rerunning ASR. |
 | Non-CUDA diarization acceleration | Planned | Current portable behavior is CPU fallback. |
 | SQLite transcript/incident/summary store | Validated | Includes FTS, embeddings, Q&A history, area profiles, and cached briefs. |
@@ -52,6 +52,6 @@ Status labels: **Validated**, **Implemented**, **Foundation**, or **Planned**.
 | CPU only | faster-whisper INT8 CPU | pyannote CPU | llama.cpp CPU | Implemented; full end-to-end timing still needed |
 | Vulkan | whisper.cpp Vulkan | pyannote CPU | llama.cpp Vulkan | ASR installation/real AMD validation pending |
 | OpenVINO | OpenVINO Whisper AUTO/CPU | pyannote CPU | llama.cpp SYCL/auto/CPU | Real CPU decode and accelerator-to-CPU fallback validated |
-| Windows ML | ONNX Runtime GenAI | pyannote CPU | llama.cpp auto/CPU | CPU decode validated; DML integration blocked by current generated model/runtime failure |
+| Windows ML | ONNX Runtime GenAI | pyannote CPU | llama.cpp auto/CPU | CPU model decode integrated and self-tested; DML acceleration remains blocked |
 
 Detailed outcomes and commands belong in `PROGRESS.md`; defects and blockers belong in `BUGS.md`.

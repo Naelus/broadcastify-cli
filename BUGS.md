@@ -10,7 +10,7 @@ Use this file for reproducible defects and concrete blockers, not the general ro
 
 - **Severity:** High for Windows ML parity; no impact on the default CUDA path.
 - **Observed:** ONNX Runtime GenAI 0.14.1 with official builder output for `openai/whisper-tiny` fails on DML/WinML. With `past_present_share_buffer=false`, DML graph capture rejects the generator; changing it to true reaches a `DmlFusedNode` invalid-key error.
-- **Control:** The UI profile remains not ready. The C# helper and a CPU FP32 model successfully transcribed a real 23-second radio clip, proving the adapter itself works.
+- **Control:** The C# helper, Python streaming adapter, and a CPU FP32 model successfully transcribed a real 23-second radio clip. The profile becomes ready only when its configured model passes an actual decode self-test; the broken DML models remain unavailable.
 - **Next:** Test a compatible published DML model or upstream fix; add self-test/model discovery before enabling the profile.
 
 ### B-002 — Vulkan ASR has not completed a real decode on AMD hardware

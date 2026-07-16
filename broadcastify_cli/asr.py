@@ -5,11 +5,16 @@ import os
 import re
 import subprocess
 import tempfile
+import wave
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterator, Sequence
 
-from .accelerators import find_whisper_cpp, whisper_cpp_backends
+from .accelerators import (
+    find_whisper_cpp,
+    find_windows_ml_helper,
+    whisper_cpp_backends,
+)
 from .audio import find_ffmpeg
 
 
@@ -246,6 +251,199 @@ class WhisperCppAsr:
                 "available_backends": self.backends,
             },
         )
+
+
+def find_windows_ml_model(
+    model_name: str, explicit_path: str | Path | None = None
+) -> Path | None:
+    configured = explicit_path or os.getenv("WINDOWS_ML_WHISPER_MODEL_PATH")
+    if configured:
+        candidate = Path(configured).expanduser()
+        if (candidate / "genai_config.json").is_file():
+            return candidate.resolve()
+    normalized = model_name.strip().lower()
+    roots = [
+        _default_model_root() / "windowsml",
+        Path.cwd() / "models" / "windowsml",
+        Path.cwd() / ".models" / "windowsml",
+    ]
+    names = [normalized, f"whisper-{normalized}", f"whisper-{normalized}-int4"]
+    for root in roots:
+        for name in names:
+            candidate = root / name
+            if (candidate / "genai_config.json").is_file():
+                return candidate.resolve()
+    return None
+
+
+class WindowsMlWhisperAsr:
+    """Runs the Windows ML ONNX Runtime GenAI helper once for many short chunks."""
+
+    SAMPLE_RATE = 16_000
+
+    def __init__(
+        self,
+        model_name: str,
+        model_path: str | Path | None = None,
+        helper_path: str | Path | None = None,
+        chunk_seconds: int = 28,
+    ) -> None:
+        if os.name != "nt":
+            raise AsrDependencyError("Windows ML transcription is available only on Windows.")
+        self.model_name = model_name
+        self.helper = str(helper_path or find_windows_ml_helper() or "")
+        if not self.helper or not Path(self.helper).is_file():
+            raise AsrDependencyError(
+                "The Windows ML helper was not found. Build BroadcastifyCli.WindowsML "
+                "or set WINDOWS_ML_HELPER_PATH."
+            )
+        resolved_model = find_windows_ml_model(model_name, model_path)
+        if resolved_model is None:
+            raise AsrDependencyError(
+                "A compatible ONNX Runtime GenAI Whisper model was not found. Set "
+                "WINDOWS_ML_WHISPER_MODEL_PATH to a directory containing genai_config.json."
+            )
+        self.model_path = resolved_model
+        self.chunk_seconds = min(29, max(5, int(chunk_seconds)))
+        self.backend = "Windows ML (ONNX Runtime GenAI)"
+
+    def transcribe(
+        self,
+        audio_path: str | Path,
+        progress: Callable[[str], None] | None = None,
+    ) -> AsrResult:
+        source = Path(audio_path)
+        if not source.is_file():
+            raise FileNotFoundError(f"Audio does not exist: {source}")
+        cache_dir = source.parent / "transcripts" / ".cache"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        segments: list[AsrSegment] = []
+        text_parts: list[str] = []
+        total_seconds = 0.0
+        with tempfile.TemporaryFile() as error_log:
+            process = subprocess.Popen(
+                [self.helper, "--model", str(self.model_path), "--stream"],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=error_log,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+            )
+            assert process.stdin is not None
+            assert process.stdout is not None
+            try:
+                for index, block in enumerate(self._audio_chunks(source), start=1):
+                    start = total_seconds
+                    duration = len(block) / (self.SAMPLE_RATE * 2)
+                    end = start + duration
+                    chunk_path = cache_dir / f"winml-{os.getpid()}-{index:06d}.wav"
+                    try:
+                        self._write_wave(chunk_path, block)
+                        if progress:
+                            progress(
+                                f"Windows ML: transcribing audio at {start / 3600:.1f} hours"
+                            )
+                        process.stdin.write(
+                            json.dumps(
+                                {"path": str(chunk_path.resolve()), "start": start, "end": end}
+                            )
+                            + "\n"
+                        )
+                        process.stdin.flush()
+                        response_line = process.stdout.readline()
+                        if not response_line:
+                            raise RuntimeError("Windows ML helper stopped before returning a chunk.")
+                        response = json.loads(response_line)
+                        if response.get("error"):
+                            raise RuntimeError(str(response["error"]))
+                        text = str(response.get("text") or "").strip()
+                        if text:
+                            text_parts.append(text)
+                            segments.append(AsrSegment(start, end, text))
+                    finally:
+                        chunk_path.unlink(missing_ok=True)
+                    total_seconds = end
+                    if progress:
+                        progress(f"Windows ML completed audio chunk {index}")
+                process.stdin.write('{"command":"stop"}\n')
+                process.stdin.flush()
+                process.stdin.close()
+                return_code = process.wait(timeout=30)
+            except Exception:
+                if process.poll() is None:
+                    process.kill()
+                process.wait(timeout=10)
+                raise
+            if return_code != 0:
+                error_log.seek(0)
+                detail = error_log.read().decode("utf-8", errors="replace").strip()
+                raise RuntimeError(
+                    detail or f"Windows ML helper exited with code {return_code}."
+                )
+        return AsrResult(
+            text=" ".join(text_parts).strip(),
+            language="en",
+            duration=total_seconds or None,
+            segments=segments,
+            engine="windows-ml",
+            backend=self.backend,
+            metadata={
+                "model_path": str(self.model_path),
+                "helper_path": self.helper,
+                "chunk_seconds": self.chunk_seconds,
+            },
+        )
+
+    def _audio_chunks(self, audio_path: Path) -> Iterator[bytes]:
+        ffmpeg = find_ffmpeg()
+        if not ffmpeg:
+            raise AsrDependencyError("FFmpeg is required for Windows ML transcription.")
+        bytes_per_chunk = self.SAMPLE_RATE * self.chunk_seconds * 2
+        with tempfile.TemporaryFile() as error_log:
+            process = subprocess.Popen(
+                [
+                    ffmpeg,
+                    "-hide_banner",
+                    "-loglevel",
+                    "error",
+                    "-i",
+                    str(audio_path),
+                    "-vn",
+                    "-ac",
+                    "1",
+                    "-ar",
+                    str(self.SAMPLE_RATE),
+                    "-c:a",
+                    "pcm_s16le",
+                    "-f",
+                    "s16le",
+                    "pipe:1",
+                ],
+                stdout=subprocess.PIPE,
+                stderr=error_log,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+            )
+            assert process.stdout is not None
+            while True:
+                block = OpenVinoWhisperAsr._read_block(process.stdout, bytes_per_chunk)
+                if not block:
+                    break
+                yield block
+            return_code = process.wait()
+            if return_code != 0:
+                error_log.seek(0)
+                detail = error_log.read().decode("utf-8", errors="replace").strip()
+                raise RuntimeError(detail or f"FFmpeg exited with code {return_code}.")
+
+    @classmethod
+    def _write_wave(cls, path: Path, block: bytes) -> None:
+        with wave.open(str(path), "wb") as output:
+            output.setnchannels(1)
+            output.setsampwidth(2)
+            output.setframerate(cls.SAMPLE_RATE)
+            output.writeframes(block)
 
 
 OPENVINO_MODELS = {

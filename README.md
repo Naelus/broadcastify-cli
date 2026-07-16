@@ -57,6 +57,8 @@ The default stack is split by responsibility so each stage can be fast and repla
 - Gemma 4 12B Instruct `Q4_K_M` through llama.cpp for structured event extraction, summaries, and questions
 - CUDA float16 batched ASR; quantized local LLM inference to conserve VRAM
 
+Hardware profiles are stage-specific rather than an all-or-nothing GPU switch. The reference Windows profile uses CUDA for faster-whisper and pyannote plus llama.cpp's detected GPU backend. Vulkan uses whisper.cpp and llama.cpp on Vulkan while diarization falls back to CPU. OpenVINO uses the devices exposed by its runtime and retries a rejected accelerator/model pairing on CPU. Windows ML uses the optional ONNX Runtime GenAI helper and does not report ready until its configured model completes a real decode self-test. See [FEATURES.md](FEATURES.md) and [BUGS.md](BUGS.md) for the current validation matrix.
+
 Whisper remains the practical fast ASR default for this radio workflow. Diarization is deliberately separate: current all-in-one audio models do not yet offer a clearly better combination of speed, mature speaker labeling, Windows support, and local deployment. WhisperX can remain an optional future word-alignment mode rather than adding its extra pass to every job.
 
 Embeddings do not replace the generative model. They cheaply retrieve and cluster likely-relevant transcript passages; Gemma turns cited evidence into structured incidents and natural-language answers. SQLite remains the source of truth, including timestamps and transcript evidence, so model output can be audited.
@@ -91,6 +93,23 @@ py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install torch==2.11.0+cu128 torchaudio==2.11.0+cu128 --index-url https://download.pytorch.org/whl/cu128
 .\.venv\Scripts\python.exe -m pip install -e ".[transcription,analysis,dev]"
 ```
+
+For OpenVINO ASR, add `.[openvino]`. For the Windows ML model builder and helper workflow, add `.[windowsml]`; the native helper's NuGet dependencies are restored by its .NET project.
+
+### Windows ML functional profile
+
+The validated Windows ML path currently uses CPU execution. It proves functional parity and keeps DML acceleration gated while the current generated DML Whisper graph is incompatible with ONNX Runtime GenAI 0.14.1. Build a small validation model and the helper with:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -e ".[transcription,windowsml]"
+$env:HF_TOKEN = $env:HUGGINGFACE_TOKEN
+.\.venv\Scripts\python.exe -m onnxruntime_genai.models.builder `
+  -m openai/whisper-tiny -e cpu -p fp32 `
+  -o "$env:LOCALAPPDATA\Broadcastify Desktop\models\windowsml\tiny"
+dotnet build .\BroadcastifyCli.WindowsML\BroadcastifyCli.WindowsML.csproj -c Release
+```
+
+Set **Settings → Processing → Advanced → ASR model path** to that model directory, choose the Windows ML profile, and select **Refresh check**. The helper loads a one-second local silence fixture through the model; only a successful decode makes the profile ready. `WINDOWS_ML_WHISPER_MODEL_PATH` and `WINDOWS_ML_HELPER_PATH` provide the equivalent `.env` overrides. The Tiny model is for validation; use a larger compatible Whisper export only after measuring radio accuracy and runtime.
 
 Build and launch the desktop app:
 

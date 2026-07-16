@@ -11,6 +11,7 @@ from typing import Callable, Iterable, Sequence
 from .asr import (
     OpenVinoWhisperAsr,
     WhisperCppAsr,
+    WindowsMlWhisperAsr,
     normalize_asr_engine,
 )
 from .audio import configure_ffmpeg_runtime, find_ffmpeg
@@ -192,11 +193,6 @@ class LocalTranscriber:
         elif self.asr_engine == "windows-ml":
             self.device = "windows-ml"
             self.compute_type = "onnx"
-            if load_asr:
-                raise TranscriptionDependencyError(
-                    "Windows ML runtime detection is available, but the ONNX Whisper adapter "
-                    "has not been enabled yet. Select Vulkan, OpenVINO, CUDA, or CPU."
-                )
         else:
             raise ValueError(f"Unsupported transcription engine: {self.asr_engine}")
 
@@ -233,6 +229,11 @@ class LocalTranscriber:
                 device=self.device,
                 model_path=asr_model_path,
                 huggingface_token=huggingface_token,
+            )
+        elif load_asr and self.asr_engine == "windows-ml":
+            self._external_asr = WindowsMlWhisperAsr(
+                model_name=self.model_name,
+                model_path=asr_model_path,
             )
 
         if self._external_asr is not None:

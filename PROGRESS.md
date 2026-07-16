@@ -18,7 +18,7 @@ This is the dated verification and delivery log for `GOAL.md`. Keep forward-look
 - Added first-missing-stage discovery and local continuation.
 - Existing transcripts can receive speaker labels without rerunning Whisper.
 - Tightened diarization status so a request flag alone does not count as completed labeling.
-- Python suite: **69 passed**.
+- Python suite before the Windows ML adapter: **69 passed**; after its streaming adapter test: **70 passed**.
 - WinUI private Release build: **0 warnings, 0 errors**.
 
 ### Hardware parity
@@ -28,6 +28,8 @@ This is the dated verification and delivery log for `GOAL.md`. Keep forward-look
 - OpenVINO GPU rejected the current model on this NVIDIA host; automatic retry on CPU succeeded and identifies the fallback in metadata.
 - llama.cpp device inspection detected Vulkan on both the RTX 3090 and AMD Radeon integrated graphics.
 - Built the official ONNX Runtime GenAI Windows ML helper. A CPU FP32 Whisper Tiny export successfully transcribed the same local test clip.
+- Integrated the Windows ML helper with one persistent model process and bounded 28-second chunks. The real clip completed through the Python adapter with 22.74 seconds of audio, one timestamped segment, and 147 output characters; the model self-test reports `decode_ready=true`.
+- Verified the native Settings flow: selecting Windows ML plus the validated model path changed the profile from runtime-only to ready after the real decode check; recommended automatic/CUDA defaults were restored afterward.
 - DML/WinML exports remain gated after reproducible graph-capture/fused-node errors; tracked as B-001.
 
 ### Archive quota reset run

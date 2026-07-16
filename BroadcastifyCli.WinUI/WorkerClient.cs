@@ -378,9 +378,30 @@ internal sealed class WorkerClient
         return report;
     }
 
-    public async Task<JsonElement?> GetDiagnosticsAsync(CancellationToken cancellationToken)
+    public async Task<JsonElement?> GetDiagnosticsAsync(
+        CancellationToken cancellationToken,
+        string? asrEngine = null,
+        string? asrModelPath = null)
     {
         JsonElement? diagnostics = null;
+        Dictionary<string, string>? environment = null;
+        if (!string.IsNullOrWhiteSpace(asrModelPath))
+        {
+            var variable = asrEngine switch
+            {
+                "windows-ml" => "WINDOWS_ML_WHISPER_MODEL_PATH",
+                "openvino" => "OPENVINO_WHISPER_MODEL_PATH",
+                "whisper.cpp" => "WHISPER_CPP_MODEL_PATH",
+                _ => null,
+            };
+            if (variable is not null)
+            {
+                environment = new Dictionary<string, string>
+                {
+                    [variable] = asrModelPath,
+                };
+            }
+        }
         await RunWorkerAsync(
             ["-m", "broadcastify_cli.worker", "diagnostics"],
             null,
@@ -391,7 +412,8 @@ internal sealed class WorkerClient
                     diagnostics = message.Clone();
                 }
             },
-            cancellationToken);
+            cancellationToken,
+            environment);
         return diagnostics;
     }
 
@@ -399,11 +421,12 @@ internal sealed class WorkerClient
         IReadOnlyList<string> arguments,
         string? stdin,
         Action<JsonElement> onMessage,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IReadOnlyDictionary<string, string>? environment = null)
     {
         using var process = new Process
         {
-            StartInfo = CreateStartInfo(arguments),
+            StartInfo = CreateStartInfo(arguments, environment),
             EnableRaisingEvents = true,
         };
         if (!process.Start())
@@ -460,7 +483,9 @@ internal sealed class WorkerClient
         }
     }
 
-    private ProcessStartInfo CreateStartInfo(IReadOnlyList<string> arguments)
+    private ProcessStartInfo CreateStartInfo(
+        IReadOnlyList<string> arguments,
+        IReadOnlyDictionary<string, string>? environment = null)
     {
         var startInfo = new ProcessStartInfo
         {
@@ -479,6 +504,13 @@ internal sealed class WorkerClient
         if (HasBundledEnvironment)
         {
             startInfo.Environment["BROADCASTIFY_ENV_FILE"] = BundledEnvironmentPath;
+        }
+        if (environment is not null)
+        {
+            foreach (var (name, value) in environment)
+            {
+                startInfo.Environment[name] = value;
+            }
         }
         return startInfo;
     }

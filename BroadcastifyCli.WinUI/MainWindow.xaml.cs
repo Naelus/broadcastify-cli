@@ -1083,7 +1083,12 @@ public sealed partial class MainWindow : Window
         try
         {
             using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-            var diagnostics = await _worker.GetDiagnosticsAsync(cancellation.Token);
+            var diagnostics = await _worker.GetDiagnosticsAsync(
+                cancellation.Token,
+                SelectedComboValue(AsrEngineComboBox, "auto"),
+                string.IsNullOrWhiteSpace(AsrModelPathBox.Text)
+                    ? null
+                    : AsrModelPathBox.Text.Trim());
             if (diagnostics is JsonElement value)
             {
                 var cuda = value.TryGetProperty("cuda_available", out var cudaValue)

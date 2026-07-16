@@ -3,7 +3,12 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
-from broadcastify_cli.asr import OpenVinoWhisperAsr, WhisperCppAsr, normalize_asr_engine
+from broadcastify_cli.asr import (
+    OpenVinoWhisperAsr,
+    WhisperCppAsr,
+    WindowsMlWhisperAsr,
+    normalize_asr_engine,
+)
 
 
 def test_engine_auto_selection_follows_requested_accelerator() -> None:
@@ -128,3 +133,77 @@ def test_openvino_retries_failed_accelerator_on_cpu(monkeypatch, tmp_path: Path)
     assert result.metadata["fallback_reason"] == "GPU execution failed"
     assert engine.device == "CPU"
     assert "OpenVINO GPU rejected this model; retrying on CPU" in messages
+
+
+def test_windows_ml_keeps_one_helper_alive_and_offsets_chunks(
+    monkeypatch, tmp_path: Path
+) -> None:
+    audio = tmp_path / "radio.mp3"
+    audio.write_bytes(b"audio")
+    model = tmp_path / "model"
+    model.mkdir()
+    writes: list[str] = []
+
+    class FakeInput:
+        def write(self, value: str) -> None:
+            writes.append(value)
+
+        @staticmethod
+        def flush() -> None:
+            pass
+
+        @staticmethod
+        def close() -> None:
+            pass
+
+    class FakeOutput:
+        def __init__(self) -> None:
+            self.values = iter(
+                [
+                    '{"text":"unit responding"}\n',
+                    '{"text":"scene secure"}\n',
+                ]
+            )
+
+        def readline(self) -> str:
+            return next(self.values, "")
+
+    class FakeProcess:
+        def __init__(self, arguments, **_kwargs) -> None:
+            assert arguments[-1] == "--stream"
+            self.stdin = FakeInput()
+            self.stdout = FakeOutput()
+
+        @staticmethod
+        def wait(timeout=None) -> int:
+            return 0
+
+        @staticmethod
+        def poll():
+            return 0
+
+        @staticmethod
+        def kill() -> None:
+            pass
+
+    monkeypatch.setattr("broadcastify_cli.asr.subprocess.Popen", FakeProcess)
+    engine = object.__new__(WindowsMlWhisperAsr)
+    engine.helper = str(tmp_path / "helper.exe")
+    engine.model_path = model
+    engine.model_name = "tiny"
+    engine.chunk_seconds = 28
+    engine.backend = "Windows ML test"
+    monkeypatch.setattr(
+        engine,
+        "_audio_chunks",
+        lambda _path: iter([b"\0\0" * 16_000, b"\0\0" * 32_000]),
+    )
+
+    result = engine.transcribe(audio)
+
+    assert result.text == "unit responding scene secure"
+    assert [segment.start for segment in result.segments] == [0.0, 1.0]
+    assert [segment.end for segment in result.segments] == [1.0, 3.0]
+    assert result.duration == 3.0
+    assert len([value for value in writes if '"path"' in value]) == 2
+    assert writes[-1] == '{"command":"stop"}\n'

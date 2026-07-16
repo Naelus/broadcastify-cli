@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 import re
 import shutil
@@ -44,6 +45,75 @@ def find_whisper_cpp() -> str | None:
         if candidate.is_file():
             return str(candidate.resolve())
     return None
+
+
+def find_windows_ml_helper() -> str | None:
+    configured = os.getenv("WINDOWS_ML_HELPER_PATH")
+    if configured and Path(configured).is_file():
+        return str(Path(configured).resolve())
+    candidates = [
+        Path.cwd()
+        / "BroadcastifyCli.WindowsML"
+        / "bin"
+        / "Release"
+        / "net10.0-windows10.0.26100.0"
+        / "win-x64"
+        / "BroadcastifyCli.WindowsML.exe",
+        Path.cwd()
+        / "BroadcastifyCli.WindowsML"
+        / "bin"
+        / "Debug"
+        / "net10.0-windows10.0.26100.0"
+        / "win-x64"
+        / "BroadcastifyCli.WindowsML.exe",
+        Path(sys.executable).resolve().parent / "windowsml" / "BroadcastifyCli.WindowsML.exe",
+    ]
+    for candidate in candidates:
+        if candidate.is_file():
+            return str(candidate.resolve())
+    return None
+
+
+def find_windows_ml_model() -> str | None:
+    configured = os.getenv("WINDOWS_ML_WHISPER_MODEL_PATH")
+    if configured and (Path(configured) / "genai_config.json").is_file():
+        return str(Path(configured).resolve())
+    return None
+
+
+def _windows_ml_diagnostics() -> dict[str, Any]:
+    helper = find_windows_ml_helper()
+    model = find_windows_ml_model()
+    value: dict[str, Any] = {
+        "helper": helper,
+        "model": model,
+        "runtime_ready": False,
+        "decode_ready": False,
+    }
+    if not helper:
+        return value
+    arguments = [helper, "--probe"]
+    if model:
+        arguments.extend(["--model", model])
+    try:
+        result = subprocess.run(
+            arguments,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        )
+        lines = [line for line in result.stdout.splitlines() if line.strip()]
+        payload = json.loads(lines[-1]) if lines else {}
+        value["runtime_ready"] = bool(payload.get("ready"))
+        value["decode_ready"] = bool(payload.get("decode_ready"))
+        value["backend"] = str(payload.get("backend") or "")
+        if result.returncode != 0 or payload.get("error"):
+            value["error"] = str(payload.get("error") or result.stderr.strip())
+    except (OSError, subprocess.SubprocessError, json.JSONDecodeError) as exc:
+        value["error"] = str(exc)
+    return value
 
 
 def whisper_cpp_backends(executable: str | Path | None) -> list[str]:
@@ -220,6 +290,7 @@ def collect_accelerator_diagnostics(llama_server: str | Path | None) -> dict[str
     torch = _torch_diagnostics()
     openvino = _openvino_diagnostics()
     onnx = _onnx_diagnostics()
+    windows_ml = _windows_ml_diagnostics()
     whisper_executable = find_whisper_cpp()
     whisper_backends = whisper_cpp_backends(whisper_executable)
     llama_devices = inspect_llama_devices(llama_server)
@@ -233,14 +304,8 @@ def collect_accelerator_diagnostics(llama_server: str | Path | None) -> dict[str
     vulkan_llm = "vulkan" in llama_backends
     openvino_devices = [str(value).upper() for value in openvino.get("devices", [])]
     openvino_asr = bool(openvino["genai_installed"] and openvino_devices)
-    windows_ml_runtime = bool(
-        onnx["windows_ml_api_installed"]
-        and onnx["installed"]
-        and any(
-            value in {"DmlExecutionProvider", "CPUExecutionProvider"}
-            for value in onnx["providers"]
-        )
-    )
+    windows_ml_runtime = bool(windows_ml["runtime_ready"])
+    windows_ml_decode = bool(windows_ml["decode_ready"])
     cpu_ready = bool(faster_whisper_ready and module_available("torch"))
     cpu_diarization = "pyannote CPU ready" if pyannote_ready else "pyannote needs its package and HF token"
     llama_ready = bool(llama_server)
@@ -294,15 +359,22 @@ def collect_accelerator_diagnostics(llama_server: str | Path | None) -> dict[str
         _profile(
             "windowsml",
             "Windows ML",
-            False,
+            windows_ml_decode and pyannote_ready and llama_ready,
             (
-                "runtime detected; Whisper adapter is not installed"
+                "Windows ML ONNX Whisper (validated model)"
+                if windows_ml_decode
+                else "runtime detected; configure and validate an ONNX Whisper model"
                 if windows_ml_runtime
-                else "needs Windows ML Python runtime and a compatible ONNX Whisper model"
+                else "needs the Windows ML helper and a compatible ONNX Whisper model"
             ),
             cpu_diarization,
             "llama.cpp auto-offload or CPU",
-            "Windows ML manages ONNX execution providers; model conversion and the Whisper adapter are still required.",
+            (
+                "The configured model passed an actual silent-audio decode self-test. "
+                "Diarization uses the dependable CPU fallback."
+                if windows_ml_decode
+                else "A runtime-only probe is not enough; this profile remains unavailable until a model decode passes."
+            ),
         ),
         _profile(
             "cpu",
@@ -320,6 +392,7 @@ def collect_accelerator_diagnostics(llama_server: str | Path | None) -> dict[str
         "torch": torch,
         "openvino": openvino,
         "onnx": onnx,
+        "windows_ml": windows_ml,
         "whisper_cpp": {
             "executable": whisper_executable,
             "backends": whisper_backends,
