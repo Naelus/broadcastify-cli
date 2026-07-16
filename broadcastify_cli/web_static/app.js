@@ -10,6 +10,7 @@ const html = (value) => String(value ?? "")
   .replaceAll("'", "&#039;");
 
 const DEFAULT_SETTINGS = {
+  hardwareProfile: "auto",
   whisperModel: "turbo",
   asrEngine: "auto",
   device: "auto",
@@ -39,7 +40,10 @@ const state = {
   jobTimer: null,
   jobCallback: null,
   analysisQueue: [],
+  hardwareDiagnostics: null,
 };
+
+let applyingHardwareProfile = false;
 
 function loadSettings() {
   try {
@@ -57,6 +61,7 @@ function saveSettings() {
 
 function readSettingsForm() {
   state.settings = {
+    hardwareProfile: byId("settingHardwareProfile").value,
     whisperModel: byId("settingWhisperModel").value,
     asrEngine: byId("settingAsrEngine").value,
     device: byId("settingDevice").value,
@@ -74,6 +79,7 @@ function readSettingsForm() {
 }
 
 function applySettingsForm() {
+  byId("settingHardwareProfile").value = state.settings.hardwareProfile;
   byId("settingWhisperModel").value = state.settings.whisperModel;
   byId("settingAsrEngine").value = state.settings.asrEngine;
   byId("settingDevice").value = state.settings.device;
@@ -87,6 +93,28 @@ function applySettingsForm() {
   byId("settingCodexPath").value = state.settings.codexPath;
   byId("settingAllowExternal").checked = Boolean(state.settings.allowExternal);
   updateProviderNotice();
+}
+
+function applyHardwareProfile(profile, notify = true) {
+  const choices = {
+    auto: ["auto", "auto", "auto"],
+    cuda: ["faster-whisper", "cuda", "cuda"],
+    vulkan: ["whisper.cpp", "vulkan", "cpu"],
+    openvino: ["openvino", "openvino-auto", "cpu"],
+    metal: ["whisper.cpp", "metal", "cpu"],
+    windowsml: ["windows-ml", "windows-ml", "cpu"],
+    cpu: ["faster-whisper", "cpu", "cpu"],
+  };
+  const choice = choices[profile];
+  if (!choice) return;
+  applyingHardwareProfile = true;
+  byId("settingHardwareProfile").value = profile;
+  byId("settingAsrEngine").value = choice[0];
+  byId("settingDevice").value = choice[1];
+  byId("settingDiarizationDevice").value = choice[2];
+  applyingHardwareProfile = false;
+  readSettingsForm();
+  if (notify) toast(`${byId("settingHardwareProfile").selectedOptions[0].textContent} defaults applied.`);
 }
 
 function providerPayload() {
@@ -341,6 +369,26 @@ function renderRuntime() {
     ["Evidence database", runtime.database_path || ""],
     ["Default behavior", runtime.platform === "Windows" ? "Tested Windows automatic profile" : "Portable automatic detection"],
   ].map(([label, value]) => `<div class="runtime-fact"><span>${html(label)}</span><strong>${html(value)}</strong></div>`).join("");
+  renderHardwareProfiles();
+}
+
+function renderHardwareProfiles() {
+  const profiles = state.hardwareDiagnostics?.accelerators?.profiles || [];
+  const region = byId("runtimeProfiles");
+  if (!profiles.length) {
+    region.innerHTML = '<div class="runtime-profile-empty">Run the hardware check to compare stage-by-stage profiles.</div>';
+    return;
+  }
+  const ready = profiles.filter((profile) => profile.ready).length;
+  region.innerHTML = `<details class="runtime-profile-details"><summary><span>Compare hardware profiles</span><strong>${ready} of ${profiles.length} ready</strong></summary><div class="runtime-profile-grid">${profiles.map((profile) => `
+    <article class="runtime-profile-card${profile.ready ? " ready" : ""}">
+      <div class="runtime-profile-head"><strong>${html(profile.name)}</strong><span>${profile.ready ? "Ready" : "Setup needed"}</span></div>
+      <div class="runtime-stage"><b>Transcribe</b><span>${html(profile.transcription)}</span></div>
+      <div class="runtime-stage"><b>Speakers</b><span>${html(profile.diarization)}</span></div>
+      <div class="runtime-stage"><b>Analyze</b><span>${html(profile.analysis)}</span></div>
+      ${profile.note ? `<p>${html(profile.note)}</p>` : ""}
+      <button class="button secondary small" data-use-hardware-profile="${html(profile.id)}">Use this profile</button>
+    </article>`).join("")}</div></details>`;
 }
 
 function updateProviderNotice(message = "") {
@@ -685,10 +733,22 @@ byId("runtimeCheckButton").addEventListener("click", async () => {
   await startJob("diagnostics", {}, { label: "Checking local hardware", onComplete: (job) => {
     const result = eventOf(job, "diagnostics");
     if (!result) return;
+    state.hardwareDiagnostics = result;
     const accelerators = result.accelerators || {};
-    const summary = [result.cuda_available ? `CUDA: ${(result.cuda_devices || []).join(", ")}` : "CUDA unavailable", result.ffmpeg ? "FFmpeg ready" : "FFmpeg missing", result.llama_server ? "llama.cpp ready" : "llama.cpp missing", `Profiles: ${Object.keys(accelerators.profiles || accelerators).length || "checked"}`].join(" · ");
+    const profiles = Array.isArray(accelerators.profiles) ? accelerators.profiles : [];
+    const summary = [result.cuda_available ? `CUDA: ${(result.cuda_devices || []).join(", ")}` : "CUDA unavailable", result.ffmpeg ? "FFmpeg ready" : "FFmpeg missing", result.llama_server ? "llama.cpp ready" : "llama.cpp missing", `Profiles: ${profiles.length || "checked"}`].join(" · ");
     byId("runtimeDescription").textContent = summary;
+    renderHardwareProfiles();
   } });
+});
+byId("settingHardwareProfile").addEventListener("change", (event) => applyHardwareProfile(event.target.value));
+["settingAsrEngine", "settingDevice", "settingDiarizationDevice"].forEach((id) => byId(id).addEventListener("change", () => {
+  if (!applyingHardwareProfile) byId("settingHardwareProfile").value = "custom";
+}));
+byId("runtimeProfiles").addEventListener("click", (event) => {
+  const button = event.target.closest("[data-use-hardware-profile]");
+  if (!button) return;
+  applyHardwareProfile(button.dataset.useHardwareProfile);
 });
 byId("asrSelfTestButton").addEventListener("click", async () => {
   await startJob("asr-self-test", processingPayload(), { label: "Testing selected transcription engine", onComplete: (job) => {

@@ -207,6 +207,21 @@ def whisper_cpp_backends(executable: str | Path | None) -> list[str]:
         names.add("sycl")
     if any("openvino" in name for name in files):
         names.add("openvino")
+    if any("metal" in name for name in files):
+        names.add("metal")
+    if sys.platform == "darwin" and "metal" not in names:
+        try:
+            linked = subprocess.run(
+                ["otool", "-L", str(Path(executable).resolve())],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=10,
+            )
+            if re.search(r"(?:Metal\.framework|ggml-metal)", linked.stdout, re.IGNORECASE):
+                names.add("metal")
+        except (OSError, subprocess.SubprocessError):
+            pass
     # Every official build retains a CPU backend even when it also offloads.
     names.add("cpu")
     return sorted(names)
@@ -381,6 +396,8 @@ def collect_accelerator_diagnostics(llama_server: str | Path | None) -> dict[str
     else:
         vulkan_asr = bool(whisper_executable and "vulkan" in whisper_backends)
     vulkan_llm = "vulkan" in llama_backends
+    metal_asr = bool(whisper_executable and "metal" in whisper_backends)
+    metal_llm = "metal" in llama_backends
     openvino_devices = [str(value).upper() for value in openvino.get("devices", [])]
     openvino_device_names = [
         f"{value.get('id')}: {value.get('name')}"
@@ -393,15 +410,40 @@ def collect_accelerator_diagnostics(llama_server: str | Path | None) -> dict[str
     cpu_diarization = "pyannote CPU ready" if pyannote_ready else "pyannote needs its package and HF token"
     llama_ready = bool(llama_server)
 
+    if cuda_ready:
+        automatic_ready = cuda_ready and pyannote_ready and llama_ready
+        automatic_transcription = "faster-whisper on CUDA"
+        automatic_diarization = "pyannote on CUDA" if pyannote_ready else cpu_diarization
+        automatic_analysis = "llama.cpp " + next(iter(sorted(llama_backends)), "CPU")
+        automatic_note = "Uses the validated Windows CUDA path and keeps per-stage fallbacks explicit."
+    elif sys.platform == "darwin" and metal_asr and metal_llm:
+        automatic_ready = pyannote_ready and llama_ready
+        automatic_transcription = "whisper.cpp on Apple Metal"
+        automatic_diarization = cpu_diarization
+        automatic_analysis = "llama.cpp / Metal"
+        automatic_note = "Uses native Apple Metal for transcription and analysis; diarization stays on CPU."
+    elif sys.platform.startswith("linux") and vulkan_asr and vulkan_llm:
+        automatic_ready = pyannote_ready and llama_ready
+        automatic_transcription = "whisper.cpp on Vulkan"
+        automatic_diarization = cpu_diarization
+        automatic_analysis = "llama.cpp / Vulkan"
+        automatic_note = "Uses detected Vulkan runtimes for transcription and analysis; diarization stays on CPU."
+    else:
+        automatic_ready = cpu_ready and pyannote_ready and llama_ready
+        automatic_transcription = "faster-whisper on CPU" if cpu_ready else "CPU ASR dependencies unavailable"
+        automatic_diarization = cpu_diarization
+        automatic_analysis = "llama.cpp / CPU" if llama_ready else "llama.cpp missing"
+        automatic_note = "Uses the dependable CPU fallback because no validated accelerator pair was detected."
+
     profiles = [
         _profile(
             "auto",
             "Automatic (recommended)",
-            cuda_ready and pyannote_ready and llama_ready,
-            "faster-whisper on CUDA" if cuda_ready else "best available engine, with CPU fallback",
-            "pyannote on CUDA" if torch["cuda_available"] else cpu_diarization,
-            "llama.cpp " + (next(iter(sorted(llama_backends)), "CPU")),
-            "Chooses a proven engine separately for each processing stage.",
+            automatic_ready,
+            automatic_transcription,
+            automatic_diarization,
+            automatic_analysis,
+            automatic_note,
         ),
         _profile(
             "cuda",
@@ -444,7 +486,7 @@ def collect_accelerator_diagnostics(llama_server: str | Path | None) -> dict[str
             "Windows ML",
             windows_ml_decode and pyannote_ready and llama_ready,
             (
-                "Windows ML ONNX Whisper (validated model)"
+                f"{windows_ml.get('backend') or 'Windows ML ONNX Whisper'} (validated model)"
                 if windows_ml_decode
                 else "runtime detected; configure and validate an ONNX Whisper model"
                 if windows_ml_runtime
@@ -459,6 +501,20 @@ def collect_accelerator_diagnostics(llama_server: str | Path | None) -> dict[str
                 else "A runtime-only probe is not enough; this profile remains unavailable until a model decode passes."
             ),
         ),
+    ]
+    if sys.platform == "darwin":
+        profiles.append(
+            _profile(
+                "metal",
+                "Apple Metal",
+                metal_asr and pyannote_ready and metal_llm,
+                "whisper.cpp / Metal" if metal_asr else "needs a native ggml-metal whisper.cpp build",
+                cpu_diarization,
+                "llama.cpp / Metal" if metal_llm else "needs a Metal llama.cpp build",
+                "Apple GPU acceleration is native-only; pyannote diarization intentionally uses CPU.",
+            )
+        )
+    profiles.append(
         _profile(
             "cpu",
             "CPU only",
@@ -467,8 +523,8 @@ def collect_accelerator_diagnostics(llama_server: str | Path | None) -> dict[str
             cpu_diarization,
             "llama.cpp / CPU" if llama_ready else "llama.cpp missing",
             "Slowest but portable and a dependable fallback for every stage.",
-        ),
-    ]
+        )
+    )
 
     return {
         "python": sys.version.split()[0],

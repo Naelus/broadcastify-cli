@@ -4,6 +4,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 import tempfile
 import wave
 from dataclasses import dataclass, field
@@ -57,6 +58,16 @@ def normalize_asr_engine(engine: str, device: str) -> str:
         device_name = (device or "auto").strip().lower()
         if device_name == "vulkan":
             return "whisper.cpp"
+        if device_name == "metal":
+            return "whisper.cpp"
+        if device_name == "auto" and sys.platform == "darwin":
+            executable = find_whisper_cpp()
+            if executable and "metal" in whisper_cpp_backends(executable):
+                return "whisper.cpp"
+        if device_name == "auto" and sys.platform.startswith("linux"):
+            executable = find_whisper_cpp()
+            if executable and "vulkan" in whisper_cpp_backends(executable):
+                return "whisper.cpp"
         if device_name.startswith("openvino") or device_name in {"gpu", "npu"}:
             return "openvino"
         if device_name.startswith("windows") or device_name == "directml":
@@ -169,6 +180,11 @@ class WhisperCppAsr:
             and self.container_image
         )
         if self.containerized:
+            if self.device == "metal":
+                raise AsrDependencyError(
+                    "Metal transcription requires a native macOS whisper.cpp build; "
+                    "Docker and Podman do not expose Apple Metal to this adapter."
+                )
             container = whisper_cpp_container_diagnostics(
                 image=self.container_image,
                 runtime=self.container_runtime,
@@ -221,6 +237,11 @@ class WhisperCppAsr:
             raise AsrDependencyError(
                 "The selected whisper.cpp executable does not expose ggml-vulkan. "
                 "Use a build compiled with GGML_VULKAN=1 or select CPU."
+            )
+        if self.device == "metal" and "metal" not in self.backends:
+            raise AsrDependencyError(
+                "The selected whisper.cpp executable does not expose ggml-metal. "
+                "Use a native macOS build with Metal enabled or select CPU."
             )
         selected_backend = (
             self.device if self.device != "auto" else ",".join(self.backends)

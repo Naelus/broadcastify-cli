@@ -14,8 +14,34 @@ from broadcastify_cli.asr import (
 def test_engine_auto_selection_follows_requested_accelerator() -> None:
     assert normalize_asr_engine("auto", "cuda") == "faster-whisper"
     assert normalize_asr_engine("auto", "vulkan") == "whisper.cpp"
+    assert normalize_asr_engine("auto", "metal") == "whisper.cpp"
     assert normalize_asr_engine("auto", "openvino-gpu") == "openvino"
     assert normalize_asr_engine("auto", "windows-ml") == "windows-ml"
+
+
+def test_macos_auto_selects_detected_native_metal(monkeypatch) -> None:
+    monkeypatch.setattr("broadcastify_cli.asr.sys.platform", "darwin")
+    monkeypatch.setattr("broadcastify_cli.asr.find_whisper_cpp", lambda: "/opt/whisper-cli")
+    monkeypatch.setattr(
+        "broadcastify_cli.asr.whisper_cpp_backends", lambda _path: ["cpu", "metal"]
+    )
+
+    assert normalize_asr_engine("auto", "auto") == "whisper.cpp"
+
+
+def test_whisper_cpp_accepts_native_metal_backend(tmp_path: Path) -> None:
+    executable = tmp_path / "whisper-cli"
+    executable.write_bytes(b"binary")
+    (tmp_path / "libggml-metal.dylib").write_bytes(b"backend")
+    model = tmp_path / "ggml-tiny.en-q5_1.bin"
+    model.write_bytes(b"model")
+
+    engine = WhisperCppAsr(
+        "tiny", device="metal", executable=executable, model_path=model
+    )
+
+    assert engine.backend == "metal"
+    assert engine.backends == ["cpu", "metal"]
 
 
 def test_portable_model_aliases_accept_web_ui_english_suffix(tmp_path: Path) -> None:

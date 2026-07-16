@@ -67,6 +67,15 @@ This is the dated verification and delivery log for `GOAL.md`. Keep forward-look
 - The final Python streaming adapter run retained 22.74 seconds, one segment, 147 characters, and `Windows ML / ONNX Runtime GenAI CPU`, proving the honest backend label crosses the helper boundary.
 - Final WinML, DirectML-flavor, and complete WinUI builds all completed with **0 warnings, 0 errors**. The complete Python suite remains **92 passed**; provider activation and its download boundary are documented in `docs/hardware-backends.md`.
 
+#### Apple Metal profile and portable settings UX
+
+- Added `metal` to the persisted job contract, CLI, Web settings, automatic engine normalization, and whisper.cpp adapter validation. Metal is native-only; the app rejects a container request because Docker/Podman cannot expose Apple Metal through this adapter.
+- Native whisper.cpp backend inspection recognizes adjacent ggml-metal libraries and, on macOS, verifies `Metal.framework`/`ggml-metal` linkage with `otool`. llama.cpp device output already normalizes `Metal0` to the same profile contract.
+- macOS automatic selection chooses whisper.cpp only when a native Metal build is actually detected; otherwise it retains the CPU fallback. The Apple profile requires both Metal ASR and Metal analysis while keeping pyannote on CPU.
+- Added a compact Web hardware-profile selector and a collapsed stage-by-stage comparison after **Check hardware**. Each detected profile can apply compatible transcription/device/diarization defaults without exposing the advanced controls first.
+- Browser QA passed at 1365×900 and 390×844: six Windows profiles rendered with 4/6 ready, the Vulkan preset applied and restored correctly, the comparison stayed collapsed by default, there was no horizontal overflow, and the console remained clean.
+- Python coverage increased to **96 passed**; browser JavaScript syntax validation passed. Real-machine macOS/Metal timing remains intentionally open in B-005.
+
 ### Archive quota reset run
 
 - Completed a guarded feed 90001 resume for July 3–16 after downloads became available again.

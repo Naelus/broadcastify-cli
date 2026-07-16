@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -14,6 +15,7 @@ from .asr import (
     WindowsMlWhisperAsr,
     normalize_asr_engine,
 )
+from .accelerators import find_whisper_cpp, whisper_cpp_backends
 from .audio import configure_ffmpeg_runtime, find_ffmpeg
 
 
@@ -177,9 +179,18 @@ class LocalTranscriber:
                 self.compute_type = compute_type
         elif self.asr_engine == "whisper.cpp":
             if requested_device == "auto":
-                requested_device = "vulkan"
-            if requested_device not in {"vulkan", "cpu"}:
-                raise RuntimeError("whisper.cpp currently accepts Vulkan or CPU in this app.")
+                executable = find_whisper_cpp()
+                backends = whisper_cpp_backends(executable)
+                if sys.platform == "darwin" and "metal" in backends:
+                    requested_device = "metal"
+                elif "vulkan" in backends:
+                    requested_device = "vulkan"
+                else:
+                    requested_device = "cpu"
+            if requested_device not in {"vulkan", "metal", "cpu"}:
+                raise RuntimeError(
+                    "whisper.cpp currently accepts Vulkan, Apple Metal, or CPU in this app."
+                )
             self.device = requested_device
             self.compute_type = "ggml quantized"
         elif self.asr_engine == "openvino":

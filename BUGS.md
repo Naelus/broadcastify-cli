@@ -29,7 +29,7 @@ Use this file for reproducible defects and concrete blockers, not the general ro
 ### B-005 — Complete cross-platform workflow is not yet validated or packaged on Linux/macOS
 
 - **Severity:** Medium for product portability; no impact on native Windows use.
-- **Observed:** Linux AMD Vulkan ASR and quantized LLM components now pass real runs through the app adapter, including an immutable-host container path. The complete Web UI install, media stream, pyannote CPU continuation, analysis server lifecycle, and packaging have not run together on Linux; no real Mac run has occurred. Cross-platform credential persistence is `.env`/session-only rather than an OS keychain.
+- **Observed:** Linux AMD Vulkan ASR and quantized LLM components pass real runs through the app adapter, including an immutable-host container path. Apple Metal is now an explicit native whisper.cpp/llama.cpp profile with CPU diarization and macOS auto-selection when both Metal backends are detected, but no real Mac run has occurred. The complete Web UI install, media stream, pyannote CPU continuation, analysis server lifecycle, and packaging are not yet validated together on every target. Cross-platform credential persistence is `.env`/session-only rather than an OS keychain.
 - **Next:** Exercise a clean ordinary-user Linux install and full short workflow, then a macOS install/CPU-or-Metal workflow; add a supervised launcher/package and platform keychain adapter without weakening the loopback/session-token boundary.
 
 ### B-006 — Feed display names are missing for some retained legacy days

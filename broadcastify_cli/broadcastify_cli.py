@@ -76,7 +76,10 @@ def search(query: str) -> None:
 @click.option(
     "--device",
     type=click.Choice(
-        ["auto", "cpu", "cuda", "vulkan", "openvino-cpu", "openvino-gpu", "openvino-npu"]
+        [
+            "auto", "cpu", "cuda", "vulkan", "metal", "openvino-auto",
+            "openvino-cpu", "openvino-gpu", "openvino-npu", "windows-ml", "directml",
+        ]
     ),
     default="auto",
     show_default=True,
@@ -187,7 +190,10 @@ def download(
 @click.option(
     "--device",
     type=click.Choice(
-        ["auto", "cpu", "cuda", "vulkan", "openvino-cpu", "openvino-gpu", "openvino-npu"]
+        [
+            "auto", "cpu", "cuda", "vulkan", "metal", "openvino-auto",
+            "openvino-cpu", "openvino-gpu", "openvino-npu", "windows-ml", "directml",
+        ]
     ),
     default="auto",
 )

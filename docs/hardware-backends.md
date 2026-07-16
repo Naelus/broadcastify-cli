@@ -11,7 +11,7 @@ The application chooses a backend independently for transcription, diarization, 
 | AMD Vulkan/Linux | whisper.cpp Vulkan | pyannote CPU fallback | llama.cpp Vulkan | Real short-clip ASR and quantized generation on Radeon 890M; full-day CPU diarization timing remains open |
 | OpenVINO | OpenVINO GenAI AUTO/CPU | pyannote CPU fallback | llama.cpp SYCL/auto/CPU | Real CPU ASR and rejected-accelerator-to-CPU fallback |
 | Windows ML | ONNX Runtime GenAI CPU | pyannote CPU fallback | llama.cpp auto/CPU | Real ASR decode; DML fails and TensorRT RTX currently partitions/falls back slower than CPU |
-| macOS | portable CPU path | pyannote CPU | llama.cpp CPU/Metal install | Code path exists, but a real Mac install and model run remain required |
+| macOS | whisper.cpp Metal or CPU | pyannote CPU | llama.cpp Metal or CPU | Explicit profile and detection exist; a real Mac install and model run remain required |
 
 The official [whisper.cpp project](https://github.com/ggml-org/whisper.cpp) documents Windows, Linux, macOS, Docker, quantized models, Metal, OpenVINO, and `GGML_VULKAN=1`. The official [llama.cpp project](https://github.com/ggml-org/llama.cpp) documents native packages/releases, Vulkan and SYCL backends, quantized GGUF models, and its OpenAI-compatible server.
 
@@ -83,6 +83,25 @@ $helper = ".\BroadcastifyCli.WindowsML\bin\Release\net10.0-windows10.0.26100.0\w
 `--ensure-winml` is never invoked by ordinary transcription. It can take minutes and changes system-wide provider package state, so it belongs behind an explicit setup/test action. Registration uses ONNX Runtime GenAI's native provider environment; registering only the general C# `OrtEnv` does not make a provider visible to GenAI.
 
 GPU acceleration remains gated. ONNX Runtime GenAI 0.13.1 and 0.14.1 DML Whisper Tiny exports fail at graph capture or a fused DML node. The certified Windows ML TensorRT RTX 1.8.24.0 provider registered and decoded, but rejected 36 attention nodes and took 15.895 seconds for the retained 22.7-second clip while the CPU model took 0.622 seconds after warm caches. A successful decode with provider partitioning is therefore not reported as a validated speed path.
+
+## macOS and Apple Metal
+
+Metal is a native profile, not a container profile. Build current upstream whisper.cpp and llama.cpp on the Mac that will run them:
+
+```bash
+xcode-select --install
+git clone https://github.com/ggml-org/whisper.cpp.git
+cmake -S whisper.cpp -B whisper.cpp/build -DGGML_METAL=ON
+cmake --build whisper.cpp/build --config Release -j
+
+git clone https://github.com/ggml-org/llama.cpp.git
+cmake -S llama.cpp -B llama.cpp/build -DGGML_METAL=ON
+cmake --build llama.cpp/build --config Release -j --target llama-server
+```
+
+Set `WHISPER_CPP_PATH`, `WHISPER_CPP_MODEL_PATH`, and `LLAMA_SERVER_PATH`, choose **Apple Metal**, then run **Test engine**. The app accepts Metal only when the native whisper.cpp directory/linkage exposes ggml-metal, and the hardware comparison requires llama.cpp to list a `Metal` device as well. The upstream [whisper.cpp repository](https://github.com/ggml-org/whisper.cpp) also documents optional Core ML encoder acceleration on Apple Silicon; its compiled encoder directory must accompany the matching GGML model. The upstream [llama.cpp repository](https://github.com/ggml-org/llama.cpp) describes Apple Silicon as a first-class Metal target.
+
+If either native backend is absent, Automatic stays on the portable CPU route. pyannote remains a CPU stage because it does not expose a supported Metal backend through this app. No macOS performance claim is made until the exact self-test and a retained radio clip run on real Apple hardware.
 
 ## Measured AMD/Vulkan reference
 

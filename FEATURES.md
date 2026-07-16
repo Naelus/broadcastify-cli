@@ -41,7 +41,7 @@ Status labels: **Validated**, **Implemented**, **Foundation**, or **Planned**.
 | Daily incident/evidence review | Validated | Exact local clips and export actions. |
 | Seven-day summaries | Validated | Explicitly records available and missing days. |
 | Regional story leads | Validated | Evidence-backed assignment leads, not confirmations. |
-| Cross-platform browser UI | Implemented | Loopback service mirrors Library, New Archive, Review, Area, Settings, jobs, media, and provider actions; exercised on real retained data in Windows, with Linux/macOS runtime validation pending. |
+| Cross-platform browser UI | Implemented | Loopback service mirrors Library, New Archive, Review, Area, Settings, jobs, media, and provider actions; responsive hardware profiles now apply compatible CUDA/Vulkan/OpenVINO/Metal/Windows ML/CPU defaults. |
 | Explicit ASR runtime self-test | Validated | Native and Web Settings decode local synthetic audio using the selected model/device, with managed downloads only after a user starts the test. |
 | Installer/model manager/onboarding | Planned | Required before non-developer distribution. |
 
@@ -54,5 +54,6 @@ Status labels: **Validated**, **Implemented**, **Foundation**, or **Planned**.
 | Vulkan | whisper.cpp Vulkan | pyannote CPU | llama.cpp Vulkan | Real AMD ASR and quantized generation validated; full-day CPU diarization timing remains |
 | OpenVINO | OpenVINO Whisper AUTO/CPU | pyannote CPU | llama.cpp SYCL/auto/CPU | Real CPU decode and accelerator-to-CPU fallback validated |
 | Windows ML | ONNX Runtime GenAI CPU | pyannote CPU | llama.cpp auto/CPU | Real CPU decode validated; DML fails and the current TensorRT RTX provider is slower than CPU for Whisper |
+| Apple Metal | whisper.cpp Metal | pyannote CPU | llama.cpp Metal | Implemented with native-backend detection and explicit self-test; real Mac validation pending |
 
 Detailed outcomes and commands belong in `PROGRESS.md`; defects and blockers belong in `BUGS.md`.

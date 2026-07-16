@@ -158,6 +158,8 @@ label { display: grid; gap: 6px; color: #3d4741; font-size: 13px; font-weight: 6
 .form-stack { display: grid; gap: 14px; }
 .form-grid { display: grid; gap: 11px; }
 .form-grid.two { grid-template-columns: 1fr 1fr; }
+.form-grid .full-row { grid-column: 1 / -1; }
+.form-grid label small { color: var(--muted); font-weight: 400; }
 .form-grid.three { grid-template-columns: repeat(3, 1fr); }
 .toggle-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .check-row { display: flex; align-items: flex-start; gap: 9px; padding: 10px; border: 1px solid var(--line); border-radius: 10px; font-weight: 400; }
@@ -198,6 +200,21 @@ label { display: grid; gap: 6px; color: #3d4741; font-size: 13px; font-weight: 6
 .runtime-fact:last-child { border-bottom: 0; }
 .runtime-fact span { color: var(--muted); }
 .runtime-fact strong { text-align: right; font-weight: 600; overflow-wrap: anywhere; }
+.runtime-profiles { margin-top: 13px; }
+.runtime-profile-empty { color: var(--muted); font-size: 13px; padding: 10px 0 2px; border-top: 1px solid var(--line); }
+.runtime-profile-details { border-top: 1px solid var(--line); padding-top: 10px; }
+.runtime-profile-details summary { display: flex; justify-content: space-between; gap: 12px; cursor: pointer; font-weight: 650; }
+.runtime-profile-details summary strong { color: var(--accent); font-size: 12px; }
+.runtime-profile-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; margin-top: 12px; }
+.runtime-profile-card { border: 1px solid var(--line); border-radius: 11px; padding: 11px; background: var(--surface-muted); }
+.runtime-profile-card.ready { border-color: #a8d0b8; background: var(--accent-soft); }
+.runtime-profile-head { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.runtime-profile-head span { color: var(--muted); font-size: 11px; white-space: nowrap; }
+.runtime-profile-card.ready .runtime-profile-head span { color: var(--accent-strong); }
+.runtime-stage { display: grid; grid-template-columns: 72px 1fr; gap: 6px; font-size: 11px; margin-top: 4px; }
+.runtime-stage b { color: var(--muted); }
+.runtime-profile-card p { color: var(--muted); font-size: 11px; margin: 8px 0; }
+.runtime-profile-card .button { margin-top: 7px; }
 .secret-field { margin-top: 12px; }
 .external-consent { margin-top: 13px; }
 
@@ -261,6 +278,7 @@ label { display: grid; gap: 6px; color: #3d4741; font-size: 13px; font-weight: 6
   .transcript-row .speaker { grid-column: 2; grid-row: 1; }
   .transcript-row p { grid-column: 1 / -1; }
   .notice { display: grid; }
+  .runtime-profile-grid { grid-template-columns: 1fr; }
 }
 
 @media (prefers-color-scheme: dark) {

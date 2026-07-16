@@ -47,8 +47,9 @@ def test_whisper_cpp_backend_dlls_are_detected(tmp_path: Path) -> None:
     executable.write_bytes(b"binary")
     (tmp_path / "ggml-vulkan.dll").write_bytes(b"vulkan")
     (tmp_path / "ggml-sycl.dll").write_bytes(b"sycl")
+    (tmp_path / "libggml-metal.dylib").write_bytes(b"metal")
 
-    assert whisper_cpp_backends(executable) == ["cpu", "sycl", "vulkan"]
+    assert whisper_cpp_backends(executable) == ["cpu", "metal", "sycl", "vulkan"]
 
 
 def test_whisper_cpp_finds_portable_local_build(monkeypatch, tmp_path: Path) -> None:
@@ -142,3 +143,47 @@ def test_explicit_missing_container_does_not_fall_back_to_native_profile(
 
     assert vulkan["ready"] is False
     assert vulkan["transcription"] == "needs a Vulkan whisper.cpp build"
+
+
+def test_macos_profile_requires_and_reports_both_metal_engines(monkeypatch) -> None:
+    monkeypatch.setattr("broadcastify_cli.accelerators.sys.platform", "darwin")
+    monkeypatch.setenv("HUGGINGFACE_TOKEN", "test-token")
+    monkeypatch.delenv("WHISPER_CPP_CONTAINER_IMAGE", raising=False)
+    monkeypatch.setattr(
+        "broadcastify_cli.accelerators._torch_diagnostics",
+        lambda: {"installed": True, "cuda_available": False, "cuda_devices": []},
+    )
+    monkeypatch.setattr(
+        "broadcastify_cli.accelerators._openvino_diagnostics",
+        lambda: {"runtime_installed": False, "genai_installed": False, "devices": []},
+    )
+    monkeypatch.setattr(
+        "broadcastify_cli.accelerators._onnx_diagnostics", lambda: {"installed": False}
+    )
+    monkeypatch.setattr(
+        "broadcastify_cli.accelerators._windows_ml_diagnostics",
+        lambda: {"runtime_ready": False, "decode_ready": False},
+    )
+    monkeypatch.setattr(
+        "broadcastify_cli.accelerators.find_whisper_cpp", lambda: "/opt/whisper-cli"
+    )
+    monkeypatch.setattr(
+        "broadcastify_cli.accelerators.whisper_cpp_backends",
+        lambda _path: ["cpu", "metal"],
+    )
+    monkeypatch.setattr(
+        "broadcastify_cli.accelerators.inspect_llama_devices",
+        lambda _path: [{"id": "Metal0", "backend": "metal", "name": "Apple GPU"}],
+    )
+    monkeypatch.setattr(
+        "broadcastify_cli.accelerators.module_available", lambda _name: True
+    )
+
+    diagnostics = collect_accelerator_diagnostics("/opt/llama-server")
+    automatic = next(value for value in diagnostics["profiles"] if value["id"] == "auto")
+    metal = next(value for value in diagnostics["profiles"] if value["id"] == "metal")
+
+    assert automatic["ready"] is True
+    assert automatic["transcription"] == "whisper.cpp on Apple Metal"
+    assert metal["ready"] is True
+    assert metal["analysis"] == "llama.cpp / Metal"

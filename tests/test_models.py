@@ -71,6 +71,7 @@ def test_diarization_requires_daily_combination() -> None:
 def test_non_cuda_transcription_profiles_are_valid() -> None:
     for engine, device in [
         ("whisper.cpp", "vulkan"),
+        ("whisper.cpp", "metal"),
         ("openvino", "openvino-gpu"),
         ("windows-ml", "windows-ml"),
         ("faster-whisper", "cpu"),

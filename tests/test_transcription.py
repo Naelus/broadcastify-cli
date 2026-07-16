@@ -15,6 +15,23 @@ from broadcastify_cli.transcription import (
 )
 
 
+def test_whisper_cpp_auto_device_prefers_metal_on_macos(monkeypatch) -> None:
+    monkeypatch.setattr("broadcastify_cli.transcription.sys.platform", "darwin")
+    monkeypatch.setattr(
+        "broadcastify_cli.transcription.find_whisper_cpp", lambda: "/opt/whisper-cli"
+    )
+    monkeypatch.setattr(
+        "broadcastify_cli.transcription.whisper_cpp_backends",
+        lambda _path: ["cpu", "metal"],
+    )
+
+    transcriber = LocalTranscriber(
+        asr_engine="whisper.cpp", device="auto", load_asr=False
+    )
+
+    assert transcriber.device == "metal"
+
+
 def test_speaker_uses_largest_overlap_not_first_overlap() -> None:
     turns = [
         SpeakerTurn(0.0, 1.1, "SPEAKER_00"),

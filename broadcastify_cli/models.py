@@ -114,6 +114,7 @@ class JobRequest:
             "cpu",
             "cuda",
             "vulkan",
+            "metal",
             "openvino-auto",
             "openvino-cpu",
             "openvino-gpu",
