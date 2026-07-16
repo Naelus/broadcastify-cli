@@ -41,7 +41,9 @@ from .models import JobRequest
 from .storage import AnalysisStore, sha256_file
 
 
-DEFAULT_DATABASE = Path("archives/broadcastify-analysis.sqlite3")
+DEFAULT_DATABASE = Path(
+    os.getenv("BROADCASTIFY_ANALYSIS_DB") or "archives/broadcastify-analysis.sqlite3"
+)
 LOADED_ENVIRONMENT_FILE: Path | None = None
 
 
@@ -606,10 +608,14 @@ def load_worker_environment() -> Path | None:
 
 
 def main() -> int:
-    global LOADED_ENVIRONMENT_FILE
+    global DEFAULT_DATABASE, LOADED_ENVIRONMENT_FILE
     # override=True preserves compatibility with the original USERNAME setting
     # on Windows, where USERNAME already exists in the parent environment.
     LOADED_ENVIRONMENT_FILE = load_worker_environment()
+    DEFAULT_DATABASE = Path(
+        os.getenv("BROADCASTIFY_ANALYSIS_DB")
+        or "archives/broadcastify-analysis.sqlite3"
+    )
     arguments = build_parser().parse_args()
     try:
         if arguments.command == "search":

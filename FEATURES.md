@@ -41,7 +41,7 @@ Status labels: **Validated**, **Implemented**, **Foundation**, or **Planned**.
 | Daily incident/evidence review | Validated | Exact local clips and export actions. |
 | Seven-day summaries | Validated | Explicitly records available and missing days. |
 | Regional story leads | Validated | Evidence-backed assignment leads, not confirmations. |
-| Cross-platform browser UI | Planned | Should consume a local service and mirror the native viewer experience. |
+| Cross-platform browser UI | Implemented | Loopback service mirrors Library, New Archive, Review, Area, Settings, jobs, media, and provider actions; exercised on real retained data in Windows, with Linux/macOS runtime validation pending. |
 | Installer/model manager/onboarding | Planned | Required before non-developer distribution. |
 
 ## Hardware profile matrix

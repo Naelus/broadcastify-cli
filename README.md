@@ -1,12 +1,15 @@
-# Broadcastify Desktop
+# Radio Archive Intelligence
 
-A native Windows app and Python CLI for finding Broadcastify feeds, downloading premium archives, combining daily audio, and producing fast local transcripts with optional speaker diarization.
+An evidence-first local application for finding Broadcastify feeds, retaining premium archives, combining daily audio, transcribing and diarizing radio traffic, and producing auditable incident, daily, weekly, and regional story summaries. The tested Windows experience uses WinUI 3; the same Python backend now has a loopback-only browser companion for Windows, Linux, and macOS plus the original CLI.
+
+The repository keeps its historical `broadcastify-cli` name for compatibility while the product direction is broader than a downloader.
 
 This fork uses Broadcastify's website login and the same private web endpoints as its archive page. It does **not** use Broadcastify's official API. Those endpoints can change, so all site-specific behavior is isolated in `broadcastify_cli/broadcastify.py`.
 
 ## What is implemented
 
 - Native WinUI 3 desktop UI on .NET 10 and Windows App SDK 1.8
+- A responsive, loopback-only browser UI with the same Library, New Archive, Review & Ask, Area Watch, and Settings workflow for cross-platform use
 - Feed search by agency, city, county, state, or ZIP, including the county-directory matches returned by the website
 - Premium website sign-in with an opt-in Windows Credential Locker login for automatic session refresh
 - A navigable WinUI shell for Local Library, New Archive, Review & Ask, Area Watch, and Settings instead of one long scrolling workspace
@@ -43,11 +46,11 @@ The durable project objective, feature matrix, known blockers, and dated validat
 
 Broadcastify's published terms restrict commercial use and AI/ML use without a license. Personal experimentation and a commercial newsroom product are not the same authorization; obtain written licensing from Broadcastify before deploying this workflow commercially. See [docs/rate-limits.md](docs/rate-limits.md) for the public guidance and measured archive-quota behavior used by the downloader.
 
-## Why WinUI 3
+## Why WinUI 3 on Windows
 
 WinUI 3 is Microsoft's current native Windows UI framework and is the right default for this new Windows-only app. It supplies the current Fluent controls, Mica, modern DPI behavior, and Windows App SDK lifecycle while keeping the UI native. WinForms would be simpler for a disposable utility, but it is an older UI stack and was not the best long-term choice here.
 
-The UI is an unpackaged x64 desktop app, so development does not require MSIX. Packaging and an installer can be added after the archive and model workflows are fully validated.
+The Windows UI is an unpackaged x64 desktop app, so development does not require MSIX. Packaging and an installer can be added after the archive and model workflows are fully validated. The browser companion is the portability surface; WinUI remains the polished Windows reference instead of forcing Windows users into a generic wrapper.
 
 ## Local model stack
 
@@ -71,14 +74,13 @@ For a combined daily job, the downloader now concatenates the archive blocks **b
 
 ## Requirements
 
-- Windows 10 version 1809 or later, x64
 - Python 3.12
-- .NET 10 SDK
 - FFmpeg with shared libraries (`Gyan.FFmpeg.Shared`)
-- NVIDIA GPU recommended; CPU mode is supported but slower
 - Broadcastify premium account for archive downloads
 - Hugging Face read token for the first pyannote model download
 - llama.cpp for local Gemma analysis
+
+The native Windows shell additionally needs Windows 10 version 1809 or later, x64, and the .NET 10 SDK. NVIDIA CUDA is the tested fast default; CPU, OpenVINO, Windows ML, and Vulkan profiles report their stages separately and fall back only where documented.
 
 Install the Windows prerequisites from PowerShell:
 
@@ -132,7 +134,25 @@ dotnet build .\BroadcastifyCli.WinUI\BroadcastifyCli.WinUI.csproj `
 
 This writes `broadcastify-desktop.env` into that build output. It is ignored by Git and the worker loads it before starting a job, but it is still a plaintext credential file inside the private build directory. Do not distribute or upload that build. Omit `BundleLocalEnv` for a normal shareable build; a normal build also removes any stale private env copy from its output.
 
-## First run
+## Cross-platform local Web UI
+
+The browser companion is served by Python and binds only to a loopback address. It does not need a cloud deployment or expose the archive library to the LAN:
+
+```powershell
+.\.venv\Scripts\broadcastify-web.exe --open
+```
+
+On Linux or macOS, use the equivalent environment entry point:
+
+```bash
+./.venv/bin/broadcastify-web --open
+```
+
+It exposes the retained Library and processing timeline, byte-range audio playback, bounded incident and transcript viewers, exact clip preparation, website feed search, guarded archive jobs, local continuation, provider-aware Q&A and weekly summaries, area profiles, retained regional briefs, hardware diagnostics, and session-only sign-in. One heavy job can run at a time, every archive job is forced to one download worker, and the explicit Broadcastify quota response still stops the range immediately.
+
+Every launch creates a random local session token. API and media routes require the same-site session cookie; actions also require the token header and reject cross-origin submissions. Non-secret settings use browser-local storage. API keys and Hugging Face tokens remain in the active tab or an ignored `.env`; the cross-platform UI does not claim OS-keychain persistence yet. See [docs/web-ui.md](docs/web-ui.md) for the runtime contract and current portability boundary.
+
+## Windows first run
 
 1. Open **Settings**, select **Sign in**, and enter the premium Broadcastify login. Leave **Save this login securely** enabled to keep it encrypted for this Windows account in Windows Credential Locker and automatically refresh an expired session. The session cookie remains in the ignored `cookies.json` file.
 2. Open **New archive**, search for and select a feed.
@@ -279,7 +299,7 @@ Run the tests with:
 
 1. **Core workflow:** authenticated feed search/download, overlap-aware continuous combination, fast transcription, persistence, local retrieval, incident extraction, summaries, and Q&A. Implemented and tested on two full days.
 2. **Diarization validation:** Community-1 completed a real combined 24.4-hour feed day with continuous labels and cached speaker turns. Implemented and validated.
-3. **Analysis UI:** focused WinUI navigation, local pipeline-state library and continuation actions, persisted days, incident timeline, daily/weekly briefs, range questions, model diagnostics, cancellation, automatic post-transcription analysis, multi-ZIP discovery, saved area profiles, and immediately reopened regional lead briefs are implemented and visually exercised in WinUI 3.
+3. **Analysis UI:** focused WinUI navigation, local pipeline-state library and continuation actions, persisted days, incident timeline, daily/weekly briefs, range questions, model diagnostics, cancellation, automatic post-transcription analysis, multi-ZIP discovery, saved area profiles, and immediately reopened regional lead briefs are implemented and visually exercised in WinUI 3. A responsive loopback browser companion now mirrors those surfaces against the same worker contract; real Linux/macOS runtime validation and packaging remain.
 4. **Regional ingestion:** explicit sequential multi-feed archive/analyze is implemented. The next step is a schedule/retention manager so a newsroom can budget storage and GPU time per profile instead of manually starting each date range.
 5. **Newsroom product phase:** evidence drill-down and cached story clips are implemented. Next add editor approval/redaction/export, radius-based coverage markets, profile management, map/geocoding review, notifications, a model/cache manager, and installer/MSIX packaging.
 6. **Neighborhood subscription phase:** build a separate public web/mobile signup for center-plus-radius and topic preferences; match only editor-approved stories, include unsubscribe/consent controls, and keep raw scanner audio private by default.

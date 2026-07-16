@@ -31,11 +31,11 @@ Use this file for reproducible defects and concrete blockers, not the general ro
 - **Observed:** CPU components and profile exist, but the complete multi-hour pipeline has not been benchmarked on the retained corpus.
 - **Next:** Use a bounded representative slice first, then a full day if practical; record ASR, diarization, and analysis time separately.
 
-### B-005 — Cross-platform UI/service is not implemented
+### B-005 — Cross-platform runtime is not yet validated or packaged on Linux/macOS
 
 - **Severity:** Medium for product portability; no impact on native Windows use.
-- **Observed:** The backend is Python and largely portable, but the current polished shell is WinUI-only and worker launch/settings assume a repository checkout.
-- **Next:** Extract a localhost service contract and build a browser UI that mirrors Library/Review/Area/Settings.
+- **Observed:** The loopback-only Python service and responsive browser UI now mirror Library, New Archive, Review, Area, Settings, media, and worker actions against real retained data on Windows. Linux/macOS entry points are defined, but neither platform has completed a real install, media stream, ASR/diarization fallback, model job, or packaging run. Cross-platform credential persistence is `.env`/session-only rather than an OS keychain.
+- **Next:** Exercise clean Linux and macOS installs, record backend-specific diagnostics and real short-clip processing, then add a supervised launcher/package and platform keychain adapter without weakening the loopback/session-token boundary.
 
 ### B-006 — Feed display names are missing for some retained legacy days
 
@@ -49,6 +49,12 @@ Use this file for reproducible defects and concrete blockers, not the general ro
 - **Observed:** Broadcastify publishes no numeric archive-download quota or reset timestamp. One measured window allowed roughly 192 successful archive redirects, while the July 16 availability follow-up allowed only 55 new media downloads before the same explicit limit response.
 - **Control:** Sequential pacing, exact cache reuse, and immediate stop on explicit exhaustion.
 - **Next:** Ask Broadcastify support for authoritative details and prioritize future regional acquisition by user distance/importance rather than a guessed quota size.
+
+### B-008 — Nearby-feed acquisition is ZIP/profile based, not a true distance cascade
+
+- **Severity:** Medium for quota-efficient newsroom coverage.
+- **Observed:** Multi-ZIP discovery and explicit area profiles work, but the app does not yet rank a center/radius market by geographic distance and spend the unknown archive budget on the nearest missing feed-day first.
+- **Next:** Add geocoded feed coverage metadata, center-plus-radius settings, and a persisted nearest-first acquisition queue. Keep feed selection reviewable and stop the whole queue on the first explicit quota response.
 
 ## Recently fixed
 

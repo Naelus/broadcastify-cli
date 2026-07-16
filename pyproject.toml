@@ -5,8 +5,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "broadcastify-cli"
-version = "0.2.0"
-description = "Local Broadcastify archive downloader, transcription, and diarization tool"
+version = "0.3.0"
+description = "Evidence-first local radio archive intelligence application"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { file = "LICENSE" }
@@ -14,7 +14,7 @@ authors = [
     { name = "NotJoeMartinez", email = "notjoemartinez@protonmail.com" },
     { name = "Banderick"}
 ]
-keywords = ["radio", "cli", "broadcastify"]
+keywords = ["radio", "broadcastify", "transcription", "diarization", "local-ai"]
 classifiers = [
     "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
     "Programming Language :: Python :: 3",
@@ -60,6 +60,7 @@ dev = [
 [project.scripts]
 broadcastify-cli = "broadcastify_cli.broadcastify_cli:cli"
 broadcastify-analysis = "broadcastify_cli.analysis_cli:cli"
+broadcastify-web = "broadcastify_cli.web_app:main"
 
 [project.urls]
 Homepage = "https://github.com/it360mz/broadcastify-cli"
@@ -68,3 +69,6 @@ Homepage = "https://github.com/it360mz/broadcastify-cli"
 include = ["broadcastify_cli*"]
 exclude = ["archives*", "tests*", "BroadcastifyCli*"]
 namespaces = false
+
+[tool.setuptools.package-data]
+broadcastify_cli = ["web_static/*"]

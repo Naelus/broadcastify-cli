@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="app-token" content="__SESSION_TOKEN__">
+  <meta name="color-scheme" content="light dark">
+  <title>Radio Archive Intelligence</title>
+  <link rel="stylesheet" href="/static/app.css?v=3">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="Primary navigation">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></div>
+        <div>
+          <strong>Radio Archive</strong>
+          <small>Local intelligence</small>
+        </div>
+      </div>
+      <nav class="nav-list">
+        <button class="nav-item active" data-view="library" aria-current="page"><span aria-hidden="true">▥</span>Local library</button>
+        <button class="nav-item" data-view="archive"><span aria-hidden="true">↓</span>New archive</button>
+        <button class="nav-item" data-view="review"><span aria-hidden="true">⌕</span>Review &amp; ask</button>
+        <button class="nav-item" data-view="area"><span aria-hidden="true">⌖</span>Area watch</button>
+      </nav>
+      <div class="sidebar-spacer"></div>
+      <button class="nav-item" data-view="settings"><span aria-hidden="true">⚙</span>Settings</button>
+      <div class="local-only"><span class="status-dot"></span>Loopback only</div>
+    </aside>
+
+    <main class="main-content">
+      <header class="topbar">
+        <button class="menu-button" id="menuButton" aria-label="Toggle navigation">☰</button>
+        <div class="topbar-copy">
+          <strong id="topbarTitle">Local library</strong>
+          <span id="topbarSubtitle">Retained evidence stays on this computer</span>
+        </div>
+        <div class="topbar-status" id="topbarStatus"><span class="status-dot"></span>Ready</div>
+      </header>
+
+      <section class="view active" id="view-library" aria-labelledby="libraryTitle">
+        <div class="page-heading">
+          <div>
+            <p class="eyebrow">Your retained archive</p>
+            <h1 id="libraryTitle">Local library</h1>
+            <p>See what is complete, what needs attention, and the exact next step without using another archive request.</p>
+          </div>
+          <button class="button secondary" id="refreshLibraryButton">Refresh library</button>
+        </div>
+        <div class="metric-grid" id="libraryMetrics" aria-label="Library summary"></div>
+        <div class="library-layout">
+          <div class="library-browser card">
+            <div class="browser-tools">
+              <label class="search-field"><span class="sr-only">Filter library</span><input id="librarySearch" type="search" placeholder="Filter feed, agency, or date"></label>
+              <select id="libraryFilter" aria-label="Library status">
+                <option value="all">All days</option>
+                <option value="attention">Needs a next step</option>
+                <option value="complete">Ready to review</option>
+              </select>
+            </div>
+            <div class="day-list" id="dayList" role="listbox" aria-label="Retained feed days"></div>
+          </div>
+          <article class="day-detail card" id="dayDetail">
+            <div class="empty-state"><div class="empty-icon">▥</div><h2>Select a retained day</h2><p>Its processing timeline, evidence, audio, and transcript will appear here.</p></div>
+          </article>
+        </div>
+      </section>
+
+      <section class="view" id="view-archive" aria-labelledby="archiveTitle">
+        <div class="page-heading">
+          <div>
+            <p class="eyebrow">Quota-safe acquisition</p>
+            <h1 id="archiveTitle">New archive</h1>
+            <p>Search the website-backed feed catalog, then retain one carefully paced date range.</p>
+          </div>
+        </div>
+        <div class="two-column">
+          <div class="card padded">
+            <div class="section-heading"><div><h2>1. Find a feed</h2><p>Agency, city, county, state, ZIP, or feed ID.</p></div></div>
+            <form id="feedSearchForm" class="inline-form">
+              <label class="grow"><span>Search</span><input id="feedSearchInput" required maxlength="160" placeholder="Example City"></label>
+              <button class="button primary" type="submit">Search feeds</button>
+            </form>
+            <div id="feedSearchResults" class="result-list"><div class="empty-compact">Search results will appear here.</div></div>
+          </div>
+          <div class="card padded">
+            <div class="section-heading"><div><h2>2. Archive &amp; process</h2><p id="selectedFeedLabel">Select a feed first.</p></div></div>
+            <form id="archiveForm" class="form-stack">
+              <input id="archiveFeedId" type="hidden">
+              <div class="form-grid two">
+                <label><span>Start date</span><input id="archiveStartDate" type="date" required></label>
+                <label><span>End date</span><input id="archiveEndDate" type="date" required></label>
+              </div>
+              <div class="toggle-grid">
+                <label class="check-row"><input id="archiveCombine" type="checkbox" checked><span><strong>Combine each day</strong><small>One continuous evidence timeline</small></span></label>
+                <label class="check-row"><input id="archiveTranscribe" type="checkbox" checked><span><strong>Transcribe</strong><small>Use the selected local ASR profile</small></span></label>
+                <label class="check-row"><input id="archiveDiarize" type="checkbox" checked><span><strong>Add speaker labels</strong><small>Runs after daily combination</small></span></label>
+                <label class="check-row"><input id="archiveAnalyze" type="checkbox" checked><span><strong>Extract incidents</strong><small>Uses the Analysis &amp; AI provider</small></span></label>
+              </div>
+              <div class="notice warning"><strong>Shared limit is unknown.</strong><span>This app starts one request at a time, reuses every cached block, and stops on Broadcastify’s explicit download-limit response.</span></div>
+              <button class="button primary wide" type="submit">Start guarded archive job</button>
+            </form>
+          </div>
+        </div>
+      </section>
+
+      <section class="view" id="view-review" aria-labelledby="reviewTitle">
+        <div class="page-heading">
+          <div>
+            <p class="eyebrow">Evidence-grounded analysis</p>
+            <h1 id="reviewTitle">Review &amp; ask</h1>
+            <p>Ask across a retained range or build a seven-day brief. Missing dates remain visible as missing coverage.</p>
+          </div>
+        </div>
+        <div class="two-column review-columns">
+          <div class="card padded">
+            <div class="section-heading"><div><h2>Ask the archive</h2><p>Retrieved transcript passages and incident records support the answer.</p></div></div>
+            <form id="askForm" class="form-stack">
+              <div class="form-grid three">
+                <label><span>Feed ID</span><input id="askFeedId" inputmode="numeric" required></label>
+                <label><span>From</span><input id="askStartDate" type="date" required></label>
+                <label><span>Through</span><input id="askEndDate" type="date" required></label>
+              </div>
+              <label><span>Question</span><textarea id="askQuestion" rows="4" required placeholder="What serious calls were reported, and which remained unconfirmed?"></textarea></label>
+              <button class="button primary" type="submit">Ask with cited evidence</button>
+            </form>
+            <div class="answer-panel" id="answerPanel"><div class="empty-compact">Your saved answer will appear here.</div></div>
+          </div>
+          <div class="card padded">
+            <div class="section-heading"><div><h2>Seven-day summary</h2><p>Reuses persisted incidents; it never reruns transcription.</p></div></div>
+            <form id="weekForm" class="form-stack">
+              <div class="form-grid two">
+                <label><span>Feed ID</span><input id="weekFeedId" inputmode="numeric" required></label>
+                <label><span>Week ending</span><input id="weekEnding" type="date" required></label>
+              </div>
+              <div class="button-row">
+                <button class="button primary" type="submit">Build or reuse summary</button>
+                <button class="button secondary" type="button" id="openSavedWeekButton">Open saved</button>
+              </div>
+            </form>
+            <div class="answer-panel" id="weekPanel"><div class="empty-compact">Coverage and notable events will appear here.</div></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="view" id="view-area" aria-labelledby="areaTitle">
+        <div class="page-heading">
+          <div>
+            <p class="eyebrow">Regional news desk</p>
+            <h1 id="areaTitle">Area watch</h1>
+            <p>Discover nearby public-safety feeds by ZIP, save an explicit profile, and rank evidence-backed local story leads.</p>
+          </div>
+        </div>
+        <div class="area-grid">
+          <div class="card padded area-discovery">
+            <div class="section-heading"><div><h2>Coverage profile</h2><p>Use comma-separated ZIPs. Nearby duplicates are deduplicated by feed.</p></div></div>
+            <form id="areaSearchForm" class="form-stack">
+              <label><span>ZIP codes</span><input id="areaZipCodes" placeholder="12345, 12346, 12347" required></label>
+              <button class="button secondary" type="submit">Discover feeds</button>
+            </form>
+            <div id="areaSearchResults" class="result-list compact"><div class="empty-compact">Discovered feeds will appear here.</div></div>
+            <form id="saveAreaProfileForm" class="inline-form profile-save">
+              <label class="grow"><span>Profile name</span><input id="areaProfileName" placeholder="Regional coverage desk"></label>
+              <button class="button primary" type="submit">Save selected</button>
+            </form>
+          </div>
+          <div class="card padded area-brief">
+            <div class="section-heading"><div><h2>Story-lead brief</h2><p>Cross-feed overlap raises interest but is never treated as independent confirmation.</p></div></div>
+            <div class="form-grid three area-controls">
+              <label><span>Saved profile</span><select id="areaProfileSelect"><option value="">Choose a profile</option></select></label>
+              <label><span>From</span><input id="areaStartDate" type="date"></label>
+              <label><span>Through</span><input id="areaEndDate" type="date"></label>
+            </div>
+            <div class="button-row">
+              <button class="button primary" id="buildAreaBriefButton">Find story leads</button>
+              <button class="button secondary" id="openSavedAreaButton">Open latest saved</button>
+            </div>
+            <div id="areaBriefPanel" class="story-list"><div class="empty-compact">Select a profile to review its latest retained brief.</div></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="view" id="view-settings" aria-labelledby="settingsTitle">
+        <div class="page-heading">
+          <div>
+            <p class="eyebrow">Private local defaults</p>
+            <h1 id="settingsTitle">Settings</h1>
+            <p>Processing choices stay in this browser profile. Secrets stay in this tab or your ignored environment file.</p>
+          </div>
+          <button class="button primary" id="saveSettingsButton">Save non-secret settings</button>
+        </div>
+        <div class="settings-grid">
+          <div class="card padded">
+            <div class="section-heading"><div><h2>Runtime</h2><p id="runtimeDescription">Loading local runtime…</p></div><button class="button secondary small" id="runtimeCheckButton">Check hardware</button></div>
+            <div class="runtime-facts" id="runtimeFacts"></div>
+          </div>
+          <div class="card padded">
+            <div class="section-heading"><div><h2>Transcription &amp; speakers</h2><p>Automatic keeps the tested Windows behavior and chooses safe fallbacks elsewhere.</p></div></div>
+            <div class="form-grid two">
+              <label><span>Whisper model</span><select id="settingWhisperModel"><option>turbo</option><option>large-v3</option><option>medium.en</option><option>small.en</option><option>base.en</option><option>tiny.en</option></select></label>
+              <label><span>ASR engine</span><select id="settingAsrEngine"><option value="auto">Automatic</option><option value="faster-whisper">faster-whisper</option><option value="whisper.cpp">whisper.cpp</option><option value="openvino">OpenVINO</option><option value="windows-ml">Windows ML</option></select></label>
+              <label><span>Transcription device</span><select id="settingDevice"><option value="auto">Automatic</option><option value="cuda">CUDA</option><option value="cpu">CPU</option><option value="vulkan">Vulkan</option><option value="openvino-auto">OpenVINO Auto</option><option value="windows-ml">Windows ML</option></select></label>
+              <label><span>Diarization device</span><select id="settingDiarizationDevice"><option value="auto">Automatic</option><option value="cuda">CUDA</option><option value="cpu">CPU fallback</option></select></label>
+              <label><span>Batch size</span><input id="settingBatchSize" type="number" min="1" max="64" value="8"></label>
+              <label><span>Optional ASR model path</span><input id="settingAsrModelPath" placeholder="Use automatic model discovery"></label>
+            </div>
+            <label class="secret-field"><span>Hugging Face token for this tab</span><input id="settingHuggingFaceToken" type="password" autocomplete="off" placeholder="Or set HUGGINGFACE_TOKEN in .env"></label>
+          </div>
+          <div class="card padded">
+            <div class="section-heading"><div><h2>Analysis &amp; AI</h2><p>Local Gemma is private by default. Hosted text transmission is always opt-in.</p></div><button class="button secondary small" id="providerCheckButton">Check provider</button></div>
+            <div class="form-grid two">
+              <label><span>Provider</span><select id="settingAnalysisProvider"><option value="local">Local Gemma / llama.cpp</option><option value="openai-responses">OpenAI Responses</option><option value="openai-compatible">OpenAI-compatible /v1</option><option value="codex-cli">Codex saved login</option></select></label>
+              <label><span>Model</span><input id="settingAnalysisModel" value="ggml-org/gemma-4-12B-it-GGUF:Q4_K_M"></label>
+              <label><span>Optional endpoint</span><input id="settingAnalysisEndpoint" placeholder="Managed locally or /v1 URL"></label>
+              <label><span>API key environment variable</span><input id="settingApiKeyEnvironment" value="OPENAI_API_KEY"></label>
+              <label><span>Optional Codex executable</span><input id="settingCodexPath" placeholder="Automatic discovery"></label>
+              <label class="secret-field"><span>API key for this tab</span><input id="settingAnalysisApiKey" type="password" autocomplete="off" placeholder="Never saved in browser settings"></label>
+            </div>
+            <label class="check-row external-consent"><input id="settingAllowExternal" type="checkbox"><span><strong>Allow transcript excerpts to leave this computer</strong><small>Only analysis prompts are sent, not raw audio. Radio text may still contain sensitive or unverified details.</small></span></label>
+            <div class="notice success" id="providerNotice"><strong>Private local analysis</strong><span>Transcript text stays on this computer.</span></div>
+          </div>
+          <div class="card padded">
+            <div class="section-heading"><div><h2>Broadcastify website login</h2><p>Uses the premium website session, not the official API. Prefer an ignored .env for repeat launches on Linux/macOS.</p></div></div>
+            <form id="loginForm" class="form-stack">
+              <label><span>Username</span><input id="loginUsername" autocomplete="username"></label>
+              <label><span>Password</span><input id="loginPassword" type="password" autocomplete="current-password"></label>
+              <button class="button secondary" type="submit">Sign in for this local session</button>
+            </form>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <aside class="job-drawer" id="jobDrawer" aria-live="polite" aria-label="Current job">
+    <button class="job-summary" id="jobDrawerToggle" aria-expanded="false">
+      <span class="job-spinner" id="jobSpinner"></span>
+      <span><strong id="jobTitle">No active job</strong><small id="jobMessage">Completed work remains resumable.</small></span>
+      <span class="job-chevron">⌃</span>
+    </button>
+    <div class="job-body">
+      <div class="job-progress"><div id="jobProgressBar"></div></div>
+      <div class="job-log" id="jobLog"></div>
+      <div class="button-row end"><button class="button danger small" id="cancelJobButton" disabled>Cancel job</button></div>
+    </div>
+  </aside>
+
+  <div class="toast-region" id="toastRegion" aria-live="polite"></div>
+  <script src="/static/app.js?v=3" defer></script>
+</body>
+</html>

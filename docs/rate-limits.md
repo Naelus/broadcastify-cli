@@ -70,5 +70,6 @@ This smaller observed window is strong evidence against documenting a stable fix
 - Acquire a requested date range before loading the GPU transcription stack. If quota exhaustion interrupts acquisition, do not call another archive-download endpoint in that job; inspect later dates through metadata only, process any days already complete in the local cache, and report incomplete dates as resumable coverage gaps.
 - Keep a backend-only JSONL probe at `scripts/download_rate_probe.py` for auditable, credential-free response timing/status telemetry.
 - Never use a guessed numeric quota to pre-spend a range. Acquire nearest/most important feeds and dates first, then stop on the server's explicit limit response.
+- The cross-platform Web UI enforces the same policy at its service boundary: it overwrites archive jobs to one download worker, preserves source blocks, allows only one heavy job at a time, and cannot bypass the downloader's explicit quota stop through parallel browser actions.
 
 Probe logs are runtime artifacts under `archives/` and are ignored by Git.

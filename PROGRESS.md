@@ -60,6 +60,15 @@ This is the dated verification and delivery log for `GOAL.md`. Keep forward-look
 - Backend/persistence commit `historical-validation` was pushed to `origin/main` after 69 tests passed and the credential-pattern audit was clean.
 - Native Library/UI commit `historical-validation` and Windows ML integration commit `historical-validation` were separately reviewed, audited, and pushed to `origin/main`.
 
+### Cross-platform browser companion
+
+- Added the `broadcastify-web` entry point and a dependency-free Python HTTP service that binds only to loopback. Each launch creates a random same-site session cookie; mutating actions additionally require a token header and matching origin.
+- Reused the existing JSON worker for website feed/ZIP search, authentication, guarded range jobs, local continuation, incident clips, day analysis, Q&A, weekly summaries, area profiles/briefs, provider checks, and hardware diagnostics. The service permits one heavy worker at a time, forces archive concurrency to one, preserves source blocks, and keeps the database path explicit across child workers.
+- Added safe byte-range streaming limited to the configured archive root, so 24-hour combined audio and generated evidence clips play without exposing arbitrary filesystem paths or contacting Broadcastify.
+- Built a responsive Library/New Archive/Review/Area/Settings browser shell. The real retained corpus showed 9 feed-days, 6 ready days, 3 incomplete days, a 24:23:04 combined stream, 40 incidents, 736 diarized transcript segments, the saved 2/7-day brief, and a 10-feed regional profile with explicit 1/10-feed coverage.
+- Visually exercised the desktop and 390x844 layouts. Transcript search returned the retained vehicle-fire line, the local llama.cpp readiness check succeeded without loading a model, Codex remained blocked while external sharing was off, mobile navigation opened correctly, and long incident/story surfaces now default to 12/10 highest-ranked records with an explicit show-all action.
+- Browser console remained free of warnings/errors. Service/security/media tests added four cases; the complete Python suite is now **81 passed** and the browser JavaScript passes the bundled Node syntax check.
+
 ## Earlier validated work
 
 - Feed 90001 completed July 11–12 end to end with 97 retained archive blocks, continuous daily audio, 1,716 transcript segments, 87 incidents, daily summaries, semantic Q&A, and a seven-day brief with explicit missing coverage.
