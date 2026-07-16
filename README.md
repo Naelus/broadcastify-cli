@@ -106,7 +106,7 @@ For OpenVINO ASR, add `.[openvino]`. For the Windows ML model builder and helper
 
 ### Windows ML functional profile
 
-The validated Windows ML path currently uses CPU execution. It proves functional parity and keeps DML acceleration gated while the current generated DML Whisper graph is incompatible with ONNX Runtime GenAI 0.14.1. Build a small validation model and the helper with:
+The validated Windows ML path currently uses CPU execution. It proves functional parity and keeps GPU acceleration gated while current generated DML Whisper graphs fail and the available TensorRT RTX provider falls back on unsupported attention nodes. Build a small validation model and the helper with:
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install -e ".[transcription,windowsml]"
@@ -117,7 +117,18 @@ $env:HF_TOKEN = $env:HUGGINGFACE_TOKEN
 dotnet build .\BroadcastifyCli.WindowsML\BroadcastifyCli.WindowsML.csproj -c Release
 ```
 
-Set **Settings → Processing → Advanced → ASR model path** to that model directory, choose the Windows ML profile, and select **Refresh check**. The helper loads a one-second local silence fixture through the model; only a successful decode makes the profile ready. `WINDOWS_ML_WHISPER_MODEL_PATH` and `WINDOWS_ML_HELPER_PATH` provide the equivalent `.env` overrides. The Tiny model is for validation; use a larger compatible Whisper export only after measuring radio accuracy and runtime.
+Set **Settings → Processing → Advanced → ASR model path** to that model directory, choose the Windows ML profile, and select **Test engine**. The helper loads a one-second local silence fixture through the exact configured model; only a successful decode makes the profile ready. `WINDOWS_ML_WHISPER_MODEL_PATH` and `WINDOWS_ML_HELPER_PATH` provide the equivalent `.env` overrides. The Tiny model is for validation; use a larger compatible Whisper export only after measuring radio accuracy and runtime.
+
+The helper can inspect Windows ML's provider catalog without downloading anything. Activating an installed provider is separate from explicitly allowing provider acquisition:
+
+```powershell
+$helper = ".\BroadcastifyCli.WindowsML\bin\Release\net10.0-windows10.0.26100.0\win-x64\BroadcastifyCli.WindowsML.exe"
+& $helper --providers
+& $helper --register-winml --providers  # installed packages only
+& $helper --ensure-winml --providers    # may download certified provider packages
+```
+
+These commands are diagnostic/setup tools; ordinary CPU transcription does not acquire a provider. See [hardware backend evidence](docs/hardware-backends.md#windows-ml-and-onnx-runtime-genai) for the measured DML and TensorRT RTX limitations.
 
 Build and launch the desktop app:
 

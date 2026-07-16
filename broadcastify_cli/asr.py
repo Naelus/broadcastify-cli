@@ -591,6 +591,9 @@ class WindowsMlWhisperAsr:
                         response = json.loads(response_line)
                         if response.get("error"):
                             raise RuntimeError(str(response["error"]))
+                        response_backend = str(response.get("backend") or "").strip()
+                        if response_backend:
+                            self.backend = response_backend
                         text = str(response.get("text") or "").strip()
                         if text:
                             text_parts.append(text)

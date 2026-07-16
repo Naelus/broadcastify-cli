@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using Microsoft.ML.OnnxRuntimeGenAI;
 
@@ -10,15 +11,54 @@ internal static class Program
         PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
     };
 
-    public static int Main(string[] args)
+    public static async Task<int> Main(string[] args)
     {
         try
         {
             var options = ParseArguments(args);
+            string[] registeredProviders = [];
+            if (options.ContainsKey("ensure-winml"))
+            {
+#if WINDOWS_ML_CATALOG
+                registeredProviders = await EnsureWindowsMlProviders();
+#else
+                throw new PlatformNotSupportedException(
+                    "This helper was not built with the Windows ML provider catalog.");
+#endif
+            }
+            else if (options.ContainsKey("register-winml"))
+            {
+#if WINDOWS_ML_CATALOG
+                registeredProviders = await RegisterReadyWindowsMlProviders();
+#else
+                throw new PlatformNotSupportedException(
+                    "This helper was not built with the Windows ML provider catalog.");
+#endif
+            }
+
+            if (options.ContainsKey("providers"))
+            {
+#if WINDOWS_ML_CATALOG
+                var providers = GetWindowsMlProviders();
+                WriteJson(new
+                {
+                    ready = true,
+                    providers,
+                    registered_providers = registeredProviders,
+                });
+                return 0;
+#else
+                throw new PlatformNotSupportedException(
+                    "This helper was not built with the Windows ML provider catalog.");
+#endif
+            }
+
             if (options.ContainsKey("probe"))
             {
                 var configuredModel = options.GetValueOrDefault("model");
                 var decodeReady = false;
+                var configuredProvider = "";
+                var backend = "Windows ML (ONNX Runtime GenAI)";
                 if (!string.IsNullOrWhiteSpace(configuredModel))
                 {
                     if (!Directory.Exists(configuredModel))
@@ -26,14 +66,18 @@ internal static class Program
                         throw new DirectoryNotFoundException(
                             $"Windows ML model directory not found: {configuredModel}");
                     }
+                    configuredProvider = GetConfiguredProvider(configuredModel);
+                    backend = DescribeBackend(configuredProvider);
                     decodeReady = RunDecodeSelfTest(configuredModel);
                 }
                 WriteJson(new
                 {
                     ready = true,
                     decode_ready = decodeReady,
-                    backend = "Windows ML (ONNX Runtime GenAI)",
+                    backend,
+                    configured_provider = configuredProvider,
                     architecture = Environment.Is64BitProcess ? "x64" : "x86",
+                    registered_providers = registeredProviders,
                 });
                 return 0;
             }
@@ -56,10 +100,12 @@ internal static class Program
             }
 
             var text = Transcribe(modelPath, audioPath);
+            var modelProvider = GetConfiguredProvider(modelPath);
             WriteJson(new
             {
                 text,
-                backend = "Windows ML (ONNX Runtime GenAI)",
+                backend = DescribeBackend(modelProvider),
+                configured_provider = modelProvider,
             });
             return 0;
         }
@@ -77,7 +123,8 @@ internal static class Program
     private static string Transcribe(string modelPath, string audioPath)
     {
         using var runtime = new OgaHandle();
-        using var model = new Model(modelPath);
+        using var config = new Config(modelPath);
+        using var model = new Model(config);
         using var processor = new MultiModalProcessor(model);
         return Transcribe(model, processor, audioPath);
     }
@@ -89,7 +136,7 @@ internal static class Program
     {
         using var audios = Audios.Load([audioPath]);
         const string prompt = "<|startoftranscript|><|en|><|transcribe|><|notimestamps|>";
-        using var inputs = processor.ProcessImagesAndAudios(prompt, null, audios);
+        using var inputs = processor.ProcessImagesAndAudios([prompt], null, audios);
         using var parameters = new GeneratorParams(model);
         parameters.SetSearchOption("do_sample", false);
         parameters.SetSearchOption("num_beams", 1d);
@@ -108,8 +155,11 @@ internal static class Program
     private static int TranscribeStream(string modelPath)
     {
         using var runtime = new OgaHandle();
-        using var model = new Model(modelPath);
+        using var config = new Config(modelPath);
+        using var model = new Model(config);
         using var processor = new MultiModalProcessor(model);
+        var configuredProvider = GetConfiguredProvider(modelPath);
+        var backend = DescribeBackend(configuredProvider);
         while (Console.In.ReadLine() is { } line)
         {
             if (string.IsNullOrWhiteSpace(line))
@@ -132,7 +182,8 @@ internal static class Program
             WriteJson(new
             {
                 text = Transcribe(model, processor, audioPath),
-                backend = "Windows ML (ONNX Runtime GenAI)",
+                backend,
+                configured_provider = configuredProvider,
             });
         }
         return 0;
@@ -184,6 +235,36 @@ internal static class Program
         writer.Write(new byte[dataLength]);
     }
 
+    private static string GetConfiguredProvider(string modelPath)
+    {
+        var configPath = Path.Combine(modelPath, "genai_config.json");
+        using var document = JsonDocument.Parse(File.ReadAllText(configPath));
+        var decoder = document.RootElement.GetProperty("model").GetProperty("decoder");
+        if (!decoder.TryGetProperty("session_options", out var sessionOptions)
+            || !sessionOptions.TryGetProperty("provider_options", out var providerOptions)
+            || providerOptions.ValueKind != JsonValueKind.Array)
+        {
+            return "CPU";
+        }
+        foreach (var item in providerOptions.EnumerateArray())
+        {
+            foreach (var provider in item.EnumerateObject())
+            {
+                return provider.Name;
+            }
+        }
+        return "CPU";
+    }
+
+    private static string DescribeBackend(string configuredProvider) =>
+        configuredProvider.Trim().ToLowerInvariant() switch
+        {
+            "cpu" => "Windows ML / ONNX Runtime GenAI CPU",
+            "dml" or "directml" => "ONNX Runtime GenAI DirectML",
+            "nvtensorrtrtx" or "trt-rtx" => "Windows ML TensorRT RTX",
+            var provider => $"Windows ML / ONNX Runtime GenAI ({provider})",
+        };
+
     private static Dictionary<string, string?> ParseArguments(IEnumerable<string> args)
     {
         var values = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
@@ -197,7 +278,10 @@ internal static class Program
             }
             var key = value[2..];
             if (string.Equals(key, "probe", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(key, "stream", StringComparison.OrdinalIgnoreCase))
+                || string.Equals(key, "stream", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(key, "providers", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(key, "register-winml", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(key, "ensure-winml", StringComparison.OrdinalIgnoreCase))
             {
                 values[key] = null;
                 continue;
@@ -224,4 +308,93 @@ internal static class Program
         Console.Out.WriteLine(value);
         Console.Out.Flush();
     }
+
+#if WINDOWS_ML_CATALOG
+    private static object[] GetWindowsMlProviders()
+    {
+        var catalog = Microsoft.Windows.AI.MachineLearning.ExecutionProviderCatalog.GetDefault();
+        return catalog.FindAllProviders()
+            .Select(provider => (object)new
+            {
+                name = provider.Name,
+                ready_state = provider.ReadyState.ToString(),
+                certification = provider.Certification.ToString(),
+                installed = provider.ReadyState
+                    != Microsoft.Windows.AI.MachineLearning.ExecutionProviderReadyState.NotPresent,
+                library_path = provider.LibraryPath,
+                package_name = provider.PackageId?.Name ?? "",
+            })
+            .ToArray();
+    }
+
+    private static async Task<string[]> RegisterReadyWindowsMlProviders()
+    {
+        var catalog = Microsoft.Windows.AI.MachineLearning.ExecutionProviderCatalog.GetDefault();
+        var providers = catalog.FindAllProviders();
+        foreach (var provider in providers)
+        {
+            if (provider.ReadyState
+                != Microsoft.Windows.AI.MachineLearning.ExecutionProviderReadyState.NotReady)
+            {
+                continue;
+            }
+            var result = await provider.EnsureReadyAsync();
+            if (result.Status
+                != Microsoft.Windows.AI.MachineLearning.ExecutionProviderReadyResultState.Success)
+            {
+                throw new InvalidOperationException(
+                    $"Windows ML could not activate {provider.Name}: "
+                    + $"{result.Status}; {result.DiagnosticText}");
+            }
+        }
+        return RegisterProviderLibraries(
+            providers.Where(provider =>
+                provider.ReadyState
+                == Microsoft.Windows.AI.MachineLearning.ExecutionProviderReadyState.Ready));
+    }
+
+    private static async Task<string[]> EnsureWindowsMlProviders()
+    {
+        var catalog = Microsoft.Windows.AI.MachineLearning.ExecutionProviderCatalog.GetDefault();
+        var providers = catalog.FindAllProviders();
+        foreach (var provider in providers)
+        {
+            if (provider.ReadyState
+                == Microsoft.Windows.AI.MachineLearning.ExecutionProviderReadyState.Ready)
+            {
+                continue;
+            }
+            var result = await provider.EnsureReadyAsync();
+            if (result.Status
+                != Microsoft.Windows.AI.MachineLearning.ExecutionProviderReadyResultState.Success)
+            {
+                throw new InvalidOperationException(
+                    $"Windows ML could not prepare {provider.Name}: "
+                    + $"{result.Status}; {result.DiagnosticText}");
+            }
+        }
+        return RegisterProviderLibraries(providers);
+    }
+
+    private static string[] RegisterProviderLibraries(
+        IEnumerable<Microsoft.Windows.AI.MachineLearning.ExecutionProvider> providers)
+    {
+        var registered = new List<string>();
+        foreach (var provider in providers)
+        {
+            if (string.IsNullOrWhiteSpace(provider.LibraryPath))
+            {
+                continue;
+            }
+            OgaRegisterExecutionProviderLibrary(provider.Name, provider.LibraryPath);
+            registered.Add(provider.Name);
+        }
+        return registered.ToArray();
+    }
+
+    [DllImport("onnxruntime-genai", CallingConvention = CallingConvention.Winapi)]
+    private static extern void OgaRegisterExecutionProviderLibrary(
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string registrationName,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string libraryPath);
+#endif
 }

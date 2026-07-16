@@ -23,7 +23,7 @@ Status labels: **Validated**, **Implemented**, **Foundation**, or **Planned**.
 | faster-whisper CUDA/CPU | Validated | CUDA is the Windows reference default; CPU is slower fallback. |
 | OpenVINO Whisper | Validated | Real AUTO/CPU decode passed; initialization and generation failures retry on CPU and retain the actual backend/fallback stage. |
 | whisper.cpp Vulkan | Validated | Native and opt-in locked-down container adapters exist; exact app path completed a real AMD Radeon 890M decode and retains backend evidence. |
-| Windows ML Whisper | Implemented | Integrated streaming C# helper and real CPU decode/self-test pass; DML model-builder output still fails and stays gated. |
+| Windows ML Whisper | Validated | Batched streaming C# helper and real CPU decode/self-test pass; provider discovery/acquisition is explicit, while DML/TensorRT acceleration stays gated after measured incompatibilities. |
 | pyannote diarization CUDA/CPU | Validated | Existing transcripts can gain labels without rerunning ASR. |
 | Non-CUDA diarization acceleration | Planned | Current portable behavior is CPU fallback. |
 | SQLite transcript/incident/summary store | Validated | Includes FTS, embeddings, Q&A history, area profiles, and cached briefs. |
@@ -53,6 +53,6 @@ Status labels: **Validated**, **Implemented**, **Foundation**, or **Planned**.
 | CPU only | faster-whisper INT8 CPU | pyannote CPU | llama.cpp CPU | Implemented; full end-to-end timing still needed |
 | Vulkan | whisper.cpp Vulkan | pyannote CPU | llama.cpp Vulkan | Real AMD ASR and quantized generation validated; full-day CPU diarization timing remains |
 | OpenVINO | OpenVINO Whisper AUTO/CPU | pyannote CPU | llama.cpp SYCL/auto/CPU | Real CPU decode and accelerator-to-CPU fallback validated |
-| Windows ML | ONNX Runtime GenAI | pyannote CPU | llama.cpp auto/CPU | CPU model decode integrated and self-tested; DML acceleration remains blocked |
+| Windows ML | ONNX Runtime GenAI CPU | pyannote CPU | llama.cpp auto/CPU | Real CPU decode validated; DML fails and the current TensorRT RTX provider is slower than CPU for Whisper |
 
 Detailed outcomes and commands belong in `PROGRESS.md`; defects and blockers belong in `BUGS.md`.

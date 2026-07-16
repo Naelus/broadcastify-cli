@@ -56,6 +56,17 @@ This is the dated verification and delivery log for `GOAL.md`. Keep forward-look
 - Visually and interactively verified WinUI at 1228×894 and the browser UI at desktop and 390×844. Both showed a clear successful OpenVINO AUTO result in 0.8 seconds; automatic/turbo settings were restored after testing. WinUI Release build: **0 warnings, 0 errors**.
 - Complete Python suite after the OpenVINO/self-test work: **92 passed**; browser JavaScript syntax check passed with the bundled Node runtime.
 
+#### Windows ML runtime validation and provider boundary
+
+- Rebuilt Whisper Tiny with the stable ONNX Runtime GenAI 0.13.1 builder and compared it with the installed 0.14.1 builder/runtime. Fresh CPU and DML models initially reproduced the helper's `DivideByZeroException`.
+- The tag-matched Microsoft Python Whisper sample decoded the same CPU model, isolating the app defect to the C# call. Whisper requires the batched-prompt multimodal overload even for one audio input; switching from the scalar overload fixed the helper. The final CPU helper decoded the retained 22.7-second radio clip in 0.622 seconds after warm caches and returned the same 147-character text as the Python control.
+- Added read-only Windows ML provider discovery, activation of already-installed providers, and explicit provider acquisition. Ordinary transcription never downloads a provider. The helper uses ONNX Runtime GenAI's native provider-registration entry point and reports configured provider/backend instead of calling every success GPU-accelerated.
+- The explicit acquisition path installed and registered Microsoft's certified `NvTensorRTRTXExecutionProvider` 1.8.24.0. Provider acquisition took 45.124 seconds on this host; later activation was local and quick.
+- Current 0.13.1/0.14.1 DML Whisper exports remain blocked: graph capture rejects the builder's non-shared cache, while a forced shared cache fails `DmlFusedNode_0_0` with an invalid-key error.
+- A corrected TensorRT RTX export completed both synthetic and real decodes, but the provider rejected 36 Whisper `Attention`/`MultiHeadAttention` nodes and partitioned/fell back. The 22.7-second real clip took 15.895 seconds, versus 0.622 seconds on the CPU model, so this is diagnostic evidence rather than an enabled acceleration path.
+- The final Python streaming adapter run retained 22.74 seconds, one segment, 147 characters, and `Windows ML / ONNX Runtime GenAI CPU`, proving the honest backend label crosses the helper boundary.
+- Final WinML, DirectML-flavor, and complete WinUI builds all completed with **0 warnings, 0 errors**. The complete Python suite remains **92 passed**; provider activation and its download boundary are documented in `docs/hardware-backends.md`.
+
 ### Archive quota reset run
 
 - Completed a guarded feed 90001 resume for July 3–16 after downloads became available again.

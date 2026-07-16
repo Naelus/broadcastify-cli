@@ -6,12 +6,13 @@ Use this file for reproducible defects and concrete blockers, not the general ro
 
 ## Active
 
-### B-001 — Windows ML DML Whisper model fails during generation
+### B-001 — Windows ML GPU providers do not yet accelerate Whisper reliably
 
 - **Severity:** High for Windows ML parity; no impact on the default CUDA path.
-- **Observed:** ONNX Runtime GenAI 0.14.1 with official builder output for `openai/whisper-tiny` fails on DML/WinML. With `past_present_share_buffer=false`, DML graph capture rejects the generator; changing it to true reaches a `DmlFusedNode` invalid-key error.
-- **Control:** The C# helper, Python streaming adapter, and a CPU FP32 model successfully transcribed a real 23-second radio clip. The profile becomes ready only when its configured model passes an actual decode self-test; the broken DML models remain unavailable.
-- **Next:** Test a compatible published DML model or upstream fix; add self-test/model discovery before enabling the profile.
+- **Observed:** Stable 0.13.1 and installed 0.14.1 builder/runtime combinations fail with current DML Whisper Tiny exports. A non-shared cache is rejected by automatic graph capture; forcing the shared cache reaches `DmlFusedNode_0_0` with `invalid unordered_map<K, T> key`.
+- **Second provider:** Windows ML successfully acquired and registered certified `NvTensorRTRTXExecutionProvider` 1.8.24.0, but TensorRT RTX reported 36 unsupported Whisper attention nodes. The retained 22.7-second clip decoded correctly through partition/fallback in 15.895 seconds, versus 0.622 seconds on the CPU model after warm caches, so it is deliberately not selected as an accelerated profile.
+- **Control:** The corrected C# helper, Python streaming adapter, and CPU FP32 model perform a real decode and identify the backend as CPU. Broken or partially-falling-back models must pass the selected-engine self-test and are not advertised as acceleration.
+- **Next:** Retest a published compatible graph or upstream runtime/provider fix. Prefer the validated CUDA, OpenVINO, or whisper.cpp Vulkan paths for Windows GPU ASR in the meantime.
 
 ### B-003 — Portable diarization is CPU-only outside CUDA
 
@@ -79,3 +80,7 @@ The exact whisper.cpp adapter now completed a real AMD Radeon 890M decode after 
 ### F-007 — OpenVINO fallback looked like the requested accelerator succeeded
 
 OpenVINO now retries both pipeline initialization and first-generation failures on CPU, removes an obsolete NPU-only constructor flag, and writes the actual fallback backend and failure stage into transcripts. Native and Web Settings expose an explicit selected-engine synthetic-audio test; the ordinary readiness check cannot silently trigger a multi-gigabyte model download.
+
+### F-008 — Windows ML Whisper used the wrong C# processor overload
+
+The helper passed one prompt through the scalar multimodal overload, which caused `DivideByZeroException` in both CPU and DML models even though Microsoft’s Python sample worked. It now uses the batched-prompt overload for the one-audio batch, constructs the model through `Config`, reports the configured provider, and passes both synthetic and retained-radio CPU decodes.
