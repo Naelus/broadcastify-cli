@@ -23,6 +23,7 @@ This fork uses Broadcastify's website login and the same private web endpoints a
 - Local BGE embeddings for semantic retrieval
 - Quantized Gemma 4 through llama.cpp for incident extraction, daily briefs, and range Q&A
 - Opt-in OpenAI Responses, OpenAI-compatible, and saved-login Codex CLI analysis providers behind the same evidence schema
+- A native **Analysis & AI** Settings tab with explicit transcript-sharing consent, no-usage readiness checks, session/env keys, and optional Windows Credential Locker storage
 - Cache/resume behavior for downloads, combined audio, transcripts, embeddings, incidents, and summaries
 - Automatic transcript import, incident extraction, summary, and semantic indexing after a completed UI job
 - Saved-day review, priority-filtered incident timeline, and evidence-grounded date-range questions in the UI
@@ -64,7 +65,7 @@ Whisper remains the practical fast ASR default for this radio workflow. Diarizat
 
 Embeddings do not replace the generative model. They cheaply retrieve and cluster likely-relevant transcript passages; Gemma turns cited evidence into structured incidents and natural-language answers. SQLite remains the source of truth, including timestamps and transcript evidence, so model output can be audited.
 
-Local Gemma remains the Windows default. API and Codex modes are explicit alternatives for users who prefer a hosted model or an existing Codex subscription login; they never activate merely because a key or login exists. See [docs/model-providers.md](docs/model-providers.md) for supported contracts, privacy controls, CLI examples, and validation status.
+Local Gemma remains the Windows default. API and Codex modes are explicit alternatives for users who prefer a hosted model or an existing Codex subscription login; they never activate merely because a key or login exists. Choose them in **Settings → Analysis & AI**. External providers remain blocked until the transcript-sharing switch is enabled, and **Check provider** verifies configuration without sending transcript text or starting a paid OpenAI model request. See [docs/model-providers.md](docs/model-providers.md) for supported contracts, privacy controls, CLI examples, and validation status.
 
 For a combined daily job, the downloader now concatenates the archive blocks **before** transcription and diarization. This is important: the old order diarized each 30-minute file separately, causing speaker labels and timestamps to restart at every boundary.
 

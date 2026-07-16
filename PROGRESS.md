@@ -46,8 +46,11 @@ This is the dated verification and delivery log for `GOAL.md`. Keep forward-look
 - Added generic authenticated OpenAI-compatible Chat Completions for local or remote llama.cpp/Ollama/LM Studio-style endpoints.
 - Added an ephemeral, read-only Codex CLI harness that reuses saved CLI authentication, isolates its working directory, requests a JSON schema, and strips unrelated secrets from the child environment.
 - Provider/model/endpoint identities are distinct in SQLite caches, preventing conclusions from one provider from masquerading as another provider's run.
-- The official Codex non-interactive command and local `codex exec --help` were checked; the reference machine currently reports `Not logged in`, so live subscription inference remains intentionally unclaimed.
-- Python suite after provider integration: **75 passed**.
+- Added a separate native **Analysis & AI** Settings tab instead of adding more controls to the processing page. It exposes local Gemma, OpenAI Responses, compatible `/v1`, and saved-login Codex providers; non-secret choices persist in the user settings file and an API key is session-only unless the user explicitly selects Windows Credential Locker.
+- Wired the selected provider into local continuation, post-job analysis, selected-day analysis, Q&A, weekly summaries, and regional story briefs. Explicit blank/false UI values override environment defaults so an old `.env` switch cannot silently re-enable external analysis.
+- Added provider-specific readiness checks that never send transcript text: local llama.cpp executable discovery, OpenAI key presence without a billable request, compatible-endpoint `/models`, and local `codex login status`.
+- Visually exercised the tab at 1240x900. Local llama.cpp was found, OpenAI correctly reported a missing key, consent-off blocked external use, and the desktop Codex check reported `Logged in using ChatGPT`; no live model request was made. The private local provider and external-sharing toggle were restored before closing.
+- Python suite after native provider settings and diagnostics: **77 passed**. WinUI Release build: **0 warnings, 0 errors**.
 
 ### Delivery checkpoints
 

@@ -545,7 +545,7 @@
                         <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
                         <StackPanel Spacing="4">
                             <TextBlock Text="Settings" Style="{StaticResource TitleTextBlockStyle}" />
-                            <TextBlock Text="Account, storage, and local model defaults shared by archive, library, and area jobs."
+                            <TextBlock Text="Account, storage, processing, and analysis defaults shared by archive, library, and area jobs."
                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                         </StackPanel>
                         <TabView Grid.Row="1" IsAddTabButtonVisible="False" TabWidthMode="SizeToContent">
@@ -669,8 +669,73 @@
                                                     <Button Grid.Column="1" Content="Browse…" VerticalAlignment="Bottom" Click="Browse_Click" />
                                                 </Grid>
                                                 <NumberBox x:Name="DownloadJobsBox" Header="Download workers" Value="1" Minimum="1" Maximum="32" SpinButtonPlacementMode="Compact" />
-                                                <TextBlock Text="These non-secret processing choices are saved for this Windows account when the app closes. Logins remain in Windows Credential Locker; tokens stay in .env or this session only."
+                                                <TextBlock Text="These non-secret processing choices are saved for this Windows account when the app closes. Secrets stay in .env or this session unless you explicitly choose Windows Credential Locker."
                                                            TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                                            </StackPanel>
+                                        </Border>
+                                    </StackPanel>
+                                </ScrollViewer>
+                            </TabViewItem>
+
+                            <TabViewItem Header="Analysis &amp; AI" IsClosable="False">
+                                <ScrollViewer HorizontalScrollBarVisibility="Disabled">
+                                    <StackPanel Spacing="16" MaxWidth="900" HorizontalAlignment="Left" Padding="0,4,12,16">
+                                        <Border Style="{StaticResource CardBorderStyle}">
+                                            <StackPanel Spacing="12">
+                                                <StackPanel Spacing="3">
+                                                    <TextBlock Text="Event analysis" Style="{StaticResource SubtitleTextBlockStyle}" />
+                                                    <TextBlock Text="Local Gemma is the private default. Hosted APIs and Codex are opt-in and use the same evidence and clip checks."
+                                                               TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                </StackPanel>
+                                                <Grid ColumnSpacing="12">
+                                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                                    <ComboBox x:Name="AnalysisProviderComboBox" Header="Analysis provider" SelectedIndex="0"
+                                                              HorizontalAlignment="Stretch" SelectionChanged="AnalysisProvider_SelectionChanged">
+                                                        <ComboBoxItem Content="Local Gemma via llama.cpp (recommended)" Tag="local" />
+                                                        <ComboBoxItem Content="OpenAI Responses API" Tag="openai-responses" />
+                                                        <ComboBoxItem Content="OpenAI-compatible /v1 endpoint" Tag="openai-compatible" />
+                                                        <ComboBoxItem Content="Codex CLI saved login" Tag="codex-cli" />
+                                                    </ComboBox>
+                                                    <TextBox x:Name="AnalysisModelBox" Grid.Column="1" Header="Model"
+                                                             PlaceholderText="Provider default when blank" />
+                                                </Grid>
+                                                <TextBox x:Name="AnalysisEndpointBox" Header="Optional endpoint"
+                                                         PlaceholderText="Managed locally, or enter a provider URL ending in /v1"
+                                                         TextChanged="AnalysisEndpoint_TextChanged" />
+                                                <ToggleSwitch x:Name="AllowExternalAnalysisToggle"
+                                                              Header="Allow transcript excerpts to leave this computer"
+                                                              Toggled="AllowExternalAnalysis_Toggled" />
+                                                <InfoBar x:Name="AnalysisProviderInfoBar" IsOpen="True" IsClosable="False"
+                                                         Severity="Success" Title="Private local analysis"
+                                                         Message="Transcript text stays on this computer." />
+                                                <Expander Header="Credentials and Codex executable" HorizontalAlignment="Stretch">
+                                                    <StackPanel Spacing="10" Padding="0,8,0,4">
+                                                        <PasswordBox x:Name="AnalysisApiKeyBox" Header="API key for this session"
+                                                                     PlaceholderText="Optional when the environment variable below is set"
+                                                                     PasswordRevealMode="Peek" />
+                                                        <StackPanel Orientation="Horizontal" Spacing="10">
+                                                            <CheckBox x:Name="RememberAnalysisApiKeyCheckBox"
+                                                                      Content="Remember this key in Windows Credential Locker" />
+                                                            <Button Content="Forget saved key" Click="ClearAnalysisKey_Click" />
+                                                        </StackPanel>
+                                                        <Grid ColumnSpacing="12">
+                                                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                                            <TextBox x:Name="AnalysisApiKeyEnvironmentBox" Header="API key environment variable"
+                                                                     Text="OPENAI_API_KEY" />
+                                                            <TextBox x:Name="CodexCliPathBox" Grid.Column="1" Header="Optional Codex CLI path"
+                                                                     PlaceholderText="Leave blank for automatic discovery" />
+                                                        </Grid>
+                                                    </StackPanel>
+                                                </Expander>
+                                                <Grid ColumnSpacing="10">
+                                                    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                                    <Button x:Name="AnalysisProviderCheckButton" Content="Check provider"
+                                                            Click="CheckAnalysisProvider_Click" />
+                                                    <TextBlock x:Name="AnalysisProviderStatusText" Grid.Column="1"
+                                                               Text="Local engine readiness is also included in Processing → hardware check."
+                                                               TextWrapping="Wrap" VerticalAlignment="Center"
+                                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                </Grid>
                                             </StackPanel>
                                         </Border>
                                     </StackPanel>

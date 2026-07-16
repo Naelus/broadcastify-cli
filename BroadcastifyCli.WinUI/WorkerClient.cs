@@ -417,6 +417,27 @@ internal sealed class WorkerClient
         return diagnostics;
     }
 
+    public async Task<AnalysisProviderStatus?> GetAnalysisProviderDiagnosticsAsync(
+        AnalysisProviderDiagnosticsRequest request,
+        CancellationToken cancellationToken)
+    {
+        AnalysisProviderStatus? result = null;
+        await RunWorkerAsync(
+            ["-m", "broadcastify_cli.worker", "analysis-provider-diagnostics"],
+            JsonSerializer.Serialize(request, JsonOptions),
+            message =>
+            {
+                if (message.TryGetProperty("type", out var type)
+                    && type.GetString() == "analysis_provider_diagnostics")
+                {
+                    result = message.GetProperty("result")
+                        .Deserialize<AnalysisProviderStatus>(JsonOptions);
+                }
+            },
+            cancellationToken);
+        return result;
+    }
+
     private async Task RunWorkerAsync(
         IReadOnlyList<string> arguments,
         string? stdin,

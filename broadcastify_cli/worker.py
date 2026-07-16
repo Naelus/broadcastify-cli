@@ -28,7 +28,11 @@ from .analysis import (
     find_llama_server,
     format_archive_time,
 )
-from .analysis_providers import AnalysisProviderConfig, open_analysis_client
+from .analysis_providers import (
+    AnalysisProviderConfig,
+    diagnose_analysis_provider,
+    open_analysis_client,
+)
 from .area_watch import AreaStoryAnalyzer
 from .broadcastify import BroadcastifyClient
 from .jobs import JobRunner
@@ -52,6 +56,13 @@ def search_feeds(query: str) -> int:
     with AnalysisStore(DEFAULT_DATABASE) as store:
         store.save_feed_catalog(serialized)
     emit({"type": "result", "results": serialized})
+    return 0
+
+
+def analysis_provider_diagnostics() -> int:
+    payload = json.load(sys.stdin)
+    result = diagnose_analysis_provider(AnalysisProviderConfig.from_mapping(payload))
+    emit({"type": "analysis_provider_diagnostics", "result": result})
     return 0
 
 
@@ -560,6 +571,7 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("run")
     subparsers.add_parser("authenticate")
     subparsers.add_parser("diagnostics")
+    subparsers.add_parser("analysis-provider-diagnostics")
     library = subparsers.add_parser("library")
     library.add_argument("--output-dir", default="archives")
     subparsers.add_parser("continue-local")
@@ -618,6 +630,8 @@ def main() -> int:
             return authenticate()
         if arguments.command == "diagnostics":
             return diagnostics()
+        if arguments.command == "analysis-provider-diagnostics":
+            return analysis_provider_diagnostics()
         if arguments.command == "library":
             return library_days(arguments.output_dir)
         if arguments.command == "continue-local":

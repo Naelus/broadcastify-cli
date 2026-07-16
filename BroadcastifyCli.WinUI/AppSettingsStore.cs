@@ -22,6 +22,13 @@ internal sealed record DesktopSettings
     public bool Transcribe { get; init; } = true;
     public bool Diarize { get; init; } = true;
     public bool AnalyzeAfterJob { get; init; } = true;
+    public string AnalysisProvider { get; init; } = "local";
+    public string AnalysisModel { get; init; } = "ggml-org/gemma-4-12B-it-GGUF:Q4_K_M";
+    public string AnalysisEndpoint { get; init; } = "";
+    public string AnalysisApiKeyEnvironment { get; init; } = "OPENAI_API_KEY";
+    public string CodexCliPath { get; init; } = "";
+    public bool AllowExternalAnalysis { get; init; }
+    public bool RememberAnalysisApiKey { get; init; }
 }
 
 internal static class AppSettingsStore

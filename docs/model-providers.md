@@ -7,11 +7,13 @@ Three opt-in alternatives implement the same `chat_json` / `chat_text` contract 
 | Provider | Transport | Credential | External-data acknowledgement |
 |---|---|---|---|
 | `local` | Managed llama.cpp or an existing local `/v1` endpoint | None | No |
-| `openai-responses` | OpenAI Responses API with Structured Outputs | Environment variable, normally `OPENAI_API_KEY` | Always required |
-| `openai-compatible` | Chat Completions `/v1` endpoint such as llama.cpp, Ollama, LM Studio, or another provider | Optional environment variable | Required unless the endpoint is loopback |
+| `openai-responses` | OpenAI Responses API with Structured Outputs | Session/env key; optional Windows Credential Locker when explicitly selected | Always required |
+| `openai-compatible` | Chat Completions `/v1` endpoint such as llama.cpp, Ollama, LM Studio, or another provider | Optional session/env key or explicitly selected Windows Credential Locker | Required unless the endpoint is loopback |
 | `codex-cli` | Ephemeral `codex exec` process using its saved login | Existing Codex CLI login | Always required |
 
 Remote providers receive text, not raw audio. Incident extraction sends bounded transcript windows; questions send retrieved evidence passages and saved incident summaries; weekly and area reports send derived summaries and incident records. Those inputs can still contain sensitive or unverified radio traffic, so remote modes refuse to run until `--allow-external-analysis` (or `ALLOW_EXTERNAL_ANALYSIS=true`) is set.
+
+On Windows, the same choices are available under **Settings → Analysis & AI** and apply to day analysis, automatic post-processing, Q&A, weekly summaries, and area briefs. Non-secret provider settings are saved for the Windows account. An entered API key remains in memory for the session unless **Remember this key in Windows Credential Locker** is explicitly checked; it is never written to the ordinary settings JSON. **Check provider** sends no transcript text. For OpenAI it checks only that a key is present, so it creates no model usage; compatible endpoints receive only `GET /models`; Codex runs only `codex login status`.
 
 ## OpenAI Responses API
 
@@ -64,7 +66,7 @@ This path reuses the CLI's saved ChatGPT/Codex authentication by default; it doe
 
 OpenAI's current Codex documentation describes saved-login reuse, non-interactive `codex exec`, ephemeral sessions, read-only sandboxing, and `--output-schema` in [Non-interactive mode](https://learn.chatgpt.com/docs/non-interactive-mode).
 
-The contract and command construction are covered by local tests. A live Codex model call was deliberately not made on the reference machine because `codex login status` reported no active CLI login; the UI must report that state rather than pretending the provider is ready.
+The contract and command construction are covered by local tests. The native readiness check detected the reference desktop's saved ChatGPT login, but a live Codex model call was deliberately not made. Readiness means authentication was detected, not that a particular plan has remaining usage or that a model response was validated.
 
 ## Persistence and switching
 

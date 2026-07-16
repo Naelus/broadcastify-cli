@@ -8,13 +8,21 @@ from pathlib import Path
 from typing import Any, Iterator, Mapping
 from urllib.parse import urlparse
 
-from .analysis import DEFAULT_LLM_MODEL, LlamaCppClient, LlamaServerProcess
+import requests
+
+from .analysis import (
+    DEFAULT_LLM_MODEL,
+    LlamaCppClient,
+    LlamaServerProcess,
+    find_llama_server,
+)
 from .analysis_clients import (
     AnalysisClient,
     AnalysisProviderError,
     CodexCliClient,
     OpenAICompatibleClient,
     OpenAIResponsesClient,
+    codex_login_status,
 )
 
 
@@ -66,19 +74,33 @@ class AnalysisProviderConfig:
 
     @classmethod
     def from_mapping(cls, value: Mapping[str, Any]) -> "AnalysisProviderConfig":
-        provider = _provider_name(
-            value.get("analysis_provider") or os.getenv("ANALYSIS_PROVIDER") or "local"
+        provider_value = (
+            value.get("analysis_provider")
+            if "analysis_provider" in value
+            else os.getenv("ANALYSIS_PROVIDER")
         )
-        explicit_model = str(
-            value.get("analysis_model") or os.getenv("ANALYSIS_MODEL") or ""
-        ).strip()
+        provider = _provider_name(provider_value or "local")
+        model_value = (
+            value.get("analysis_model")
+            if "analysis_model" in value
+            else os.getenv("ANALYSIS_MODEL")
+        )
+        explicit_model = str(model_value or "").strip()
         if not explicit_model and provider == "local":
             explicit_model = str(value.get("model") or DEFAULT_LLM_MODEL)
         if not explicit_model and provider == "openai-responses":
             explicit_model = DEFAULT_OPENAI_MODEL
-        endpoint = str(
-            value.get("analysis_endpoint") or os.getenv("ANALYSIS_ENDPOINT") or ""
-        ).strip()
+        endpoint_value = (
+            value.get("analysis_endpoint")
+            if "analysis_endpoint" in value
+            else os.getenv("ANALYSIS_ENDPOINT")
+        )
+        endpoint = str(endpoint_value or "").strip()
+        allow_external = (
+            bool(value.get("allow_external_analysis"))
+            if "allow_external_analysis" in value
+            else _truthy(os.getenv("ALLOW_EXTERNAL_ANALYSIS"))
+        )
         return cls(
             provider=provider,
             model=explicit_model,
@@ -92,8 +114,7 @@ class AnalysisProviderConfig:
             codex_path=str(
                 value.get("codex_cli_path") or os.getenv("CODEX_CLI_PATH") or ""
             ).strip(),
-            allow_external=bool(value.get("allow_external_analysis", False))
-            or _truthy(os.getenv("ALLOW_EXTERNAL_ANALYSIS")),
+            allow_external=allow_external,
             timeout=float(value.get("analysis_timeout") or 600.0),
         )
 
@@ -132,6 +153,63 @@ class AnalysisProviderConfig:
 
 def _api_key(config: AnalysisProviderConfig) -> str:
     return config.api_key or os.getenv(config.api_key_env, "")
+
+
+def diagnose_analysis_provider(config: AnalysisProviderConfig) -> dict[str, Any]:
+    """Check configuration/auth without sending transcript text or creating usage."""
+
+    result: dict[str, Any] = {
+        "provider": config.provider,
+        "model": config.model or "account default",
+        "external": config.is_external,
+        "ready": False,
+        "verified": False,
+        "message": "",
+    }
+    try:
+        config.validate()
+    except AnalysisProviderError as exc:
+        result["message"] = str(exc)
+        return result
+    if config.provider == "local" and not config.endpoint:
+        executable = find_llama_server()
+        result["ready"] = bool(executable)
+        result["message"] = (
+            f"llama.cpp is available at {executable}; the model loads on first use."
+            if executable
+            else "llama-server was not found. Install llama.cpp or configure LLAMA_SERVER_PATH."
+        )
+        return result
+    if config.provider == "openai-responses":
+        result["ready"] = bool(_api_key(config))
+        result["message"] = (
+            f"API key found in {config.api_key_env}; no billable model request was made."
+            if result["ready"]
+            else f"No API key was supplied and {config.api_key_env} is empty."
+        )
+        return result
+    if config.provider == "codex-cli":
+        ready, message = codex_login_status(config.codex_path or None)
+        result["ready"] = ready
+        result["verified"] = ready
+        result["message"] = message
+        return result
+
+    headers: dict[str, str] = {}
+    if _api_key(config):
+        headers["Authorization"] = f"Bearer {_api_key(config)}"
+    url = f"{config.endpoint.rstrip('/')}/models"
+    try:
+        response = requests.get(url, headers=headers, timeout=5.0)
+        if response.status_code == 200:
+            result["ready"] = True
+            result["verified"] = True
+            result["message"] = "The compatible endpoint answered /models without receiving transcript text."
+        else:
+            result["message"] = f"The compatible endpoint returned HTTP {response.status_code} for /models."
+    except requests.RequestException as exc:
+        result["message"] = f"The compatible endpoint could not be reached: {exc}"
+    return result
 
 
 @contextmanager

@@ -19,6 +19,7 @@ namespace BroadcastifyCli.WinUI;
 
 public sealed partial class MainWindow : Window
 {
+    private const string DefaultAnalysisModel = "ggml-org/gemma-4-12B-it-GGUF:Q4_K_M";
     private readonly ObservableCollection<FeedSearchResult> _feeds = [];
     private readonly ObservableCollection<FeedSearchResult> _areaFeeds = [];
     private readonly ObservableCollection<AreaProfile> _areaProfiles = [];
@@ -39,6 +40,7 @@ public sealed partial class MainWindow : Window
     private LibraryDay? _selectedLibraryDay;
     private int _librarySelectionVersion;
     private bool _broadcastifyRateLimitObserved;
+    private bool _loadingSettings;
 
     public MainWindow()
     {
@@ -175,6 +177,7 @@ public sealed partial class MainWindow : Window
 
     private void LoadUserSettings()
     {
+        _loadingSettings = true;
         var settings = AppSettingsStore.Load();
         SelectComboValue(HardwareProfileComboBox, settings.HardwareProfile);
         SelectComboValue(ModelComboBox, settings.WhisperModel);
@@ -195,6 +198,30 @@ public sealed partial class MainWindow : Window
         TranscribeCheckBox.IsChecked = settings.Transcribe;
         DiarizeCheckBox.IsChecked = settings.Diarize;
         AnalyzeAfterJobCheckBox.IsChecked = settings.AnalyzeAfterJob;
+        SelectComboValue(AnalysisProviderComboBox, settings.AnalysisProvider);
+        AnalysisModelBox.Text = string.IsNullOrWhiteSpace(settings.AnalysisModel)
+            ? settings.AnalysisProvider switch
+            {
+                "local" => DefaultAnalysisModel,
+                "openai-responses" => "gpt-5.6-luna",
+                _ => "",
+            }
+            : settings.AnalysisModel;
+        AnalysisEndpointBox.Text = settings.AnalysisEndpoint;
+        AnalysisApiKeyEnvironmentBox.Text = string.IsNullOrWhiteSpace(settings.AnalysisApiKeyEnvironment)
+            ? "OPENAI_API_KEY"
+            : settings.AnalysisApiKeyEnvironment;
+        CodexCliPathBox.Text = settings.CodexCliPath;
+        AllowExternalAnalysisToggle.IsOn = settings.AllowExternalAnalysis;
+        var savedAnalysisKey = CredentialStore.TryLoadAnalysisKey();
+        if (savedAnalysisKey is not null)
+        {
+            AnalysisApiKeyBox.Password = savedAnalysisKey.Secret;
+        }
+        RememberAnalysisApiKeyCheckBox.IsChecked =
+            settings.RememberAnalysisApiKey && savedAnalysisKey is not null;
+        _loadingSettings = false;
+        UpdateAnalysisProviderUi();
     }
 
     private void MainWindow_Closed(object sender, WindowEventArgs args)
@@ -220,11 +247,224 @@ public sealed partial class MainWindow : Window
             Transcribe = TranscribeCheckBox.IsChecked == true,
             Diarize = DiarizeCheckBox.IsChecked == true,
             AnalyzeAfterJob = AnalyzeAfterJobCheckBox.IsChecked == true,
+            AnalysisProvider = SelectedComboValue(AnalysisProviderComboBox, "local"),
+            AnalysisModel = AnalysisModelBox.Text.Trim(),
+            AnalysisEndpoint = AnalysisEndpointBox.Text.Trim(),
+            AnalysisApiKeyEnvironment = string.IsNullOrWhiteSpace(AnalysisApiKeyEnvironmentBox.Text)
+                ? "OPENAI_API_KEY"
+                : AnalysisApiKeyEnvironmentBox.Text.Trim(),
+            CodexCliPath = CodexCliPathBox.Text.Trim(),
+            AllowExternalAnalysis = AllowExternalAnalysisToggle.IsOn,
+            RememberAnalysisApiKey = RememberAnalysisApiKeyCheckBox.IsChecked == true,
         };
         if (!AppSettingsStore.TrySave(settings))
         {
             AppendLog("Settings could not be saved to this Windows account.");
         }
+        if (RememberAnalysisApiKeyCheckBox.IsChecked == true
+            && !string.IsNullOrWhiteSpace(AnalysisApiKeyBox.Password))
+        {
+            CredentialStore.SaveAnalysisKey(AnalysisApiKeyBox.Password);
+        }
+        else if (RememberAnalysisApiKeyCheckBox.IsChecked != true)
+        {
+            CredentialStore.ClearAnalysisKey();
+        }
+    }
+
+    private void AnalysisProvider_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_loadingSettings || AnalysisModelBox is null)
+        {
+            return;
+        }
+        var provider = SelectedComboValue(AnalysisProviderComboBox, "local");
+        switch (provider)
+        {
+            case "openai-responses":
+                if (string.IsNullOrWhiteSpace(AnalysisModelBox.Text)
+                    || AnalysisModelBox.Text.StartsWith("ggml-org/", StringComparison.OrdinalIgnoreCase)
+                    || AnalysisModelBox.Text == "local-model")
+                {
+                    AnalysisModelBox.Text = "gpt-5.6-luna";
+                }
+                if (string.IsNullOrWhiteSpace(AnalysisEndpointBox.Text))
+                {
+                    AnalysisEndpointBox.Text = "https://api.openai.com/v1";
+                }
+                break;
+            case "openai-compatible":
+                if (string.IsNullOrWhiteSpace(AnalysisModelBox.Text)
+                    || AnalysisModelBox.Text.StartsWith("ggml-org/", StringComparison.OrdinalIgnoreCase)
+                    || AnalysisModelBox.Text.StartsWith("gpt-", StringComparison.OrdinalIgnoreCase))
+                {
+                    AnalysisModelBox.Text = "local-model";
+                }
+                if (string.IsNullOrWhiteSpace(AnalysisEndpointBox.Text)
+                    || AnalysisEndpointBox.Text.StartsWith("https://api.openai.com", StringComparison.OrdinalIgnoreCase))
+                {
+                    AnalysisEndpointBox.Text = "http://127.0.0.1:1234/v1";
+                }
+                break;
+            case "codex-cli":
+                if (AnalysisModelBox.Text.StartsWith("ggml-org/", StringComparison.OrdinalIgnoreCase)
+                    || AnalysisModelBox.Text.StartsWith("gpt-", StringComparison.OrdinalIgnoreCase)
+                    || AnalysisModelBox.Text == "local-model")
+                {
+                    AnalysisModelBox.Text = "";
+                }
+                AnalysisEndpointBox.Text = "";
+                break;
+            default:
+                if (string.IsNullOrWhiteSpace(AnalysisModelBox.Text)
+                    || AnalysisModelBox.Text.StartsWith("gpt-", StringComparison.OrdinalIgnoreCase)
+                    || AnalysisModelBox.Text == "local-model")
+                {
+                    AnalysisModelBox.Text = DefaultAnalysisModel;
+                }
+                if (AnalysisEndpointBox.Text.StartsWith("https://api.openai.com", StringComparison.OrdinalIgnoreCase)
+                    || AnalysisEndpointBox.Text == "http://127.0.0.1:1234/v1")
+                {
+                    AnalysisEndpointBox.Text = "";
+                }
+                break;
+        }
+        AnalysisProviderStatusText.Text = "Provider settings changed; run the check before a large job.";
+        UpdateAnalysisProviderUi();
+    }
+
+    private void AnalysisEndpoint_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        if (!_loadingSettings)
+        {
+            UpdateAnalysisProviderUi();
+        }
+    }
+
+    private void AllowExternalAnalysis_Toggled(object sender, RoutedEventArgs e) =>
+        UpdateAnalysisProviderUi();
+
+    private bool SelectedAnalysisProviderIsExternal()
+    {
+        var provider = SelectedComboValue(AnalysisProviderComboBox, "local");
+        if (provider is "openai-responses" or "codex-cli")
+        {
+            return true;
+        }
+        if (provider != "openai-compatible")
+        {
+            return false;
+        }
+        return !Uri.TryCreate(AnalysisEndpointBox.Text.Trim(), UriKind.Absolute, out var endpoint)
+            || !endpoint.IsLoopback;
+    }
+
+    private string SelectedAnalysisProviderDisplayName() =>
+        SelectedComboValue(AnalysisProviderComboBox, "local") switch
+        {
+            "openai-responses" => "OpenAI",
+            "openai-compatible" => "the compatible model endpoint",
+            "codex-cli" => "Codex CLI",
+            _ => "local Gemma",
+        };
+
+    private void UpdateAnalysisProviderUi()
+    {
+        if (AnalysisProviderInfoBar is null)
+        {
+            return;
+        }
+        var provider = SelectedComboValue(AnalysisProviderComboBox, "local");
+        var usesApiKey = provider is "openai-responses" or "openai-compatible";
+        var usesCodex = provider == "codex-cli";
+        var external = SelectedAnalysisProviderIsExternal();
+        AnalysisEndpointBox.IsEnabled = !usesCodex;
+        AnalysisApiKeyBox.IsEnabled = usesApiKey;
+        AnalysisApiKeyEnvironmentBox.IsEnabled = usesApiKey;
+        RememberAnalysisApiKeyCheckBox.IsEnabled = usesApiKey;
+        CodexCliPathBox.IsEnabled = usesCodex;
+        AllowExternalAnalysisToggle.IsEnabled = external;
+        if (!external)
+        {
+            AnalysisProviderInfoBar.Severity = InfoBarSeverity.Success;
+            AnalysisProviderInfoBar.Title = provider == "local"
+                ? "Private local analysis"
+                : "Local compatible endpoint";
+            AnalysisProviderInfoBar.Message = "Transcript text stays on this computer.";
+        }
+        else if (!AllowExternalAnalysisToggle.IsOn)
+        {
+            AnalysisProviderInfoBar.Severity = InfoBarSeverity.Warning;
+            AnalysisProviderInfoBar.Title = "External analysis is off";
+            AnalysisProviderInfoBar.Message =
+                "This provider cannot receive transcript excerpts until you explicitly allow it.";
+        }
+        else
+        {
+            AnalysisProviderInfoBar.Severity = InfoBarSeverity.Warning;
+            AnalysisProviderInfoBar.Title = "External transcript sharing allowed";
+            AnalysisProviderInfoBar.Message =
+                "Only analysis prompts are sent—not raw audio—but radio text may contain sensitive or unverified details.";
+        }
+    }
+
+    private T ApplyAnalysisProvider<T>(T request) where T : AnalysisProviderRequest
+    {
+        var provider = SelectedComboValue(AnalysisProviderComboBox, "local");
+        request.AnalysisProvider = provider;
+        request.AnalysisModel = AnalysisModelBox.Text.Trim();
+        request.AnalysisEndpoint = AnalysisEndpointBox.Text.Trim();
+        request.AnalysisApiKey = provider is "openai-responses" or "openai-compatible"
+            && !string.IsNullOrWhiteSpace(AnalysisApiKeyBox.Password)
+                ? AnalysisApiKeyBox.Password
+                : null;
+        request.AnalysisApiKeyEnvironment = string.IsNullOrWhiteSpace(AnalysisApiKeyEnvironmentBox.Text)
+            ? "OPENAI_API_KEY"
+            : AnalysisApiKeyEnvironmentBox.Text.Trim();
+        request.CodexCliPath = CodexCliPathBox.Text.Trim();
+        request.AllowExternalAnalysis = SelectedAnalysisProviderIsExternal()
+            && AllowExternalAnalysisToggle.IsOn;
+        return request;
+    }
+
+    private async void CheckAnalysisProvider_Click(object sender, RoutedEventArgs e)
+    {
+        if (_worker is null)
+        {
+            return;
+        }
+        AnalysisProviderCheckButton.IsEnabled = false;
+        AnalysisProviderStatusText.Text = "Checking configuration without sending transcript text…";
+        try
+        {
+            using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+            var status = await _worker.GetAnalysisProviderDiagnosticsAsync(
+                ApplyAnalysisProvider(new AnalysisProviderDiagnosticsRequest()),
+                cancellation.Token);
+            if (status is null)
+            {
+                AnalysisProviderStatusText.Text = "The provider check returned no status.";
+                return;
+            }
+            var verification = status.Verified ? "Verified" : status.Ready ? "Configured" : "Setup needed";
+            AnalysisProviderStatusText.Text = $"{verification}: {status.Message}";
+        }
+        catch (Exception exception)
+        {
+            AnalysisProviderStatusText.Text = exception.Message;
+        }
+        finally
+        {
+            AnalysisProviderCheckButton.IsEnabled = true;
+        }
+    }
+
+    private void ClearAnalysisKey_Click(object sender, RoutedEventArgs e)
+    {
+        CredentialStore.ClearAnalysisKey();
+        AnalysisApiKeyBox.Password = "";
+        RememberAnalysisApiKeyCheckBox.IsChecked = false;
+        AnalysisProviderStatusText.Text = "Saved analysis API key removed from Windows Credential Locker.";
     }
 
     private void ApplySelectedHardwareProfileDescription()
@@ -630,7 +870,7 @@ public sealed partial class MainWindow : Window
             else
             {
                 var report = await _worker.ContinueLocalDayAsync(
-                    new LocalProcessingRequest
+                    ApplyAnalysisProvider(new LocalProcessingRequest
                     {
                         FeedId = day.FeedId,
                         ArchiveDate = day.ArchiveDate,
@@ -651,7 +891,7 @@ public sealed partial class MainWindow : Window
                         HuggingFaceToken = string.IsNullOrWhiteSpace(HuggingFaceTokenBox.Password)
                             ? null
                             : HuggingFaceTokenBox.Password,
-                    },
+                    }),
                     HandleWorkerMessage,
                     _operationCancellation.Token);
                 AnalysisFeedBox.Text = day.FeedId;
@@ -1051,12 +1291,12 @@ public sealed partial class MainWindow : Window
             _operationCancellation.Token.ThrowIfCancellationRequested();
             AppendLog($"Analyzing feed {request.FeedId} for {day.ArchiveDate}…");
             latestReport = await _worker.AnalyzeDayAsync(
-                new AnalysisRequest
+                ApplyAnalysisProvider(new AnalysisRequest
                 {
                     FeedId = request.FeedId,
                     ArchiveDate = day.ArchiveDate,
                     OutputDirectory = request.OutputDirectory,
-                },
+                }),
                 HandleWorkerMessage,
                 _operationCancellation.Token);
         }
@@ -1460,14 +1700,14 @@ public sealed partial class MainWindow : Window
         try
         {
             var report = await _worker.AnalyzeDayAsync(
-                new AnalysisRequest
+                ApplyAnalysisProvider(new AnalysisRequest
                 {
                     FeedId = day.FeedId,
                     ArchiveDate = day.ArchiveDate,
                     OutputDirectory = string.IsNullOrWhiteSpace(OutputFolderBox.Text)
                         ? "archives"
                         : OutputFolderBox.Text.Trim(),
-                },
+                }),
                 HandleWorkerMessage,
                 _operationCancellation.Token);
             if (report is not null)
@@ -1527,17 +1767,17 @@ public sealed partial class MainWindow : Window
         _operationCancellation = new CancellationTokenSource();
         SetBusy(true, "Retrieving evidence…", jobRunning: true);
         JobProgress.IsIndeterminate = true;
-        AnswerText.Text = "Working locally…";
+        AnswerText.Text = $"Working with {SelectedAnalysisProviderDisplayName()}…";
         try
         {
             var answer = await _worker.AskArchiveAsync(
-                new ArchiveQuestionRequest
+                ApplyAnalysisProvider(new ArchiveQuestionRequest
                 {
                     FeedId = feedId,
                     StartDate = startDate.ToString("yyyy-MM-dd"),
                     EndDate = endDate.ToString("yyyy-MM-dd"),
                     Question = question,
-                },
+                }),
                 HandleWorkerMessage,
                 _operationCancellation.Token);
             AnswerText.Text = answer is null
@@ -1582,15 +1822,15 @@ public sealed partial class MainWindow : Window
         SetBusy(true, $"Summarizing week ending {weekEnding}…", jobRunning: true);
         JobProgress.IsIndeterminate = true;
         WeekCoverageText.Text = "Loading seven-day evidence…";
-        WeekSummaryText.Text = "Working locally…";
+        WeekSummaryText.Text = $"Working with {SelectedAnalysisProviderDisplayName()}…";
         try
         {
             var report = await _worker.SummarizeWeekAsync(
-                new WeeklySummaryRequest
+                ApplyAnalysisProvider(new WeeklySummaryRequest
                 {
                     FeedId = feedId,
                     WeekEnding = weekEnding,
-                },
+                }),
                 HandleWorkerMessage,
                 _operationCancellation.Token);
             if (report is null)
@@ -1913,7 +2153,7 @@ public sealed partial class MainWindow : Window
         SetBusy(true, $"Ranking story leads for {profile.Name}…", jobRunning: true);
         JobProgress.IsIndeterminate = true;
         AreaCoverageText.Text = "Loading saved incidents across selected feeds…";
-        AreaSummaryText.Text = "Working locally…";
+        AreaSummaryText.Text = $"Working with {SelectedAnalysisProviderDisplayName()}…";
         _areaStoryMediaPlayer.Pause();
         _areaStoryMediaPlayer.Source = null;
         AreaPlaybackStatusText.Text = "Preparing story evidence packages…";
@@ -1921,12 +2161,12 @@ public sealed partial class MainWindow : Window
         try
         {
             var report = await _worker.SummarizeAreaAsync(
-                new AreaDigestRequest
+                ApplyAnalysisProvider(new AreaDigestRequest
                 {
                     ProfileName = profile.Name,
                     StartDate = startDate.ToString("yyyy-MM-dd"),
                     EndDate = endDate.ToString("yyyy-MM-dd"),
-                },
+                }),
                 HandleWorkerMessage,
                 _operationCancellation.Token);
             if (report is null)
@@ -2005,6 +2245,7 @@ public sealed partial class MainWindow : Window
         SaveAreaProfileButton.IsEnabled = !busy && _worker is not null;
         ProcessAreaFeedsButton.IsEnabled = !busy && _worker is not null;
         GenerateAreaDigestButton.IsEnabled = !busy && _worker is not null;
+        AnalysisProviderCheckButton.IsEnabled = !busy && _worker is not null;
         AreaProfileCombo.IsEnabled = !busy && _worker is not null;
         RefreshLibraryButton.IsEnabled = !busy && _worker is not null;
         LibraryList.IsEnabled = !busy && _worker is not null;

@@ -357,6 +357,35 @@ def _codex_environment() -> dict[str, str]:
     }
 
 
+def codex_login_status(
+    executable: str | Path | None = None,
+    *,
+    timeout: float = 15.0,
+) -> tuple[bool, str]:
+    path = find_codex_cli(executable)
+    if path is None:
+        return False, "Codex CLI was not found. Install it or set CODEX_CLI_PATH."
+    flags = 0
+    if os.name == "nt" and hasattr(subprocess, "CREATE_NO_WINDOW"):
+        flags = subprocess.CREATE_NO_WINDOW
+    try:
+        completed = subprocess.run(
+            [str(path), "login", "status"],
+            text=True,
+            capture_output=True,
+            env=_codex_environment(),
+            timeout=timeout,
+            check=False,
+            creationflags=flags,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return False, f"Codex login check failed: {exc}"
+    detail = (completed.stdout or completed.stderr or "").strip()
+    if completed.returncode == 0:
+        return True, detail or "Codex CLI has a saved login."
+    return False, detail or f"Codex login check exited with code {completed.returncode}."
+
+
 class CodexCliClient:
     """Structured analysis through an existing, opt-in Codex CLI login."""
 

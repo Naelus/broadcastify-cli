@@ -69,7 +69,54 @@ internal sealed record AreaProfileSaveRequest
     public List<FeedSearchResult> Feeds { get; init; } = [];
 }
 
-internal sealed record AreaDigestRequest
+internal abstract record AnalysisProviderRequest
+{
+    [JsonPropertyName("analysis_provider")]
+    public string AnalysisProvider { get; set; } = "local";
+
+    [JsonPropertyName("analysis_model")]
+    public string AnalysisModel { get; set; } = "";
+
+    [JsonPropertyName("analysis_endpoint")]
+    public string AnalysisEndpoint { get; set; } = "";
+
+    [JsonPropertyName("analysis_api_key")]
+    public string? AnalysisApiKey { get; set; }
+
+    [JsonPropertyName("analysis_api_key_env")]
+    public string AnalysisApiKeyEnvironment { get; set; } = "OPENAI_API_KEY";
+
+    [JsonPropertyName("codex_cli_path")]
+    public string CodexCliPath { get; set; } = "";
+
+    [JsonPropertyName("allow_external_analysis")]
+    public bool AllowExternalAnalysis { get; set; }
+}
+
+internal sealed record AnalysisProviderDiagnosticsRequest : AnalysisProviderRequest;
+
+public sealed record AnalysisProviderStatus
+{
+    [JsonPropertyName("provider")]
+    public string Provider { get; init; } = "";
+
+    [JsonPropertyName("model")]
+    public string Model { get; init; } = "";
+
+    [JsonPropertyName("external")]
+    public bool External { get; init; }
+
+    [JsonPropertyName("ready")]
+    public bool Ready { get; init; }
+
+    [JsonPropertyName("verified")]
+    public bool Verified { get; init; }
+
+    [JsonPropertyName("message")]
+    public string Message { get; init; } = "";
+}
+
+internal sealed record AreaDigestRequest : AnalysisProviderRequest
 {
     [JsonPropertyName("profile_name")]
     public string ProfileName { get; init; } = "";
@@ -517,7 +564,7 @@ public sealed record HardwareProfileStatus
         $"Transcription: {Transcription}\nDiarization: {Diarization}\nAnalysis: {Analysis}";
 }
 
-internal sealed record LocalProcessingRequest
+internal sealed record LocalProcessingRequest : AnalysisProviderRequest
 {
     [JsonPropertyName("feed_id")]
     public string FeedId { get; init; } = "";
@@ -692,7 +739,7 @@ public sealed record DayReport
     public bool HasDiarization { get; init; }
 }
 
-internal sealed record AnalysisRequest
+internal sealed record AnalysisRequest : AnalysisProviderRequest
 {
     [JsonPropertyName("feed_id")]
     public string FeedId { get; init; } = "";
@@ -710,7 +757,7 @@ internal sealed record AnalysisRequest
     public bool ForceSummary { get; init; }
 }
 
-internal sealed record WeeklySummaryRequest
+internal sealed record WeeklySummaryRequest : AnalysisProviderRequest
 {
     [JsonPropertyName("feed_id")]
     public string FeedId { get; init; } = "";
@@ -767,7 +814,7 @@ public sealed record WeeklyReport
         : "Notable incident records: " + string.Join(", ", NotableIncidentIds.Select(value => $"I{value}"));
 }
 
-internal sealed record ArchiveQuestionRequest
+internal sealed record ArchiveQuestionRequest : AnalysisProviderRequest
 {
     [JsonPropertyName("feed_id")]
     public string FeedId { get; init; } = "";

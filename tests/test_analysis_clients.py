@@ -12,7 +12,10 @@ from broadcastify_cli.analysis_clients import (
     OpenAICompatibleClient,
     OpenAIResponsesClient,
 )
-from broadcastify_cli.analysis_providers import AnalysisProviderConfig
+from broadcastify_cli.analysis_providers import (
+    AnalysisProviderConfig,
+    diagnose_analysis_provider,
+)
 
 
 class FakeResponse:
@@ -58,6 +61,25 @@ def test_provider_config_has_distinct_persistence_identity() -> None:
     assert AnalysisProviderConfig(
         provider="codex-cli", model=""
     ).cache_model == "codex-cli:account-default"
+
+
+def test_explicit_ui_provider_values_override_environment(monkeypatch) -> None:
+    monkeypatch.setenv("ANALYSIS_MODEL", "environment-model")
+    monkeypatch.setenv("ANALYSIS_ENDPOINT", "https://environment.invalid/v1")
+    monkeypatch.setenv("ALLOW_EXTERNAL_ANALYSIS", "true")
+
+    config = AnalysisProviderConfig.from_mapping(
+        {
+            "analysis_provider": "codex-cli",
+            "analysis_model": "",
+            "analysis_endpoint": "",
+            "allow_external_analysis": False,
+        }
+    )
+
+    assert config.model == ""
+    assert config.endpoint == ""
+    assert config.allow_external is False
 
 
 def test_openai_responses_uses_structured_output_without_storage(monkeypatch) -> None:
@@ -190,3 +212,24 @@ def test_codex_cli_is_ephemeral_read_only_and_strips_app_secrets(
     assert environment["CODEX_HOME"] == str(tmp_path / "codex-home")
     assert "BROADCASTIFY_PASSWORD" not in environment
     assert "HUGGINGFACE_TOKEN" not in environment
+
+
+def test_openai_diagnostic_never_contacts_model(monkeypatch) -> None:
+    monkeypatch.setenv("TEST_OPENAI_KEY", "present")
+
+    def unexpected_request(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("OpenAI readiness must not create API usage")
+
+    monkeypatch.setattr("broadcastify_cli.analysis_providers.requests.get", unexpected_request)
+    result = diagnose_analysis_provider(
+        AnalysisProviderConfig(
+            provider="openai-responses",
+            model="fast-model",
+            api_key_env="TEST_OPENAI_KEY",
+            allow_external=True,
+        )
+    )
+
+    assert result["ready"] is True
+    assert result["verified"] is False
+    assert "no billable model request" in str(result["message"])
