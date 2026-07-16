@@ -382,6 +382,10 @@ def collect_accelerator_diagnostics(llama_server: str | Path | None) -> dict[str
         vulkan_asr = bool(whisper_executable and "vulkan" in whisper_backends)
     vulkan_llm = "vulkan" in llama_backends
     openvino_devices = [str(value).upper() for value in openvino.get("devices", [])]
+    openvino_device_names = [
+        f"{value.get('id')}: {value.get('name')}"
+        for value in openvino.get("device_details", [])
+    ]
     openvino_asr = bool(openvino["genai_installed"] and openvino_devices)
     windows_ml_runtime = bool(windows_ml["runtime_ready"])
     windows_ml_decode = bool(windows_ml["decode_ready"])
@@ -422,7 +426,7 @@ def collect_accelerator_diagnostics(llama_server: str | Path | None) -> dict[str
             openvino_asr and pyannote_ready and llama_ready,
             (
                 "OpenVINO Whisper / "
-                + ", ".join(openvino_devices)
+                + ", ".join(openvino_device_names or openvino_devices)
                 + " (safe CPU fallback)"
                 if openvino_asr
                 else "needs the OpenVINO GenAI optional package"

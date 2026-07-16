@@ -24,7 +24,7 @@ The tested Windows experience remains the reference behavior. A user should be a
 - OpenVINO performs a real Whisper decode and safely falls back to CPU when an exposed accelerator rejects the model.
 - Vulkan performs a real whisper.cpp decode and llama.cpp generation on suitable AMD or Intel hardware; this now passes on AMD Radeon 890M, while diarization uses the documented CPU fallback and still needs a full-day portable timing run.
 - Windows ML performs a real ONNX Whisper decode through the packaged helper and is integrated only after the model/runtime self-test passes.
-- Settings explain the selected stage backends and prevent unsupported combinations from looking ready.
+- Settings explain the selected stage backends, offer an explicit real-decode ASR self-test in both UIs, and prevent unsupported combinations or CPU fallbacks from looking like the requested accelerator succeeded.
 - The Local Library viewer makes unfinished diarization or analysis obvious and offers the exact next action.
 - The application receives another visual QA and accessibility pass after every material navigation/viewer change.
 

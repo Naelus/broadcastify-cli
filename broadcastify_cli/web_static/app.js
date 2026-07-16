@@ -690,6 +690,17 @@ byId("runtimeCheckButton").addEventListener("click", async () => {
     byId("runtimeDescription").textContent = summary;
   } });
 });
+byId("asrSelfTestButton").addEventListener("click", async () => {
+  await startJob("asr-self-test", processingPayload(), { label: "Testing selected transcription engine", onComplete: (job) => {
+    const result = eventOf(job, "asr_self_test")?.result;
+    if (!result) return;
+    const notice = byId("asrSelfTestNotice");
+    notice.className = "notice success";
+    notice.querySelector("strong").textContent = "Transcription ready";
+    const fallback = result.fallback_reason ? ` Fallback: ${result.fallback_reason}` : "";
+    notice.querySelector("span").textContent = `${result.message}${fallback}`;
+  } });
+});
 byId("loginForm").addEventListener("submit", async (event) => {
   event.preventDefault();
   const username = byId("loginUsername").value;

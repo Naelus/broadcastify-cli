@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from broadcastify_cli.asr import AsrResult, AsrSegment
 from broadcastify_cli.transcription import (
     LocalTranscriber,
     SpeakerTurn,
@@ -63,6 +64,43 @@ def test_compatible_transcript_is_a_cache_hit(tmp_path: Path) -> None:
     transcriber.diarize = False
 
     assert transcriber._existing_transcript_is_current(audio, json_path, txt_path)
+
+
+def test_external_asr_records_actual_fallback_backend(tmp_path: Path) -> None:
+    audio = tmp_path / "radio.wav"
+    audio.write_bytes(b"audio")
+
+    class FakeExternalAsr:
+        @staticmethod
+        def transcribe(_path: Path, progress=None) -> AsrResult:
+            return AsrResult(
+                text="unit responding",
+                duration=1.0,
+                segments=[AsrSegment(0.0, 1.0, "unit responding")],
+                engine="openvino",
+                backend="OpenVINO CPU (fallback from GPU)",
+                metadata={
+                    "fallback_reason": "GPU execution failed",
+                    "fallback_stage": "generation",
+                },
+            )
+
+    transcriber = object.__new__(LocalTranscriber)
+    transcriber._asr = None
+    transcriber._external_asr = FakeExternalAsr()
+    transcriber.model_name = "tiny"
+    transcriber.asr_engine = "openvino"
+    transcriber.backend_description = "OpenVINO GPU"
+    transcriber.device = "openvino-gpu"
+    transcriber.compute_type = "int8"
+    transcriber.diarize = False
+    transcriber.diarization_device = "cpu"
+
+    transcript_path = transcriber.transcribe_file(audio)
+    payload = json.loads(transcript_path.read_text(encoding="utf-8"))
+
+    assert payload["asr_backend"] == "OpenVINO CPU (fallback from GPU)"
+    assert payload["asr_metadata"]["fallback_stage"] == "generation"
 
 
 def test_diarization_turn_cache_is_parameter_and_audio_specific(tmp_path: Path) -> None:

@@ -46,6 +46,16 @@ This is the dated verification and delivery log for `GOAL.md`. Keep forward-look
 - Fixed an honesty bug: Vulkan profile readiness now requires a detected llama.cpp Vulkan device rather than any `llama-server` executable. The container image is never pulled implicitly; diagnostics only inspect an explicitly configured image already present locally.
 - Complete Python suite after the native/container runtime work: **87 passed**.
 
+#### OpenVINO selected-engine validation
+
+- Updated the OpenVINO path for the installed 2026.2.1 runtime: removed the obsolete NPU static-pipeline override, added the official Distil Large V3 INT8 mapping, and normalized Web UI `.en` model aliases.
+- Added CPU recovery when GPU/NPU/AUTO model construction itself fails, complementing the existing first-generation fallback. Transcripts now replace the requested backend label with the actual fallback backend and retain whether initialization or generation failed.
+- Re-ran the retained 22.7-second radio fixture with the already-cached official Tiny INT8 model. AUTO completed in 1.093 seconds with 23 words and 3 timestamped segments. Explicit GPU failed during generation, retried on CPU, and returned the identical transcript in 1.828 seconds.
+- Added an explicit selected-engine self-test worker to both WinUI and the loopback Web UI. It generates one second of local silence, loads the exact selected engine/model/device, may download a missing managed model only after the user clicks **Test engine**, and returns backend/timing/fallback metadata without returning generated transcript text.
+- The full worker path passed with OpenVINO AUTO in 0.766 seconds. Explicit GPU correctly surfaced `OpenVINO CPU (fallback from GPU)` in 1.735 seconds instead of the old misleading GPU label.
+- Visually and interactively verified WinUI at 1228×894 and the browser UI at desktop and 390×844. Both showed a clear successful OpenVINO AUTO result in 0.8 seconds; automatic/turbo settings were restored after testing. WinUI Release build: **0 warnings, 0 errors**.
+- Complete Python suite after the OpenVINO/self-test work: **92 passed**; browser JavaScript syntax check passed with the bundled Node runtime.
+
 ### Archive quota reset run
 
 - Completed a guarded feed 90001 resume for July 3–16 after downloads became available again.

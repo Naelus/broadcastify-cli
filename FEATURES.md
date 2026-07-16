@@ -21,7 +21,7 @@ Status labels: **Validated**, **Implemented**, **Foundation**, or **Planned**.
 |---|---|---|
 | Continuous daily MP3 with overlap trimming | Validated | Combination occurs before ASR/diarization. |
 | faster-whisper CUDA/CPU | Validated | CUDA is the Windows reference default; CPU is slower fallback. |
-| OpenVINO Whisper | Validated | Real CPU decode passed; exposed GPU failure retries on CPU. |
+| OpenVINO Whisper | Validated | Real AUTO/CPU decode passed; initialization and generation failures retry on CPU and retain the actual backend/fallback stage. |
 | whisper.cpp Vulkan | Validated | Native and opt-in locked-down container adapters exist; exact app path completed a real AMD Radeon 890M decode and retains backend evidence. |
 | Windows ML Whisper | Implemented | Integrated streaming C# helper and real CPU decode/self-test pass; DML model-builder output still fails and stays gated. |
 | pyannote diarization CUDA/CPU | Validated | Existing transcripts can gain labels without rerunning ASR. |
@@ -42,6 +42,7 @@ Status labels: **Validated**, **Implemented**, **Foundation**, or **Planned**.
 | Seven-day summaries | Validated | Explicitly records available and missing days. |
 | Regional story leads | Validated | Evidence-backed assignment leads, not confirmations. |
 | Cross-platform browser UI | Implemented | Loopback service mirrors Library, New Archive, Review, Area, Settings, jobs, media, and provider actions; exercised on real retained data in Windows, with Linux/macOS runtime validation pending. |
+| Explicit ASR runtime self-test | Validated | Native and Web Settings decode local synthetic audio using the selected model/device, with managed downloads only after a user starts the test. |
 | Installer/model manager/onboarding | Planned | Required before non-developer distribution. |
 
 ## Hardware profile matrix

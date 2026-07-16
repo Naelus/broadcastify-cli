@@ -18,6 +18,13 @@ def test_engine_auto_selection_follows_requested_accelerator() -> None:
     assert normalize_asr_engine("auto", "windows-ml") == "windows-ml"
 
 
+def test_portable_model_aliases_accept_web_ui_english_suffix(tmp_path: Path) -> None:
+    from broadcastify_cli.asr import whisper_cpp_model_filename
+
+    assert whisper_cpp_model_filename("tiny.en") == "ggml-tiny.en-q5_1.bin"
+    assert whisper_cpp_model_filename("medium.en") == "ggml-medium.en-q5_0.bin"
+
+
 def test_whisper_cpp_json_is_normalized(monkeypatch, tmp_path: Path) -> None:
     executable = tmp_path / "whisper-cli.exe"
     executable.write_bytes(b"binary")
@@ -276,8 +283,40 @@ def test_openvino_retries_failed_accelerator_on_cpu(monkeypatch, tmp_path: Path)
     assert result.text == "unit responding"
     assert result.backend == "OpenVINO CPU (fallback from GPU)"
     assert result.metadata["fallback_reason"] == "GPU execution failed"
+    assert result.metadata["fallback_stage"] == "generation"
     assert engine.device == "CPU"
     assert "OpenVINO GPU rejected this model; retrying on CPU" in messages
+
+
+def test_openvino_retries_failed_accelerator_initialization_on_cpu(
+    monkeypatch, tmp_path: Path
+) -> None:
+    model = tmp_path / "model"
+    model.mkdir()
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakePipeline:
+        def __init__(self, _path: str, device: str, **kwargs: object) -> None:
+            calls.append((device, kwargs))
+            if device == "NPU":
+                raise RuntimeError("NPU compilation failed\ninternal detail")
+
+    monkeypatch.setitem(
+        __import__("sys").modules,
+        "openvino_genai",
+        SimpleNamespace(WhisperPipeline=FakePipeline),
+    )
+
+    engine = OpenVinoWhisperAsr("tiny", device="NPU", model_path=model)
+
+    assert calls == [
+        ("NPU", {"word_timestamps": True}),
+        ("CPU", {"word_timestamps": True}),
+    ]
+    assert engine.device == "CPU"
+    assert engine.backend == "OpenVINO CPU (fallback from NPU)"
+    assert engine._fallback_reason == "NPU compilation failed"
+    assert engine._fallback_stage == "initialization"
 
 
 def test_windows_ml_keeps_one_helper_alive_and_offsets_chunks(

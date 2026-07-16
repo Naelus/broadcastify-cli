@@ -417,6 +417,29 @@ internal sealed class WorkerClient
         return diagnostics;
     }
 
+    public async Task<AsrSelfTestStatus?> RunAsrSelfTestAsync(
+        AsrSelfTestRequest request,
+        Action<JsonElement> onMessage,
+        CancellationToken cancellationToken)
+    {
+        AsrSelfTestStatus? result = null;
+        await RunWorkerAsync(
+            ["-m", "broadcastify_cli.worker", "asr-self-test"],
+            JsonSerializer.Serialize(request, JsonOptions),
+            message =>
+            {
+                if (message.TryGetProperty("type", out var type)
+                    && type.GetString() == "asr_self_test"
+                    && message.TryGetProperty("result", out var value))
+                {
+                    result = value.Deserialize<AsrSelfTestStatus>(JsonOptions);
+                }
+                onMessage(message);
+            },
+            cancellationToken);
+        return result;
+    }
+
     public async Task<AnalysisProviderStatus?> GetAnalysisProviderDiagnosticsAsync(
         AnalysisProviderDiagnosticsRequest request,
         CancellationToken cancellationToken)

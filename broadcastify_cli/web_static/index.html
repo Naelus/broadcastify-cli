@@ -196,16 +196,17 @@
             <div class="runtime-facts" id="runtimeFacts"></div>
           </div>
           <div class="card padded">
-            <div class="section-heading"><div><h2>Transcription &amp; speakers</h2><p>Automatic keeps the tested Windows behavior and chooses safe fallbacks elsewhere.</p></div></div>
+            <div class="section-heading"><div><h2>Transcription &amp; speakers</h2><p>Automatic keeps the tested Windows behavior and chooses safe fallbacks elsewhere.</p></div><button class="button secondary small" id="asrSelfTestButton">Test engine</button></div>
             <div class="form-grid two">
-              <label><span>Whisper model</span><select id="settingWhisperModel"><option>turbo</option><option>large-v3</option><option>medium.en</option><option>small.en</option><option>base.en</option><option>tiny.en</option></select></label>
+              <label><span>Whisper model</span><select id="settingWhisperModel"><option>turbo</option><option>distil-large-v3</option><option>large-v3</option><option>medium.en</option><option>small.en</option><option>base.en</option><option>tiny.en</option></select></label>
               <label><span>ASR engine</span><select id="settingAsrEngine"><option value="auto">Automatic</option><option value="faster-whisper">faster-whisper</option><option value="whisper.cpp">whisper.cpp</option><option value="openvino">OpenVINO</option><option value="windows-ml">Windows ML</option></select></label>
-              <label><span>Transcription device</span><select id="settingDevice"><option value="auto">Automatic</option><option value="cuda">CUDA</option><option value="cpu">CPU</option><option value="vulkan">Vulkan</option><option value="openvino-auto">OpenVINO Auto</option><option value="windows-ml">Windows ML</option></select></label>
+              <label><span>Transcription device</span><select id="settingDevice"><option value="auto">Automatic</option><option value="cuda">CUDA</option><option value="cpu">CPU</option><option value="vulkan">Vulkan</option><option value="openvino-auto">OpenVINO Auto</option><option value="openvino-gpu">OpenVINO GPU</option><option value="openvino-npu">OpenVINO NPU</option><option value="windows-ml">Windows ML</option></select></label>
               <label><span>Diarization device</span><select id="settingDiarizationDevice"><option value="auto">Automatic</option><option value="cuda">CUDA</option><option value="cpu">CPU fallback</option></select></label>
               <label><span>Batch size</span><input id="settingBatchSize" type="number" min="1" max="64" value="8"></label>
               <label><span>Optional ASR model path</span><input id="settingAsrModelPath" placeholder="Use automatic model discovery"></label>
             </div>
             <label class="secret-field"><span>Hugging Face token for this tab</span><input id="settingHuggingFaceToken" type="password" autocomplete="off" placeholder="Or set HUGGINGFACE_TOKEN in .env"></label>
+            <div class="notice" id="asrSelfTestNotice"><strong>Not tested this session</strong><span>Testing decodes local synthetic audio and may download the selected managed model.</span></div>
           </div>
           <div class="card padded">
             <div class="section-heading"><div><h2>Analysis &amp; AI</h2><p>Local Gemma is private by default. Hosted text transmission is always opt-in.</p></div><button class="button secondary small" id="providerCheckButton">Check provider</button></div>

@@ -338,6 +338,8 @@ class LocalTranscriber:
         asr_metadata: dict[str, object] = {}
         if self._external_asr is not None:
             result = self._external_asr.transcribe(audio_path, progress=progress)
+            if result.backend:
+                self.backend_description = result.backend
             language = result.language
             language_probability = result.language_probability
             duration = result.duration

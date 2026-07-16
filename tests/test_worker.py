@@ -4,7 +4,73 @@ from datetime import date
 from pathlib import Path
 
 from broadcastify_cli.storage import AnalysisStore
-from broadcastify_cli.worker import _day_report, _incident_clip, load_worker_environment
+from broadcastify_cli.worker import (
+    _day_report,
+    _incident_clip,
+    asr_self_test,
+    load_worker_environment,
+)
+
+
+def test_asr_self_test_uses_selected_engine_without_returning_transcript_text(
+    monkeypatch,
+) -> None:
+    emitted: list[dict[str, object]] = []
+    initialized: dict[str, object] = {}
+
+    class FakeTranscriber:
+        asr_engine = "openvino"
+        backend_description = "OpenVINO CPU (fallback from NPU)"
+        device = "openvino-npu"
+
+        def __init__(self, **kwargs: object) -> None:
+            initialized.update(kwargs)
+
+        def transcribe_file(self, audio_path: Path, progress=None) -> Path:
+            assert audio_path.is_file()
+            if progress:
+                progress("Synthetic audio decoded")
+            transcript_dir = audio_path.parent / "transcripts"
+            transcript_dir.mkdir()
+            result = transcript_dir / "silence.json"
+            result.write_text(
+                json.dumps(
+                    {
+                        "asr_engine": self.asr_engine,
+                        "asr_backend": self.backend_description,
+                        "device": self.device,
+                        "text": "never return this transcript",
+                        "segments": [],
+                        "words": [],
+                        "asr_metadata": {
+                            "fallback_reason": "NPU compilation failed",
+                            "fallback_stage": "initialization",
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            return result
+
+    monkeypatch.setattr("broadcastify_cli.worker.LocalTranscriber", FakeTranscriber)
+    monkeypatch.setattr("broadcastify_cli.worker.emit", emitted.append)
+
+    exit_code = asr_self_test(
+        {
+            "model": "tiny",
+            "asr_engine": "openvino",
+            "device": "openvino-npu",
+            "batch_size": 4,
+        }
+    )
+
+    result = next(value["result"] for value in emitted if value["type"] == "asr_self_test")
+    assert exit_code == 0
+    assert initialized["model_name"] == "tiny"
+    assert initialized["device"] == "openvino-npu"
+    assert result["ready"] is True
+    assert result["fallback_stage"] == "initialization"
+    assert "never return" not in json.dumps(result)
 
 
 def test_explicit_private_environment_overrides_repository_defaults(

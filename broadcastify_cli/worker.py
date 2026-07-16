@@ -4,7 +4,10 @@ import argparse
 import json
 import os
 import sys
+import tempfile
+import time
 import traceback
+import wave
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -39,6 +42,7 @@ from .jobs import JobRunner
 from .library import LocalProcessingRequest, prepare_local_day, scan_local_library
 from .models import JobRequest
 from .storage import AnalysisStore, sha256_file
+from .transcription import LocalTranscriber
 
 
 DEFAULT_DATABASE = Path(
@@ -165,6 +169,69 @@ def diagnostics() -> int:
         with AnalysisStore(DEFAULT_DATABASE) as store:
             payload["analysis_stats"] = store.stats()
     emit(payload)
+    return 0
+
+
+def asr_self_test(payload: dict[str, Any] | None = None) -> int:
+    settings = payload if payload is not None else json.load(sys.stdin)
+    started = time.monotonic()
+
+    def progress(message: str) -> None:
+        emit(
+            {
+                "type": "progress",
+                "phase": "asr_self_test",
+                "current": 0,
+                "total": 0,
+                "message": str(message),
+            }
+        )
+
+    model = str(settings.get("model") or "turbo")
+    asr_engine = str(settings.get("asr_engine") or "auto")
+    device = str(settings.get("device") or "auto")
+    progress(
+        f"Loading {model} with {asr_engine} on {device}; a missing managed model may download now"
+    )
+    transcriber = LocalTranscriber(
+        model_name=model,
+        asr_engine=asr_engine,
+        device=device,
+        device_index=max(0, int(settings.get("device_index", 0))),
+        compute_type=str(settings.get("compute_type") or "auto"),
+        asr_model_path=settings.get("asr_model_path") or None,
+        diarization_device="cpu",
+        diarize=False,
+        huggingface_token=str(settings.get("huggingface_token") or "") or None,
+        batch_size=max(1, int(settings.get("batch_size", 8))),
+    )
+    with tempfile.TemporaryDirectory(prefix="radio-archive-asr-test-") as temporary:
+        audio_path = Path(temporary) / "silence.wav"
+        with wave.open(str(audio_path), "wb") as output:
+            output.setnchannels(1)
+            output.setsampwidth(2)
+            output.setframerate(16_000)
+            output.writeframes(bytes(16_000 * 2))
+        transcript_path = transcriber.transcribe_file(audio_path, progress=progress)
+        transcript = json.loads(transcript_path.read_text(encoding="utf-8"))
+    metadata = dict(transcript.get("asr_metadata") or {})
+    result = {
+        "ready": True,
+        "engine": str(transcript.get("asr_engine") or transcriber.asr_engine),
+        "backend": str(transcript.get("asr_backend") or transcriber.backend_description),
+        "model": model,
+        "device": str(transcript.get("device") or transcriber.device),
+        "elapsed_seconds": round(time.monotonic() - started, 3),
+        "segment_count": len(transcript.get("segments") or []),
+        "word_count": len(transcript.get("words") or []),
+        "fallback_reason": str(metadata.get("fallback_reason") or ""),
+        "fallback_stage": str(metadata.get("fallback_stage") or ""),
+    }
+    result["message"] = (
+        f"Transcription self-test passed with {result['backend']} in "
+        f"{result['elapsed_seconds']:.1f} seconds."
+    )
+    emit({"type": "asr_self_test", "result": result, "message": result["message"]})
     return 0
 
 
@@ -573,6 +640,7 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("run")
     subparsers.add_parser("authenticate")
     subparsers.add_parser("diagnostics")
+    subparsers.add_parser("asr-self-test")
     subparsers.add_parser("analysis-provider-diagnostics")
     library = subparsers.add_parser("library")
     library.add_argument("--output-dir", default="archives")
@@ -636,6 +704,8 @@ def main() -> int:
             return authenticate()
         if arguments.command == "diagnostics":
             return diagnostics()
+        if arguments.command == "asr-self-test":
+            return asr_self_test()
         if arguments.command == "analysis-provider-diagnostics":
             return analysis_provider_diagnostics()
         if arguments.command == "library":

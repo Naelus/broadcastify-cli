@@ -83,7 +83,7 @@ WHISPER_CPP_MODELS = {
 
 
 def whisper_cpp_model_filename(model_name: str) -> str:
-    normalized = model_name.strip().lower()
+    normalized = model_name.strip().lower().removesuffix(".en")
     try:
         return WHISPER_CPP_MODELS[normalized]
     except KeyError as exc:
@@ -682,6 +682,7 @@ class WindowsMlWhisperAsr:
 OPENVINO_MODELS = {
     "turbo": "OpenVINO/whisper-large-v3-turbo-int8-ov",
     "large-v3-turbo": "OpenVINO/whisper-large-v3-turbo-int8-ov",
+    "distil-large-v3": "OpenVINO/distil-whisper-large-v3-int8-ov",
     "large-v3": "OpenVINO/whisper-large-v3-int8-ov",
     "medium": "OpenVINO/whisper-medium-int8-ov",
     "small": "OpenVINO/whisper-small-int8-ov",
@@ -718,7 +719,9 @@ class OpenVinoWhisperAsr:
             model_id = str(resolved_model)
         else:
             try:
-                model_id = OPENVINO_MODELS[model_name.strip().lower()]
+                model_id = OPENVINO_MODELS[
+                    model_name.strip().lower().removesuffix(".en")
+                ]
             except KeyError as exc:
                 raise ValueError(
                     f"The OpenVINO engine does not have a configured model mapping for {model_name!r}."
@@ -738,15 +741,26 @@ class OpenVinoWhisperAsr:
                 )
             )
         constructor_args: dict[str, object] = {"word_timestamps": True}
-        if self.device == "NPU":
-            constructor_args["STATIC_PIPELINE"] = True
         self.model_id = model_id
         self.model_path = resolved_model
         self._ov_genai = ov_genai
         self._constructor_args = constructor_args
-        self._pipeline = self._create_pipeline(self.device)
-        self.backend = f"OpenVINO {self.device}"
+        self.requested_device = self.device
         self._fallback_reason = ""
+        self._fallback_stage = ""
+        try:
+            self._pipeline = self._create_pipeline(self.device)
+            self.backend = f"OpenVINO {self.device}"
+        except RuntimeError as exc:
+            if self.device == "CPU":
+                raise
+            failed_device = self.device
+            self._fallback_reason = str(exc).splitlines()[0][:500]
+            self._fallback_stage = "initialization"
+            self.device = "CPU"
+            self._constructor_args = {"word_timestamps": True}
+            self._pipeline = self._create_pipeline("CPU")
+            self.backend = f"OpenVINO CPU (fallback from {failed_device})"
 
     @staticmethod
     def _normalize_device(value: str) -> str:
@@ -791,6 +805,7 @@ class OpenVinoWhisperAsr:
                     raise
                 failed_device = self.device
                 self._fallback_reason = str(exc).splitlines()[0][:500]
+                self._fallback_stage = "generation"
                 if progress:
                     progress(
                         f"OpenVINO {failed_device} rejected this model; retrying on CPU"
@@ -838,7 +853,9 @@ class OpenVinoWhisperAsr:
             metadata={
                 "model_id": self.model_id,
                 "model_path": str(self.model_path),
+                "requested_device": getattr(self, "requested_device", self.device),
                 "fallback_reason": getattr(self, "_fallback_reason", ""),
+                "fallback_stage": getattr(self, "_fallback_stage", ""),
             },
         )
 

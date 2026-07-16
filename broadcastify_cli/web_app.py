@@ -285,6 +285,7 @@ class JobManager:
         stdin_commands = {
             "analysis-provider-diagnostics",
             "analyze-day",
+            "asr-self-test",
             "ask",
             "authenticate",
             "continue-local",

@@ -504,6 +504,71 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    private async void AsrSelfTest_Click(object sender, RoutedEventArgs e)
+    {
+        if (_worker is null || _operationCancellation is not null)
+        {
+            return;
+        }
+        _operationCancellation = new CancellationTokenSource();
+        SetBusy(true, "Testing the selected transcription engine…", jobRunning: true);
+        JobProgress.IsIndeterminate = true;
+        AsrSelfTestInfoBar.Severity = InfoBarSeverity.Informational;
+        AsrSelfTestInfoBar.Title = "Loading and decoding local synthetic audio";
+        AsrSelfTestInfoBar.Message =
+            "A missing managed model may download once. Raw archive audio is not used.";
+        try
+        {
+            var result = await _worker.RunAsrSelfTestAsync(
+                new AsrSelfTestRequest
+                {
+                    Model = SelectedComboValue(ModelComboBox, "turbo"),
+                    AsrEngine = SelectedComboValue(AsrEngineComboBox, "auto"),
+                    Device = SelectedComboValue(DeviceComboBox, "auto"),
+                    DeviceIndex = RequiredInteger(GpuIndexBox.Value, 0),
+                    AsrModelPath = string.IsNullOrWhiteSpace(AsrModelPathBox.Text)
+                        ? null
+                        : AsrModelPathBox.Text.Trim(),
+                    BatchSize = RequiredInteger(BatchSizeBox.Value, 8),
+                    HuggingFaceToken = string.IsNullOrWhiteSpace(HuggingFaceTokenBox.Password)
+                        ? null
+                        : HuggingFaceTokenBox.Password,
+                },
+                HandleWorkerMessage,
+                _operationCancellation.Token);
+            if (result is null || !result.Ready)
+            {
+                throw new InvalidOperationException(
+                    "The transcription worker ended without a successful self-test result.");
+            }
+            AsrSelfTestInfoBar.Severity = InfoBarSeverity.Success;
+            AsrSelfTestInfoBar.Title = "Selected transcription engine is ready";
+            AsrSelfTestInfoBar.Message = string.IsNullOrWhiteSpace(result.FallbackReason)
+                ? result.Message
+                : $"{result.Message} Fallback during {result.FallbackStage}: {result.FallbackReason}";
+        }
+        catch (OperationCanceledException)
+        {
+            AsrSelfTestInfoBar.Severity = InfoBarSeverity.Warning;
+            AsrSelfTestInfoBar.Title = "Transcription test cancelled";
+            AsrSelfTestInfoBar.Message = "No archive work was changed.";
+        }
+        catch (Exception exception)
+        {
+            AsrSelfTestInfoBar.Severity = InfoBarSeverity.Error;
+            AsrSelfTestInfoBar.Title = "Selected transcription engine needs setup";
+            AsrSelfTestInfoBar.Message = exception.Message;
+            AppendLog(exception.Message);
+        }
+        finally
+        {
+            _operationCancellation.Dispose();
+            _operationCancellation = null;
+            JobProgress.IsIndeterminate = false;
+            SetBusy(false);
+        }
+    }
+
     private async void RefreshLibrary_Click(object sender, RoutedEventArgs e) =>
         await RefreshLibraryAsync();
 
@@ -2246,6 +2311,7 @@ public sealed partial class MainWindow : Window
         ProcessAreaFeedsButton.IsEnabled = !busy && _worker is not null;
         GenerateAreaDigestButton.IsEnabled = !busy && _worker is not null;
         AnalysisProviderCheckButton.IsEnabled = !busy && _worker is not null;
+        AsrSelfTestButton.IsEnabled = !busy && _worker is not null;
         AreaProfileCombo.IsEnabled = !busy && _worker is not null;
         RefreshLibraryButton.IsEnabled = !busy && _worker is not null;
         LibraryList.IsEnabled = !busy && _worker is not null;

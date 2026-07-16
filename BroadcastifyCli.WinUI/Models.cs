@@ -389,6 +389,63 @@ internal sealed record JobRequest
     public string? HuggingFaceToken { get; init; }
 }
 
+internal sealed record AsrSelfTestRequest
+{
+    [JsonPropertyName("model")]
+    public string Model { get; init; } = "turbo";
+
+    [JsonPropertyName("asr_engine")]
+    public string AsrEngine { get; init; } = "auto";
+
+    [JsonPropertyName("device")]
+    public string Device { get; init; } = "auto";
+
+    [JsonPropertyName("device_index")]
+    public int DeviceIndex { get; init; }
+
+    [JsonPropertyName("compute_type")]
+    public string ComputeType { get; init; } = "auto";
+
+    [JsonPropertyName("asr_model_path")]
+    public string? AsrModelPath { get; init; }
+
+    [JsonPropertyName("batch_size")]
+    public int BatchSize { get; init; } = 8;
+
+    [JsonPropertyName("huggingface_token")]
+    public string? HuggingFaceToken { get; init; }
+}
+
+public sealed record AsrSelfTestStatus
+{
+    [JsonPropertyName("ready")]
+    public bool Ready { get; init; }
+
+    [JsonPropertyName("engine")]
+    public string Engine { get; init; } = "";
+
+    [JsonPropertyName("backend")]
+    public string Backend { get; init; } = "";
+
+    [JsonPropertyName("model")]
+    public string Model { get; init; } = "";
+
+    [JsonPropertyName("device")]
+    public string Device { get; init; } = "";
+
+    [JsonPropertyName("elapsed_seconds")]
+    public double ElapsedSeconds { get; init; }
+
+    [JsonPropertyName("fallback_reason")]
+    public string FallbackReason { get; init; } = "";
+
+    [JsonPropertyName("fallback_stage")]
+    public string FallbackStage { get; init; } = "";
+
+    [JsonPropertyName("message")]
+    public string Message { get; init; } = "";
+}
+
 internal sealed record JobRunResult
 {
     [JsonPropertyName("feed_id")]

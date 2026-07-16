@@ -189,3 +189,22 @@ def test_web_jobs_validate_area_zip_codes(tmp_path: Path) -> None:
     manager = JobManager(tmp_path, tmp_path / "analysis.sqlite3", tmp_path)
     with pytest.raises(WebRequestError, match="five-digit"):
         manager._worker_request("area-search", {"zip_codes": ["not-a-zip"]})  # noqa: SLF001
+
+
+def test_web_jobs_forward_explicit_asr_self_test_settings(tmp_path: Path) -> None:
+    manager = JobManager(tmp_path, tmp_path / "analysis.sqlite3", tmp_path)
+    arguments, payload = manager._worker_request(  # noqa: SLF001
+        "asr-self-test",
+        {
+            "model": "tiny.en",
+            "asr_engine": "openvino",
+            "device": "openvino-npu",
+            "huggingface_token": "session-only-test-token",
+        },
+    )
+
+    assert arguments == ["asr-self-test"]
+    assert payload is not None
+    assert payload["model"] == "tiny.en"
+    assert payload["device"] == "openvino-npu"
+    assert payload["huggingface_token"] == "session-only-test-token"

@@ -607,13 +607,20 @@
 
                                         <Border Style="{StaticResource CardBorderStyle}">
                                             <StackPanel Spacing="12">
-                                                <TextBlock Text="Transcription &amp; speakers" Style="{StaticResource SubtitleTextBlockStyle}" />
-                                                <TextBlock Text="The hardware profile supplies safe engine defaults. Most jobs only need a Whisper model and batch size."
-                                                           TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                <Grid ColumnSpacing="8">
+                                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                                    <StackPanel Spacing="3">
+                                                        <TextBlock Text="Transcription &amp; speakers" Style="{StaticResource SubtitleTextBlockStyle}" />
+                                                        <TextBlock Text="The hardware profile supplies safe engine defaults. Most jobs only need a Whisper model and batch size."
+                                                                   TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                    </StackPanel>
+                                                    <Button x:Name="AsrSelfTestButton" Grid.Column="1" Content="Test engine" VerticalAlignment="Top"
+                                                            Click="AsrSelfTest_Click" ToolTipService.ToolTip="Decode local synthetic audio. A missing managed model may download." />
+                                                </Grid>
                                                 <Grid ColumnSpacing="12">
                                                     <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
                                                     <ComboBox x:Name="ModelComboBox" Header="Whisper model" SelectedIndex="0" HorizontalAlignment="Stretch">
-                                                        <ComboBoxItem Content="turbo" /><ComboBoxItem Content="distil-large-v3" /><ComboBoxItem Content="large-v3" /><ComboBoxItem Content="medium" /><ComboBoxItem Content="small" />
+                                                        <ComboBoxItem Content="turbo" /><ComboBoxItem Content="distil-large-v3" /><ComboBoxItem Content="large-v3" /><ComboBoxItem Content="medium" /><ComboBoxItem Content="small" /><ComboBoxItem Content="base" /><ComboBoxItem Content="tiny" />
                                                     </ComboBox>
                                                     <NumberBox x:Name="BatchSizeBox" Grid.Column="1" Header="ASR / speaker batch" Value="8" Minimum="1" Maximum="64" SpinButtonPlacementMode="Compact" />
                                                 </Grid>
@@ -657,6 +664,9 @@
                                                 </Expander>
                                                 <PasswordBox x:Name="HuggingFaceTokenBox" Header="Hugging Face read token for speaker labels and managed models"
                                                              PlaceholderText="Optional here when HUGGINGFACE_TOKEN is in .env" PasswordRevealMode="Peek" />
+                                                <InfoBar x:Name="AsrSelfTestInfoBar" IsOpen="True" IsClosable="False" Severity="Informational"
+                                                         Title="Selected transcription engine not tested this session"
+                                                         Message="Test engine decodes local synthetic audio and may download the selected managed model." />
                                             </StackPanel>
                                         </Border>
 
