@@ -34,9 +34,10 @@ This is the dated verification and delivery log for `GOAL.md`. Keep forward-look
 
 ### Archive quota reset run
 
-- Started a guarded feed 90001 resume for July 3–16 after the user reported a reset.
-- The first archive listing showed 48 missing July 3 blocks and successful sequential downloads began at the enforced five-second interval.
-- Final success/quota counts will be appended when the background job exits.
+- Completed a guarded feed 90001 resume for July 3–16 after downloads became available again.
+- The process made 55 successful new media downloads at five-second pacing: 48/48 July 3 blocks and 7/48 July 4 blocks. The next request received the explicit quota response.
+- It made no more media requests, combined the now-complete July 3 audio, reused complete July 11–12 caches, and preserved every incomplete date for the next run.
+- The 55-request result contradicts treating the earlier roughly 192-redirect observation as a fixed daily quota; documentation now describes the budget/reset as dynamic or rolling and unknown.
 
 ### Delivery checkpoints
 
@@ -44,7 +45,7 @@ This is the dated verification and delivery log for `GOAL.md`. Keep forward-look
 - Remote: `https://Naelus@github.com/Naelus/broadcastify-cli`.
 - Staged content is scanned for common token/password patterns before every commit.
 - Backend/persistence commit `historical-validation` was pushed to `origin/main` after 69 tests passed and the credential-pattern audit was clean.
-- Native UI is being delivered separately because all work since the original diarization commit began from one uncommitted tree.
+- Native Library/UI commit `historical-validation` and Windows ML integration commit `historical-validation` were separately reviewed, audited, and pushed to `origin/main`.
 
 ## Earlier validated work
 

@@ -1,6 +1,6 @@
 # Broadcastify archive limits and measured behavior
 
-Last checked: July 15, 2026.
+Last checked: July 16, 2026.
 
 ## Public information
 
@@ -48,7 +48,18 @@ The resumable reference-feed run then recorded:
 - Four complete days retained for July 3–6, plus 22 of 48 blocks for July 7.
 - No transient 429 before the final explicit `Download limit exceeded` response, despite serial five-second pacing throughout.
 
-The user had also successfully tested downloads before telemetry began. A boundary near 200 successful archive requests per account window is therefore plausible, but remains an inference rather than a published or proven quota. The observed behavior is consistent with a request budget, not a simple requests-per-minute rule.
+The user had also successfully tested downloads before telemetry began. At that point a boundary near 200 successful archive requests per account window appeared plausible, but it was still an inference rather than a published or proven quota.
+
+### July 16 availability follow-up
+
+After archive downloads became available again, a guarded feed `90001` resume requested July 3–16. The process ran from 2:00:36 AM to 2:06:40 AM Central time and produced:
+
+- 55 successful new media downloads at serial five-second pacing: all 48 July 3 blocks, then 7 of 48 July 4 blocks.
+- One explicit `Download limit exceeded` response on the next July 4 request.
+- No retry of that explicit quota response and no later media-download requests in the range.
+- A combined July 3 recording, reuse of the already-complete July 11–12 caches, and safely resumable gaps for every incomplete day.
+
+This smaller observed window is strong evidence against documenting a stable fixed 200-request daily quota. It could reflect a rolling/shared budget, only a partial reset, prior account/IP use outside this process, or server-side policy that varies by context. The only defensible operational conclusion is that download availability can return by a later day, while neither the amount restored nor the reset boundary is predictable from public information.
 
 ## Implemented policy
 
@@ -58,5 +69,6 @@ The user had also successfully tested downloads before telemetry began. A bounda
 - Treat the explicit `Download limit exceeded` response as quota exhaustion: stop after that one response, block queued workers, preserve files, and report the support address.
 - Acquire a requested date range before loading the GPU transcription stack. If quota exhaustion interrupts acquisition, do not call another archive-download endpoint in that job; inspect later dates through metadata only, process any days already complete in the local cache, and report incomplete dates as resumable coverage gaps.
 - Keep a backend-only JSONL probe at `scripts/download_rate_probe.py` for auditable, credential-free response timing/status telemetry.
+- Never use a guessed numeric quota to pre-spend a range. Acquire nearest/most important feeds and dates first, then stop on the server's explicit limit response.
 
 Probe logs are runtime artifacts under `archives/` and are ignored by Git.

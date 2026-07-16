@@ -46,9 +46,9 @@ Use this file for reproducible defects and concrete blockers, not the general ro
 ### B-007 — Archive quota size/reset schedule remains inferred
 
 - **Severity:** Operational.
-- **Observed:** Broadcastify publishes no numeric archive-download quota or reset timestamp. Measured runs suggest a budget near 200 successful requests and a reset no later than the next day, but this is not proven.
+- **Observed:** Broadcastify publishes no numeric archive-download quota or reset timestamp. One measured window allowed roughly 192 successful archive redirects, while the July 16 availability follow-up allowed only 55 new media downloads before the same explicit limit response.
 - **Control:** Sequential pacing, exact cache reuse, and immediate stop on explicit exhaustion.
-- **Next:** Record the July 16 reset run and ask Broadcastify support for authoritative details.
+- **Next:** Ask Broadcastify support for authoritative details and prioritize future regional acquisition by user distance/importance rather than a guessed quota size.
 
 ## Recently fixed
 
