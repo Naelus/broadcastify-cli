@@ -1,0 +1,725 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Window
+    x:Class="BroadcastifyCli.WinUI.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:local="using:BroadcastifyCli.WinUI"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    Title="Broadcastify Desktop"
+    mc:Ignorable="d">
+    <Window.SystemBackdrop>
+        <MicaBackdrop />
+    </Window.SystemBackdrop>
+
+    <Grid Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <TitleBar x:Name="AppTitleBar" Title="Broadcastify Desktop" Subtitle="Local radio archive intelligence" />
+
+        <NavigationView x:Name="RootNavigation"
+                        Grid.Row="1"
+                        IsBackButtonVisible="Collapsed"
+                        IsPaneToggleButtonVisible="True"
+                        IsSettingsVisible="True"
+                        PaneDisplayMode="Left"
+                        OpenPaneLength="220"
+                        SelectionChanged="RootNavigation_SelectionChanged">
+            <NavigationView.MenuItems>
+                <NavigationViewItem x:Name="LibraryNavigationItem" Content="Local library" Tag="library" IsSelected="True">
+                    <NavigationViewItem.Icon><FontIcon Glyph="&#xE8F1;" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem x:Name="ArchiveNavigationItem" Content="New archive" Tag="archive">
+                    <NavigationViewItem.Icon><FontIcon Glyph="&#xE896;" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem x:Name="ReviewNavigationItem" Content="Review &amp; ask" Tag="review">
+                    <NavigationViewItem.Icon><FontIcon Glyph="&#xE8A5;" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem x:Name="AreaNavigationItem" Content="Area watch" Tag="area">
+                    <NavigationViewItem.Icon><FontIcon Glyph="&#xE707;" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
+            </NavigationView.MenuItems>
+
+            <NavigationView.Content>
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <!-- Local library -->
+                    <Grid x:Name="LibraryPage" Padding="26,20,26,18" RowSpacing="16">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+
+                        <Grid ColumnSpacing="14">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Spacing="4">
+                                <TextBlock Text="Local library" Style="{StaticResource TitleTextBlockStyle}" />
+                                <TextBlock Text="See every retained feed-day, what is finished, and the exact next step—without touching Broadcastify unless a download is incomplete."
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+                            </StackPanel>
+                            <Button x:Name="RefreshLibraryButton" Grid.Column="1" Content="Refresh library"
+                                    VerticalAlignment="Center" Click="RefreshLibrary_Click" />
+                        </Grid>
+
+                        <Grid Grid.Row="1" ColumnSpacing="12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Border Style="{StaticResource CardBorderStyle}" Padding="16">
+                                <StackPanel Spacing="3"><TextBlock Text="Feeds" Foreground="{ThemeResource TextFillColorSecondaryBrush}" /><TextBlock x:Name="LibraryFeedCountText" Text="—" FontSize="24" FontWeight="SemiBold" /></StackPanel>
+                            </Border>
+                            <Border Grid.Column="1" Style="{StaticResource CardBorderStyle}" Padding="16">
+                                <StackPanel Spacing="3"><TextBlock Text="Local days" Foreground="{ThemeResource TextFillColorSecondaryBrush}" /><TextBlock x:Name="LibraryDayCountText" Text="—" FontSize="24" FontWeight="SemiBold" /></StackPanel>
+                            </Border>
+                            <Border Grid.Column="2" Style="{StaticResource CardBorderStyle}" Padding="16">
+                                <StackPanel Spacing="3"><TextBlock Text="Need a next step" Foreground="{ThemeResource TextFillColorSecondaryBrush}" /><TextBlock x:Name="LibraryAttentionCountText" Text="—" FontSize="24" FontWeight="SemiBold" /></StackPanel>
+                            </Border>
+                            <Border Grid.Column="3" Style="{StaticResource CardBorderStyle}" Padding="16">
+                                <StackPanel Spacing="3"><TextBlock Text="Ready to review" Foreground="{ThemeResource TextFillColorSecondaryBrush}" /><TextBlock x:Name="LibraryCompleteCountText" Text="—" FontSize="24" FontWeight="SemiBold" /></StackPanel>
+                            </Border>
+                        </Grid>
+
+                        <Grid Grid.Row="2" ColumnSpacing="10">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="220" />
+                            </Grid.ColumnDefinitions>
+                            <AutoSuggestBox x:Name="LibrarySearchBox" PlaceholderText="Filter by feed, agency, or date"
+                                            QueryIcon="Find" TextChanged="LibraryFilter_Changed" />
+                            <ComboBox x:Name="LibraryFilterCombo" Grid.Column="1" HorizontalAlignment="Stretch"
+                                      SelectedIndex="0" SelectionChanged="LibraryFilterCombo_SelectionChanged">
+                                <ComboBoxItem Content="All local days" Tag="all" />
+                                <ComboBoxItem Content="Needs attention" Tag="attention" />
+                                <ComboBoxItem Content="Ready to review" Tag="complete" />
+                                <ComboBoxItem Content="Needs download" Tag="network" />
+                            </ComboBox>
+                        </Grid>
+
+                        <Border Grid.Row="3" Style="{StaticResource CardBorderStyle}" Padding="0">
+                            <Grid ColumnSpacing="0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="5*" MinWidth="330" />
+                                    <ColumnDefinition Width="6*" MinWidth="390" />
+                                </Grid.ColumnDefinitions>
+                                <ListView x:Name="LibraryList" SelectionMode="Single"
+                                          SelectionChanged="LibraryList_SelectionChanged">
+                                    <ListView.ItemTemplate>
+                                        <DataTemplate x:DataType="local:LibraryDay">
+                                            <StackPanel Padding="12,10" Spacing="5">
+                                                <TextBlock Text="{x:Bind FeedName}" Style="{StaticResource BodyStrongTextBlockStyle}"
+                                                           MaxLines="1" TextTrimming="CharacterEllipsis" />
+                                                <TextBlock Text="{x:Bind DateAndStatus}"
+                                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                <ProgressBar Minimum="0" Maximum="100" Value="{x:Bind PipelinePercent}" />
+                                                <Grid ColumnSpacing="8">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="*" />
+                                                        <ColumnDefinition Width="Auto" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock Text="{x:Bind NextStep}"
+                                                               Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"
+                                                               MaxLines="1" TextTrimming="CharacterEllipsis" />
+                                                    <TextBlock Grid.Column="1" Text="{x:Bind StorageSummary}"
+                                                               Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                                                </Grid>
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </ListView.ItemTemplate>
+                                </ListView>
+                                <TextBlock x:Name="LibraryEmptyText" Text="No local archive days match this view."
+                                           Visibility="Collapsed" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+
+                                <Border Grid.Column="1" BorderThickness="1,0,0,0"
+                                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}">
+                                    <Grid>
+                                        <StackPanel x:Name="LibraryDetailEmptyPanel" HorizontalAlignment="Center"
+                                                    VerticalAlignment="Center" Spacing="8" Margin="28">
+                                            <FontIcon Glyph="&#xE8F1;" FontSize="30"
+                                                      Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                            <TextBlock Text="Choose a local day to inspect it."
+                                                       Style="{StaticResource SubtitleTextBlockStyle}"
+                                                       HorizontalAlignment="Center" />
+                                            <TextBlock Text="Its audio, transcript, speaker labels, and analysis state will appear here."
+                                                       TextWrapping="Wrap" TextAlignment="Center" MaxWidth="360"
+                                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                        </StackPanel>
+
+                                        <Grid x:Name="LibraryDetailPanel" Visibility="Collapsed" Padding="18,14,18,14" RowSpacing="10">
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="*" />
+                                                <RowDefinition Height="Auto" />
+                                            </Grid.RowDefinitions>
+                                            <StackPanel Spacing="3">
+                                                <TextBlock x:Name="LibraryDetailTitleText" Style="{StaticResource SubtitleTextBlockStyle}"
+                                                           TextWrapping="Wrap" />
+                                                <TextBlock x:Name="LibraryDetailSubtitleText"
+                                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                            </StackPanel>
+                                            <InfoBar x:Name="LibraryDetailInfoBar" Grid.Row="1" IsOpen="True"
+                                                     IsClosable="False" Severity="Informational" />
+                                            <TabView Grid.Row="2" IsAddTabButtonVisible="False" TabWidthMode="SizeToContent">
+                                                <TabViewItem Header="Processing" IsClosable="False">
+                                                    <ScrollViewer HorizontalScrollBarVisibility="Disabled" Padding="4,8,8,4">
+                                                        <StackPanel Spacing="10">
+                                                            <ProgressBar x:Name="LibraryDetailProgress" Minimum="0" Maximum="100" />
+                                                            <TextBlock x:Name="LibraryDetailStatusText" TextWrapping="Wrap"
+                                                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                            <Border Padding="12,8" CornerRadius="6" Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}">
+                                                                <StackPanel Spacing="8">
+                                                                    <TextBlock Text="Processing timeline" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                                                                    <TextBlock x:Name="LibraryDownloadStageText" TextWrapping="Wrap" />
+                                                                    <TextBlock x:Name="LibraryCombineStageText" TextWrapping="Wrap" />
+                                                                    <TextBlock x:Name="LibraryTranscriptStageText" TextWrapping="Wrap" />
+                                                                    <TextBlock x:Name="LibraryDiarizationStageText" TextWrapping="Wrap" />
+                                                                    <TextBlock x:Name="LibraryAnalysisStageText" TextWrapping="Wrap" />
+                                                                </StackPanel>
+                                                            </Border>
+                                                            <TextBlock x:Name="LibraryPathText" TextWrapping="Wrap"
+                                                                       IsTextSelectionEnabled="True"
+                                                                       Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                                                        </StackPanel>
+                                                    </ScrollViewer>
+                                                </TabViewItem>
+                                                <TabViewItem Header="Listen &amp; transcript" IsClosable="False">
+                                                    <Grid Padding="4,8,8,4" RowSpacing="9">
+                                                        <Grid.RowDefinitions>
+                                                            <RowDefinition Height="Auto" />
+                                                            <RowDefinition Height="Auto" />
+                                                            <RowDefinition Height="*" />
+                                                            <RowDefinition Height="Auto" />
+                                                        </Grid.RowDefinitions>
+                                                        <TextBlock x:Name="LibraryAudioStatusText" Text="No combined audio is available."
+                                                                   TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                        <MediaPlayerElement x:Name="LibraryAudioPlayer" Grid.Row="1" Height="72"
+                                                                            AreTransportControlsEnabled="True" />
+                                                        <TextBox x:Name="LibraryTranscriptPreviewText" Grid.Row="2" IsReadOnly="True"
+                                                                 AcceptsReturn="True" TextWrapping="Wrap" FontFamily="Consolas"
+                                                                 PlaceholderText="No transcript is available yet."
+                                                                 ScrollViewer.VerticalScrollBarVisibility="Auto" />
+                                                        <Button x:Name="LibraryOpenTranscriptButton" Grid.Row="3"
+                                                                Content="Open full transcript" HorizontalAlignment="Left"
+                                                                Click="LibraryOpenTranscript_Click" />
+                                                    </Grid>
+                                                </TabViewItem>
+                                            </TabView>
+                                            <Grid Grid.Row="3" ColumnSpacing="8">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <Button x:Name="LibraryDetailPrimaryButton" HorizontalAlignment="Stretch"
+                                                        Style="{StaticResource AccentButtonStyle}"
+                                                        Click="LibraryDetailPrimary_Click" />
+                                                <Button x:Name="LibraryDetailReviewButton" Grid.Column="1" Content="Open review"
+                                                        Click="LibraryDetailReview_Click" />
+                                                <Button x:Name="LibraryOpenFolderButton" Grid.Column="2" Content="Open folder"
+                                                        Click="LibraryOpenFolder_Click" />
+                                            </Grid>
+                                        </Grid>
+                                    </Grid>
+                                </Border>
+                            </Grid>
+                        </Border>
+                    </Grid>
+
+                    <!-- New archive -->
+                    <Grid x:Name="ArchivePage" Visibility="Collapsed" Padding="26,20,26,18" RowSpacing="16">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <StackPanel Spacing="4">
+                            <TextBlock Text="New archive" Style="{StaticResource TitleTextBlockStyle}" />
+                            <TextBlock Text="Find a feed using the same kinds of searches as the website, then acquire a guarded date range. Processing settings live in Settings."
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+                        </StackPanel>
+
+                        <Grid Grid.Row="1" ColumnSpacing="16">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="3*" />
+                                <ColumnDefinition Width="2*" />
+                            </Grid.ColumnDefinitions>
+                            <Border Style="{StaticResource CardBorderStyle}">
+                                <Grid RowSpacing="12">
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="*" />
+                                        <RowDefinition Height="Auto" />
+                                    </Grid.RowDefinitions>
+                                    <TextBlock Text="Find a feed" Style="{StaticResource SubtitleTextBlockStyle}" />
+                                    <Grid Grid.Row="1" ColumnSpacing="8">
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                        <AutoSuggestBox x:Name="SearchBox" PlaceholderText="Example City, agency, county, or ZIP" QueryIcon="Find"
+                                                        QuerySubmitted="Search_QuerySubmitted" />
+                                        <Button x:Name="SearchButton" Grid.Column="1" Content="Search" Click="Search_Click" />
+                                    </Grid>
+                                    <ListView x:Name="FeedResults" Grid.Row="2" SelectionMode="Single" SelectionChanged="FeedResults_SelectionChanged">
+                                        <ListView.ItemTemplate>
+                                            <DataTemplate x:DataType="local:FeedSearchResult">
+                                                <Grid Padding="8" ColumnSpacing="14">
+                                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                                    <StackPanel Spacing="3">
+                                                        <TextBlock Text="{x:Bind Name}" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                                                        <TextBlock Text="{x:Bind LocationAndGenre}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                        <TextBlock Text="{x:Bind Description}" MaxLines="2" TextTrimming="CharacterEllipsis" TextWrapping="Wrap"
+                                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                    </StackPanel>
+                                                    <StackPanel Grid.Column="1" HorizontalAlignment="Right" Spacing="3">
+                                                        <TextBlock Text="{x:Bind FeedLabel}" HorizontalAlignment="Right" />
+                                                        <TextBlock Text="{x:Bind ListenerSummary}" HorizontalAlignment="Right" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                        <TextBlock Text="{x:Bind Status}" HorizontalAlignment="Right" Foreground="{ThemeResource SystemFillColorSuccessBrush}" />
+                                                    </StackPanel>
+                                                </Grid>
+                                            </DataTemplate>
+                                        </ListView.ItemTemplate>
+                                    </ListView>
+                                    <TextBlock x:Name="SelectedFeedText" Grid.Row="3" Text="No feed selected"
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                </Grid>
+                            </Border>
+
+                            <Border Grid.Column="1" Style="{StaticResource CardBorderStyle}">
+                                <ScrollViewer HorizontalScrollBarVisibility="Disabled">
+                                    <StackPanel Spacing="14">
+                                        <TextBlock Text="Archive job" Style="{StaticResource SubtitleTextBlockStyle}" />
+                                        <DatePicker x:Name="StartDatePicker" Header="Start date" HorizontalAlignment="Stretch" />
+                                        <DatePicker x:Name="EndDatePicker" Header="End date" HorizontalAlignment="Stretch" />
+                                        <ToggleSwitch x:Name="CombineToggle" Header="Daily audio" OffContent="Keep separate" OnContent="Create combined MP3" Toggled="Combine_Toggled" />
+                                        <ToggleSwitch x:Name="KeepOriginalsToggle" Header="Source files" IsOn="True" OffContent="Remove after combine" OnContent="Keep originals" />
+                                        <CheckBox x:Name="TranscribeCheckBox" Content="Transcribe locally" IsChecked="True" />
+                                        <CheckBox x:Name="DiarizeCheckBox" Content="Add speaker diarization" IsChecked="True" />
+                                        <CheckBox x:Name="AnalyzeAfterJobCheckBox" Content="Extract incidents, summarize, and index" IsChecked="True" />
+                                        <InfoBar IsOpen="True" IsClosable="False" Severity="Informational" Title="Quota-safe acquisition"
+                                                 Message="Downloads run sequentially by default. Explicit quota exhaustion stops all new archive requests while complete cached days continue locally." />
+                                        <Button x:Name="StartButton" Content="Start archive job" HorizontalAlignment="Stretch"
+                                                Style="{StaticResource AccentButtonStyle}" Click="Start_Click" />
+                                        <TextBlock Text="Model, device, speaker, storage, and credential options are in Settings."
+                                                   TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                    </StackPanel>
+                                </ScrollViewer>
+                            </Border>
+                        </Grid>
+
+                        <Expander Grid.Row="2" Header="Activity log">
+                            <TextBox x:Name="LogBox" Height="150" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap"
+                                     FontFamily="Consolas" ScrollViewer.VerticalScrollBarVisibility="Auto" />
+                        </Expander>
+                    </Grid>
+
+                    <!-- Review -->
+                    <Grid x:Name="ReviewPage" Visibility="Collapsed" Padding="26,20,26,18" RowSpacing="16">
+                        <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+                        <StackPanel Spacing="4">
+                            <TextBlock Text="Review &amp; ask" Style="{StaticResource TitleTextBlockStyle}" />
+                            <TextBlock Text="Audit daily incidents against clips, build a seven-day brief, or ask questions across retained evidence."
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+                        </StackPanel>
+                        <Grid Grid.Row="1" ColumnSpacing="16">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="310" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                            <Border Style="{StaticResource CardBorderStyle}">
+                                <Grid RowSpacing="10">
+                                    <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                                    <TextBox x:Name="AnalysisFeedBox" Header="Feed ID" PlaceholderText="90001" />
+                                    <Button x:Name="RefreshAnalysisButton" Grid.Row="1" Content="Refresh saved days" Click="RefreshAnalysis_Click" />
+                                    <ListView x:Name="AnalysisDaysList" Grid.Row="2" SelectionMode="Single" SelectionChanged="AnalysisDays_SelectionChanged">
+                                        <ListView.ItemTemplate>
+                                            <DataTemplate x:DataType="local:AnalysisDay">
+                                                <StackPanel Padding="7" Spacing="3">
+                                                    <TextBlock Text="{x:Bind FeedAndDate}" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                                                    <TextBlock Text="{x:Bind ProcessingSummary}" TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                    <TextBlock Text="{x:Bind SpeakerSummary}" TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                </StackPanel>
+                                            </DataTemplate>
+                                        </ListView.ItemTemplate>
+                                    </ListView>
+                                    <Grid Grid.Row="3" ColumnSpacing="8">
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                        <Button x:Name="AnalyzeSelectedButton" Content="Analyze" Click="AnalyzeSelected_Click" />
+                                        <Button x:Name="ReloadReportButton" Grid.Column="1" Content="Reload" Click="ReloadReport_Click" />
+                                    </Grid>
+                                </Grid>
+                            </Border>
+
+                            <TabView Grid.Column="1" IsAddTabButtonVisible="False">
+                                <TabViewItem Header="Daily review" IsClosable="False">
+                                    <Grid Padding="4,8,4,4" RowSpacing="9">
+                                        <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                                        <TextBlock x:Name="SummaryText" Text="Choose a saved day." TextWrapping="Wrap" MaxHeight="126" />
+                                        <ComboBox x:Name="PriorityFilterCombo" Grid.Row="1" Width="220" HorizontalAlignment="Left" SelectedIndex="2" SelectionChanged="PriorityFilter_SelectionChanged">
+                                            <ComboBoxItem Content="Priority 5 only" Tag="5" />
+                                            <ComboBoxItem Content="Priority 4–5" Tag="4" />
+                                            <ComboBoxItem Content="Priority 3–5" Tag="3" />
+                                            <ComboBoxItem Content="All incidents" Tag="1" />
+                                        </ComboBox>
+                                        <ListView x:Name="IncidentList" Grid.Row="2" SelectionMode="None">
+                                            <ListView.ItemTemplate>
+                                                <DataTemplate x:DataType="local:IncidentRecord">
+                                                    <Grid Padding="8" ColumnSpacing="12">
+                                                        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                                        <Border MinWidth="58" Padding="8,5" CornerRadius="8" Background="{ThemeResource AccentFillColorSecondaryBrush}" VerticalAlignment="Top">
+                                                            <TextBlock Text="{x:Bind TypeAndPriority}" TextWrapping="Wrap" HorizontalAlignment="Center" />
+                                                        </Border>
+                                                        <StackPanel Grid.Column="1" Spacing="3">
+                                                            <TextBlock Text="{x:Bind Title}" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                                                            <TextBlock Text="{x:Bind TimeAndLocation}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                            <TextBlock Text="{x:Bind Summary}" TextWrapping="Wrap" MaxLines="3" TextTrimming="CharacterEllipsis" />
+                                                            <TextBlock Text="{x:Bind ConfidenceSummary}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                            <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,4,0,0">
+                                                                <Button Content="Play exact clip" Click="PlayIncident_Click" />
+                                                                <Button Content="Export clip…" Click="ExportIncidentClip_Click" />
+                                                            </StackPanel>
+                                                        </StackPanel>
+                                                    </Grid>
+                                                </DataTemplate>
+                                            </ListView.ItemTemplate>
+                                        </ListView>
+                                        <TextBlock x:Name="PlaybackStatusText" Grid.Row="3" Text="Choose an incident to audit its exact local clip."
+                                                   TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                        <MediaPlayerElement x:Name="IncidentPlayer" Grid.Row="4" Height="72" AreTransportControlsEnabled="True" />
+                                    </Grid>
+                                </TabViewItem>
+                                <TabViewItem Header="Weekly brief" IsClosable="False">
+                                    <ScrollViewer Padding="8">
+                                        <StackPanel Spacing="14" MaxWidth="900" HorizontalAlignment="Left">
+                                            <TextBlock Text="Seven-day activity brief" Style="{StaticResource SubtitleTextBlockStyle}" />
+                                            <TextBlock Text="Uses saved daily incidents and clearly reports missing days." Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                            <StackPanel Orientation="Horizontal" Spacing="10">
+                                                <DatePicker x:Name="WeekEndingPicker" Header="Week ending" />
+                                                <Button x:Name="GenerateWeekButton" Content="Generate weekly brief" VerticalAlignment="Bottom"
+                                                        Style="{StaticResource AccentButtonStyle}" Click="GenerateWeek_Click" />
+                                            </StackPanel>
+                                            <TextBlock x:Name="WeekCoverageText" Text="Choose a week ending date." TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                            <TextBlock x:Name="WeekSummaryText" TextWrapping="Wrap" IsTextSelectionEnabled="True" />
+                                        </StackPanel>
+                                    </ScrollViewer>
+                                </TabViewItem>
+                                <TabViewItem Header="Ask the archive" IsClosable="False">
+                                    <ScrollViewer Padding="8">
+                                        <StackPanel Spacing="14" MaxWidth="900" HorizontalAlignment="Left">
+                                            <TextBlock Text="Ask across a date range" Style="{StaticResource SubtitleTextBlockStyle}" />
+                                            <Grid ColumnSpacing="10">
+                                                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                                <DatePicker x:Name="QuestionStartDatePicker" Header="Start date" />
+                                                <DatePicker x:Name="QuestionEndDatePicker" Grid.Column="1" Header="End date" />
+                                                <TextBox x:Name="QuestionBox" Grid.Column="2" Header="Question" MinWidth="360" PlaceholderText="What were the most serious reported events?" />
+                                            </Grid>
+                                            <Button x:Name="AskButton" Content="Ask locally" HorizontalAlignment="Left" Style="{StaticResource AccentButtonStyle}" Click="Ask_Click" />
+                                            <TextBlock x:Name="AnswerText" TextWrapping="Wrap" IsTextSelectionEnabled="True" />
+                                        </StackPanel>
+                                    </ScrollViewer>
+                                </TabViewItem>
+                            </TabView>
+                        </Grid>
+                    </Grid>
+
+                    <!-- Area watch -->
+                    <Grid x:Name="AreaPage" Visibility="Collapsed" Padding="26,20,26,18" RowSpacing="16">
+                        <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+                        <StackPanel Spacing="4">
+                            <TextBlock Text="Area watch" Style="{StaticResource TitleTextBlockStyle}" />
+                            <TextBlock Text="Choose nearby public-safety feeds explicitly, then rank evidence-backed local assignment leads."
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+                        </StackPanel>
+                        <TabView Grid.Row="1" IsAddTabButtonVisible="False">
+                            <TabViewItem Header="Feeds &amp; coverage" IsClosable="False">
+                                <Grid Padding="6,10,6,4" ColumnSpacing="16">
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="3*" /><ColumnDefinition Width="2*" /></Grid.ColumnDefinitions>
+                                    <Border Style="{StaticResource CardBorderStyle}">
+                                        <Grid RowSpacing="10">
+                                            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                                            <TextBox x:Name="AreaProfileNameBox" Header="Area profile name" PlaceholderText="Example City 12345" />
+                                            <Grid Grid.Row="1" ColumnSpacing="8">
+                                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                                <TextBox x:Name="AreaZipCodesBox" Header="ZIP codes" PlaceholderText="12345" />
+                                                <Button x:Name="DiscoverAreaFeedsButton" Grid.Column="1" Content="Discover feeds" VerticalAlignment="Bottom" Click="DiscoverAreaFeeds_Click" />
+                                            </Grid>
+                                            <CheckBox x:Name="AreaPublicSafetyOnlyCheckBox" Grid.Row="2" Content="Show public-safety feeds only" IsChecked="True" />
+                                            <ListView x:Name="AreaFeedResults" Grid.Row="3" SelectionMode="Multiple" IsMultiSelectCheckBoxEnabled="True">
+                                                <ListView.ItemTemplate>
+                                                    <DataTemplate x:DataType="local:FeedSearchResult">
+                                                        <Grid Padding="8" ColumnSpacing="12">
+                                                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                                            <StackPanel Spacing="3">
+                                                                <TextBlock Text="{x:Bind Name}" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                                                                <TextBlock Text="{x:Bind AreaMatchSummary}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                                <TextBlock Text="{x:Bind Description}" MaxLines="2" TextWrapping="Wrap" TextTrimming="CharacterEllipsis" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                            </StackPanel>
+                                                            <TextBlock Grid.Column="1" Text="{x:Bind FeedLabel}" />
+                                                        </Grid>
+                                                    </DataTemplate>
+                                                </ListView.ItemTemplate>
+                                            </ListView>
+                                            <Button x:Name="SaveAreaProfileButton" Grid.Row="4" Content="Save selected feeds" Click="SaveAreaProfile_Click" />
+                                        </Grid>
+                                    </Border>
+                                    <Border Grid.Column="1" Style="{StaticResource CardBorderStyle}">
+                                        <StackPanel Spacing="12">
+                                            <ComboBox x:Name="AreaProfileCombo" Header="Saved area profile" HorizontalAlignment="Stretch" DisplayMemberPath="DisplayName" SelectionChanged="AreaProfile_SelectionChanged" />
+                                            <DatePicker x:Name="AreaStartDatePicker" Header="Start date" HorizontalAlignment="Stretch" />
+                                            <DatePicker x:Name="AreaEndDatePicker" Header="End date" HorizontalAlignment="Stretch" />
+                                            <Button x:Name="ProcessAreaFeedsButton" Content="Archive + analyze selected feeds" HorizontalAlignment="Stretch"
+                                                    Style="{StaticResource AccentButtonStyle}" Click="ProcessAreaFeeds_Click" />
+                                            <InfoBar IsOpen="True" IsClosable="False" Severity="Informational" Title="Explicit feed selection"
+                                                     Message="ZIP discovery never downloads by itself. Acquisition starts only for the feeds checked here and uses the shared quota-safe settings." />
+                                        </StackPanel>
+                                    </Border>
+                                </Grid>
+                            </TabViewItem>
+                            <TabViewItem Header="Story leads" IsClosable="False">
+                                <Grid Padding="6,10,6,4" RowSpacing="10">
+                                    <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                                    <Grid ColumnSpacing="10">
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                        <TextBlock Text="Evidence-backed assignment leads" Style="{StaticResource SubtitleTextBlockStyle}" VerticalAlignment="Center" />
+                                        <Button x:Name="GenerateAreaDigestButton" Grid.Column="1" Content="Find story leads" Style="{StaticResource AccentButtonStyle}" Click="GenerateAreaDigest_Click" />
+                                    </Grid>
+                                    <InfoBar Grid.Row="1" IsOpen="True" IsClosable="False" Severity="Warning" Title="Assignment leads, not confirmed events"
+                                             Message="Police-radio ASR can be wrong. Verify every quote and clip before publication or subscriber delivery." />
+                                    <TextBlock x:Name="AreaCoverageText" Grid.Row="2" Text="Save or choose a profile, then select a date range." TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                    <ScrollViewer Grid.Row="3" MaxHeight="150">
+                                        <TextBlock x:Name="AreaSummaryText" TextWrapping="Wrap" IsTextSelectionEnabled="True" />
+                                    </ScrollViewer>
+                                    <ListView x:Name="AreaStoryList" Grid.Row="4" SelectionMode="None">
+                                        <ListView.ItemTemplate>
+                                            <DataTemplate x:DataType="local:AreaStory">
+                                                <StackPanel Padding="10" Spacing="5">
+                                                    <TextBlock Text="{x:Bind Headline}" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                                                    <TextBlock Text="{x:Bind ScoreSummary}" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" />
+                                                    <TextBlock Text="{x:Bind TimeAndPlace}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                    <TextBlock Text="{x:Bind Summary}" TextWrapping="Wrap" MaxLines="4" TextTrimming="CharacterEllipsis" />
+                                                    <TextBlock Text="{x:Bind WhyInteresting}" TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                    <TextBlock Text="{x:Bind EvidenceSummary}" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                                                    <TextBlock Text="{x:Bind AudienceSummary}" TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                    <ItemsControl ItemsSource="{x:Bind IncidentReferences}">
+                                                        <ItemsControl.ItemTemplate>
+                                                            <DataTemplate x:DataType="local:AreaStoryReference">
+                                                                <Border Margin="0,4,0,0" Padding="10" CornerRadius="6" Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}">
+                                                                    <StackPanel Spacing="4">
+                                                                        <TextBlock Text="{x:Bind SourceAndTime}" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                                                                        <TextBlock Text="{x:Bind QuoteDisplay}" TextWrapping="Wrap" IsTextSelectionEnabled="True" FontStyle="Italic" />
+                                                                        <TextBlock Text="{x:Bind ProvenanceSummary}" TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                                        <StackPanel Orientation="Horizontal" Spacing="8">
+                                                                            <Button Content="Play evidence clip" IsEnabled="{x:Bind ClipAvailable}" Click="PlayStoryEvidence_Click" />
+                                                                            <Button Content="Export clip…" IsEnabled="{x:Bind ClipAvailable}" Click="ExportStoryEvidence_Click" />
+                                                                            <TextBlock Text="{x:Bind ClipStatus}" VerticalAlignment="Center" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                                        </StackPanel>
+                                                                    </StackPanel>
+                                                                </Border>
+                                                            </DataTemplate>
+                                                        </ItemsControl.ItemTemplate>
+                                                    </ItemsControl>
+                                                </StackPanel>
+                                            </DataTemplate>
+                                        </ListView.ItemTemplate>
+                                    </ListView>
+                                    <TextBlock x:Name="AreaPlaybackStatusText" Grid.Row="5" Text="Choose a source clip to audit its transcript quote." TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                    <MediaPlayerElement x:Name="AreaStoryPlayer" Grid.Row="6" Height="72" AreTransportControlsEnabled="True" />
+                                </Grid>
+                            </TabViewItem>
+                        </TabView>
+                    </Grid>
+
+                    <!-- Settings -->
+                    <Grid x:Name="SettingsPage" Visibility="Collapsed" Padding="26,20,26,18" RowSpacing="16">
+                        <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+                        <StackPanel Spacing="4">
+                            <TextBlock Text="Settings" Style="{StaticResource TitleTextBlockStyle}" />
+                            <TextBlock Text="Account, storage, and local model defaults shared by archive, library, and area jobs."
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        </StackPanel>
+                        <TabView Grid.Row="1" IsAddTabButtonVisible="False" TabWidthMode="SizeToContent">
+                            <TabViewItem Header="Processing" IsClosable="False">
+                                <ScrollViewer HorizontalScrollBarVisibility="Disabled">
+                                    <StackPanel Spacing="16" MaxWidth="1080" HorizontalAlignment="Left" Padding="0,4,12,16">
+                                        <InfoBar x:Name="DiagnosticsInfoBar" IsOpen="True" IsClosable="False" Severity="Informational"
+                                                 Title="Checking local models" Message="Inspecting transcription, diarization, and analysis engines…" />
+
+                                        <Border Style="{StaticResource CardBorderStyle}">
+                                            <StackPanel Spacing="14">
+                                                <StackPanel Spacing="3">
+                                                    <TextBlock Text="Hardware profile" Style="{StaticResource SubtitleTextBlockStyle}" />
+                                                    <TextBlock Text="A profile chooses a proven engine for each stage. You can still refine the transcription controls below."
+                                                               TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                </StackPanel>
+                                                <ComboBox x:Name="HardwareProfileComboBox" Header="This computer should use" SelectedIndex="0"
+                                                          HorizontalAlignment="Stretch" SelectionChanged="HardwareProfile_SelectionChanged">
+                                                    <ComboBoxItem Content="Automatic (recommended)" Tag="auto" />
+                                                    <ComboBoxItem Content="NVIDIA CUDA" Tag="cuda" />
+                                                    <ComboBoxItem Content="Cross-vendor Vulkan" Tag="vulkan" />
+                                                    <ComboBoxItem Content="OpenVINO runtime" Tag="openvino" />
+                                                    <ComboBoxItem Content="Windows ML" Tag="windowsml" />
+                                                    <ComboBoxItem Content="CPU only" Tag="cpu" />
+                                                </ComboBox>
+                                                <TextBlock x:Name="HardwareProfileDescriptionText"
+                                                           Text="Detecting the best engines for this computer…" TextWrapping="Wrap"
+                                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                <Grid ColumnSpacing="8">
+                                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                                    <Expander Header="Compare detected profiles" HorizontalAlignment="Stretch">
+                                                        <ListView x:Name="HardwareProfileList" SelectionMode="None" IsItemClickEnabled="False"
+                                                                  HorizontalContentAlignment="Stretch">
+                                                            <ListView.ItemTemplate>
+                                                                <DataTemplate x:DataType="local:HardwareProfileStatus">
+                                                                    <Border BorderThickness="1" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                                                            CornerRadius="6" Padding="10" Margin="0,0,0,6">
+                                                                        <StackPanel Spacing="3">
+                                                                            <Grid ColumnSpacing="8">
+                                                                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                                                                <TextBlock Text="{x:Bind Name}" FontWeight="SemiBold" />
+                                                                                <TextBlock Grid.Column="1" Text="{x:Bind StateText}" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" />
+                                                                            </Grid>
+                                                                            <TextBlock Text="{x:Bind StageSummary}" TextWrapping="Wrap" FontSize="12"
+                                                                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                                            <TextBlock Text="{x:Bind Note}" TextWrapping="Wrap" FontSize="12"
+                                                                                       Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                                                                        </StackPanel>
+                                                                    </Border>
+                                                                </DataTemplate>
+                                                            </ListView.ItemTemplate>
+                                                        </ListView>
+                                                    </Expander>
+                                                    <Button x:Name="DiagnosticsRefreshButton" Grid.Column="1" Content="Refresh check"
+                                                            Click="RefreshDiagnostics_Click" />
+                                                </Grid>
+                                            </StackPanel>
+                                        </Border>
+
+                                        <Border Style="{StaticResource CardBorderStyle}">
+                                            <StackPanel Spacing="12">
+                                                <TextBlock Text="Transcription &amp; speakers" Style="{StaticResource SubtitleTextBlockStyle}" />
+                                                <TextBlock Text="The hardware profile supplies safe engine defaults. Most jobs only need a Whisper model and batch size."
+                                                           TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                <Grid ColumnSpacing="12">
+                                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                                    <ComboBox x:Name="ModelComboBox" Header="Whisper model" SelectedIndex="0" HorizontalAlignment="Stretch">
+                                                        <ComboBoxItem Content="turbo" /><ComboBoxItem Content="distil-large-v3" /><ComboBoxItem Content="large-v3" /><ComboBoxItem Content="medium" /><ComboBoxItem Content="small" />
+                                                    </ComboBox>
+                                                    <NumberBox x:Name="BatchSizeBox" Grid.Column="1" Header="ASR / speaker batch" Value="8" Minimum="1" Maximum="64" SpinButtonPlacementMode="Compact" />
+                                                </Grid>
+                                                <Expander Header="Advanced engine overrides and speaker tuning" HorizontalAlignment="Stretch">
+                                                    <StackPanel Spacing="12" Padding="0,8,0,4">
+                                                        <TextBlock Text="Changing the hardware profile resets these overrides to a compatible combination."
+                                                                   TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                                                        <Grid ColumnSpacing="12">
+                                                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                                            <ComboBox x:Name="AsrEngineComboBox" Header="Transcription engine" SelectedIndex="0" HorizontalAlignment="Stretch">
+                                                                <ComboBoxItem Content="Recommended" Tag="auto" />
+                                                                <ComboBoxItem Content="faster-whisper" Tag="faster-whisper" />
+                                                                <ComboBoxItem Content="whisper.cpp" Tag="whisper.cpp" />
+                                                                <ComboBoxItem Content="OpenVINO GenAI" Tag="openvino" />
+                                                                <ComboBoxItem Content="Windows ML" Tag="windows-ml" />
+                                                            </ComboBox>
+                                                            <ComboBox x:Name="DeviceComboBox" Grid.Column="1" Header="Transcription accelerator" SelectedIndex="0" HorizontalAlignment="Stretch">
+                                                                <ComboBoxItem Content="Automatic" Tag="auto" />
+                                                                <ComboBoxItem Content="NVIDIA CUDA" Tag="cuda" />
+                                                                <ComboBoxItem Content="Cross-vendor Vulkan" Tag="vulkan" />
+                                                                <ComboBoxItem Content="OpenVINO (auto)" Tag="openvino-auto" />
+                                                                <ComboBoxItem Content="OpenVINO GPU" Tag="openvino-gpu" />
+                                                                <ComboBoxItem Content="OpenVINO NPU" Tag="openvino-npu" />
+                                                                <ComboBoxItem Content="CPU" Tag="cpu" />
+                                                            </ComboBox>
+                                                            <ComboBox x:Name="DiarizationDeviceComboBox" Grid.Column="2" Header="Speaker-label accelerator" SelectedIndex="0" HorizontalAlignment="Stretch">
+                                                                <ComboBoxItem Content="Automatic" Tag="auto" />
+                                                                <ComboBoxItem Content="NVIDIA CUDA" Tag="cuda" />
+                                                                <ComboBoxItem Content="CPU fallback" Tag="cpu" />
+                                                            </ComboBox>
+                                                        </Grid>
+                                                        <Grid ColumnSpacing="12">
+                                                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                                            <NumberBox x:Name="GpuIndexBox" Header="GPU index" Value="0" Minimum="0" Maximum="15" SpinButtonPlacementMode="Compact" />
+                                                            <NumberBox x:Name="MinimumSpeakersBox" Grid.Column="1" Header="Minimum speakers (0 = detect)" Value="2" Minimum="0" Maximum="64" SpinButtonPlacementMode="Compact" />
+                                                            <NumberBox x:Name="MaximumSpeakersBox" Grid.Column="2" Header="Maximum speakers (0 = detect)" Value="8" Minimum="0" Maximum="64" SpinButtonPlacementMode="Compact" />
+                                                        </Grid>
+                                                        <TextBox x:Name="AsrModelPathBox" Header="Optional engine-specific model path"
+                                                                 PlaceholderText="Leave blank to use the engine's managed model cache" />
+                                                    </StackPanel>
+                                                </Expander>
+                                                <PasswordBox x:Name="HuggingFaceTokenBox" Header="Hugging Face read token for speaker labels and managed models"
+                                                             PlaceholderText="Optional here when HUGGINGFACE_TOKEN is in .env" PasswordRevealMode="Peek" />
+                                            </StackPanel>
+                                        </Border>
+
+                                        <Border Style="{StaticResource CardBorderStyle}">
+                                            <StackPanel Spacing="12">
+                                                <TextBlock Text="Library &amp; downloads" Style="{StaticResource SubtitleTextBlockStyle}" />
+                                                <Grid ColumnSpacing="8">
+                                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                                    <TextBox x:Name="OutputFolderBox" Header="Archive library folder" Text="archives" />
+                                                    <Button Grid.Column="1" Content="Browse…" VerticalAlignment="Bottom" Click="Browse_Click" />
+                                                </Grid>
+                                                <NumberBox x:Name="DownloadJobsBox" Header="Download workers" Value="1" Minimum="1" Maximum="32" SpinButtonPlacementMode="Compact" />
+                                                <TextBlock Text="These non-secret processing choices are saved for this Windows account when the app closes. Logins remain in Windows Credential Locker; tokens stay in .env or this session only."
+                                                           TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                                            </StackPanel>
+                                        </Border>
+                                    </StackPanel>
+                                </ScrollViewer>
+                            </TabViewItem>
+
+                            <TabViewItem Header="Account &amp; private build" IsClosable="False">
+                                <ScrollViewer HorizontalScrollBarVisibility="Disabled">
+                                    <StackPanel Spacing="16" MaxWidth="900" HorizontalAlignment="Left" Padding="0,4,12,16">
+                                        <Border Style="{StaticResource CardBorderStyle}">
+                                            <StackPanel Spacing="12">
+                                                <TextBlock Text="Broadcastify account" Style="{StaticResource SubtitleTextBlockStyle}" />
+                                                <InfoBar x:Name="AuthInfoBar" IsOpen="True" IsClosable="False" Severity="Informational"
+                                                         Title="Premium archive access" Message="A saved session, Windows Credential Locker login, or private bundled .env can refresh access.">
+                                                    <InfoBar.ActionButton><Button Content="Sign in" Click="SignIn_Click" /></InfoBar.ActionButton>
+                                                </InfoBar>
+                                                <TextBlock x:Name="SettingsAuthStatusText" Text="Checking saved login…" TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                                    <Button Content="Sign in or replace saved login" Click="SignIn_Click" />
+                                                    <Button x:Name="ClearSavedLoginButton" Content="Forget saved login" Click="ClearSavedLogin_Click" />
+                                                </StackPanel>
+                                            </StackPanel>
+                                        </Border>
+                                        <Border Style="{StaticResource CardBorderStyle}">
+                                            <StackPanel Spacing="8">
+                                                <TextBlock Text="Private build environment" Style="{StaticResource SubtitleTextBlockStyle}" />
+                                                <TextBlock x:Name="SettingsEnvironmentText" Text="Checking bundled environment…" TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                <TextBlock Text="Private builds can include the ignored repository .env so this computer starts signed in. Public builds never copy it."
+                                                           TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                                            </StackPanel>
+                                        </Border>
+                                    </StackPanel>
+                                </ScrollViewer>
+                            </TabViewItem>
+                        </TabView>
+                    </Grid>
+
+                    <!-- Persistent task status -->
+                    <Border Grid.Row="1" Padding="18,9" BorderThickness="0,1,0,0" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                            Background="{ThemeResource LayerFillColorDefaultBrush}">
+                        <Grid ColumnSpacing="12">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="260" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                            <TextBlock x:Name="StatusText" Text="Ready" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                            <ProgressBar x:Name="JobProgress" Grid.Column="1" Minimum="0" Maximum="100" Value="0" VerticalAlignment="Center" />
+                            <Button x:Name="CancelButton" Grid.Column="2" Content="Cancel" IsEnabled="False" Click="Cancel_Click" />
+                        </Grid>
+                    </Border>
+                </Grid>
+            </NavigationView.Content>
+        </NavigationView>
+    </Grid>
+</Window>

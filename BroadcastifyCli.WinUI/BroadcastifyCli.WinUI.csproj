@@ -1,0 +1,56 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows10.0.26100.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
+    <RootNamespace>BroadcastifyCli.WinUI</RootNamespace>
+    <AssemblyName>Broadcastify Desktop</AssemblyName>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <Platforms>x64</Platforms>
+    <UseWinUI>true</UseWinUI>
+    <WinUISDKReferences>false</WinUISDKReferences>
+    <WindowsPackageType>None</WindowsPackageType>
+    <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <EnableMsixTooling>false</EnableMsixTooling>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <BundleLocalEnv Condition="'$(BundleLocalEnv)' == ''">false</BundleLocalEnv>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Manifest Include="$(ApplicationManifest)" />
+    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.7705" />
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.8.260317003" />
+  </ItemGroup>
+
+  <Target Name="BundlePrivateEnvironmentForBuild"
+          AfterTargets="Build"
+          Condition="'$(BundleLocalEnv)' == 'true' and Exists('$(MSBuildProjectDirectory)\..\.env')">
+    <Copy SourceFiles="$(MSBuildProjectDirectory)\..\.env"
+          DestinationFiles="$(OutDir)broadcastify-desktop.env" />
+    <Message Text="Bundled the ignored local .env into this private build output."
+             Importance="high" />
+  </Target>
+
+  <Target Name="RemovePrivateEnvironmentFromNormalBuild"
+          AfterTargets="Build"
+          Condition="'$(BundleLocalEnv)' != 'true' and Exists('$(OutDir)broadcastify-desktop.env')">
+    <Delete Files="$(OutDir)broadcastify-desktop.env" />
+  </Target>
+
+  <Target Name="BundlePrivateEnvironmentForPublish"
+          AfterTargets="Publish"
+          Condition="'$(BundleLocalEnv)' == 'true' and Exists('$(MSBuildProjectDirectory)\..\.env')">
+    <Copy SourceFiles="$(MSBuildProjectDirectory)\..\.env"
+          DestinationFiles="$(PublishDir)broadcastify-desktop.env" />
+    <Message Text="Bundled the ignored local .env into this private publish output."
+             Importance="high" />
+  </Target>
+
+  <Target Name="RemovePrivateEnvironmentFromNormalPublish"
+          AfterTargets="Publish"
+          Condition="'$(BundleLocalEnv)' != 'true' and Exists('$(PublishDir)broadcastify-desktop.env')">
+    <Delete Files="$(PublishDir)broadcastify-desktop.env" />
+  </Target>
+</Project>

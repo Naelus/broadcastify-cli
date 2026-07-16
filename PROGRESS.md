@@ -41,7 +41,8 @@ This is the dated verification and delivery log for `GOAL.md`. Keep forward-look
 - Git identity: `naelus <9455516+Naelus@users.noreply.github.com>`.
 - Remote: `https://Naelus@github.com/Naelus/broadcastify-cli`.
 - Staged content is scanned for common token/password patterns before every commit.
-- Backend/persistence and native UI are being delivered as separate reviewable commits because all work since the original diarization commit began from one uncommitted tree.
+- Backend/persistence commit `historical-validation` was pushed to `origin/main` after 69 tests passed and the credential-pattern audit was clean.
+- Native UI is being delivered separately because all work since the original diarization commit began from one uncommitted tree.
 
 ## Earlier validated work
 
