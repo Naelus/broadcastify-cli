@@ -76,6 +76,14 @@ This is the dated verification and delivery log for `GOAL.md`. Keep forward-look
 - Browser QA passed at 1365×900 and 390×844: six Windows profiles rendered with 4/6 ready, the Vulkan preset applied and restored correctly, the comparison stayed collapsed by default, there was no horizontal overflow, and the console remained clean.
 - Python coverage increased to **96 passed**; browser JavaScript syntax validation passed. Real-machine macOS/Metal timing remains intentionally open in B-005.
 
+#### Linux Web UI real-host validation
+
+- Cloned exact public commit `historical-validation` into a new child of the existing isolated TrueNAS test directory; the prior Vulkan artifacts were not overwritten.
+- TrueNAS system Python 3.11.9 intentionally lacked `venv`, `ensurepip`, and pip. No host package was installed. PyPA's standalone `pip.pyz` (1,756,180 bytes, SHA-256 `6ddc3444b803a48d83ccf1c4ad846717b42c8ffc9d74713a53ae829a97201365`) installed the project/dev dependencies into a private 17 MiB `.python` directory.
+- The complete suite passed on the Linux host: **96 passed in 0.80 seconds**.
+- Started the exact commit on `127.0.0.1:18765` only, then exercised it from the same host. Health/bootstrap reported Linux and `loopback_only=true`; the v4 static UI included the portable profile controls; a POST without the action token returned 403; a retained-file range request returned 206 with the exact requested bytes; and the diagnostics child worker completed with six Linux profiles.
+- Stopped only the verified test PID after the smoke run, confirmed the port closed and no matching process remained, and left all artifacts under the user-owned isolated test directory. No NAS package, service, group, or storage setting changed.
+
 ### Archive quota reset run
 
 - Completed a guarded feed 90001 resume for July 3–16 after downloads became available again.
