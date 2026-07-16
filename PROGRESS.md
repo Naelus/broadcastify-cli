@@ -39,6 +39,16 @@ This is the dated verification and delivery log for `GOAL.md`. Keep forward-look
 - It made no more media requests, combined the now-complete July 3 audio, reused complete July 11–12 caches, and preserved every incomplete date for the next run.
 - The 55-request result contradicts treating the earlier roughly 192-redirect observation as a fixed daily quota; documentation now describes the budget/reset as dynamic or rolling and unknown.
 
+### Portable analysis providers
+
+- Added a common analysis-client contract without changing the validated local llama.cpp default.
+- Added OpenAI Responses Structured Outputs with `store=false`, environment-only API keys, bounded transient retries, and an explicit transcript-transmission gate.
+- Added generic authenticated OpenAI-compatible Chat Completions for local or remote llama.cpp/Ollama/LM Studio-style endpoints.
+- Added an ephemeral, read-only Codex CLI harness that reuses saved CLI authentication, isolates its working directory, requests a JSON schema, and strips unrelated secrets from the child environment.
+- Provider/model/endpoint identities are distinct in SQLite caches, preventing conclusions from one provider from masquerading as another provider's run.
+- The official Codex non-interactive command and local `codex exec --help` were checked; the reference machine currently reports `Not logged in`, so live subscription inference remains intentionally unclaimed.
+- Python suite after provider integration: **75 passed**.
+
 ### Delivery checkpoints
 
 - Git identity: `naelus <9455516+Naelus@users.noreply.github.com>`.

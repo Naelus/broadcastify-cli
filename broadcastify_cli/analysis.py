@@ -16,6 +16,7 @@ from typing import Any, Callable, Iterable, Sequence
 
 import requests
 
+from .analysis_clients import AnalysisClient
 from .storage import AnalysisStore
 
 
@@ -475,7 +476,7 @@ class IncidentAnalyzer:
     def __init__(
         self,
         store: AnalysisStore,
-        client: LlamaCppClient,
+        client: AnalysisClient,
         prompt_version: str = PROMPT_VERSION,
         progress: Callable[[str], None] | None = None,
     ) -> None:
@@ -799,7 +800,7 @@ class WeeklySummaryAnalyzer:
     def __init__(
         self,
         store: AnalysisStore,
-        client: LlamaCppClient,
+        client: AnalysisClient,
         prompt_version: str = WEEKLY_PROMPT_VERSION,
         progress: Callable[[str], None] | None = None,
     ) -> None:
@@ -1161,7 +1162,7 @@ class RangeQuestionAnswerer:
     def __init__(
         self,
         store: AnalysisStore,
-        client: LlamaCppClient,
+        client: AnalysisClient,
         indexer: SemanticIndexer | None = None,
     ) -> None:
         self.store = store

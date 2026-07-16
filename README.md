@@ -22,6 +22,7 @@ This fork uses Broadcastify's website login and the same private web endpoints a
 - Persistent SQLite evidence store with FTS5 text search
 - Local BGE embeddings for semantic retrieval
 - Quantized Gemma 4 through llama.cpp for incident extraction, daily briefs, and range Q&A
+- Opt-in OpenAI Responses, OpenAI-compatible, and saved-login Codex CLI analysis providers behind the same evidence schema
 - Cache/resume behavior for downloads, combined audio, transcripts, embeddings, incidents, and summaries
 - Automatic transcript import, incident extraction, summary, and semantic indexing after a completed UI job
 - Saved-day review, priority-filtered incident timeline, and evidence-grounded date-range questions in the UI
@@ -62,6 +63,8 @@ Hardware profiles are stage-specific rather than an all-or-nothing GPU switch. T
 Whisper remains the practical fast ASR default for this radio workflow. Diarization is deliberately separate: current all-in-one audio models do not yet offer a clearly better combination of speed, mature speaker labeling, Windows support, and local deployment. WhisperX can remain an optional future word-alignment mode rather than adding its extra pass to every job.
 
 Embeddings do not replace the generative model. They cheaply retrieve and cluster likely-relevant transcript passages; Gemma turns cited evidence into structured incidents and natural-language answers. SQLite remains the source of truth, including timestamps and transcript evidence, so model output can be audited.
+
+Local Gemma remains the Windows default. API and Codex modes are explicit alternatives for users who prefer a hosted model or an existing Codex subscription login; they never activate merely because a key or login exists. See [docs/model-providers.md](docs/model-providers.md) for supported contracts, privacy controls, CLI examples, and validation status.
 
 For a combined daily job, the downloader now concatenates the archive blocks **before** transcription and diarization. This is important: the old order diarized each 30-minute file separately, causing speaker labels and timestamps to restart at every boundary.
 
@@ -200,7 +203,7 @@ Download, combine, transcribe, and diarize a date range:
   --model turbo
 ```
 
-For environment-based sign-in, copy `.env-example` to `.env` and set `BROADCASTIFY_USERNAME` and `BROADCASTIFY_PASSWORD`. The legacy `USERNAME`/`PASSWORD` names remain supported. Set `HUGGINGFACE_TOKEN` for pyannote, unless the read token is entered in the UI for that session. Optional overrides are `WHISPER_CPP_PATH`, `WHISPER_CPP_MODEL_PATH`, `OPENVINO_WHISPER_MODEL_PATH`, `BROADCASTIFY_MODEL_DIR`, `LLAMA_SERVER_PATH`, and `FFMPEG_PATH`; blank values preserve automatic discovery. Credential files, the Windows-build copy, and the session-cookie file are ignored by Git.
+For environment-based sign-in, copy `.env-example` to `.env` and set `BROADCASTIFY_USERNAME` and `BROADCASTIFY_PASSWORD`. The legacy `USERNAME`/`PASSWORD` names remain supported. Set `HUGGINGFACE_TOKEN` for pyannote, unless the read token is entered in the UI for that session. Optional runtime overrides are `WHISPER_CPP_PATH`, `WHISPER_CPP_MODEL_PATH`, `OPENVINO_WHISPER_MODEL_PATH`, `BROADCASTIFY_MODEL_DIR`, `LLAMA_SERVER_PATH`, and `FFMPEG_PATH`; blank values preserve automatic discovery. Optional analysis-provider variables are documented in [docs/model-providers.md](docs/model-providers.md). Credential files, the Windows-build copy, and the session-cookie file are ignored by Git.
 
 Import, classify, summarize, and embed a completed day:
 

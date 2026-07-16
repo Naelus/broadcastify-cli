@@ -5,7 +5,6 @@ import json
 import os
 import sys
 import traceback
-from contextlib import nullcontext
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -20,11 +19,8 @@ from .audio import (
 )
 from .analysis import (
     DEFAULT_EMBEDDING_MODEL,
-    DEFAULT_LLM_MODEL,
     PROMPT_VERSION,
     IncidentAnalyzer,
-    LlamaCppClient,
-    LlamaServerProcess,
     RangeQuestionAnswerer,
     SemanticIndexer,
     WeeklySummaryAnalyzer,
@@ -32,6 +28,7 @@ from .analysis import (
     find_llama_server,
     format_archive_time,
 )
+from .analysis_providers import AnalysisProviderConfig, open_analysis_client
 from .area_watch import AreaStoryAnalyzer
 from .broadcastify import BroadcastifyClient
 from .jobs import JobRunner
@@ -279,7 +276,7 @@ def _analyze_day_payload(payload: dict[str, Any]) -> tuple[dict[str, Any], int, 
     feed_id = str(payload["feed_id"])
     archive_date = date.fromisoformat(str(payload["archive_date"]))
     output_dir = Path(payload.get("output_dir") or "archives")
-    model = str(payload.get("model") or DEFAULT_LLM_MODEL)
+    provider = AnalysisProviderConfig.from_mapping(payload)
     force = bool(payload.get("force", False))
     force_summary = bool(payload.get("force_summary", False))
     audio, transcript, manifest = discover_day_paths(output_dir, feed_id, archive_date)
@@ -298,19 +295,29 @@ def _analyze_day_payload(payload: dict[str, Any]) -> tuple[dict[str, Any], int, 
         complete = bool(
             day is not None
             and store.get_daily_summary(
-                int(day["id"]), model, PROMPT_VERSION, str(day["transcript_sha256"])
+                int(day["id"]),
+                provider.cache_model,
+                PROMPT_VERSION,
+                str(day["transcript_sha256"]),
             )
         )
-        server_context = (
-            nullcontext(None)
-            if complete and not force and not force_summary
-            else LlamaServerProcess(model=model)
+        emit(
+            {
+                "type": "stage",
+                "stage": "analysis_provider",
+                "message": (
+                    f"Analysis provider: {provider.provider} / {provider.cache_model}"
+                    + (" (external transcript excerpts allowed)." if provider.is_external else ".")
+                ),
+            }
         )
-        with server_context as server:
-            base_url = server.base_url if server else "http://127.0.0.1:8088/v1"
+        with open_analysis_client(
+            provider,
+            launch_local_server=not (complete and not force and not force_summary),
+        ) as client:
             result = IncidentAnalyzer(
                 store,
-                LlamaCppClient(base_url=base_url, model=model),
+                client,
                 progress=lambda message: emit(
                     {"type": "stage", "stage": "analysis", "message": message}
                 ),
@@ -366,12 +373,26 @@ def continue_local_day() -> int:
     )
     report = None
     if bool(payload.get("analyze", True)):
+        provider_fields = {
+            key: payload[key]
+            for key in (
+                "analysis_provider",
+                "analysis_model",
+                "analysis_endpoint",
+                "analysis_api_key",
+                "analysis_api_key_env",
+                "codex_cli_path",
+                "allow_external_analysis",
+                "analysis_timeout",
+            )
+            if key in payload
+        }
         report, incident_count, indexed = _analyze_day_payload(
             {
                 "feed_id": request.feed_id,
                 "archive_date": request.archive_date.isoformat(),
                 "output_dir": str(request.output_dir),
-                "model": payload.get("analysis_model") or DEFAULT_LLM_MODEL,
+                **provider_fields,
             }
         )
         emit(
@@ -413,6 +434,7 @@ def ask_archive() -> int:
     question = str(payload["question"]).strip()
     if not question:
         raise ValueError("A question is required.")
+    provider = AnalysisProviderConfig.from_mapping(payload)
     emit(
         {
             "type": "stage",
@@ -423,10 +445,10 @@ def ask_archive() -> int:
     with AnalysisStore(DEFAULT_DATABASE) as store:
         indexer = SemanticIndexer(store, model=DEFAULT_EMBEDDING_MODEL)
         indexer.index_missing()
-        with LlamaServerProcess(model=DEFAULT_LLM_MODEL) as server:
+        with open_analysis_client(provider) as client:
             result = RangeQuestionAnswerer(
                 store,
-                LlamaCppClient(base_url=server.base_url, model=DEFAULT_LLM_MODEL),
+                client,
                 indexer=indexer,
             ).ask(feed_id, start_date, end_date, question)
     emit({"type": "answer", "message": "Question answered.", "result": result})
@@ -437,7 +459,7 @@ def summarize_week() -> int:
     payload = json.load(sys.stdin)
     feed_id = str(payload["feed_id"])
     week_ending = date.fromisoformat(str(payload["week_ending"]))
-    model = str(payload.get("model") or DEFAULT_LLM_MODEL)
+    provider = AnalysisProviderConfig.from_mapping(payload)
     force = bool(payload.get("force", False))
     emit(
         {
@@ -447,10 +469,10 @@ def summarize_week() -> int:
         }
     )
     with AnalysisStore(DEFAULT_DATABASE) as store:
-        with LlamaServerProcess(model=model) as server:
+        with open_analysis_client(provider) as client:
             result = WeeklySummaryAnalyzer(
                 store,
-                LlamaCppClient(base_url=server.base_url, model=model),
+                client,
                 progress=lambda message: emit(
                     {
                         "type": "stage",
@@ -477,7 +499,7 @@ def summarize_area() -> int:
     profile_name = str(payload["profile_name"])
     start_date = date.fromisoformat(str(payload["start_date"]))
     end_date = date.fromisoformat(str(payload["end_date"]))
-    model = str(payload.get("model") or DEFAULT_LLM_MODEL)
+    provider = AnalysisProviderConfig.from_mapping(payload)
     force = bool(payload.get("force", False))
     emit(
         {
@@ -487,10 +509,10 @@ def summarize_area() -> int:
         }
     )
     with AnalysisStore(DEFAULT_DATABASE) as store:
-        with LlamaServerProcess(model=model) as server:
+        with open_analysis_client(provider) as client:
             result = AreaStoryAnalyzer(
                 store,
-                LlamaCppClient(base_url=server.base_url, model=model),
+                client,
                 progress=lambda message: emit(
                     {"type": "stage", "stage": "area_digest", "message": message}
                 ),

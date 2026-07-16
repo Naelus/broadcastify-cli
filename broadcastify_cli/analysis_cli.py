@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from contextlib import nullcontext
 from datetime import date, datetime
 from pathlib import Path
 
@@ -11,16 +10,18 @@ from rich.console import Console
 
 from .analysis import (
     DEFAULT_EMBEDDING_MODEL,
-    DEFAULT_LLM_MODEL,
     PROMPT_VERSION,
     IncidentAnalyzer,
-    LlamaCppClient,
-    LlamaServerProcess,
     RangeQuestionAnswerer,
     SemanticIndexer,
     WeeklySummaryAnalyzer,
     discover_day_paths,
     format_archive_time,
+)
+from .analysis_providers import (
+    PROVIDER_CHOICES,
+    AnalysisProviderConfig,
+    open_analysis_client,
 )
 from .storage import AnalysisStore
 
@@ -33,6 +34,28 @@ def parse_date(value: str) -> date:
         return date.fromisoformat(value)
     except ValueError as exc:
         raise click.BadParameter("Use YYYY-MM-DD.") from exc
+
+
+def provider_config(
+    provider: str,
+    model: str | None,
+    server_url: str | None,
+    api_key_env: str,
+    codex_path: Path | None,
+    allow_external_analysis: bool,
+) -> AnalysisProviderConfig:
+    value: dict[str, object] = {
+        "analysis_provider": provider,
+        "analysis_api_key_env": api_key_env,
+        "allow_external_analysis": allow_external_analysis,
+    }
+    if model:
+        value["analysis_model"] = model
+    if server_url:
+        value["analysis_endpoint"] = server_url
+    if codex_path:
+        value["codex_cli_path"] = str(codex_path)
+    return AnalysisProviderConfig.from_mapping(value)
 
 
 @click.group(context_settings={"help_option_names": ["-h", "--help"]})
@@ -65,8 +88,12 @@ def import_day(feed_id: str, date_value: date, output_dir: Path, db: Path) -> No
 @click.option("--date", "date_value", required=True, callback=lambda _c, _p, v: parse_date(v))
 @click.option("--output-dir", type=click.Path(path_type=Path), default=Path("archives"))
 @click.option("--db", type=click.Path(path_type=Path), default=Path("archives/broadcastify-analysis.sqlite3"))
-@click.option("--model", default=DEFAULT_LLM_MODEL, show_default=True)
-@click.option("--server-url", help="Use an already-running llama.cpp /v1 endpoint")
+@click.option("--provider", type=click.Choice(PROVIDER_CHOICES), default="local", show_default=True)
+@click.option("--model", help="Provider model; local defaults to quantized Gemma")
+@click.option("--server-url", help="Provider base URL ending in /v1, or an existing local llama.cpp endpoint")
+@click.option("--api-key-env", default="OPENAI_API_KEY", show_default=True, help="Environment variable containing the provider key")
+@click.option("--codex-path", type=click.Path(path_type=Path), help="Optional Codex CLI executable")
+@click.option("--allow-external-analysis", is_flag=True, help="Acknowledge that transcript excerpts may leave this computer")
 @click.option("--embedding-model", default=DEFAULT_EMBEDDING_MODEL, show_default=True)
 @click.option("--embeddings/--no-embeddings", default=True, show_default=True)
 @click.option("--force", is_flag=True, help="Re-run extraction and summary even if cached")
@@ -76,14 +103,26 @@ def analyze_day(
     date_value: date,
     output_dir: Path,
     db: Path,
-    model: str,
+    provider: str,
+    model: str | None,
     server_url: str | None,
+    api_key_env: str,
+    codex_path: Path | None,
+    allow_external_analysis: bool,
     embedding_model: str,
     embeddings: bool,
     force: bool,
     force_summary: bool,
 ) -> None:
     """Import and classify one day, then create its end-of-day summary."""
+    provider_settings = provider_config(
+        provider,
+        model,
+        server_url,
+        api_key_env,
+        codex_path,
+        allow_external_analysis,
+    )
     audio, transcript, manifest = discover_day_paths(output_dir, feed_id, date_value)
     with AnalysisStore(db) as store:
         imported = store.import_transcript(
@@ -94,17 +133,16 @@ def analyze_day(
         complete = bool(
             day is not None
             and store.get_daily_summary(
-                int(day["id"]), model, PROMPT_VERSION, str(day["transcript_sha256"])
+                int(day["id"]),
+                provider_settings.cache_model,
+                PROMPT_VERSION,
+                str(day["transcript_sha256"]),
             )
         )
-        server_context = (
-            nullcontext(None)
-            if server_url or (complete and not force and not force_summary)
-            else LlamaServerProcess(model=model)
-        )
-        with server_context as server:
-            base_url = server_url or (server.base_url if server else "http://127.0.0.1:8088/v1")
-            client = LlamaCppClient(base_url=base_url, model=model)
+        with open_analysis_client(
+            provider_settings,
+            launch_local_server=not (complete and not force and not force_summary),
+        ) as client:
             result = IncidentAnalyzer(
                 store, client, progress=console.print
             ).analyze_day(
@@ -127,8 +165,12 @@ def analyze_day(
 @click.option("--end-date", required=True, callback=lambda _c, _p, v: parse_date(v))
 @click.option("--question", required=True)
 @click.option("--db", type=click.Path(path_type=Path), default=Path("archives/broadcastify-analysis.sqlite3"))
-@click.option("--model", default=DEFAULT_LLM_MODEL, show_default=True)
-@click.option("--server-url", help="Use an already-running llama.cpp /v1 endpoint")
+@click.option("--provider", type=click.Choice(PROVIDER_CHOICES), default="local", show_default=True)
+@click.option("--model", help="Provider model; local defaults to quantized Gemma")
+@click.option("--server-url", help="Provider base URL ending in /v1, or an existing local llama.cpp endpoint")
+@click.option("--api-key-env", default="OPENAI_API_KEY", show_default=True)
+@click.option("--codex-path", type=click.Path(path_type=Path))
+@click.option("--allow-external-analysis", is_flag=True, help="Acknowledge that transcript excerpts may leave this computer")
 @click.option("--embedding-model", default=DEFAULT_EMBEDDING_MODEL, show_default=True)
 @click.option("--semantic/--keyword-only", default=True, show_default=True)
 def ask(
@@ -137,14 +179,26 @@ def ask(
     end_date: date,
     question: str,
     db: Path,
-    model: str,
+    provider: str,
+    model: str | None,
     server_url: str | None,
+    api_key_env: str,
+    codex_path: Path | None,
+    allow_external_analysis: bool,
     embedding_model: str,
     semantic: bool,
 ) -> None:
     """Ask an evidence-grounded question over an imported date range."""
     if start_date > end_date:
         raise click.BadParameter("Start date must be on or before end date.")
+    provider_settings = provider_config(
+        provider,
+        model,
+        server_url,
+        api_key_env,
+        codex_path,
+        allow_external_analysis,
+    )
     with AnalysisStore(db) as store:
         indexer = None
         if semantic:
@@ -152,16 +206,10 @@ def ask(
             indexed = indexer.index_missing()
             if indexed:
                 console.print(f"Indexed {indexed} new transcript passages.")
-        server_context = (
-            nullcontext(None)
-            if server_url
-            else LlamaServerProcess(model=model)
-        )
-        with server_context as server:
-            base_url = server_url or server.base_url
+        with open_analysis_client(provider_settings) as client:
             result = RangeQuestionAnswerer(
                 store,
-                LlamaCppClient(base_url=base_url, model=model),
+                client,
                 indexer=indexer,
             ).ask(feed_id, start_date, end_date, question)
     console.print(result["answer"])
@@ -173,27 +221,41 @@ def ask(
 @click.option("--feed-id", required=True)
 @click.option("--week-ending", required=True, callback=lambda _c, _p, v: parse_date(v))
 @click.option("--db", type=click.Path(path_type=Path), default=Path("archives/broadcastify-analysis.sqlite3"))
-@click.option("--model", default=DEFAULT_LLM_MODEL, show_default=True)
-@click.option("--server-url", help="Use an already-running llama.cpp /v1 endpoint")
+@click.option("--provider", type=click.Choice(PROVIDER_CHOICES), default="local", show_default=True)
+@click.option("--model", help="Provider model; local defaults to quantized Gemma")
+@click.option("--server-url", help="Provider base URL ending in /v1, or an existing local llama.cpp endpoint")
+@click.option("--api-key-env", default="OPENAI_API_KEY", show_default=True)
+@click.option("--codex-path", type=click.Path(path_type=Path))
+@click.option("--allow-external-analysis", is_flag=True, help="Acknowledge that transcript excerpts may leave this computer")
 @click.option("--force", is_flag=True, help="Regenerate even when the source data is unchanged")
 @click.option("--json-output", is_flag=True, help="Emit the complete weekly report as JSON")
 def summarize_week(
     feed_id: str,
     week_ending: date,
     db: Path,
-    model: str,
+    provider: str,
+    model: str | None,
     server_url: str | None,
+    api_key_env: str,
+    codex_path: Path | None,
+    allow_external_analysis: bool,
     force: bool,
     json_output: bool,
 ) -> None:
     """Summarize the seven-day period ending on the selected date."""
+    provider_settings = provider_config(
+        provider,
+        model,
+        server_url,
+        api_key_env,
+        codex_path,
+        allow_external_analysis,
+    )
     with AnalysisStore(db) as store:
-        server_context = nullcontext(None) if server_url else LlamaServerProcess(model=model)
-        with server_context as server:
-            base_url = server_url or server.base_url
+        with open_analysis_client(provider_settings) as client:
             result = WeeklySummaryAnalyzer(
                 store,
-                LlamaCppClient(base_url=base_url, model=model),
+                client,
                 progress=console.print,
             ).summarize(feed_id, week_ending, force=force)
     if json_output:
@@ -239,12 +301,7 @@ def report_day(
             for value in store.get_incidents(feed_id, date_value, date_value)
             if int(value["priority"]) >= min_priority
         ]
-        summary = store.get_daily_summary(
-            int(day["id"]),
-            DEFAULT_LLM_MODEL,
-            PROMPT_VERSION,
-            str(day["transcript_sha256"]),
-        )
+        summary = store.get_latest_daily_summary(int(day["id"]))
     if json_output:
         console.print_json(json.dumps(incidents, ensure_ascii=False))
         return

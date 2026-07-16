@@ -50,6 +50,13 @@ Use this file for reproducible defects and concrete blockers, not the general ro
 - **Control:** Sequential pacing, exact cache reuse, and immediate stop on explicit exhaustion.
 - **Next:** Ask Broadcastify support for authoritative details and prioritize future regional acquisition by user distance/importance rather than a guessed quota size.
 
+### B-008 — Alternative analysis providers are not selectable in WinUI yet
+
+- **Severity:** Medium usability gap; backend and CLI are functional.
+- **Observed:** OpenAI Responses, compatible `/v1`, and Codex CLI provider contracts are implemented and tested, but the native app still sends the local default on every analysis action.
+- **Control:** The command-line interface exposes all provider, endpoint, model, key-environment, Codex-path, and external-data consent options without accepting secrets on command lines.
+- **Next:** Add a concise Analysis Provider card to Settings, keep keys session-only or in Windows Credential Locker, and show a real provider readiness check.
+
 ## Recently fixed
 
 ### F-001 — Diarization restarted for every downloaded block

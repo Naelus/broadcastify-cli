@@ -28,7 +28,7 @@ Status labels: **Validated**, **Implemented**, **Foundation**, or **Planned**.
 | Non-CUDA diarization acceleration | Planned | Current portable behavior is CPU fallback. |
 | SQLite transcript/incident/summary store | Validated | Includes FTS, embeddings, Q&A history, area profiles, and cached briefs. |
 | Quantized llama.cpp analysis | Validated | Gemma GGUF local path; Vulkan device detection is implemented. |
-| Provider API/Codex harness | Planned | Must be opt-in, auditable, secret-safe, and preserve evidence schemas. |
+| Provider API/Codex harness | Implemented | Backend/CLI support OpenAI Responses, compatible `/v1` endpoints, and ephemeral saved-login Codex; native Settings exposure remains. |
 
 ## User experience
 
