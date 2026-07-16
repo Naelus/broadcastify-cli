@@ -45,11 +45,12 @@ Use this file for reproducible defects and concrete blockers, not the general ro
 - **Control:** Sequential pacing, exact cache reuse, and immediate stop on explicit exhaustion.
 - **Next:** Ask Broadcastify support for authoritative details and prioritize future regional acquisition by user distance/importance rather than a guessed quota size.
 
-### B-008 — Nearby-feed acquisition is ZIP/profile based, not a true distance cascade
+### B-008 — Radius priority is implemented; acquisition is not yet a shared persisted cascade
 
 - **Severity:** Medium for quota-efficient newsroom coverage.
-- **Observed:** Multi-ZIP discovery and explicit area profiles work, but the app does not yet rank a center/radius market by geographic distance and spend the unknown archive budget on the nearest missing feed-day first.
-- **Next:** Add geocoded feed coverage metadata, center-plus-radius settings, and a persisted nearest-first acquisition queue. Keep feed selection reviewable and stop the whole queue on the first explicit quota response.
+- **Observed:** Native and Web clients now expand a center/radius with cached Census ZCTA centroids, preserve an explicit nearest-first feed order, and explain that county-directory distance is approximate. The native multi-feed loop still owns execution, so it can continue to another selected feed after the first feed reports explicit quota exhaustion.
+- **Control:** Discovery never downloads audio, results remain explicitly reviewable, and each single-feed job stops its own range on the first explicit quota response.
+- **Next:** Move profile execution into a shared persisted backend queue, stop the whole queue on `download_limited`, and resume the first incomplete feed without replaying completed work.
 
 ## Recently fixed
 

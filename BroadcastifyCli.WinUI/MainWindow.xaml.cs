@@ -41,6 +41,7 @@ public sealed partial class MainWindow : Window
     private int _librarySelectionVersion;
     private bool _broadcastifyRateLimitObserved;
     private bool _loadingSettings;
+    private AreaCoverage _currentAreaCoverage = new();
 
     public MainWindow()
     {
@@ -1948,6 +1949,29 @@ public sealed partial class MainWindow : Window
         return zipCodes;
     }
 
+    private void AreaCoverageMode_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        => UpdateAreaCoverageControls();
+
+    private void UpdateAreaCoverageControls()
+    {
+        if (AreaRadiusBox is null || AreaMaxZipCodesBox is null || AreaZipCodesBox is null)
+        {
+            return;
+        }
+        var radiusMode = string.Equals(
+            SelectedComboValue(AreaCoverageModeCombo, "radius"),
+            "radius",
+            StringComparison.OrdinalIgnoreCase);
+        AreaRadiusBox.IsEnabled = radiusMode;
+        AreaMaxZipCodesBox.IsEnabled = radiusMode;
+        AreaZipCodesBox.Header = radiusMode ? "Center ZIP" : "ZIPs in priority order";
+        AreaZipCodesBox.PlaceholderText = radiusMode ? "12345" : "12345, 12346, 12347";
+        if (DiscoverAreaFeedsButton is not null)
+        {
+            DiscoverAreaFeedsButton.Content = radiusMode ? "Discover nearest" : "Discover feeds";
+        }
+    }
+
     private async void DiscoverAreaFeeds_Click(object sender, RoutedEventArgs e)
     {
         if (_worker is null)
@@ -1955,9 +1979,17 @@ public sealed partial class MainWindow : Window
             return;
         }
         List<string> zipCodes;
+        var radiusMode = string.Equals(
+            SelectedComboValue(AreaCoverageModeCombo, "radius"),
+            "radius",
+            StringComparison.OrdinalIgnoreCase);
         try
         {
             zipCodes = ParseZipCodes(AreaZipCodesBox.Text);
+            if (radiusMode && zipCodes.Count != 1)
+            {
+                throw new FormatException("Radius coverage needs one five-digit center ZIP.");
+            }
         }
         catch (FormatException exception)
         {
@@ -1965,11 +1997,24 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        SetBusy(true, $"Searching {zipCodes.Count} ZIP code{(zipCodes.Count == 1 ? "" : "s")}…");
+        var radiusMiles = Math.Clamp(AreaRadiusBox.Value, 1, 100);
+        var maxZipCodes = Math.Clamp(RequiredInteger(AreaMaxZipCodesBox.Value, 12), 1, 20);
+        SetBusy(
+            true,
+            radiusMode
+                ? $"Discovering the nearest ZIP areas within {radiusMiles:0.#} miles…"
+                : $"Searching {zipCodes.Count} ordered ZIP code{(zipCodes.Count == 1 ? "" : "s")}…");
         try
         {
             using var cancellation = new CancellationTokenSource(TimeSpan.FromMinutes(2));
-            var results = await _worker.SearchAreaFeedsAsync(zipCodes, cancellation.Token);
+            var response = await _worker.SearchAreaFeedsAsync(
+                zipCodes,
+                radiusMode ? zipCodes[0] : null,
+                radiusMode ? radiusMiles : null,
+                maxZipCodes,
+                cancellation.Token);
+            _currentAreaCoverage = response.Coverage;
+            var results = response.Results;
             var visibleResults = AreaPublicSafetyOnlyCheckBox.IsChecked == true
                 ? results.Where(value => string.Equals(
                     value.Genre, "Public Safety", StringComparison.OrdinalIgnoreCase)).ToList()
@@ -1979,9 +2024,12 @@ public sealed partial class MainWindow : Window
             {
                 _areaFeeds.Add(result);
             }
+            AreaFeedResults.SelectAll();
+            var searchedCount = _currentAreaCoverage.SearchedZipCodes.Count;
             AreaCoverageText.Text =
-                $"Showing {visibleResults.Count} of {results.Count} unique feeds. Select only the agencies this desk should monitor.";
-            AppendLog($"Area search returned {results.Count} unique feed(s) for {string.Join(", ", zipCodes)}; showing {visibleResults.Count}.");
+                $"Showing {visibleResults.Count} of {results.Count} unique feeds from {searchedCount} ZIP area{(searchedCount == 1 ? "" : "s")}, already ordered nearest first. Uncheck agencies this desk should not monitor.";
+            AppendLog(
+                $"Area search returned {results.Count} unique feed(s); showing {visibleResults.Count} in quota priority order.");
         }
         catch (Exception exception)
         {
@@ -2025,7 +2073,24 @@ public sealed partial class MainWindow : Window
             return;
         }
         AreaProfileNameBox.Text = profile.Name;
-        AreaZipCodesBox.Text = string.Join(", ", profile.ZipCodes);
+        _currentAreaCoverage = profile.Coverage with
+        {
+            SearchedZipCodes = profile.Coverage.SearchedZipCodes.Count > 0
+                ? profile.Coverage.SearchedZipCodes
+                : profile.ZipCodes.Select(value => new AreaZipCandidate { ZipCode = value }).ToList(),
+        };
+        SelectComboTag(AreaCoverageModeCombo, _currentAreaCoverage.Mode);
+        AreaZipCodesBox.Text = string.Equals(
+            _currentAreaCoverage.Mode, "radius", StringComparison.OrdinalIgnoreCase)
+            ? (_currentAreaCoverage.CenterZip.Length > 0
+                ? _currentAreaCoverage.CenterZip
+                : profile.ZipCodes.FirstOrDefault() ?? "")
+            : string.Join(", ", profile.ZipCodes);
+        AreaRadiusBox.Value = _currentAreaCoverage.RadiusMiles ?? 25;
+        AreaMaxZipCodesBox.Value = _currentAreaCoverage.MaxZipCodes > 0
+            ? _currentAreaCoverage.MaxZipCodes
+            : Math.Min(20, profile.ZipCodes.Count);
+        UpdateAreaCoverageControls();
         _areaFeeds.Clear();
         foreach (var feed in profile.Feeds)
         {
@@ -2087,7 +2152,10 @@ public sealed partial class MainWindow : Window
         {
             return;
         }
-        var selected = AreaFeedResults.SelectedItems.OfType<FeedSearchResult>().ToList();
+        var selected = AreaFeedResults.SelectedItems
+            .OfType<FeedSearchResult>()
+            .OrderBy(value => _areaFeeds.IndexOf(value))
+            .ToList();
         if (selected.Count == 0)
         {
             await ShowMessageAsync("Feeds required", "Select at least one discovered feed.");
@@ -2101,7 +2169,15 @@ public sealed partial class MainWindow : Window
         List<string> zipCodes;
         try
         {
-            zipCodes = ParseZipCodes(AreaZipCodesBox.Text);
+            zipCodes = _currentAreaCoverage.SearchedZipCodes
+                .Select(value => value.ZipCode)
+                .Where(value => !string.IsNullOrWhiteSpace(value))
+                .Distinct()
+                .ToList();
+            if (zipCodes.Count == 0)
+            {
+                zipCodes = ParseZipCodes(AreaZipCodesBox.Text);
+            }
         }
         catch (FormatException exception)
         {
@@ -2119,6 +2195,7 @@ public sealed partial class MainWindow : Window
                     Name = AreaProfileNameBox.Text.Trim(),
                     ZipCodes = zipCodes,
                     Feeds = selected,
+                    Coverage = _currentAreaCoverage,
                 },
                 HandleWorkerMessage,
                 cancellation.Token);

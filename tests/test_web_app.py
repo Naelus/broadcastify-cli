@@ -191,6 +191,25 @@ def test_web_jobs_validate_area_zip_codes(tmp_path: Path) -> None:
         manager._worker_request("area-search", {"zip_codes": ["not-a-zip"]})  # noqa: SLF001
 
 
+def test_web_jobs_validate_and_forward_radius_discovery(tmp_path: Path) -> None:
+    manager = JobManager(tmp_path, tmp_path / "analysis.sqlite3", tmp_path)
+    arguments, payload = manager._worker_request(  # noqa: SLF001
+        "area-search",
+        {"center_zip": "12345", "radius_miles": 25, "max_zip_codes": 12},
+    )
+
+    assert arguments == [
+        "area-search",
+        "--center-zip",
+        "12345",
+        "--radius-miles",
+        "25.0",
+        "--max-zip-codes",
+        "12",
+    ]
+    assert payload is None
+
+
 def test_web_jobs_forward_explicit_asr_self_test_settings(tmp_path: Path) -> None:
     manager = JobManager(tmp_path, tmp_path / "analysis.sqlite3", tmp_path)
     arguments, payload = manager._worker_request(  # noqa: SLF001

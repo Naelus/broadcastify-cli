@@ -271,7 +271,12 @@ class BroadcastifyClient:
             results.setdefault(result.feed_id, result)
         return self.rank_feed_search_results(query, list(results.values()))
 
-    def search_area_feeds(self, zip_codes: Sequence[str]) -> list[dict[str, object]]:
+    def search_area_feeds(
+        self,
+        zip_codes: Sequence[str],
+        *,
+        zip_distances: dict[str, float] | None = None,
+    ) -> list[dict[str, object]]:
         """Search several ZIP codes and return a feed-id-deduplicated result set.
 
         Broadcastify's website search is the source of truth here; this deliberately
@@ -301,14 +306,50 @@ class BroadcastifyClient:
                 if isinstance(matches, list) and zip_code not in matches:
                     matches.append(zip_code)
 
-        return sorted(
+        ordered = sorted(
             by_feed.values(),
             key=lambda value: (
+                min(
+                    (normalized.index(str(code)) for code in value.get("matched_zip_codes", [])),
+                    default=len(normalized),
+                ),
                 -len(value.get("matched_zip_codes", [])),
                 -int(value.get("listeners", 0)),
                 str(value.get("name", "")).lower(),
             ),
         )
+        distances = zip_distances or {}
+        for rank, value in enumerate(ordered, start=1):
+            matches = [str(code) for code in value.get("matched_zip_codes", [])]
+            nearest_zip = min(
+                matches,
+                key=lambda code: (
+                    distances.get(code, float("inf")),
+                    normalized.index(code) if code in normalized else len(normalized),
+                ),
+                default="",
+            )
+            value["nearest_zip_code"] = nearest_zip
+            value["distance_miles"] = (
+                round(float(distances[nearest_zip]), 2)
+                if nearest_zip in distances
+                else None
+            )
+            value["priority_rank"] = rank
+        if distances:
+            ordered.sort(
+                key=lambda value: (
+                    float(value["distance_miles"])
+                    if value.get("distance_miles") is not None
+                    else float("inf"),
+                    -len(value.get("matched_zip_codes", [])),
+                    -int(value.get("listeners", 0)),
+                    str(value.get("name", "")).lower(),
+                )
+            )
+            for rank, value in enumerate(ordered, start=1):
+                value["priority_rank"] = rank
+        return ordered
 
     def feeds_for_zip(self, zip_code: str) -> list[FeedSearchResult]:
         """Follow the site's ZIP match to its county feed directory."""

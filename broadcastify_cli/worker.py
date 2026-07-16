@@ -38,6 +38,7 @@ from .analysis_providers import (
 )
 from .area_watch import AreaStoryAnalyzer
 from .broadcastify import BroadcastifyClient
+from .geography import CENSUS_ZCTA_YEAR, ZipCentroidCatalog
 from .jobs import JobRunner
 from .library import LocalProcessingRequest, prepare_local_day, scan_local_library
 from .models import JobRequest
@@ -72,12 +73,59 @@ def analysis_provider_diagnostics() -> int:
     return 0
 
 
-def search_area(zip_codes: list[str]) -> int:
+def search_area(
+    zip_codes: list[str],
+    *,
+    center_zip: str | None = None,
+    radius_miles: float | None = None,
+    max_zip_codes: int = 12,
+) -> int:
+    coverage: dict[str, Any]
+    zip_distances: dict[str, float] | None = None
+    if center_zip:
+        if radius_miles is None:
+            raise ValueError("Radius discovery requires a radius in miles.")
+        emit(
+            {
+                "type": "log",
+                "message": (
+                    f"Finding up to {max_zip_codes} Census ZIP areas within "
+                    f"{radius_miles:g} miles of {center_zip}..."
+                ),
+            }
+        )
+        nearby = ZipCentroidCatalog().nearest(
+            center_zip, radius_miles, limit=max_zip_codes
+        )
+        zip_codes = [value.zip_code for value in nearby]
+        zip_distances = {value.zip_code: value.distance_miles for value in nearby}
+        coverage = {
+            "mode": "radius",
+            "center_zip": center_zip,
+            "radius_miles": float(radius_miles),
+            "max_zip_codes": int(max_zip_codes),
+            "searched_zip_codes": [value.to_dict() for value in nearby],
+            "distance_basis": (
+                f"{CENSUS_ZCTA_YEAR} Census ZCTA internal-point centroids; "
+                "feed distance is the nearest matched ZIP area, not a transmitter location."
+            ),
+        }
+    else:
+        coverage = {
+            "mode": "zip-list",
+            "center_zip": zip_codes[0] if zip_codes else "",
+            "radius_miles": None,
+            "max_zip_codes": len(zip_codes),
+            "searched_zip_codes": [
+                {"zip_code": value, "distance_miles": None} for value in zip_codes
+            ],
+            "distance_basis": "User-ordered ZIP priority; no mileage estimate.",
+        }
     with BroadcastifyClient() as client:
-        results = client.search_area_feeds(zip_codes)
+        results = client.search_area_feeds(zip_codes, zip_distances=zip_distances)
     with AnalysisStore(DEFAULT_DATABASE) as store:
         store.save_feed_catalog(results)
-    emit({"type": "area_search", "results": results})
+    emit({"type": "area_search", "results": results, "coverage": coverage})
     return 0
 
 
@@ -96,6 +144,7 @@ def save_area_profile() -> int:
             str(payload.get("name") or ""),
             list(payload.get("zip_codes") or []),
             list(payload.get("feeds") or []),
+            dict(payload.get("coverage") or {}),
         )
     emit(
         {
@@ -631,7 +680,10 @@ def build_parser() -> argparse.ArgumentParser:
     search = subparsers.add_parser("search")
     search.add_argument("--query", required=True)
     area_search = subparsers.add_parser("area-search")
-    area_search.add_argument("--zip", action="append", dest="zip_codes", required=True)
+    area_search.add_argument("--zip", action="append", dest="zip_codes", default=[])
+    area_search.add_argument("--center-zip")
+    area_search.add_argument("--radius-miles", type=float)
+    area_search.add_argument("--max-zip-codes", type=int, default=12)
     subparsers.add_parser("area-profiles")
     subparsers.add_parser("save-area-profile")
     subparsers.add_parser("summarize-area")
@@ -689,7 +741,12 @@ def main() -> int:
         if arguments.command == "search":
             return search_feeds(arguments.query)
         if arguments.command == "area-search":
-            return search_area(arguments.zip_codes)
+            return search_area(
+                arguments.zip_codes,
+                center_zip=arguments.center_zip,
+                radius_miles=arguments.radius_miles,
+                max_zip_codes=arguments.max_zip_codes,
+            )
         if arguments.command == "area-profiles":
             return list_area_profiles()
         if arguments.command == "save-area-profile":

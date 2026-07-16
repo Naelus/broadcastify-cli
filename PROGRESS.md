@@ -121,6 +121,14 @@ This is the dated verification and delivery log for `GOAL.md`. Keep forward-look
 - Visually exercised the desktop and 390x844 layouts. Transcript search returned the retained vehicle-fire line, the local llama.cpp readiness check succeeded without loading a model, Codex remained blocked while external sharing was off, mobile navigation opened correctly, and long incident/story surfaces now default to 12/10 highest-ranked records with an explicit show-all action.
 - Browser console remained free of warnings/errors. Service/security/media tests added four cases; the complete Python suite is now **81 passed** and the browser JavaScript passes the bundled Node syntax check.
 
+### Radius-based regional discovery
+
+- Added a bounded, cached reader for the official 2025 US Census ZCTA Gazetteer and great-circle ZIP-centroid distance calculation. Radius searches accept 1–100 miles, inspect at most 20 nearby ZIP areas, and retain the exact distance basis; ordered-ZIP mode remains available for Census-missing USPS ZIPs.
+- Updated reverse-engineered Broadcastify website discovery to retain the nearest matched ZIP, approximate mileage, and stable priority rank while still deduplicating county-directory results by feed ID. Discovery makes no archive-media requests.
+- Persisted center ZIP, radius, ZIP cap, searched ZIP metadata, explicit feed selection, and nearest-first order in SQLite with an additive migration for existing databases.
+- Added matching native WinUI and loopback Web controls. A real archive-free 12345/10-mile/4-ZIP run downloaded and validated the 930 KB Census cache, then returned eight Example County feeds led by feed 90001; all shared the honest 0-mile county-directory approximation because the queried ZIPs mapped to the same county.
+- Focused geography/search/storage/Web/worker suite: **30 passed**. WinUI isolated Debug build: **0 warnings, 0 errors**. Browser JavaScript syntax check passed.
+
 ## Earlier validated work
 
 - Feed 90001 completed July 11–12 end to end with 97 retained archive blocks, continuous daily audio, 1,716 transcript segments, 87 incidents, daily summaries, semantic Q&A, and a seven-day brief with explicit missing coverage.

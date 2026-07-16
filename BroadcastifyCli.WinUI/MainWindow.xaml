@@ -447,15 +447,25 @@
                                     <Grid.ColumnDefinitions><ColumnDefinition Width="3*" /><ColumnDefinition Width="2*" /></Grid.ColumnDefinitions>
                                     <Border Style="{StaticResource CardBorderStyle}">
                                         <Grid RowSpacing="10">
-                                            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
-                                            <TextBox x:Name="AreaProfileNameBox" Header="Area profile name" PlaceholderText="Example City 12345" />
+                                            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                                            <TextBox x:Name="AreaProfileNameBox" Header="Area profile name" PlaceholderText="Regional coverage desk" />
                                             <Grid Grid.Row="1" ColumnSpacing="8">
-                                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                                <TextBox x:Name="AreaZipCodesBox" Header="ZIP codes" PlaceholderText="12345" />
-                                                <Button x:Name="DiscoverAreaFeedsButton" Grid.Column="1" Content="Discover feeds" VerticalAlignment="Bottom" Click="DiscoverAreaFeeds_Click" />
+                                                <Grid.ColumnDefinitions><ColumnDefinition Width="170" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                                <ComboBox x:Name="AreaCoverageModeCombo" Header="Coverage" SelectedIndex="0" SelectionChanged="AreaCoverageMode_SelectionChanged">
+                                                    <ComboBoxItem Content="Radius from ZIP" Tag="radius" />
+                                                    <ComboBoxItem Content="Ordered ZIP list" Tag="zip-list" />
+                                                </ComboBox>
+                                                <TextBox x:Name="AreaZipCodesBox" Grid.Column="1" Header="Center ZIP" PlaceholderText="12345" />
+                                                <Button x:Name="DiscoverAreaFeedsButton" Grid.Column="2" Content="Discover nearest" VerticalAlignment="Bottom" Click="DiscoverAreaFeeds_Click" />
                                             </Grid>
-                                            <CheckBox x:Name="AreaPublicSafetyOnlyCheckBox" Grid.Row="2" Content="Show public-safety feeds only" IsChecked="True" />
-                                            <ListView x:Name="AreaFeedResults" Grid.Row="3" SelectionMode="Multiple" IsMultiSelectCheckBoxEnabled="True">
+                                            <Grid Grid.Row="2" ColumnSpacing="8">
+                                                <Grid.ColumnDefinitions><ColumnDefinition Width="150" /><ColumnDefinition Width="150" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                                <NumberBox x:Name="AreaRadiusBox" Header="Radius (miles)" Value="25" Minimum="1" Maximum="100" SpinButtonPlacementMode="Compact" />
+                                                <NumberBox x:Name="AreaMaxZipCodesBox" Grid.Column="1" Header="ZIP search cap" Value="12" Minimum="1" Maximum="20" SpinButtonPlacementMode="Compact" />
+                                                <TextBlock Grid.Column="2" Text="Radius mode caches Census ZIP centroids once, checks nearby ZIP areas first, and never starts archive downloads." TextWrapping="Wrap" VerticalAlignment="Bottom" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                            </Grid>
+                                            <CheckBox x:Name="AreaPublicSafetyOnlyCheckBox" Grid.Row="3" Content="Show public-safety feeds only" IsChecked="True" />
+                                            <ListView x:Name="AreaFeedResults" Grid.Row="4" SelectionMode="Multiple" IsMultiSelectCheckBoxEnabled="True">
                                                 <ListView.ItemTemplate>
                                                     <DataTemplate x:DataType="local:FeedSearchResult">
                                                         <Grid Padding="8" ColumnSpacing="12">
@@ -470,7 +480,7 @@
                                                     </DataTemplate>
                                                 </ListView.ItemTemplate>
                                             </ListView>
-                                            <Button x:Name="SaveAreaProfileButton" Grid.Row="4" Content="Save selected feeds" Click="SaveAreaProfile_Click" />
+                                            <Button x:Name="SaveAreaProfileButton" Grid.Row="5" Content="Save selected nearest-first feeds" Click="SaveAreaProfile_Click" />
                                         </Grid>
                                     </Border>
                                     <Border Grid.Column="1" Style="{StaticResource CardBorderStyle}">

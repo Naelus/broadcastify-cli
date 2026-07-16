@@ -10,8 +10,8 @@ Status labels: **Validated**, **Implemented**, **Foundation**, or **Planned**.
 |---|---|---|
 | Website-login feed search | Validated | Uses Broadcastify's website endpoints, not the official API. |
 | City/county/state/ZIP discovery | Validated | Includes county-directory results and feed catalog persistence. |
-| Multi-ZIP area profiles | Validated | Downloads only explicitly selected feeds. |
-| Nearest-feed/radius cascade | Planned | Needed for low-quota regional coverage without indiscriminate acquisition. |
+| Radius and ordered-ZIP area profiles | Validated | Census ZCTA centroid expansion, explicit feed review, and persisted approximate distance/priority; discovery makes no archive requests. |
+| Persisted nearest-first acquisition cascade | Foundation | Feed priority exists; shared stop/resume queue is the remaining low-quota control. |
 | Sequential cache-aware archive acquisition | Validated | Five-second minimum pacing, retries, shared cooldown, exact timezone cache keys. |
 | Explicit quota exhaustion stop | Validated | Stops new media requests and preserves all completed work. |
 

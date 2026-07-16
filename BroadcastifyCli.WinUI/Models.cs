@@ -28,12 +28,63 @@ public sealed record FeedSearchResult
     [JsonPropertyName("matched_zip_codes")]
     public List<string> MatchedZipCodes { get; init; } = [];
 
+    [JsonPropertyName("nearest_zip_code")]
+    public string NearestZipCode { get; init; } = "";
+
+    [JsonPropertyName("distance_miles")]
+    public double? DistanceMiles { get; init; }
+
+    [JsonPropertyName("priority_rank")]
+    public int PriorityRank { get; init; }
+
     public string FeedLabel => $"Feed {FeedId}";
     public string LocationAndGenre => string.Join(" · ", new[] { Location, Genre }.Where(value => !string.IsNullOrWhiteSpace(value)));
     public string ListenerSummary => $"{Listeners:N0} listener{(Listeners == 1 ? "" : "s")}";
     public string AreaMatchSummary => MatchedZipCodes.Count == 0
         ? LocationAndGenre
-        : $"Matched ZIP {string.Join(", ", MatchedZipCodes)} · {LocationAndGenre}";
+        : string.Join(" · ", new[]
+        {
+            DistanceMiles is null
+                ? $"Priority {PriorityRank}: ZIP {NearestZipCode}"
+                : $"Priority {PriorityRank}: about {DistanceMiles:0.#} mi via ZIP {NearestZipCode}",
+            LocationAndGenre,
+        }.Where(value => !string.IsNullOrWhiteSpace(value)));
+}
+
+public sealed record AreaZipCandidate
+{
+    [JsonPropertyName("zip_code")]
+    public string ZipCode { get; init; } = "";
+
+    [JsonPropertyName("distance_miles")]
+    public double? DistanceMiles { get; init; }
+}
+
+public sealed record AreaCoverage
+{
+    [JsonPropertyName("mode")]
+    public string Mode { get; init; } = "zip-list";
+
+    [JsonPropertyName("center_zip")]
+    public string CenterZip { get; init; } = "";
+
+    [JsonPropertyName("radius_miles")]
+    public double? RadiusMiles { get; init; }
+
+    [JsonPropertyName("max_zip_codes")]
+    public int MaxZipCodes { get; init; } = 12;
+
+    [JsonPropertyName("searched_zip_codes")]
+    public List<AreaZipCandidate> SearchedZipCodes { get; init; } = [];
+
+    [JsonPropertyName("distance_basis")]
+    public string DistanceBasis { get; init; } = "";
+}
+
+internal sealed record AreaSearchResponse
+{
+    public List<FeedSearchResult> Results { get; init; } = [];
+    public AreaCoverage Coverage { get; init; } = new();
 }
 
 public sealed record AreaProfile
@@ -53,6 +104,9 @@ public sealed record AreaProfile
     [JsonPropertyName("feed_ids")]
     public List<string> FeedIds { get; init; } = [];
 
+    [JsonPropertyName("coverage")]
+    public AreaCoverage Coverage { get; init; } = new();
+
     public string DisplayName => $"{Name} · {Feeds.Count} feed{(Feeds.Count == 1 ? "" : "s")}";
     public string CoverageArea => $"ZIPs {string.Join(", ", ZipCodes)}";
 }
@@ -67,6 +121,9 @@ internal sealed record AreaProfileSaveRequest
 
     [JsonPropertyName("feeds")]
     public List<FeedSearchResult> Feeds { get; init; } = [];
+
+    [JsonPropertyName("coverage")]
+    public AreaCoverage Coverage { get; init; } = new();
 }
 
 internal abstract record AnalysisProviderRequest

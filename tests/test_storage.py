@@ -79,4 +79,41 @@ def test_area_profiles_are_persisted_and_updated(tmp_path: Path) -> None:
         assert first["feed_ids"] == ["90001"]
         assert updated["feed_ids"] == ["90001", "5318"]
         assert store.list_area_profiles()[0]["zip_codes"] == ["75201"]
+        assert store.list_area_profiles()[0]["coverage"]["mode"] == "zip-list"
         assert store.stats()["area_profiles"] == 1
+
+
+def test_radius_area_profile_retains_nearest_first_metadata(tmp_path: Path) -> None:
+    with AnalysisStore(tmp_path / "analysis.sqlite3") as store:
+        profile = store.save_area_profile(
+            "Example radius",
+            ["12345", "12346"],
+            [
+                {
+                    "feed_id": "200",
+                    "name": "Outer feed",
+                    "distance_miles": 4.5,
+                    "priority_rank": 2,
+                    "nearest_zip_code": "12346",
+                },
+                {
+                    "feed_id": "100",
+                    "name": "Center feed",
+                    "distance_miles": 0,
+                    "priority_rank": 1,
+                    "nearest_zip_code": "12345",
+                },
+            ],
+            {
+                "mode": "radius",
+                "center_zip": "12345",
+                "radius_miles": 25,
+                "max_zip_codes": 12,
+                "distance_basis": "test centroids",
+            },
+        )
+
+        assert profile["coverage"]["center_zip"] == "12345"
+        assert profile["coverage"]["radius_miles"] == 25
+        assert [value["feed_id"] for value in profile["feeds"]] == ["100", "200"]
+        assert profile["feeds"][1]["distance_miles"] == 4.5

@@ -264,6 +264,30 @@ class JobManager:
                 raise WebRequestError(HTTPStatus.BAD_REQUEST, "Enter a feed search of 160 characters or fewer.")
             return ["search", "--query", query], None
         if command == "area-search":
+            center_zip = str(payload.get("center_zip") or "").strip()
+            if center_zip:
+                if not ZIP_PATTERN.fullmatch(center_zip):
+                    raise WebRequestError(HTTPStatus.BAD_REQUEST, "Enter a five-digit center ZIP code.")
+                try:
+                    radius_miles = float(payload.get("radius_miles", 25))
+                    max_zip_codes = int(payload.get("max_zip_codes", 12))
+                except (TypeError, ValueError):
+                    raise WebRequestError(
+                        HTTPStatus.BAD_REQUEST, "Radius and ZIP limit must be numeric."
+                    ) from None
+                if not 1 <= radius_miles <= 100:
+                    raise WebRequestError(HTTPStatus.BAD_REQUEST, "Radius must be between 1 and 100 miles.")
+                if not 1 <= max_zip_codes <= 20:
+                    raise WebRequestError(HTTPStatus.BAD_REQUEST, "ZIP limit must be between 1 and 20.")
+                return [
+                    "area-search",
+                    "--center-zip",
+                    center_zip,
+                    "--radius-miles",
+                    str(radius_miles),
+                    "--max-zip-codes",
+                    str(max_zip_codes),
+                ], None
             zip_codes = list(dict.fromkeys(str(value).strip() for value in payload.get("zip_codes", [])))
             if not zip_codes or any(not ZIP_PATTERN.fullmatch(value) for value in zip_codes):
                 raise WebRequestError(HTTPStatus.BAD_REQUEST, "Enter one or more five-digit ZIP codes.")

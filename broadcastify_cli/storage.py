@@ -215,6 +215,7 @@ class AnalysisStore:
                 name TEXT NOT NULL UNIQUE,
                 zip_codes_json TEXT NOT NULL,
                 feeds_json TEXT NOT NULL,
+                coverage_json TEXT NOT NULL DEFAULT '{}',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
@@ -258,6 +259,14 @@ class AnalysisStore:
             );
             """
         )
+        area_profile_columns = {
+            str(row["name"])
+            for row in self.connection.execute("PRAGMA table_info(area_profiles)").fetchall()
+        }
+        if "coverage_json" not in area_profile_columns:
+            self.connection.execute(
+                "ALTER TABLE area_profiles ADD COLUMN coverage_json TEXT NOT NULL DEFAULT '{}'"
+            )
         row = self.connection.execute("SELECT version FROM schema_info LIMIT 1").fetchone()
         if row is None:
             self.connection.execute(
@@ -730,6 +739,7 @@ class AnalysisStore:
         name: str,
         zip_codes: Sequence[str],
         feeds: Sequence[dict[str, Any]],
+        coverage: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         clean_name = name.strip()
         if not clean_name:
@@ -739,6 +749,44 @@ class AnalysisStore:
         clean_zips = list(dict.fromkeys(str(value).strip() for value in zip_codes))
         if not clean_zips or any(not value.isdigit() or len(value) != 5 for value in clean_zips):
             raise ValueError("Area profiles require one or more five-digit ZIP codes.")
+        raw_coverage = coverage or {}
+        coverage_mode = str(raw_coverage.get("mode") or "zip-list").strip().lower()
+        if coverage_mode not in {"radius", "zip-list"}:
+            raise ValueError("Area coverage mode must be radius or zip-list.")
+        center_zip = str(raw_coverage.get("center_zip") or clean_zips[0]).strip()
+        if center_zip not in clean_zips:
+            raise ValueError("The center ZIP must be included in the discovered ZIP list.")
+        radius_value = raw_coverage.get("radius_miles")
+        radius_miles = float(radius_value) if radius_value not in {None, ""} else None
+        if coverage_mode == "radius" and (radius_miles is None or not 1 <= radius_miles <= 100):
+            raise ValueError("Radius area profiles require 1 through 100 miles.")
+        max_zip_codes = int(raw_coverage.get("max_zip_codes") or len(clean_zips))
+        if not 1 <= max_zip_codes <= 20:
+            raise ValueError("Area profiles may search at most 20 ZIP areas.")
+        clean_coverage = {
+            "mode": coverage_mode,
+            "center_zip": center_zip,
+            "radius_miles": radius_miles if coverage_mode == "radius" else None,
+            "max_zip_codes": max_zip_codes,
+            "searched_zip_codes": [
+                {
+                    "zip_code": zip_code,
+                    "distance_miles": next(
+                        (
+                            round(float(candidate["distance_miles"]), 2)
+                            if candidate.get("distance_miles") is not None
+                            else None
+                            for candidate in raw_coverage.get("searched_zip_codes", [])
+                            if isinstance(candidate, dict)
+                            and str(candidate.get("zip_code") or "").strip() == zip_code
+                        ),
+                        None,
+                    ),
+                }
+                for zip_code in clean_zips
+            ],
+            "distance_basis": str(raw_coverage.get("distance_basis") or ""),
+        }
         clean_feeds: list[dict[str, Any]] = []
         seen: set[str] = set()
         for raw in feeds:
@@ -756,25 +804,47 @@ class AnalysisStore:
                     "listeners": int(raw.get("listeners") or 0),
                     "status": str(raw.get("status") or ""),
                     "matched_zip_codes": list(raw.get("matched_zip_codes") or []),
+                    "nearest_zip_code": str(raw.get("nearest_zip_code") or ""),
+                    "distance_miles": (
+                        round(float(raw["distance_miles"]), 2)
+                        if raw.get("distance_miles") is not None
+                        else None
+                    ),
+                    "priority_rank": int(raw.get("priority_rank") or len(clean_feeds) + 1),
                 }
             )
         if not clean_feeds:
             raise ValueError("Select at least one feed for the area profile.")
+        clean_feeds.sort(
+            key=lambda value: (
+                int(value["priority_rank"]),
+                float(value["distance_miles"])
+                if value["distance_miles"] is not None
+                else float("inf"),
+                str(value["name"]).lower(),
+            )
+        )
+        for rank, feed in enumerate(clean_feeds, start=1):
+            feed["priority_rank"] = rank
         now = utc_now()
         with self.transaction() as connection:
             connection.execute(
                 """
-                INSERT INTO area_profiles(name, zip_codes_json, feeds_json, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO area_profiles(
+                    name, zip_codes_json, feeds_json, coverage_json, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
                 ON CONFLICT(name) DO UPDATE SET
                     zip_codes_json=excluded.zip_codes_json,
                     feeds_json=excluded.feeds_json,
+                    coverage_json=excluded.coverage_json,
                     updated_at=excluded.updated_at
                 """,
                 (
                     clean_name,
                     json.dumps(clean_zips),
                     json.dumps(clean_feeds, ensure_ascii=False),
+                    json.dumps(clean_coverage, ensure_ascii=False),
                     now,
                     now,
                 ),
@@ -788,6 +858,7 @@ class AnalysisStore:
         value = dict(row)
         value["zip_codes"] = json.loads(value.pop("zip_codes_json"))
         value["feeds"] = json.loads(value.pop("feeds_json"))
+        value["coverage"] = json.loads(value.pop("coverage_json") or "{}")
         value["feed_ids"] = [str(feed["feed_id"]) for feed in value["feeds"]]
         return value
 

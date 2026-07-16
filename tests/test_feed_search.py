@@ -142,6 +142,25 @@ def test_area_search_deduplicates_feeds_and_tracks_matching_zips() -> None:
 
     assert [value["feed_id"] for value in results] == ["90001", "100"]
     assert results[0]["matched_zip_codes"] == ["75201", "75202"]
+    assert results[0]["priority_rank"] == 1
+    assert results[0]["nearest_zip_code"] == "75201"
+
+
+def test_area_search_prioritizes_nearest_radius_match() -> None:
+    client = BroadcastifyClient()
+    responses = {
+        "12345": [FeedSearchResult("100", "Center fire", listeners=2)],
+        "12346": [FeedSearchResult("200", "Nearby police", listeners=200)],
+    }
+    client.feeds_for_zip = lambda query: responses[query]  # type: ignore[method-assign]
+
+    results = client.search_area_feeds(
+        ["12345", "12346"], zip_distances={"12345": 0.0, "12346": 4.5}
+    )
+
+    assert [value["feed_id"] for value in results] == ["100", "200"]
+    assert [value["distance_miles"] for value in results] == [0.0, 4.5]
+    assert [value["priority_rank"] for value in results] == [1, 2]
 
 
 def test_area_search_rejects_non_zip_queries() -> None:

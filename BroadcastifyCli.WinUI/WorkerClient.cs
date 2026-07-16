@@ -39,17 +39,33 @@ internal sealed class WorkerClient
         return results ?? [];
     }
 
-    public async Task<IReadOnlyList<FeedSearchResult>> SearchAreaFeedsAsync(
+    public async Task<AreaSearchResponse> SearchAreaFeedsAsync(
         IReadOnlyList<string> zipCodes,
+        string? centerZip,
+        double? radiusMiles,
+        int maxZipCodes,
         CancellationToken cancellationToken)
     {
         List<FeedSearchResult>? results = null;
         var arguments = new List<string> { "-m", "broadcastify_cli.worker", "area-search" };
-        foreach (var zipCode in zipCodes)
+        if (!string.IsNullOrWhiteSpace(centerZip))
         {
-            arguments.Add("--zip");
-            arguments.Add(zipCode);
+            arguments.Add("--center-zip");
+            arguments.Add(centerZip);
+            arguments.Add("--radius-miles");
+            arguments.Add((radiusMiles ?? 25).ToString(System.Globalization.CultureInfo.InvariantCulture));
+            arguments.Add("--max-zip-codes");
+            arguments.Add(maxZipCodes.ToString(System.Globalization.CultureInfo.InvariantCulture));
         }
+        else
+        {
+            foreach (var zipCode in zipCodes)
+            {
+                arguments.Add("--zip");
+                arguments.Add(zipCode);
+            }
+        }
+        AreaCoverage coverage = new();
         await RunWorkerAsync(
             arguments,
             null,
@@ -59,10 +75,14 @@ internal sealed class WorkerClient
                 {
                     results = message.GetProperty("results")
                         .Deserialize<List<FeedSearchResult>>(JsonOptions);
+                    if (message.TryGetProperty("coverage", out var coverageValue))
+                    {
+                        coverage = coverageValue.Deserialize<AreaCoverage>(JsonOptions) ?? new();
+                    }
                 }
             },
             cancellationToken);
-        return results ?? [];
+        return new AreaSearchResponse { Results = results ?? [], Coverage = coverage };
     }
 
     public async Task<IReadOnlyList<AreaProfile>> ListAreaProfilesAsync(
