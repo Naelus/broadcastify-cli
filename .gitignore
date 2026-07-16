@@ -149,7 +149,9 @@ celerybeat.pid
 
 # Environments
 .env
+broadcastify-desktop.env
 .venv
+.venv.broken*/
 env/
 venv/
 ENV/
@@ -193,4 +195,16 @@ archives/
 .archives
 *.mp3
 *.json
+*.sqlite3-wal
+*.sqlite3-shm
+*.db-wal
+*.db-shm
+BroadcastifyCli.WinUI/bin/
+BroadcastifyCli.WinUI/obj/
+BroadcastifyCli.WindowsML/bin/
+BroadcastifyCli.WindowsML/obj/
+.models/
+.tmp/
+.dotnet-home/
+cache_dir/
 

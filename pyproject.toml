@@ -5,10 +5,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "broadcastify-cli"
-version = "0.1.2" 
-description = " CLI for interacting with the unoffical broadcastify API"
+version = "0.2.0"
+description = "Local Broadcastify archive downloader, transcription, and diarization tool"
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.10"
 license = { file = "LICENSE" }
 authors = [
     { name = "NotJoeMartinez", email = "notjoemartinez@protonmail.com" },
@@ -23,29 +23,46 @@ classifiers = [
 
 
 dependencies = [
-    "certifi==2024.2.2",
-    "charset-normalizer==3.3.2",
-    "click==8.1.7",
-    "coloredlogs==15.0.1",
-    "ctranslate2==4.2.1",
-    "faster-whisper==1.0.3",
-    "ffmpeg-python==0.2.0",
-    "idna==3.7",
-    "markdown-it-py==3.0.0",
-    "mdurl==0.1.2",
-    "numpy==1.26.4",
-    "pydantic==2.7.1",
-    "pydub==0.25.1",
-    "Pygments==2.17.2",
-    "python-dotenv==1.0.1",
-    "requests==2.31.0",
-    "rich==13.7.1",
-    "tqdm==4.66.4",
-    "urllib3==2.2.1"
+    "beautifulsoup4>=4.12,<5",
+    "click>=8.1,<9",
+    "python-dotenv>=1.0,<2",
+    "requests>=2.32,<3",
+    "rich>=13.7,<15"
+]
+
+[project.optional-dependencies]
+transcription = [
+    "faster-whisper>=1.2,<2",
+    "pyannote.audio>=4.0,<5",
+    "torch>=2.8,<3",
+    "torchaudio>=2.8,<3"
+]
+analysis = [
+    "fastembed>=0.8,<1"
+]
+openvino = [
+    "huggingface-hub>=0.27,<2",
+    "numpy>=1.26,<3",
+    "openvino>=2026.1,<2027",
+    "openvino-genai>=2026.1,<2027"
+]
+windowsml = [
+    "wasdk-Microsoft.Windows.AI.MachineLearning[all]",
+    "wasdk-Microsoft.Windows.ApplicationModel.DynamicDependency.Bootstrap",
+    "onnxruntime-windowsml>=1.23,<2"
+]
+dev = [
+    "pytest>=8,<10"
 ]
 
 [project.scripts]
 broadcastify-cli = "broadcastify_cli.broadcastify_cli:cli"
+broadcastify-analysis = "broadcastify_cli.analysis_cli:cli"
 
 [project.urls]
-Homepage = "https://github.com/NotJoeMartinez/broadcastify-cli"
+Homepage = "https://github.com/it360mz/broadcastify-cli"
+
+[tool.setuptools.packages.find]
+include = ["broadcastify_cli*"]
+exclude = ["archives*", "tests*", "BroadcastifyCli*"]
+namespaces = false
