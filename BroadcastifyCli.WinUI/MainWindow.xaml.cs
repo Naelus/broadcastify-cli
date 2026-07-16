@@ -1335,14 +1335,24 @@ public sealed partial class MainWindow : Window
             : HuggingFaceTokenBox.Password,
     };
 
-    private async Task RunAndAnalyzeJobAsync(JobRequest request)
+    private async Task<JobRunResult?> RunAndAnalyzeJobAsync(JobRequest request)
+    {
+        if (_worker is null || _operationCancellation is null)
+        {
+            return null;
+        }
+        var jobResult = await _worker.RunJobAsync(
+            request, HandleWorkerMessage, _operationCancellation.Token);
+        await AnalyzeCompletedJobAsync(request, jobResult);
+        return jobResult;
+    }
+
+    private async Task AnalyzeCompletedJobAsync(JobRequest request, JobRunResult? jobResult)
     {
         if (_worker is null || _operationCancellation is null)
         {
             return;
         }
-        var jobResult = await _worker.RunJobAsync(
-            request, HandleWorkerMessage, _operationCancellation.Token);
         if (!request.Transcribe || !request.Combine || AnalyzeAfterJobCheckBox.IsChecked != true)
         {
             return;
@@ -2099,7 +2109,30 @@ public sealed partial class MainWindow : Window
         AreaFeedResults.SelectAll();
         AreaCoverageText.Text =
             $"Loaded {profile.DisplayName} for {profile.CoverageArea}. Selected feeds are explicit and can be changed before saving.";
+        await LoadLatestAreaQueueAsync(profile.Name);
         await LoadLatestAreaDigestAsync(profile);
+    }
+
+    private async Task LoadLatestAreaQueueAsync(string profileName)
+    {
+        if (_worker is null)
+        {
+            return;
+        }
+        try
+        {
+            using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            var runs = await _worker.ListAreaAcquisitionRunsAsync(profileName, cancellation.Token);
+            var latest = runs.FirstOrDefault();
+            AreaQueueStatusText.Text = latest is null
+                ? "No retained queue for this profile yet."
+                : $"{latest.Summary} · {latest.StartDate} through {latest.EndDate}"
+                    + (string.IsNullOrWhiteSpace(latest.StopReason) ? "" : $" · {latest.StopReason}");
+        }
+        catch (Exception exception)
+        {
+            AreaQueueStatusText.Text = $"Queue history unavailable: {exception.Message}";
+        }
     }
 
     private async Task LoadLatestAreaDigestAsync(AreaProfile profile)
@@ -2217,7 +2250,17 @@ public sealed partial class MainWindow : Window
         {
             return;
         }
-        var selected = AreaFeedResults.SelectedItems.OfType<FeedSearchResult>().ToList();
+        if (AreaProfileCombo.SelectedItem is not AreaProfile profile)
+        {
+            await ShowMessageAsync(
+                "Saved profile required",
+                "Save the reviewed nearest-first feed selection before starting a resumable area queue.");
+            return;
+        }
+        var selected = AreaFeedResults.SelectedItems
+            .OfType<FeedSearchResult>()
+            .OrderBy(value => _areaFeeds.IndexOf(value))
+            .ToList();
         if (selected.Count == 0)
         {
             await ShowMessageAsync("Feeds required", "Select the feeds to archive and analyze.");
@@ -2244,18 +2287,34 @@ public sealed partial class MainWindow : Window
         JobProgress.Value = 0;
         try
         {
-            for (var index = 0; index < selected.Count; index++)
+            var baseRequest = CreateJobRequest(
+                selected[0].FeedId, startDate, endDate, minimumSpeakers, maximumSpeakers);
+            var result = await _worker.RunAreaAcquisitionAsync(
+                new AreaAcquisitionRequest
+                {
+                    ProfileName = profile.Name,
+                    FeedIds = selected.Select(value => value.FeedId).ToList(),
+                    Job = baseRequest,
+                },
+                HandleWorkerMessage,
+                _operationCancellation.Token);
+            if (result is null)
+            {
+                AreaCoverageText.Text = "The area worker returned no queue result.";
+                return;
+            }
+            foreach (var feedResult in result.FeedResults)
             {
                 _operationCancellation.Token.ThrowIfCancellationRequested();
-                var feed = selected[index];
-                var request = CreateJobRequest(
-                    feed.FeedId, startDate, endDate, minimumSpeakers, maximumSpeakers);
-                AppendLog($"Area feed {index + 1}/{selected.Count}: {feed.Name} ({feed.FeedId}).");
-                StatusText.Text = $"Area feed {index + 1}/{selected.Count}: {feed.Name}";
-                await RunAndAnalyzeJobAsync(request);
+                await AnalyzeCompletedJobAsync(
+                    baseRequest with { FeedId = feedResult.Feed.FeedId },
+                    feedResult.Result);
             }
-            AreaCoverageText.Text =
-                $"Processed {selected.Count} selected feed{(selected.Count == 1 ? "" : "s")}. Generate the area brief to rank cross-feed leads.";
+            AreaCoverageText.Text = result.DownloadLimited
+                ? $"Queue {result.Id} paused at the archive quota boundary. Resume later; the first incomplete feed stays next and lower-priority feeds made no requests."
+                : $"Queue {result.Id} is {result.Status}. Generate the area brief to rank retained cross-feed leads.";
+            AreaQueueStatusText.Text = result.Summary
+                + (string.IsNullOrWhiteSpace(result.StopReason) ? "" : $" · {result.StopReason}");
         }
         catch (OperationCanceledException)
         {

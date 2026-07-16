@@ -166,6 +166,9 @@ label { display: grid; gap: 6px; color: #3d4741; font-size: 13px; font-weight: 6
 .check-row input { width: 17px; min-height: 17px; margin-top: 2px; accent-color: var(--accent); }
 .check-row strong, .check-row small { display: block; }
 .check-row small { color: var(--muted); margin-top: 2px; }
+.compact-toggles { margin-top: 2px; }
+.queue-items { display: grid; gap: 4px; color: var(--muted); font-size: 0.84rem; margin-top: -2px; }
+.queue-items span { overflow-wrap: anywhere; }
 .result-list { display: grid; gap: 8px; margin-top: 16px; max-height: 540px; overflow-y: auto; }
 .result-list.compact { max-height: 360px; }
 .feed-result { border: 1px solid var(--line); border-radius: 11px; padding: 12px; display: grid; grid-template-columns: auto 1fr auto; gap: 11px; align-items: start; }

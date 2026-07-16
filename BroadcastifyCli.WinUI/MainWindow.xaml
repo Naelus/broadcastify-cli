@@ -488,10 +488,11 @@
                                             <ComboBox x:Name="AreaProfileCombo" Header="Saved area profile" HorizontalAlignment="Stretch" DisplayMemberPath="DisplayName" SelectionChanged="AreaProfile_SelectionChanged" />
                                             <DatePicker x:Name="AreaStartDatePicker" Header="Start date" HorizontalAlignment="Stretch" />
                                             <DatePicker x:Name="AreaEndDatePicker" Header="End date" HorizontalAlignment="Stretch" />
-                                            <Button x:Name="ProcessAreaFeedsButton" Content="Archive + analyze selected feeds" HorizontalAlignment="Stretch"
+                                            <Button x:Name="ProcessAreaFeedsButton" Content="Run or resume nearest-first queue" HorizontalAlignment="Stretch"
                                                     Style="{StaticResource AccentButtonStyle}" Click="ProcessAreaFeeds_Click" />
-                                            <InfoBar IsOpen="True" IsClosable="False" Severity="Informational" Title="Explicit feed selection"
-                                                     Message="ZIP discovery never downloads by itself. Acquisition starts only for the feeds checked here and uses the shared quota-safe settings." />
+                                            <TextBlock x:Name="AreaQueueStatusText" Text="No retained queue for this profile yet." TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                            <InfoBar IsOpen="True" IsClosable="False" Severity="Informational" Title="Persisted quota-safe queue"
+                                                     Message="Save the reviewed feed selection first. The queue resumes cached work, runs nearest feeds first, and stops every lower-priority feed on the first explicit quota response." />
                                         </StackPanel>
                                     </Border>
                                 </Grid>

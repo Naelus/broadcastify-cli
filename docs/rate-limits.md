@@ -69,7 +69,8 @@ This smaller observed window is strong evidence against documenting a stable fix
 - Treat the explicit `Download limit exceeded` response as quota exhaustion: stop after that one response, block queued workers, preserve files, and report the support address.
 - Acquire a requested date range before loading the GPU transcription stack. If quota exhaustion interrupts acquisition, do not call another archive-download endpoint in that job; inspect later dates through metadata only, process any days already complete in the local cache, and report incomplete dates as resumable coverage gaps.
 - Keep a backend-only JSONL probe at `scripts/download_rate_probe.py` for auditable, credential-free response timing/status telemetry.
-- Never use a guessed numeric quota to pre-spend a range. Radius profiles now persist an approximate nearest-first feed order from Census ZCTA/county-directory matches; the pending shared profile runner must spend in that order and stop on the server's explicit limit response.
-- The cross-platform Web UI enforces the same policy at its service boundary: it overwrites archive jobs to one download worker, preserves source blocks, allows only one heavy job at a time, and cannot bypass the downloader's explicit quota stop through parallel browser actions.
+- Never use a guessed numeric quota to pre-spend a range. Radius profiles persist an approximate nearest-first feed order from Census ZCTA/county-directory matches. The shared profile runner spends in that order, persists each item, and stops all lower-priority feeds on the server's explicit limit response.
+- The cross-platform Web UI enforces the same policy at its service boundary: it overwrites single-feed and area jobs to one download worker, preserves source blocks, allows only one heavy job at a time, and cannot bypass the downloader's explicit quota stop through parallel browser actions.
+- Archive progress uses **Ready (cached or downloaded)**. A cache hit advances completion but is not counted or described as a new network download.
 
 Probe logs are runtime artifacts under `archives/` and are ignored by Git.

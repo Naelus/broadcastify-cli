@@ -129,6 +129,15 @@ This is the dated verification and delivery log for `GOAL.md`. Keep forward-look
 - Added matching native WinUI and loopback Web controls. A real archive-free 12345/10-mile/4-ZIP run downloaded and validated the 930 KB Census cache, then returned eight Example County feeds led by feed 90001; all shared the honest 0-mile county-directory approximation because the queried ZIPs mapped to the same county.
 - Focused geography/search/storage/Web/worker suite: **30 passed**. WinUI isolated Debug build: **0 warnings, 0 errors**. Browser JavaScript syntax check passed.
 
+### Persisted nearest-first acquisition queue
+
+- Moved multi-feed execution from the native loop into a shared backend runner used by WinUI and the loopback Web UI. SQLite retains the profile/date/processing fingerprint, feed priority, approximate distance, status, attempts, completed and missing days, explicit quota state, and compact job result.
+- Credentials are excluded from the persisted processing JSON and fingerprint. Every area job is forced to one download worker and preserved source blocks at the Web service boundary.
+- Completed feeds are skipped without authentication or archive metadata, interrupted `running` items recover to `pending`, partial feeds rerun against exact cached blocks, and the first `download_limited` result stops every lower-priority feed.
+- Native Area Watch now requires a saved reviewed profile, runs/resumes the shared queue, performs sequential analysis only for completed transcripts, and displays the latest retained queue. Web Area Watch mirrors the processing switches, queue action, and per-feed status.
+- Real browser smoke: a one-feed July 11 queue reused all 48 cached blocks and completed with model work disabled; the exact rerun logged only `already complete`. No media download could have occurred because all 48 cache resolutions finished inside five seconds despite the five-second network pacing guard. Mobile 390×844 had 375/375 px document width, and browser console logs were empty.
+- Renamed ambiguous archive progress from `Downloaded` to `Ready (cached or downloaded)` so cache reuse is not mistaken for fresh quota consumption.
+
 ## Earlier validated work
 
 - Feed 90001 completed July 11–12 end to end with 97 retained archive blocks, continuous daily audio, 1,716 transcript segments, 87 incidents, daily summaries, semantic Q&A, and a seven-day brief with explicit missing coverage.

@@ -11,7 +11,7 @@ Status labels: **Validated**, **Implemented**, **Foundation**, or **Planned**.
 | Website-login feed search | Validated | Uses Broadcastify's website endpoints, not the official API. |
 | City/county/state/ZIP discovery | Validated | Includes county-directory results and feed catalog persistence. |
 | Radius and ordered-ZIP area profiles | Validated | Census ZCTA centroid expansion, explicit feed review, and persisted approximate distance/priority; discovery makes no archive requests. |
-| Persisted nearest-first acquisition cascade | Foundation | Feed priority exists; shared stop/resume queue is the remaining low-quota control. |
+| Persisted nearest-first acquisition cascade | Validated | Shared native/Web queue skips completed feeds, recovers interrupted items, and stops all lower priorities on explicit quota exhaustion. |
 | Sequential cache-aware archive acquisition | Validated | Five-second minimum pacing, retries, shared cooldown, exact timezone cache keys. |
 | Explicit quota exhaustion stop | Validated | Stops new media requests and preserves all completed work. |
 
@@ -26,7 +26,7 @@ Status labels: **Validated**, **Implemented**, **Foundation**, or **Planned**.
 | Windows ML Whisper | Validated | Batched streaming C# helper and real CPU decode/self-test pass; provider discovery/acquisition is explicit, while DML/TensorRT acceleration stays gated after measured incompatibilities. |
 | pyannote diarization CUDA/CPU | Validated | Existing transcripts can gain labels without rerunning ASR. |
 | Non-CUDA diarization acceleration | Planned | Current portable behavior is CPU fallback. |
-| SQLite transcript/incident/summary store | Validated | Includes FTS, embeddings, Q&A history, area profiles, and cached briefs. |
+| SQLite transcript/incident/summary store | Validated | Includes FTS, embeddings, Q&A history, area profiles/queues, and cached briefs. |
 | Quantized llama.cpp analysis | Validated | Gemma GGUF local path; real AMD Vulkan generation offloaded all tested model layers. |
 | Provider API/Codex harness | Validated | Native Settings and CLI support local Gemma, OpenAI Responses, compatible `/v1` endpoints, and ephemeral saved-login Codex with explicit transcript-sharing consent and readiness checks. |
 

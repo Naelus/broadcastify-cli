@@ -510,6 +510,93 @@ internal sealed record JobRunResult
 
     [JsonPropertyName("days")]
     public List<JobDayResult> Days { get; init; } = [];
+
+    [JsonPropertyName("requested_days")]
+    public int RequestedDays { get; init; }
+
+    [JsonPropertyName("completed_days")]
+    public int CompletedDays { get; init; }
+
+    [JsonPropertyName("download_limited")]
+    public bool DownloadLimited { get; init; }
+
+    [JsonPropertyName("missing_days")]
+    public List<string> MissingDays { get; init; } = [];
+}
+
+internal sealed record AreaAcquisitionRequest
+{
+    [JsonPropertyName("profile_name")]
+    public string ProfileName { get; init; } = "";
+
+    [JsonPropertyName("feed_ids")]
+    public List<string> FeedIds { get; init; } = [];
+
+    [JsonPropertyName("job")]
+    public JobRequest Job { get; init; } = new();
+}
+
+internal sealed record AreaFeedJobResult
+{
+    [JsonPropertyName("feed")]
+    public FeedSearchResult Feed { get; init; } = new();
+
+    [JsonPropertyName("result")]
+    public JobRunResult Result { get; init; } = new();
+
+    [JsonPropertyName("status")]
+    public string Status { get; init; } = "";
+}
+
+internal sealed record AreaAcquisitionResult
+{
+    [JsonPropertyName("id")]
+    public long Id { get; init; }
+
+    [JsonPropertyName("status")]
+    public string Status { get; init; } = "";
+
+    [JsonPropertyName("start_date")]
+    public string StartDate { get; init; } = "";
+
+    [JsonPropertyName("end_date")]
+    public string EndDate { get; init; } = "";
+
+    [JsonPropertyName("stop_reason")]
+    public string StopReason { get; init; } = "";
+
+    [JsonPropertyName("download_limited")]
+    public bool DownloadLimited { get; init; }
+
+    [JsonPropertyName("feed_results")]
+    public List<AreaFeedJobResult> FeedResults { get; init; } = [];
+
+    [JsonPropertyName("items")]
+    public List<AreaAcquisitionItemState> Items { get; init; } = [];
+
+    public string Summary =>
+        $"Queue {Id} · {Status.Replace('_', ' ')} · {Items.Count(value => value.Status == "complete")}/{Items.Count} feeds complete";
+}
+
+internal sealed record AreaAcquisitionItemState
+{
+    [JsonPropertyName("feed_id")]
+    public string FeedId { get; init; } = "";
+
+    [JsonPropertyName("feed_name")]
+    public string FeedName { get; init; } = "";
+
+    [JsonPropertyName("priority_rank")]
+    public int PriorityRank { get; init; }
+
+    [JsonPropertyName("status")]
+    public string Status { get; init; } = "";
+
+    [JsonPropertyName("requested_days")]
+    public int RequestedDays { get; init; }
+
+    [JsonPropertyName("completed_days")]
+    public int CompletedDays { get; init; }
 }
 
 internal sealed record JobDayResult

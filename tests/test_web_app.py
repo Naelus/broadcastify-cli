@@ -185,6 +185,31 @@ def test_web_jobs_force_quota_safe_archive_defaults(tmp_path: Path) -> None:
     assert payload["output_dir"] == str(tmp_path)
 
 
+def test_web_area_jobs_force_the_same_quota_boundary(tmp_path: Path) -> None:
+    manager = JobManager(tmp_path, tmp_path / "analysis.sqlite3", tmp_path)
+    arguments, payload = manager._worker_request(  # noqa: SLF001
+        "run-area",
+        {
+            "profile_name": "Regional desk",
+            "job": {
+                "start_date": "2026-07-12",
+                "end_date": "2026-07-12",
+                "download_jobs": 8,
+                "keep_originals": False,
+                "diarize": True,
+            },
+        },
+    )
+
+    assert arguments == ["run-area"]
+    assert payload is not None
+    assert payload["job"]["download_jobs"] == 1
+    assert payload["job"]["keep_originals"] is True
+    assert payload["job"]["combine"] is True
+    assert payload["job"]["transcribe"] is True
+    assert payload["job"]["output_dir"] == str(tmp_path)
+
+
 def test_web_jobs_validate_area_zip_codes(tmp_path: Path) -> None:
     manager = JobManager(tmp_path, tmp_path / "analysis.sqlite3", tmp_path)
     with pytest.raises(WebRequestError, match="five-digit"):

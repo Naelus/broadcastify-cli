@@ -203,7 +203,10 @@ def test_download_day_does_not_count_failed_archives_as_downloaded(
         )
 
     assert max(current for current, _total, _message in progress) == 2
-    assert all(message != "Downloaded 3/3" for _current, _total, message in progress)
+    assert all(
+        message != "Ready 3/3 (cached or downloaded)"
+        for _current, _total, message in progress
+    )
 
 
 def test_download_day_deduplicates_shared_quota_failure(tmp_path: Path) -> None:

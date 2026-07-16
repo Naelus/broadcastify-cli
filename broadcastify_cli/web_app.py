@@ -314,6 +314,7 @@ class JobManager:
             "authenticate",
             "continue-local",
             "run",
+            "run-area",
             "save-area-profile",
             "summarize-area",
             "summarize-week",
@@ -330,6 +331,15 @@ class JobManager:
             if payload.get("diarize"):
                 payload["combine"] = True
                 payload["transcribe"] = True
+        if command == "run-area":
+            job_payload = dict(payload.get("job") or {})
+            job_payload["output_dir"] = str(self.output_dir)
+            job_payload["download_jobs"] = 1
+            job_payload["keep_originals"] = True
+            if job_payload.get("diarize"):
+                job_payload["combine"] = True
+                job_payload["transcribe"] = True
+            payload["job"] = job_payload
         return [command], payload
 
 
@@ -574,11 +584,13 @@ def create_server(
                 library = _library_payload(state)
                 with AnalysisStore(state.database_path) as store:
                     profiles = store.list_area_profiles()
+                    area_runs = store.list_area_acquisition_runs(limit=20)
                 self._json(
                     HTTPStatus.OK,
                     {
                         **library,
                         "profiles": profiles,
+                        "area_runs": area_runs,
                         "runtime": {
                             "platform": platform.system(),
                             "platform_release": platform.release(),

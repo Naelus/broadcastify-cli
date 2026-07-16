@@ -6,7 +6,7 @@
   <meta name="app-token" content="__SESSION_TOKEN__">
   <meta name="color-scheme" content="light dark">
   <title>Radio Archive Intelligence</title>
-  <link rel="stylesheet" href="/static/app.css?v=5">
+  <link rel="stylesheet" href="/static/app.css?v=6">
 </head>
 <body>
   <div class="app-shell">
@@ -178,6 +178,14 @@
               <label><span>From</span><input id="areaStartDate" type="date"></label>
               <label><span>Through</span><input id="areaEndDate" type="date"></label>
             </div>
+            <div class="toggle-grid compact-toggles">
+              <label class="check-row"><input id="areaRunCombine" type="checkbox" checked><span><strong>Combine</strong><small>Continuous daily timeline</small></span></label>
+              <label class="check-row"><input id="areaRunTranscribe" type="checkbox" checked><span><strong>Transcribe</strong><small>Selected hardware profile</small></span></label>
+              <label class="check-row"><input id="areaRunDiarize" type="checkbox" checked><span><strong>Speaker labels</strong><small>Requires combine</small></span></label>
+              <label class="check-row"><input id="areaRunAnalyze" type="checkbox" checked><span><strong>Analyze</strong><small>Queue after transcripts</small></span></label>
+            </div>
+            <button class="button secondary wide" id="runAreaQueueButton">Run or resume nearest-first queue</button>
+            <div id="areaQueuePanel" class="empty-compact">Choose a saved profile to inspect its last acquisition queue.</div>
             <div class="button-row">
               <button class="button primary" id="buildAreaBriefButton">Find story leads</button>
               <button class="button secondary" id="openSavedAreaButton">Open latest saved</button>
@@ -256,6 +264,6 @@
   </aside>
 
   <div class="toast-region" id="toastRegion" aria-live="polite"></div>
-  <script src="/static/app.js?v=5" defer></script>
+  <script src="/static/app.js?v=6" defer></script>
 </body>
 </html>

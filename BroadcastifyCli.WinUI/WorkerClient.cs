@@ -164,6 +164,53 @@ internal sealed class WorkerClient
         return result;
     }
 
+    public async Task<AreaAcquisitionResult?> RunAreaAcquisitionAsync(
+        AreaAcquisitionRequest request,
+        Action<JsonElement> onMessage,
+        CancellationToken cancellationToken)
+    {
+        AreaAcquisitionResult? result = null;
+        await RunWorkerAsync(
+            ["-m", "broadcastify_cli.worker", "run-area"],
+            JsonSerializer.Serialize(request, JsonOptions),
+            message =>
+            {
+                if (message.TryGetProperty("type", out var type)
+                    && type.GetString() == "area_complete"
+                    && message.TryGetProperty("result", out var value))
+                {
+                    result = value.Deserialize<AreaAcquisitionResult>(JsonOptions);
+                }
+                onMessage(message);
+            },
+            cancellationToken);
+        return result;
+    }
+
+    public async Task<IReadOnlyList<AreaAcquisitionResult>> ListAreaAcquisitionRunsAsync(
+        string profileName,
+        CancellationToken cancellationToken)
+    {
+        List<AreaAcquisitionResult>? results = null;
+        await RunWorkerAsync(
+            [
+                "-m", "broadcastify_cli.worker", "area-runs",
+                "--profile-name", profileName,
+            ],
+            null,
+            message =>
+            {
+                if (message.TryGetProperty("type", out var type)
+                    && type.GetString() == "area_runs")
+                {
+                    results = message.GetProperty("runs")
+                        .Deserialize<List<AreaAcquisitionResult>>(JsonOptions);
+                }
+            },
+            cancellationToken);
+        return results ?? [];
+    }
+
     public async Task<LibraryResponse> ListLibraryAsync(
         string outputDirectory,
         CancellationToken cancellationToken)

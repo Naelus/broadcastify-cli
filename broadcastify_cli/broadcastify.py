@@ -642,7 +642,11 @@ class BroadcastifyClient:
         limit_failure: DownloadLimitExceeded | None = None
         remaining_ids = archive_ids[1:]
         if progress:
-            progress(1, len(archive_ids), f"Downloaded 1/{len(archive_ids)}")
+            progress(
+                1,
+                len(archive_ids),
+                f"Ready 1/{len(archive_ids)} (cached or downloaded)",
+            )
         if not remaining_ids:
             return downloaded
 
@@ -671,7 +675,7 @@ class BroadcastifyClient:
                             progress(
                                 successful,
                                 len(archive_ids),
-                                f"Downloaded {successful}/{len(archive_ids)}",
+                                f"Ready {successful}/{len(archive_ids)} (cached or downloaded)",
                             )
                 except Exception as exc:  # reported after remaining downloads finish
                     if isinstance(exc, DownloadLimitExceeded):
@@ -687,7 +691,7 @@ class BroadcastifyClient:
                                 successful,
                                 len(archive_ids),
                                 f"Archive {archive_id} failed after retries; "
-                                f"{successful}/{len(archive_ids)} downloaded.",
+                                f"{successful}/{len(archive_ids)} ready.",
                             )
 
         if limit_failure is not None:

@@ -359,6 +359,24 @@ function renderProfiles() {
   const current = byId("areaProfileSelect").value;
   byId("areaProfileSelect").innerHTML = '<option value="">Choose a profile</option>' + profiles.map((profile) => `<option value="${html(profile.name)}">${html(profile.name)} · ${profile.feeds.length} feeds</option>`).join("");
   if (profiles.some((profile) => profile.name === current)) byId("areaProfileSelect").value = current;
+  renderAreaQueue();
+}
+
+function renderAreaQueue() {
+  const profileName = byId("areaProfileSelect").value;
+  const run = (state.bootstrap.area_runs || []).find((value) => value.profile_name === profileName);
+  if (!profileName) {
+    byId("areaQueuePanel").innerHTML = '<div class="empty-compact">Choose a saved profile to inspect its last acquisition queue.</div>';
+    return;
+  }
+  if (!run) {
+    byId("areaQueuePanel").innerHTML = '<div class="notice"><strong>No retained queue yet</strong><span>Starting it will process the saved feed order and persist every stop/resume point.</span></div>';
+    return;
+  }
+  const items = run.items || [];
+  const complete = items.filter((value) => value.status === "complete").length;
+  const warning = run.status === "quota_limited" || run.status === "failed" || run.status === "partial";
+  byId("areaQueuePanel").innerHTML = `<div class="notice ${warning ? "warning" : "success"}"><strong>Queue ${Number(run.id)} · ${html(words(run.status))}</strong><span>${complete}/${items.length} feeds complete · ${html(run.start_date)} through ${html(run.end_date)}${run.stop_reason ? ` · ${html(run.stop_reason)}` : ""}</span></div><div class="queue-items">${items.map((item) => `<span><b>${Number(item.priority_rank)}. ${html(item.feed_name)}</b> · ${html(words(item.status))} · ${Number(item.completed_days)}/${Number(item.requested_days)} days</span>`).join("")}</div>`;
 }
 
 function renderRuntime() {
@@ -479,6 +497,15 @@ function eventOf(job, type) {
 
 async function queueAnalyses(feedId, dates) {
   state.analysisQueue = dates.map((archiveDate) => ({ feedId, archiveDate }));
+  await runNextAnalysis();
+}
+
+async function queueAreaAnalyses(feedResults) {
+  state.analysisQueue = feedResults.flatMap((value) =>
+    (value.result?.days || [])
+      .filter((day) => (day.transcripts || []).length)
+      .map((day) => ({ feedId: value.feed?.feed_id || value.result?.feed_id, archiveDate: day.date })))
+    .filter((value) => value.feedId && value.archiveDate);
   await runNextAnalysis();
 }
 
@@ -763,9 +790,37 @@ byId("buildAreaBriefButton").addEventListener("click", async () => {
   if (!profileName) return toast("Choose a saved area profile.", true);
   await startJob("summarize-area", { profile_name: profileName, start_date: byId("areaStartDate").value, end_date: byId("areaEndDate").value, ...providerPayload() }, { label: `Ranking ${profileName} story leads`, onComplete: (job) => renderAreaBrief(eventOf(job, "area_digest")?.result) });
 });
+byId("areaRunDiarize").addEventListener("change", () => {
+  if (byId("areaRunDiarize").checked) {
+    byId("areaRunCombine").checked = true;
+    byId("areaRunTranscribe").checked = true;
+  }
+});
+byId("runAreaQueueButton").addEventListener("click", async () => {
+  const profileName = byId("areaProfileSelect").value;
+  if (!profileName) return toast("Choose and save an area profile first.", true);
+  const analyze = byId("areaRunAnalyze").checked;
+  await startJob("run-area", {
+    profile_name: profileName,
+    job: {
+      feed_id: "0",
+      start_date: byId("areaStartDate").value,
+      end_date: byId("areaEndDate").value,
+      combine: byId("areaRunCombine").checked,
+      transcribe: byId("areaRunTranscribe").checked,
+      diarize: byId("areaRunDiarize").checked,
+      ...processingPayload(),
+    },
+  }, { label: `Running ${profileName} nearest first`, onComplete: async (job) => {
+    const result = eventOf(job, "area_complete")?.result;
+    await refreshBootstrap();
+    if (analyze && result?.feed_results?.length) await queueAreaAnalyses(result.feed_results);
+  } });
+});
 byId("openSavedAreaButton").addEventListener("click", openSavedArea);
 byId("areaProfileSelect").addEventListener("change", async () => {
   applySelectedAreaProfile();
+  renderAreaQueue();
   await openSavedArea();
 });
 byId("areaCoverageMode").addEventListener("change", updateAreaCoverageControls);

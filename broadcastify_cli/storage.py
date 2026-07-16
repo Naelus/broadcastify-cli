@@ -220,6 +220,40 @@ class AnalysisStore:
                 updated_at TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS area_acquisition_runs (
+                id INTEGER PRIMARY KEY,
+                profile_id INTEGER NOT NULL REFERENCES area_profiles(id) ON DELETE CASCADE,
+                start_date TEXT NOT NULL,
+                end_date TEXT NOT NULL,
+                processing_fingerprint TEXT NOT NULL,
+                processing_json TEXT NOT NULL,
+                status TEXT NOT NULL,
+                stop_reason TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                completed_at TEXT,
+                UNIQUE(profile_id, start_date, end_date, processing_fingerprint)
+            );
+
+            CREATE TABLE IF NOT EXISTS area_acquisition_items (
+                id INTEGER PRIMARY KEY,
+                run_id INTEGER NOT NULL REFERENCES area_acquisition_runs(id) ON DELETE CASCADE,
+                feed_id TEXT NOT NULL,
+                feed_name TEXT NOT NULL,
+                priority_rank INTEGER NOT NULL,
+                distance_miles REAL,
+                status TEXT NOT NULL,
+                requested_days INTEGER NOT NULL DEFAULT 0,
+                completed_days INTEGER NOT NULL DEFAULT 0,
+                missing_days_json TEXT NOT NULL DEFAULT '[]',
+                download_limited INTEGER NOT NULL DEFAULT 0,
+                result_json TEXT NOT NULL DEFAULT '{}',
+                message TEXT NOT NULL DEFAULT '',
+                attempt_count INTEGER NOT NULL DEFAULT 0,
+                updated_at TEXT NOT NULL,
+                UNIQUE(run_id, feed_id)
+            );
+
             CREATE TABLE IF NOT EXISTS area_story_digests (
                 id INTEGER PRIMARY KEY,
                 profile_id INTEGER NOT NULL REFERENCES area_profiles(id) ON DELETE CASCADE,
@@ -874,6 +908,250 @@ class AnalysisStore:
         ).fetchall()
         return [self._area_profile(row) for row in rows]
 
+    @staticmethod
+    def _area_acquisition_fingerprint(
+        processing: dict[str, Any], feeds: Sequence[dict[str, Any]]
+    ) -> str:
+        payload = {
+            "processing": processing,
+            "feeds": [
+                {
+                    "feed_id": str(feed.get("feed_id") or ""),
+                    "priority_rank": int(feed.get("priority_rank") or index),
+                    "distance_miles": feed.get("distance_miles"),
+                }
+                for index, feed in enumerate(feeds, start=1)
+            ],
+        }
+        return hashlib.sha256(
+            json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+
+    def ensure_area_acquisition_run(
+        self,
+        profile_id: int,
+        start_date: date,
+        end_date: date,
+        processing: dict[str, Any],
+        feeds: Sequence[dict[str, Any]],
+    ) -> dict[str, Any]:
+        if start_date > end_date:
+            raise ValueError("Area acquisition start date must be on or before its end date.")
+        if not feeds:
+            raise ValueError("Area acquisition requires at least one selected feed.")
+        fingerprint = self._area_acquisition_fingerprint(processing, feeds)
+        serialized_processing = json.dumps(processing, sort_keys=True, ensure_ascii=False)
+        now = utc_now()
+        with self.transaction() as connection:
+            row = connection.execute(
+                """
+                SELECT id FROM area_acquisition_runs
+                WHERE profile_id=? AND start_date=? AND end_date=?
+                  AND processing_fingerprint=?
+                """,
+                (
+                    profile_id,
+                    start_date.isoformat(),
+                    end_date.isoformat(),
+                    fingerprint,
+                ),
+            ).fetchone()
+            if row is None:
+                cursor = connection.execute(
+                    """
+                    INSERT INTO area_acquisition_runs(
+                        profile_id, start_date, end_date, processing_fingerprint,
+                        processing_json, status, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, 'running', ?, ?)
+                    """,
+                    (
+                        profile_id,
+                        start_date.isoformat(),
+                        end_date.isoformat(),
+                        fingerprint,
+                        serialized_processing,
+                        now,
+                        now,
+                    ),
+                )
+                run_id = int(cursor.lastrowid)
+            else:
+                run_id = int(row["id"])
+                connection.execute(
+                    """
+                    UPDATE area_acquisition_runs
+                    SET processing_json=?, status='running', stop_reason='',
+                        updated_at=?, completed_at=NULL
+                    WHERE id=?
+                    """,
+                    (serialized_processing, now, run_id),
+                )
+                connection.execute(
+                    """
+                    UPDATE area_acquisition_items
+                    SET status='pending', message='Recovered an interrupted local worker.', updated_at=?
+                    WHERE run_id=? AND status='running'
+                    """,
+                    (now, run_id),
+                )
+            for index, feed in enumerate(feeds, start=1):
+                feed_id = str(feed.get("feed_id") or "").strip()
+                if not feed_id.isdigit():
+                    raise ValueError("Area acquisition feed IDs must contain only digits.")
+                distance = feed.get("distance_miles")
+                connection.execute(
+                    """
+                    INSERT INTO area_acquisition_items(
+                        run_id, feed_id, feed_name, priority_rank, distance_miles,
+                        status, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, 'pending', ?)
+                    ON CONFLICT(run_id, feed_id) DO UPDATE SET
+                        feed_name=excluded.feed_name,
+                        priority_rank=excluded.priority_rank,
+                        distance_miles=excluded.distance_miles,
+                        updated_at=excluded.updated_at
+                    """,
+                    (
+                        run_id,
+                        feed_id,
+                        str(feed.get("name") or f"Feed {feed_id}"),
+                        int(feed.get("priority_rank") or index),
+                        float(distance) if distance is not None else None,
+                        now,
+                    ),
+                )
+        result = self.get_area_acquisition_run(run_id)
+        assert result is not None
+        return result
+
+    def start_area_acquisition_item(self, run_id: int, feed_id: str) -> None:
+        with self.transaction() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE area_acquisition_items
+                SET status='running', message='', attempt_count=attempt_count+1, updated_at=?
+                WHERE run_id=? AND feed_id=?
+                """,
+                (utc_now(), run_id, feed_id),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError(f"Feed {feed_id} is not in area acquisition run {run_id}.")
+
+    def finish_area_acquisition_item(
+        self,
+        run_id: int,
+        feed_id: str,
+        *,
+        status: str,
+        result: dict[str, Any] | None = None,
+        message: str = "",
+    ) -> None:
+        if status not in {"complete", "partial", "failed", "pending"}:
+            raise ValueError(f"Unsupported area acquisition item status: {status}")
+        value = result or {}
+        with self.transaction() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE area_acquisition_items
+                SET status=?, requested_days=?, completed_days=?, missing_days_json=?,
+                    download_limited=?, result_json=?, message=?, updated_at=?
+                WHERE run_id=? AND feed_id=?
+                """,
+                (
+                    status,
+                    int(value.get("requested_days") or 0),
+                    int(value.get("completed_days") or 0),
+                    json.dumps(list(value.get("missing_days") or [])),
+                    int(bool(value.get("download_limited"))),
+                    json.dumps(value, ensure_ascii=False),
+                    message,
+                    utc_now(),
+                    run_id,
+                    feed_id,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError(f"Feed {feed_id} is not in area acquisition run {run_id}.")
+
+    def finish_area_acquisition_run(
+        self, run_id: int, status: str, stop_reason: str = ""
+    ) -> dict[str, Any]:
+        if status not in {"complete", "partial", "quota_limited", "failed", "canceled"}:
+            raise ValueError(f"Unsupported area acquisition run status: {status}")
+        now = utc_now()
+        with self.transaction() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE area_acquisition_runs
+                SET status=?, stop_reason=?, updated_at=?, completed_at=?
+                WHERE id=?
+                """,
+                (status, stop_reason, now, now, run_id),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError(f"Area acquisition run {run_id} was not found.")
+        result = self.get_area_acquisition_run(run_id)
+        assert result is not None
+        return result
+
+    @staticmethod
+    def _area_acquisition_item(row: sqlite3.Row) -> dict[str, Any]:
+        value = dict(row)
+        value["download_limited"] = bool(value["download_limited"])
+        value["missing_days"] = json.loads(value.pop("missing_days_json") or "[]")
+        value["result"] = json.loads(value.pop("result_json") or "{}")
+        return value
+
+    def get_area_acquisition_run(self, run_id: int) -> dict[str, Any] | None:
+        row = self.connection.execute(
+            """
+            SELECT r.*, p.name AS profile_name
+            FROM area_acquisition_runs r
+            JOIN area_profiles p ON p.id=r.profile_id
+            WHERE r.id=?
+            """,
+            (run_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        value = dict(row)
+        value["processing"] = json.loads(value.pop("processing_json") or "{}")
+        items = self.connection.execute(
+            """
+            SELECT * FROM area_acquisition_items
+            WHERE run_id=? ORDER BY priority_rank, id
+            """,
+            (run_id,),
+        ).fetchall()
+        value["items"] = [self._area_acquisition_item(item) for item in items]
+        return value
+
+    def list_area_acquisition_runs(
+        self, profile_name: str | None = None, limit: int = 20
+    ) -> list[dict[str, Any]]:
+        parameters: list[Any] = []
+        where = ""
+        if profile_name:
+            where = "WHERE p.name=?"
+            parameters.append(profile_name.strip())
+        parameters.append(max(1, min(100, int(limit))))
+        rows = self.connection.execute(
+            f"""
+            SELECT r.id
+            FROM area_acquisition_runs r
+            JOIN area_profiles p ON p.id=r.profile_id
+            {where}
+            ORDER BY r.updated_at DESC, r.id DESC
+            LIMIT ?
+            """,
+            parameters,
+        ).fetchall()
+        return [
+            result
+            for row in rows
+            if (result := self.get_area_acquisition_run(int(row["id"]))) is not None
+        ]
+
     def get_area_story_digest(
         self,
         profile_id: int,
@@ -1191,6 +1469,8 @@ class AnalysisStore:
                 "daily_summaries",
                 "weekly_summaries",
                 "area_profiles",
+                "area_acquisition_runs",
+                "area_acquisition_items",
                 "area_story_digests",
                 "embeddings",
                 "qa_history",

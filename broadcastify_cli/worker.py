@@ -37,6 +37,7 @@ from .analysis_providers import (
     open_analysis_client,
 )
 from .area_watch import AreaStoryAnalyzer
+from .area_acquisition import AreaAcquisitionRunner
 from .broadcastify import BroadcastifyClient
 from .geography import CENSUS_ZCTA_YEAR, ZipCentroidCatalog
 from .jobs import JobRunner
@@ -161,6 +162,20 @@ def run_job() -> int:
     request = JobRequest.from_dict(payload)
     with BroadcastifyClient() as client:
         JobRunner(request, emit=emit, client=client).run()
+    return 0
+
+
+def run_area_acquisition() -> int:
+    payload = json.load(sys.stdin)
+    with AnalysisStore(DEFAULT_DATABASE) as store, BroadcastifyClient() as client:
+        AreaAcquisitionRunner(payload, store, emit=emit, client=client).run()
+    return 0
+
+
+def list_area_acquisition_runs(profile_name: str | None = None) -> int:
+    with AnalysisStore(DEFAULT_DATABASE) as store:
+        runs = store.list_area_acquisition_runs(profile_name=profile_name)
+    emit({"type": "area_runs", "runs": runs})
     return 0
 
 
@@ -686,6 +701,9 @@ def build_parser() -> argparse.ArgumentParser:
     area_search.add_argument("--max-zip-codes", type=int, default=12)
     subparsers.add_parser("area-profiles")
     subparsers.add_parser("save-area-profile")
+    subparsers.add_parser("run-area")
+    area_runs = subparsers.add_parser("area-runs")
+    area_runs.add_argument("--profile-name")
     subparsers.add_parser("summarize-area")
     saved_area = subparsers.add_parser("saved-area-digest")
     saved_area.add_argument("--profile-name", required=True)
@@ -751,6 +769,10 @@ def main() -> int:
             return list_area_profiles()
         if arguments.command == "save-area-profile":
             return save_area_profile()
+        if arguments.command == "run-area":
+            return run_area_acquisition()
+        if arguments.command == "area-runs":
+            return list_area_acquisition_runs(arguments.profile_name)
         if arguments.command == "summarize-area":
             return summarize_area()
         if arguments.command == "saved-area-digest":

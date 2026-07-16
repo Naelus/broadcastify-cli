@@ -21,7 +21,7 @@ The default address is `http://127.0.0.1:8765/`. `--port` may select another loc
 - website-backed feed search and guarded inclusive archive jobs
 - automatic analysis queue for newly completed transcripts
 - evidence-grounded range Q&A and persisted seven-day briefs with missing dates
-- ZIP discovery, explicit area profiles, and retained regional story-lead briefs with coverage gaps
+- center/radius or ordered-ZIP discovery, explicit area profiles, persisted nearest-first stop/resume queues, and retained regional story-lead briefs with coverage gaps
 - automatic/CUDA/CPU/Vulkan/OpenVINO/Apple Metal/Windows ML processing profiles with a collapsed stage-by-stage readiness comparison
 - explicit selected-engine synthetic-audio self-test, with user-controlled managed-model download and actual fallback reporting
 - local Gemma, OpenAI Responses, compatible `/v1`, and Codex-login analysis settings with the same explicit external-text gate as WinUI
