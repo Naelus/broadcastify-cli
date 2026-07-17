@@ -46,6 +46,17 @@ This is the dated verification and delivery log for `GOAL.md`. Keep forward-look
 - SQLite retained **1 feed-day, 1 transcript segment, 1 passage, 1 embedding, and 1 daily summary**. The short fixture correctly produced **0 incidents** and finished at pipeline 100% / **Ready to review**.
 - The completed container used image `sha256:2f8d2507ee587a8b94c514d27545089234810e6da3e6dd0f2e1327f2f96de861`, numeric user 950, read-only root, network `none`, `cap-drop=ALL`, `no-new-privileges`, render groups 44/107, and PID limit 1024. It was removed after inspection; exact source and result artifacts remain in the isolated user-owned `app-historical-validation` and `webjob-historical-validation-1` paths.
 
+### All-CPU Web workflow and analysis credibility
+
+- Removed every GPU device/group from a fresh Web-job container and selected whisper.cpp CPU, pyannote CPU, and the CPU device of the same local llama.cpp build. The first exact-current run proved CPU ASR and diarization, then exposed llama.cpp b9637 rejecting the daily schema's `maxLength: 2500` grammar with HTTP 500 even though the 1B Q4 model was generating at roughly 70 tokens/second.
+- Removed the parser-hostile grammar bound, retained a deterministic 250-word application clamp, and made the local client retry only recognized schema/parser errors through llama.cpp's simpler JSON-object mode. Exact commit `historical-validation` passed **116 tests** and completed the all-CPU job.
+- That run exposed a more important credibility defect: with only incident I1 retained, the generated daily brief invented incidents I2-I4 and an unsupported count of four priority events. Daily summaries now reject unknown incident IDs and activity counts above the supplied record set, retry once with the exact allowed IDs, then use the existing deterministic evidence summary if the model remains ungrounded.
+- Incident normalization now treats confidence as extraction confidence from noisy ASR rather than event certainty: it caps every incident below 1.0, caps a single coarse 20-second-or-longer segment at **0.90**, and prefixes unhedged claims with `Radio traffic reported:`.
+- Exact pushed commit `historical-validation` passes **119 local tests** and all **119 tests in 2.28 seconds** inside the immutable image. A fresh protected all-CPU Web job completed in **21.282 seconds** with networking disabled, no Hugging Face token, and no GPU devices or supplemental render groups.
+- Transcript evidence records whisper.cpp backend/device `cpu`, `ggml_vulkan: No devices found`, one segment, and CPU diarization complete with **5 turns**. llama.cpp listed only the AMD Ryzen CPU, loaded the 1B Q4 model in 0.645 seconds, and generated at about 56-72 tokens/second.
+- The short fixture retained one evidence-backed `person_with_weapon` record from the exact quote `I was chased with someone with a gun`, normalized to `Radio traffic reported: a person was chased with a gun.` at confidence **0.90**. Both free-form summary attempts were rejected as unsupported; the persisted brief contains only that one reported category and explicitly says noisy ASR is not a confirmed outcome.
+- SQLite retained **1 feed-day, 1 transcript segment, 1 incident, 1 passage, 1 embedding, and 1 daily summary**, finishing at pipeline 100% / **Ready to review**. This is bounded fallback evidence, not a full-day CPU benchmark; B-004 remains open.
+
 ### Pipeline correctness
 
 - Added first-missing-stage discovery and local continuation.

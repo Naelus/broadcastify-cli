@@ -20,7 +20,7 @@ The tested Windows experience remains the reference behavior. A user should be a
 ## Definition of done for the active parity phase
 
 - CUDA reference flow remains green on the RTX 3090.
-- CPU transcription, CPU diarization, and CPU LLM fallback are exercised.
+- CPU transcription, CPU diarization, and CPU LLM fallback are exercised; exact commit `historical-validation` completes the protected all-CPU Web workflow with grounded persistence, while longer/full-day timing remains open.
 - OpenVINO performs a real Whisper decode and safely falls back to CPU when an exposed accelerator rejects the model.
 - Vulkan performs a real whisper.cpp decode and llama.cpp generation on suitable AMD or Intel hardware; exact commit `historical-validation` now passes a protected loopback Web job through network-disabled AMD Radeon 890M ASR → CPU diarization → local analysis, while full-day portable diarization timing remains open.
 - Windows ML performs a real ONNX Whisper decode through the packaged helper and is integrated only after the model/runtime self-test passes.

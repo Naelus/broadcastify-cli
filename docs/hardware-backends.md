@@ -7,7 +7,7 @@ The application chooses a backend independently for transcription, diarization, 
 | Profile | Transcription | Diarization | Analysis | Evidence |
 |---|---|---|---|---|
 | Windows CUDA | faster-whisper CUDA | pyannote CUDA | llama.cpp auto-offload | Full retained-day reference workflow on RTX 3090 |
-| CPU | faster-whisper INT8 | pyannote CPU | llama.cpp CPU | Components work; full-day wall-clock benchmark remains open |
+| CPU | faster-whisper INT8 or whisper.cpp CPU | pyannote CPU | llama.cpp CPU | Protected 30-second all-CPU Web job validated; full-day benchmark remains open |
 | AMD Vulkan/Linux | whisper.cpp Vulkan | pyannote CPU fallback | llama.cpp Vulkan | Protected end-to-end Web job validated on Radeon 890M; full-day CPU diarization timing remains open |
 | OpenVINO | OpenVINO GenAI AUTO/CPU | pyannote CPU fallback | llama.cpp SYCL/auto/CPU | Real CPU ASR and rejected-accelerator-to-CPU fallback |
 | Windows ML | ONNX Runtime GenAI CPU | pyannote CPU fallback | llama.cpp auto/CPU | Real ASR decode; DML fails and TensorRT RTX currently partitions/falls back slower than CPU |
@@ -126,3 +126,9 @@ No packages, services, or storage configuration were changed on the appliance ho
 The exact current commit (`historical-validation`) was placed in a fresh isolated clone. Because the TrueNAS home and `/tmp` mounts are deliberately `noexec`, Python 3.12 CPU wheels were built inside the already-recorded Vulkan image and stored in user-writable executable `/var/tmp`; no host package or mount setting changed. The resulting image/runtime combination passed 113 tests with networking disabled.
 
 The headless Web harness established the real loopback cookie/action-token session and posted a fresh `continue-local` job for 30 seconds of retained radio with `--network none`. No Hugging Face token was supplied: the complete cached Community-1 model loaded, CPU pyannote completed five turns, whisper.cpp retained `cpu` plus `vulkan` availability and explicit `using Vulkan0 backend` evidence for AMD Radeon 890M, and the 1B Q4 Gemma server detected the same Vulkan device. One passage, one embedding, and one daily summary persisted; the final state was Ready to review with zero invented incidents. Container time was 15.139 seconds. The root filesystem was read-only, all capabilities were dropped, `no-new-privileges` and PID limit 1024 were set, and the completed container was removed.
+
+### Bounded all-CPU measurement
+
+Exact commit `historical-validation` passed 119 tests in the immutable image, then ran the same protected Web job with no `/dev/dri` device and no supplemental render groups. whisper.cpp was explicitly selected as CPU and retained `ggml_vulkan: No devices found`; pyannote ran on CPU; llama.cpp listed only the Ryzen CPU, loaded the cached 1B Q4 model in about 0.645 seconds, and generated around 56-72 tokens/second.
+
+The fresh 30-second workflow completed in 21.282 seconds, persisted one segment, five speaker turns, one evidence-backed incident, one passage/embedding, and one daily summary, and ended Ready to review. The local model's two unsupported daily briefs were rejected by the incident-ID/count grounding gate; the stored deterministic brief contains only the cited report. The container used a read-only root, network `none`, numeric user 950, dropped all capabilities, `no-new-privileges`, PID limit 1024, no token, and an empty device list. Full-day CPU throughput remains unmeasured.

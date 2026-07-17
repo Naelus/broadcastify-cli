@@ -53,7 +53,7 @@ Status labels: **Validated**, **Implemented**, **Foundation**, or **Planned**.
 | Profile | ASR | Diarization | Analysis | Current state |
 |---|---|---|---|---|
 | Automatic/NVIDIA | faster-whisper CUDA | pyannote CUDA | llama.cpp Vulkan/auto-offload | Validated on RTX 3090 |
-| CPU only | faster-whisper INT8 CPU | pyannote CPU | llama.cpp CPU | Implemented; 60 seconds of retained diarization took 19.203 seconds, but full CPU-only end-to-end timing remains |
+| CPU only | faster-whisper INT8 CPU or whisper.cpp CPU | pyannote CPU | llama.cpp CPU | Exact `historical-validation` protected Web job completed all stages on CPU in 21.282 seconds for 30 seconds of retained audio; full-day timing remains |
 | Vulkan | whisper.cpp Vulkan | pyannote CPU | llama.cpp Vulkan | Exact `historical-validation` protected Web job completed the 30-second offline AMD workflow in 15.139 seconds; full-day CPU diarization timing remains |
 | OpenVINO | OpenVINO Whisper AUTO/CPU | pyannote CPU | llama.cpp SYCL/auto/CPU | Real CPU decode and accelerator-to-CPU fallback validated |
 | Windows ML | ONNX Runtime GenAI CPU | pyannote CPU | llama.cpp auto/CPU | Real CPU decode validated; DML fails and the current TensorRT RTX provider is slower than CPU for Whisper |

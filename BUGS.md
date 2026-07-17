@@ -23,8 +23,8 @@ Use this file for reproducible defects and concrete blockers, not the general ro
 ### B-004 — Full CPU-only end-to-end timing is not recorded
 
 - **Severity:** Medium.
-- **Observed:** CPU components and profile exist. Bounded CPU diarization is now recorded, but the complete multi-hour all-CPU pipeline has not been benchmarked on the retained corpus.
-- **Next:** Run a longer representative slice and then a full day if practical; record CPU ASR, diarization, and CPU LLM time separately rather than extrapolating the 60-second result.
+- **Observed:** Exact commit `historical-validation` completed a protected 30-second all-CPU Web job in 21.282 seconds: whisper.cpp CPU, pyannote CPU, llama.cpp CPU, embeddings, persistence, and grounded daily summary. This proves the fallback contract but does not predict multi-hour throughput.
+- **Next:** Run a longer representative slice and then a full day if practical; record CPU ASR, diarization, and CPU LLM time separately rather than extrapolating the short result.
 
 ### B-005 — Cross-platform launch/package and real macOS validation remain incomplete
 
@@ -46,6 +46,14 @@ Use this file for reproducible defects and concrete blockers, not the general ro
 - **Next:** Ask Broadcastify support for authoritative details and prioritize future regional acquisition by user distance/importance rather than a guessed quota size.
 
 ## Recently fixed
+
+### F-013 — Local daily briefs could invent incident IDs and overstate ASR certainty
+
+An exact CPU job retained only incident I1, but the free-form daily brief invented I2-I4 and claimed four priority events. Daily summaries now reject unknown incident IDs and counts above the supplied record set, retry once, and fall back to a deterministic evidence-only brief when still ungrounded. Incident normalization caps noisy-ASR extraction confidence below certainty, caps one coarse 20-second-or-longer segment at 0.90, and marks unhedged claims as radio-reported. Exact commit `historical-validation` rejected both unsupported live summary attempts and persisted only the cited I1 evidence.
+
+### F-012 — llama.cpp rejected the daily JSON schema on the CPU path
+
+llama.cpp b9637 expanded the daily summary's `maxLength: 2500` into a grammar repetition above its sane parser limit and returned HTTP 500. The application now enforces the 250-word bound after generation, omits the parser-hostile schema repetition, and retries only recognized schema/parser failures with llama.cpp's simpler JSON-object response format. Unrelated server 500s still surface.
 
 ### F-011 — A cached diarization model still required a Hugging Face token offline
 
