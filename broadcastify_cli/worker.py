@@ -163,6 +163,11 @@ def save_area_profile() -> int:
 def run_job() -> int:
     payload = json.load(sys.stdin)
     request = JobRequest.from_dict(payload)
+    if request.feed_name:
+        with AnalysisStore(DEFAULT_DATABASE) as store:
+            store.save_feed_catalog(
+                [{"feed_id": request.feed_id, "name": request.feed_name}]
+            )
     with BroadcastifyClient() as client:
         JobRunner(request, emit=emit, client=client).run()
     return 0

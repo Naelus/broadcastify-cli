@@ -993,6 +993,7 @@ byId("archiveForm").addEventListener("submit", async (event) => {
   const analyze = byId("archiveAnalyze").checked;
   await startJob("run", {
     feed_id: feedId,
+    feed_name: state.selectedFeed?.name || "",
     start_date: byId("archiveStartDate").value,
     end_date: byId("archiveEndDate").value,
     combine: byId("archiveCombine").checked,

@@ -1260,7 +1260,10 @@ public sealed partial class MainWindow : Window
             {
                 AppendLog($"Resuming archive coverage for feed {day.FeedId} on {day.ArchiveDate}.");
                 await RunAndAnalyzeJobAsync(CreateJobRequest(
-                    day.FeedId, archiveDate.Date, archiveDate.Date, minimumSpeakers, maximumSpeakers));
+                    day.FeedId, archiveDate.Date, archiveDate.Date, minimumSpeakers, maximumSpeakers,
+                    string.Equals(day.FeedName, $"Feed {day.FeedId}", StringComparison.Ordinal)
+                        ? null
+                        : day.FeedName));
             }
             else
             {
@@ -1613,7 +1616,8 @@ public sealed partial class MainWindow : Window
         }
 
         var request = CreateJobRequest(
-            _selectedFeed.FeedId, startDate, endDate, minimumSpeakers, maximumSpeakers);
+            _selectedFeed.FeedId, startDate, endDate, minimumSpeakers, maximumSpeakers,
+            _selectedFeed.Name);
 
         _operationCancellation = new CancellationTokenSource();
         SetBusy(true, "Starting job…", jobRunning: true);
@@ -1648,9 +1652,11 @@ public sealed partial class MainWindow : Window
         DateTime startDate,
         DateTime endDate,
         int? minimumSpeakers,
-        int? maximumSpeakers) => new()
+        int? maximumSpeakers,
+        string? feedName = null) => new()
     {
         FeedId = feedId,
+        FeedName = feedName?.Trim() ?? "",
         StartDate = startDate.ToString("yyyy-MM-dd"),
         EndDate = endDate.ToString("yyyy-MM-dd"),
         OutputDirectory = string.IsNullOrWhiteSpace(OutputFolderBox.Text) ? "archives" : OutputFolderBox.Text.Trim(),
@@ -2815,7 +2821,8 @@ public sealed partial class MainWindow : Window
         try
         {
             var baseRequest = CreateJobRequest(
-                selected[0].FeedId, startDate, endDate, minimumSpeakers, maximumSpeakers);
+                selected[0].FeedId, startDate, endDate, minimumSpeakers, maximumSpeakers,
+                selected[0].Name);
             var result = await _worker.RunAreaAcquisitionAsync(
                 new AreaAcquisitionRequest
                 {

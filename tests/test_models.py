@@ -18,6 +18,19 @@ def test_date_range_is_inclusive() -> None:
     ]
 
 
+def test_job_request_preserves_bounded_feed_name() -> None:
+    request = JobRequest.from_dict(
+        {
+            "feed_id": "5318",
+            "feed_name": f"  {'A' * 240}  ",
+            "start_date": "2026-07-10",
+            "end_date": "2026-07-10",
+        }
+    )
+
+    assert request.feed_name == "A" * 200
+
+
 def test_diarization_requires_transcription() -> None:
     request = JobRequest(
         feed_id="5318",

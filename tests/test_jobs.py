@@ -30,9 +30,11 @@ def test_combined_audio_is_created_before_one_transcription_pass(
     for source in source_files:
         source.write_bytes(b"audio")
     combined_file = day_dir / f"combined_5318_{archive_date:%Y%m%d}.mp3"
+    combined_feed_names: list[str] = []
 
-    def fake_combine(*_args: object, **_kwargs: object) -> Path:
+    def fake_combine(*_args: object, **kwargs: object) -> Path:
         calls.append("combine")
+        combined_feed_names.append(str(kwargs.get("feed_name") or ""))
         combined_file.write_bytes(b"combined")
         return combined_file
 
@@ -54,6 +56,7 @@ def test_combined_audio_is_created_before_one_transcription_pass(
 
     request = JobRequest(
         feed_id="5318",
+        feed_name="Example Public Safety",
         start_date=archive_date,
         end_date=archive_date,
         output_dir=tmp_path,
@@ -66,6 +69,7 @@ def test_combined_audio_is_created_before_one_transcription_pass(
     assert calls.index("download") < calls.index("load_model")
     assert calls.index("combine") < calls.index("transcribe")
     assert calls.count("transcribe") == 1
+    assert combined_feed_names == ["Example Public Safety"]
 
 
 def test_quota_stops_new_requests_but_keeps_complete_cached_days(tmp_path: Path) -> None:

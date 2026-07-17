@@ -394,6 +394,9 @@ internal sealed record JobRequest
     [JsonPropertyName("feed_id")]
     public string FeedId { get; init; } = "";
 
+    [JsonPropertyName("feed_name")]
+    public string FeedName { get; init; } = "";
+
     [JsonPropertyName("start_date")]
     public string StartDate { get; init; } = "";
 

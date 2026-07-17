@@ -25,6 +25,7 @@ class JobRequest:
     feed_id: str
     start_date: date
     end_date: date
+    feed_name: str = ""
     output_dir: Path = Path("archives")
     combine: bool = False
     keep_originals: bool = True
@@ -49,6 +50,7 @@ class JobRequest:
             feed_id=str(value["feed_id"]).strip(),
             start_date=date.fromisoformat(str(value["start_date"])),
             end_date=date.fromisoformat(str(value["end_date"])),
+            feed_name=str(value.get("feed_name") or "").strip()[:200],
             output_dir=Path(value.get("output_dir") or "archives"),
             combine=bool(value.get("combine", False)),
             keep_originals=bool(value.get("keep_originals", True)),

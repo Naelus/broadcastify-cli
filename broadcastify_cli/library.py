@@ -70,6 +70,18 @@ def _directory_size(path: Path) -> int:
     return total
 
 
+def _manifest_feed_name(path: Path) -> str:
+    if not path.is_file():
+        return ""
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, TypeError, ValueError, json.JSONDecodeError):
+        return ""
+    if not isinstance(payload, dict):
+        return ""
+    return str(payload.get("feed_name") or "").strip()[:200]
+
+
 def _state_for_day(
     output_root: Path,
     feed_id: str,
@@ -172,9 +184,10 @@ def _state_for_day(
         if has_stale_analysis
         else "Not analyzed",
     ]
+    resolved_feed_name = feed_name or _manifest_feed_name(manifest)
     return {
         "feed_id": feed_id,
-        "feed_name": feed_name or f"Feed {feed_id}",
+        "feed_name": resolved_feed_name or f"Feed {feed_id}",
         "archive_date": archive_date.isoformat(),
         "day_directory": str(day_directory.resolve()),
         "raw_file_count": len(raw_files),

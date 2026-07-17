@@ -73,9 +73,13 @@ def test_combiner_reencodes_with_continuous_timestamps(monkeypatch, tmp_path: Pa
         "90001",
         date(2026, 7, 12),
         source_files=sources,
+        feed_name="Example City Public Safety",
     )
     assert second == output
     assert captured.count("ffmpeg") == 1
+    assert json.loads(manifest.read_text(encoding="utf-8"))["feed_name"] == (
+        "Example City Public Safety"
+    )
 
 
 def test_combiner_manifest_counts_media_duration_across_feed_gaps(

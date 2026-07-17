@@ -129,6 +129,7 @@ class AreaAcquisitionRunner:
             request_payload = {
                 **job_payload,
                 "feed_id": feed_id,
+                "feed_name": str(feed.get("name") or ""),
                 "start_date": start_date.isoformat(),
                 "end_date": end_date.isoformat(),
                 "download_jobs": 1,

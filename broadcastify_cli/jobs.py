@@ -167,6 +167,7 @@ class JobRunner:
                     archive_date,
                     source_files=audio_files,
                     delete_sources=not self.request.keep_originals,
+                    feed_name=self.request.feed_name,
                 )
 
             # A combined job must be transcribed after concatenation. This gives
@@ -209,6 +210,7 @@ class JobRunner:
 
         result = {
             "feed_id": self.request.feed_id,
+            "feed_name": self.request.feed_name,
             "output_dir": str(self.request.output_dir),
             "days": day_results,
             "requested_days": len(dates),

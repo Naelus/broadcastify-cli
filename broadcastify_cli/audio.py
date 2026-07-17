@@ -284,6 +284,7 @@ def _write_manifest(
     source_starts: list[datetime | None],
     trim_durations: list[float | None],
     timeline_durations: list[float],
+    feed_name: str = "",
 ) -> None:
     combined_offset = 0.0
     manifest_sources: list[dict[str, object]] = []
@@ -302,20 +303,21 @@ def _write_manifest(
             }
         )
         combined_offset += timeline_duration
+    payload: dict[str, object] = {
+        "timeline_version": MANIFEST_TIMELINE_VERSION,
+        "feed_id": feed_id,
+        "archive_date": archive_date.isoformat(),
+        "combined_file": output.name,
+        "sources": manifest_sources,
+    }
+    if normalized_name := str(feed_name or "").strip():
+        payload["feed_name"] = normalized_name
+    _write_manifest_payload(manifest_path, payload)
+
+
+def _write_manifest_payload(manifest_path: Path, payload: dict[str, object]) -> None:
     partial = manifest_path.with_suffix(manifest_path.suffix + ".tmp")
-    partial.write_text(
-        json.dumps(
-            {
-                "timeline_version": MANIFEST_TIMELINE_VERSION,
-                "feed_id": feed_id,
-                "archive_date": archive_date.isoformat(),
-                "combined_file": output.name,
-                "sources": manifest_sources,
-            },
-            indent=2,
-        ),
-        encoding="utf-8",
-    )
+    partial.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     os.replace(partial, manifest_path)
 
 
@@ -325,6 +327,7 @@ def combine_mp3_files(
     archive_date: date,
     source_files: Iterable[str | Path] | None = None,
     delete_sources: bool = False,
+    feed_name: str = "",
 ) -> Path | None:
     root = Path(directory)
     files = sorted(Path(path) for path in (source_files or list_source_mp3s(root)))
@@ -339,7 +342,13 @@ def combine_mp3_files(
     if current:
         try:
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            if not isinstance(manifest, dict):
+                raise ValueError("Combined manifest must be a JSON object.")
             if int(manifest.get("timeline_version", 0)) >= MANIFEST_TIMELINE_VERSION:
+                normalized_name = str(feed_name or "").strip()
+                if normalized_name and str(manifest.get("feed_name") or "") != normalized_name:
+                    manifest["feed_name"] = normalized_name
+                    _write_manifest_payload(manifest_path, manifest)
                 return output
         except (OSError, TypeError, ValueError, json.JSONDecodeError):
             pass
@@ -363,6 +372,7 @@ def combine_mp3_files(
             source_starts,
             trim_durations,
             timeline_durations,
+            feed_name,
         )
         return output
 
@@ -430,6 +440,7 @@ def combine_mp3_files(
             source_starts,
             trim_durations,
             timeline_durations,
+            feed_name,
         )
 
         if delete_sources:

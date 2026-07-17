@@ -21,6 +21,17 @@ def _day(tmp_path: Path, feed_id: str, value: str) -> Path:
 def test_library_discovers_partial_and_analyzed_days(tmp_path: Path) -> None:
     partial = _day(tmp_path, "90003", "2026-07-07")
     (partial / "202607070000-1-90003.mp3").write_bytes(b"raw")
+    (partial / "combined_90003_20260707.manifest.json").write_text(
+        json.dumps(
+            {
+                "feed_id": "90003",
+                "feed_name": "Example County Public Safety",
+                "archive_date": "2026-07-07",
+                "sources": [],
+            }
+        ),
+        encoding="utf-8",
+    )
 
     ready = _day(tmp_path, "90001", "2026-07-12")
     audio = ready / "combined_90001_20260712.mp3"
@@ -71,6 +82,7 @@ def test_library_discovers_partial_and_analyzed_days(tmp_path: Path) -> None:
     assert analyzed["primary_action"] == "open_review"
 
     incomplete = next(value for value in states if value["feed_id"] == "90003")
+    assert incomplete["feed_name"] == "Example County Public Safety"
     assert incomplete["raw_file_count"] == 1
     assert incomplete["needs_network"] is True
     assert incomplete["primary_action"] == "resume_download"
