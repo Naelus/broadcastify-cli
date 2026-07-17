@@ -2,7 +2,7 @@ import json
 from datetime import date
 from pathlib import Path
 
-from broadcastify_cli.area_watch import AreaStoryAnalyzer
+from broadcastify_cli.area_watch import AreaStoryAnalyzer, _public_quote
 from broadcastify_cli.storage import AnalysisStore
 
 
@@ -15,6 +15,16 @@ class FakeWriter:
     def chat_text(self, **_kwargs: object) -> str:
         self.calls += 1
         return "**Top leads**\n* A shots-fired dispatch report appeared in overlapping selected feeds. Verify independently."
+
+
+def test_public_quote_redacts_contextual_name_and_phone() -> None:
+    quote, changed = _public_quote(
+        "Check the welfare of Summer Gibson; call 309-555-0123."
+    )
+
+    assert changed is True
+    assert "Summer Gibson" not in quote
+    assert "309-555-0123" not in quote
 
 
 def _transcript(path: Path, text: str) -> None:

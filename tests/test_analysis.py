@@ -13,10 +13,12 @@ from broadcastify_cli.analysis import (
     build_transcript_windows,
     find_cached_huggingface_gguf,
     find_llama_server,
+    incident_claim_has_evidence_support,
     normalize_local_model_reference,
     normalize_event_type,
     normalize_priority,
     prepare_llama_environment,
+    redact_public_text,
     resolve_local_llama_model,
 )
 from broadcastify_cli.storage import AnalysisStore
@@ -101,6 +103,9 @@ def test_llama_json_retries_schema_parser_500_as_json_object(monkeypatch) -> Non
     )
 
     assert result == {"summary": "CPU fallback works."}
+    assert calls[0]["temperature"] == 0.0
+    assert calls[0]["top_p"] == 1.0
+    assert calls[0]["seed"] == 0
     assert calls[0]["response_format"]["type"] == "json_schema"
     assert calls[1]["response_format"] == {"type": "json_object"}
 
@@ -337,7 +342,291 @@ def test_clear_evidence_corrects_category_and_routine_priority() -> None:
     assert normalize_event_type("She reported a single gunshot", "other") == "shots_fired"
     assert normalize_event_type("Juveniles running northeast", "fire") == "suspicious_activity"
     assert normalize_event_type("Residential intrusion alarm", "warrant_arrest") == "burglary"
+    assert normalize_event_type("The stolen vehicle was found", "domestic_disturbance") == "vehicle_theft"
+    assert normalize_event_type("They located the stolen spot car", "other") == "vehicle_theft"
+    assert normalize_event_type("He broke out three bus windows", "vehicle_theft") == "property_damage"
+    assert normalize_event_type("A vehicle attempting to flee without lights", "vehicle_theft") == "vehicle_pursuit"
+    assert normalize_event_type("Welfare check for an elderly man", "warrant_arrest") == "welfare_check"
+    assert normalize_event_type("Check the welfare of a resident", "warrant_arrest") == "welfare_check"
+    assert normalize_event_type("A female is having trouble breathing", "other") == "medical"
+    assert normalize_event_type("A person collapsed; medic to evaluate", "other") == "medical"
+    assert normalize_event_type("Trying to steal packages off the porch", "other") == "theft"
+    assert normalize_event_type("The neighbor made threats", "other") == "threats"
+    assert normalize_event_type("Female screaming in the lobby", "assault") == "disturbance"
+    assert normalize_event_type("Screaming near some type of ambulance fight", "assault") == "disturbance"
+    assert normalize_event_type("Juveniles getting ready to fight", "assault") == "disturbance"
+    assert normalize_event_type("Routine follow-up requested", "warrant_arrest") == "other"
     assert normalize_priority("theft_shoplifting", 5) == 3
+    assert normalize_priority("unknown", 5) == 2
+
+
+def test_public_text_redacts_contextual_private_names_and_identifiers() -> None:
+    text, changed = redact_public_text(
+        "Trouble with Logan Spangler; caller 309-555-0123, DOB 1/2/1980."
+    )
+
+    assert changed is True
+    assert "Logan Spangler" not in text
+    assert "[private person]" in text
+    assert "[phone redacted]" in text
+    assert "[date of birth redacted]" in text
+
+    radio_text, radio_changed = redact_public_text(
+        "Collar, Nick Schieber. Latina Johnson, black female, "
+        "date of birth 3, 2587."
+    )
+    assert radio_changed is True
+    assert "Nick Schieber" not in radio_text
+    assert "Latina Johnson" not in radio_text
+    assert "2587" not in radio_text
+
+    single_name, single_changed = redact_public_text(
+        "Amiel was threatening to come to the location."
+    )
+    assert single_changed is True
+    assert "Amiel" not in single_name
+
+
+def test_incident_validation_redacts_names_from_public_fields_but_keeps_evidence() -> None:
+    incident = IncidentAnalyzer._validate_incident(  # noqa: SLF001
+        {
+            "event_type": "trespassing",
+            "title": "Logan Spangler refusing to leave",
+            "summary": "Officers responded to a male, Logan Spangler, refusing to leave.",
+            "location": "North Brandywine",
+            "priority": 2,
+            "confidence": 0.9,
+            "evidence_segment_ids": [0],
+            "attributes": {"subject_name": "Logan Spangler"},
+        },
+        {0},
+        {
+            0: {
+                "segment_index": 0,
+                "start_seconds": 0.0,
+                "end_seconds": 8.0,
+                "speaker": "SPEAKER_00",
+                "text": "Trouble with Logan Spangler, refusing to leave North Brandywine.",
+            }
+        },
+    )
+
+    assert incident is not None
+    assert incident["event_type"] == "trespassing"
+    assert "Logan Spangler" not in incident["title"]
+    assert "Logan Spangler" not in incident["summary"]
+    assert incident["attributes"]["subject_name"] == "[private person]"
+    assert "Logan Spangler" in incident["evidence"][0]["text"]
+
+
+def test_incident_validation_caps_medical_priority_and_removes_uncertain_welfare_suffix() -> None:
+    breathing = IncidentAnalyzer._validate_incident(  # noqa: SLF001
+        {
+            "event_type": "medical",
+            "title": "Medical emergency - breathing difficulty",
+            "summary": "A female was reported having trouble breathing.",
+            "location": "North Allen Road",
+            "priority": 5,
+            "confidence": 0.9,
+            "evidence_segment_ids": [0],
+            "attributes": {},
+        },
+        {0},
+        {
+            0: {
+                "segment_index": 0,
+                "start_seconds": 0.0,
+                "end_seconds": 8.0,
+                "speaker": None,
+                "text": "North Allen Road, a female is having trouble breathing.",
+            }
+        },
+    )
+    welfare = IncidentAnalyzer._validate_incident(  # noqa: SLF001
+        {
+            "event_type": "welfare_check",
+            "title": "Welfare check on female",
+            "summary": "Officers were sent to North Delaware, Texas for a welfare check.",
+            "location": "2306 North Delaware, Texas",
+            "priority": 2,
+            "confidence": 0.8,
+            "evidence_segment_ids": [1],
+            "attributes": {},
+        },
+        {1},
+        {
+            1: {
+                "segment_index": 1,
+                "start_seconds": 10.0,
+                "end_seconds": 18.0,
+                "speaker": None,
+                "text": "2306 North Delaware, Texas welfare of Summer Gibson.",
+            }
+        },
+    )
+
+    assert breathing is not None
+    assert breathing["priority"] == 4
+    assert welfare is not None
+    assert welfare["location"] == "2306 North Delaware"
+    assert "Texas" not in welfare["summary"]
+
+
+def test_daily_summary_rejects_unsupported_outcome_language() -> None:
+    issues = IncidentAnalyzer._daily_summary_grounding_issues(  # noqa: SLF001
+        "A shots-fired report was later identified as fireworks.",
+        {1},
+        1,
+        [
+            "Report of shots fired. Residents separately reported hearing fireworks."
+        ],
+    )
+
+    assert any("identified fireworks" in issue for issue in issues)
+
+
+def test_incident_validation_removes_unsupported_outcome_plate_and_arson_language() -> None:
+    hit_and_run = IncidentAnalyzer._validate_incident(  # noqa: SLF001
+        {
+            "event_type": "traffic_collision",
+            "title": "Hit and run",
+            "summary": (
+                "A hit and run involving a gray SUV was reported on Hightower. "
+                "The driver was identified as a male in a green shirt."
+            ),
+            "location": "S-E-V-8-9-5-9-I-M-Charles-0-9-5",
+            "priority": 4,
+            "confidence": 0.8,
+            "evidence_segment_ids": [0],
+            "attributes": {},
+        },
+        {0},
+        {
+            0: {
+                "segment_index": 0,
+                "start_seconds": 0.0,
+                "end_seconds": 12.0,
+                "speaker": None,
+                "text": (
+                    "Hit and run, gray SUV north on Hightower. "
+                    "The driver is a male in a green shirt."
+                ),
+            }
+        },
+    )
+    fire = IncidentAnalyzer._validate_incident(  # noqa: SLF001
+        {
+            "event_type": "fire",
+            "title": "Arson investigation at Fallen Oak",
+            "summary": "A male was reported setting something on fire at Fallen Oak.",
+            "location": "Fallen Oak",
+            "priority": 3,
+            "confidence": 0.8,
+            "evidence_segment_ids": [1],
+            "attributes": {},
+        },
+        {1},
+        {
+            1: {
+                "segment_index": 1,
+                "start_seconds": 20.0,
+                "end_seconds": 28.0,
+                "speaker": None,
+                "text": "Fallen Oak, a male set something on fire on the patio.",
+            }
+        },
+    )
+
+    assert hit_and_run is not None
+    assert "identified" not in hit_and_run["summary"].lower()
+    assert hit_and_run["location"] is None
+    assert fire is not None
+    assert "arson" not in fire["title"].lower()
+    assert fire["event_type"] == "fire"
+
+
+def test_incident_claim_requires_meaningful_support_in_cited_evidence() -> None:
+    assert incident_claim_has_evidence_support(
+        "Hit and run on Hightower",
+        "A gray minivan left northbound after a hit and run.",
+        "Hightower",
+        {},
+        [{"text": "Hit and run, gray minivan went north on Hightower."}],
+    )
+    assert not incident_claim_has_evidence_support(
+        "Stolen squad car in Example Township",
+        "A stolen squad car was located at Bruch and Garfield.",
+        "Example Township",
+        {"vehicle_type": "squad car"},
+        [
+            {"text": "One subject is under arrest for transport."},
+            {"text": "Recent domestic at this location; she is waiting in a black car."},
+        ],
+    )
+    assert not incident_claim_has_evidence_support(
+        "Search warrant execution on Main Street",
+        "Officers executed a search warrant on Main Street.",
+        "Main Street",
+        {},
+        [{"text": "Officers are searching for a subject near Main Street."}],
+    )
+    assert not incident_claim_has_evidence_support(
+        "Vehicle pursuit on Jefferson",
+        "A vehicle pursuit continued on Jefferson.",
+        "Jefferson",
+        {},
+        [{"text": "A vehicle was traveling the wrong way on Jefferson."}],
+    )
+
+
+def test_incident_validation_rejects_unsupported_claim_and_scattered_quotes() -> None:
+    segments = {
+        0: {
+            "segment_index": 0,
+            "start_seconds": 0.0,
+            "end_seconds": 5.0,
+            "speaker": "SPEAKER_00",
+            "text": "One subject is under arrest for transport.",
+        },
+        1: {
+            "segment_index": 1,
+            "start_seconds": 1_000.0,
+            "end_seconds": 1_005.0,
+            "speaker": "SPEAKER_01",
+            "text": "Follow-up on reported shots fired at Main Street.",
+        },
+    }
+    unsupported = IncidentAnalyzer._validate_incident(  # noqa: SLF001
+        {
+            "event_type": "vehicle_theft",
+            "title": "Stolen squad car in Example Township",
+            "summary": "A stolen squad car was located at Bruch and Garfield.",
+            "location": "Example Township",
+            "priority": 4,
+            "confidence": 0.9,
+            "evidence_segment_ids": [0],
+            "attributes": {},
+        },
+        {0, 1},
+        segments,
+    )
+    scattered = IncidentAnalyzer._validate_incident(  # noqa: SLF001
+        {
+            "event_type": "shots_fired",
+            "title": "Reported shots fired at Main Street",
+            "summary": "Radio traffic reported shots fired at Main Street.",
+            "location": "Main Street",
+            "priority": 4,
+            "confidence": 0.9,
+            "evidence_segment_ids": [0, 1],
+            "attributes": {},
+        },
+        {0, 1},
+        segments,
+    )
+
+    assert unsupported is None
+    assert scattered is None
 
 
 def test_incident_normalization_marks_radio_report_and_caps_coarse_asr_confidence() -> None:
@@ -367,6 +656,40 @@ def test_incident_normalization_marks_radio_report_and_caps_coarse_asr_confidenc
     assert incident is not None
     assert incident["summary"] == "Radio traffic reported: a person was chased with a gun."
     assert incident["confidence"] == 0.90
+
+
+def test_incident_deduplication_merges_contained_evidence() -> None:
+    common = {
+        "event_type": "burglary",
+        "location": "West Ham",
+        "start_seconds": 10.0,
+        "end_seconds": 30.0,
+        "priority": 4,
+        "confidence": 0.8,
+        "attributes": {},
+    }
+    incidents = [
+        {
+            **common,
+            "fingerprint": "first",
+            "title": "Burglary in progress",
+            "summary": "Four people were reported entering the property.",
+            "evidence": [
+                {"segment_index": 1},
+                {"segment_index": 2},
+                {"segment_index": 3},
+            ],
+        },
+        {
+            **common,
+            "fingerprint": "second",
+            "title": "Trespassers on property",
+            "summary": "People were reported entering the property.",
+            "evidence": [{"segment_index": 1}],
+        },
+    ]
+
+    assert len(IncidentAnalyzer._deduplicate(incidents)) == 1  # noqa: SLF001
 
 
 def test_manifest_maps_audio_offset_to_archive_wall_time(tmp_path: Path) -> None:

@@ -7,7 +7,7 @@ from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any, Callable, Protocol, Sequence
 
-from .analysis import archive_datetime_for_offset, format_archive_time
+from .analysis import archive_datetime_for_offset, format_archive_time, redact_public_text
 from .audio import AudioClipError, extract_audio_clip
 from .storage import AnalysisStore
 
@@ -93,18 +93,11 @@ def _incident_time(value: dict[str, Any]) -> datetime:
 
 def _public_quote(value: str) -> tuple[str, bool]:
     """Redact obvious identifiers while preserving a locally auditable ASR quote."""
-    quote = re.sub(r"\s+", " ", value).strip()
-    original = quote
-    quote = re.sub(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", "[email redacted]", quote, flags=re.I)
-    quote = re.sub(
-        r"(?<!\d)(?:\+?1[\s.-]?)?(?:\(?\d{3}\)?[\s.-]?)\d{3}[\s.-]?\d{4}(?!\d)",
-        "[phone redacted]",
-        quote,
-    )
-    quote = re.sub(r"(?<!\d)\d{7,}(?!\d)", "[identifier redacted]", quote)
+    quote, changed = redact_public_text(value)
     if len(quote) > 800:
         quote = quote[:797].rstrip() + "…"
-    return quote, quote != original
+        changed = True
+    return quote, changed
 
 
 def _usable_location(value: object) -> bool:
@@ -335,6 +328,7 @@ def _story_from_cluster(
         "medical",
         "self_harm_crisis",
         "traffic_stop",
+        "theft",
         "theft_shoplifting",
     }:
         score = min(score, MIN_STORY_SCORE - 1)

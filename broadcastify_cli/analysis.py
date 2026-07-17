@@ -25,15 +25,19 @@ LEGACY_LLM_MODELS = {
     "ggml-org/gemma-4-12B-it-GGUF:Q4_K_M": DEFAULT_LLM_MODEL,
 }
 DEFAULT_EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"
-PROMPT_VERSION = "police-radio-events-v3"
+PROMPT_VERSION = "police-radio-events-v9"
 WEEKLY_PROMPT_VERSION = "police-radio-weekly-v1"
 EVENT_TYPES = {
     "shots_fired",
     "fire",
     "medical",
     "traffic_collision",
+    "traffic_violation",
+    "vehicle_pursuit",
     "domestic_disturbance",
+    "disturbance",
     "assault",
+    "threats",
     "robbery",
     "burglary",
     "weapons",
@@ -42,52 +46,636 @@ EVENT_TYPES = {
     "traffic_stop",
     "missing_person",
     "self_harm_crisis",
+    "theft",
     "theft_shoplifting",
+    "vehicle_theft",
+    "property_damage",
     "person_with_weapon",
+    "trespassing",
+    "welfare_check",
     "eviction_civil",
     "other",
     "unknown",
 }
+_INCIDENT_SUPPORT_WORD = re.compile(r"[a-z0-9]+")
+_INCIDENT_SUPPORT_STOP_WORDS = {
+    "about",
+    "after",
+    "again",
+    "also",
+    "and",
+    "another",
+    "appears",
+    "before",
+    "being",
+    "call",
+    "called",
+    "caller",
+    "car",
+    "description",
+    "dispatch",
+    "dispatched",
+    "event",
+    "female",
+    "from",
+    "have",
+    "incident",
+    "individual",
+    "information",
+    "location",
+    "male",
+    "medical",
+    "near",
+    "nearby",
+    "officer",
+    "officers",
+    "other",
+    "person",
+    "police",
+    "radio",
+    "received",
+    "regarding",
+    "report",
+    "reported",
+    "reports",
+    "request",
+    "requested",
+    "responded",
+    "response",
+    "scene",
+    "stated",
+    "subject",
+    "suspect",
+    "that",
+    "their",
+    "there",
+    "they",
+    "this",
+    "traffic",
+    "type",
+    "unit",
+    "units",
+    "unknown",
+    "victim",
+    "vehicle",
+    "was",
+    "were",
+    "with",
+    "woman",
+}
+_MAX_INCIDENT_EVIDENCE_GAP_SECONDS = 600.0
+_CRITICAL_INCIDENT_CONCEPTS: tuple[tuple[set[str], set[str]], ...] = (
+    (
+        {"stolen", "steal", "theft", "shoplift", "shoplifting"},
+        {"stolen", "steal", "theft", "shoplift", "shoplifting"},
+    ),
+    (
+        {
+            "armed",
+            "firearm",
+            "gun",
+            "hammer",
+            "handgun",
+            "knife",
+            "pistol",
+            "rifle",
+            "weapon",
+        },
+        {
+            "armed",
+            "firearm",
+            "gun",
+            "hammer",
+            "handgun",
+            "knife",
+            "pistol",
+            "rifle",
+            "weapon",
+        },
+    ),
+    (
+        {"gunshot", "shot"},
+        {"gunshot", "shot"},
+    ),
+    (
+        {"blaze", "burning", "fire", "flame"},
+        {"blaze", "burning", "fire", "flame"},
+    ),
+    (
+        {"assault", "attack", "fight", "stabbing"},
+        {"assault", "attack", "fight", "stabbing"},
+    ),
+    (
+        {"threat", "threaten", "threatened", "threatening"},
+        {"threat", "threaten", "threatened", "threatening"},
+    ),
+    (
+        {"overdose"},
+        {"overdose"},
+    ),
+    (
+        {"unconscious"},
+        {"unconscious"},
+    ),
+    (
+        {"accident", "collision", "crash"},
+        {"accident", "collision", "crash", "hit", "struck"},
+    ),
+    (
+        {"chase", "flee", "pursue", "pursued", "pursuing", "pursuit"},
+        {"chase", "flee", "pursue", "pursued", "pursuing", "pursuit"},
+    ),
+    (
+        {"warrant"},
+        {"warrant"},
+    ),
+    (
+        {"arrest", "custody"},
+        {"arrest", "custody"},
+    ),
+    (
+        {"barricade"},
+        {"barricade"},
+    ),
+    (
+        {"blood"},
+        {"blood"},
+    ),
+    (
+        {"suicidal", "suicide"},
+        {"suicidal", "suicide"},
+    ),
+    (
+        {"burglary", "break-in"},
+        {"burglary", "break-in", "breaking", "entering", "kicking"},
+    ),
+    (
+        {"damage", "vandalism"},
+        {"breaking", "broken", "damage", "smashed", "vandalism"},
+    ),
+    (
+        {"trespass", "trespassing", "refused", "refusing"},
+        {"refus", "refused", "refusing", "trespass", "trespassing"},
+    ),
+    (
+        {"welfare"},
+        {"welfare"},
+    ),
+)
+
+_PRIVATE_PERSON_CONTEXT = re.compile(
+    r"\b(?i:"
+    r"trouble\s+with|welfare\s+(?:of|on|for)|"
+    r"(?:caller|collar|complainant|subject|patient|victim|male|female)"
+    r"(?:\s+(?:is|named))?|name\s+is|named"
+    r"|see|looking\s+for|locat(?:e|ing)|searching\s+for"
+    r")\s*,?\s*"
+    r"(?P<name>[A-Z][A-Za-z'’-]{1,30}(?:\s+[A-Z][A-Za-z'’-]{1,30}){0,2})\b"
+)
+_PRIVATE_PERSON_DESCRIPTOR = re.compile(
+    r"\b(?P<name>[A-Z][A-Za-z'’-]{1,30}\s+[A-Z][A-Za-z'’-]{1,30})\b"
+    r"(?=\s*(?:,|-)?\s*(?i:"
+    r"black|white|asian|hispanic|latina|male|female|juvenile|"
+    r"date\s+of\s+birth|dob|wearing|armed|looking\s+for\s+(?:him|her)|"
+    r"he['’]?s|she['’]?s"
+    r")\b)"
+)
+_PRIVATE_PERSON_SINGLE_DESCRIPTOR = re.compile(
+    r"\b(?P<name>[A-Z][A-Za-z'’-]{2,30})\b"
+    r"(?=\s+(?i:(?:was|is)\s+(?:threatening|suicidal|armed|wanted)))"
+)
+
+
+def private_person_names(value: object) -> tuple[str, ...]:
+    """Find likely private-person names only in strong local contexts."""
+
+    text = str(value or "")
+    names = {
+        match.group("name").strip()
+        for pattern in (
+            _PRIVATE_PERSON_CONTEXT,
+            _PRIVATE_PERSON_DESCRIPTOR,
+            _PRIVATE_PERSON_SINGLE_DESCRIPTOR,
+        )
+        for match in pattern.finditer(text)
+    }
+    return tuple(sorted(names, key=lambda item: (-len(item), item.lower())))
+
+
+def redact_public_text(
+    value: object,
+    *,
+    additional_private_names: Iterable[str] = (),
+) -> tuple[str, bool]:
+    """Redact obvious identifiers from model output or displayed ASR text."""
+
+    text = re.sub(r"\s+", " ", str(value or "")).strip()
+    original = text
+    names = set(private_person_names(text))
+    names.update(
+        str(name).strip() for name in additional_private_names if str(name).strip()
+    )
+    for name in sorted(names, key=lambda item: (-len(item), item.lower())):
+        text = re.sub(
+            rf"(?<![A-Za-z]){re.escape(name)}(?![A-Za-z])",
+            "[private person]",
+            text,
+            flags=re.I,
+        )
+    text = re.sub(
+        r"\b(?:DOB|date of birth)\s*:?\s*"
+        r"(?:\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d[\d\s,./-]{2,20})",
+        "[date of birth redacted]",
+        text,
+        flags=re.I,
+    )
+    text = re.sub(
+        r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b",
+        "[email redacted]",
+        text,
+        flags=re.I,
+    )
+    text = re.sub(
+        r"(?<!\d)(?:\+?1[\s.-]?)?(?:\(?\d{3}\)?[\s.-]?)"
+        r"\d{3}[\s.-]?\d{4}(?!\d)",
+        "[phone redacted]",
+        text,
+    )
+    text = re.sub(r"(?<!\d)\d{7,}(?!\d)", "[identifier redacted]", text)
+    return text, text != original
+
+
+def _redact_public_value(
+    value: object,
+    *,
+    additional_private_names: Iterable[str],
+) -> object:
+    if isinstance(value, Mapping):
+        return {
+            str(key): _redact_public_value(
+                item, additional_private_names=additional_private_names
+            )
+            for key, item in value.items()
+        }
+    if isinstance(value, Sequence) and not isinstance(
+        value, (str, bytes, bytearray)
+    ):
+        return [
+            _redact_public_value(
+                item, additional_private_names=additional_private_names
+            )
+            for item in value
+        ]
+    if isinstance(value, str):
+        return redact_public_text(
+            value, additional_private_names=additional_private_names
+        )[0]
+    return value
+
+
+def _clean_model_public_claim(value: str) -> str:
+    cleaned = re.sub(
+        r"\s*\((?:likely|possibly|probably|presumably|apparently|unclear)\b[^)]*\)",
+        "",
+        value,
+        flags=re.I,
+    )
+    cleaned = re.sub(
+        r"\s*\(S\d+(?:\s*,\s*S\d+)*\)",
+        "",
+        cleaned,
+        flags=re.I,
+    )
+    return re.sub(r"\s+", " ", cleaned).strip()
+
+
+_OUTCOME_FORMS = {
+    "confirmed": r"confirm(?:ed|s|ing)?",
+    "determined": r"determin(?:e|ed|es|ing)",
+    "identified": r"identif(?:y|ied|ies|ying)",
+    "resolved": r"resolv(?:e|ed|es|ing)",
+    "cleared": r"clear(?:ed|s|ing)?",
+}
+
+
+def _remove_unsupported_outcome_sentences(
+    summary: str,
+    evidence_text: str,
+) -> str:
+    retained: list[str] = []
+    for sentence in re.split(r"(?<=[.!?])\s+", summary):
+        unsupported = False
+        for label, form in _OUTCOME_FORMS.items():
+            for match in re.finditer(rf"\b{form}\b", sentence, flags=re.I):
+                if re.search(
+                    r"\b(?:no|not)\s*$",
+                    sentence[max(0, match.start() - 8) : match.start()],
+                    flags=re.I,
+                ):
+                    continue
+                if not re.search(rf"\b{form}\b", evidence_text, flags=re.I):
+                    unsupported = True
+                    break
+            if unsupported:
+                break
+        if not unsupported:
+            retained.append(sentence)
+    return " ".join(retained).strip()
+
+
+def _remove_uncertain_welfare_location_suffix(
+    location: str | None,
+    summary: str,
+    evidence_text: str,
+) -> tuple[str | None, str]:
+    if not location:
+        return location, summary
+    for match in re.finditer(
+        r",\s*(?P<suffix>[A-Z][A-Za-z'’-]+)\s+welfare\s+of\b",
+        evidence_text,
+    ):
+        suffix = match.group("suffix")
+        if not re.search(rf",\s*{re.escape(suffix)}\s*$", location, flags=re.I):
+            continue
+        location = re.sub(
+            rf",\s*{re.escape(suffix)}\s*$", "", location, flags=re.I
+        ).strip()
+        summary = re.sub(
+            rf",\s*{re.escape(suffix)}"
+            rf"(?=\s+(?:for|during|on)\b|[.,;:]|$)",
+            "",
+            summary,
+            flags=re.I,
+        )
+    return location or None, summary
 
 
 def normalize_event_type(text: str, fallback: str) -> str:
     """Correct only clear category contradictions using evidence phrases."""
     value = text.lower()
+    if re.search(
+        r"\bstolen\b.{0,24}\b(?:car|vehicle|truck|suv|van)\b",
+        value,
+    ):
+        return "vehicle_theft"
     rules: tuple[tuple[str, tuple[str, ...]], ...] = (
         ("shots_fired", ("shots fired", "gunshots", "gunshot", "heard a shot")),
         ("fire", ("vehicle fire", "structure fire", "house fire", "building fire", "on fire")),
         ("self_harm_crisis", ("self-harm", "self harm", "harm herself", "harm himself", "suicid")),
         ("robbery", ("robbery", "robbed")),
-        ("burglary", ("burglary", "burglar", "break-in", "broke into", "intrusion alarm")),
-        ("domestic_disturbance", ("domestic",)),
-        ("assault", ("assault", "stabbing", "stabbed")),
-        ("medical", ("unconscious", "not breathing", "difficulty breathing", "medical emergency")),
+        (
+            "burglary",
+            (
+                "burglary",
+                "burglar",
+                "break-in",
+                "broke into",
+                "kicking in",
+                "intrusion alarm",
+            ),
+        ),
+        (
+            "person_with_weapon",
+            (
+                "with a gun",
+                "has a gun",
+                "handgun",
+                "firearm",
+                "with a weapon",
+                "armed suspect",
+                "armed with",
+                "bb gun",
+            ),
+        ),
+        (
+            "domestic_disturbance",
+            (
+                "domestic",
+                "ex-husband",
+                "ex-wife",
+                "ex-boyfriend",
+                "ex-girlfriend",
+                "spousal",
+            ),
+        ),
+        ("threats", ("making threats", "threats", "threatening", "threatened")),
+        (
+            "assault",
+            (
+                "assault",
+                "fighting",
+                "fight in progress",
+                "physical fight",
+                "trying to fight",
+                "attacked",
+                "stabbing",
+                "stabbed",
+            ),
+        ),
+        (
+            "medical",
+            (
+                "unconscious",
+                "not breathing",
+                "difficulty breathing",
+                "trouble breathing",
+                "can't breathe",
+                "cannot breathe",
+                "shortness of breath",
+                "agonally breathing",
+                "agnally breathing",
+                "collapsed",
+                "medic to evaluate",
+                "not alert",
+                "overdose",
+                "person down",
+                "medical services",
+                "medical emergency",
+            ),
+        ),
+        (
+            "vehicle_theft",
+            (
+                "stolen vehicle",
+                "stolen car",
+                "vehicle theft",
+                "auto theft",
+                "car was stolen",
+                "car stolen",
+                "theft of a license plate",
+                "stolen license plate",
+            ),
+        ),
+        (
+            "property_damage",
+            (
+                "breaking out",
+                "broke out",
+                "broken window",
+                "breaking window",
+                "property damage",
+                "vandalism",
+                "throwing rocks at",
+            ),
+        ),
+        (
+            "theft",
+            (
+                "package theft",
+                "steal package",
+                "steal packages",
+                "stole a package",
+                "stole packages",
+                "stolen package",
+                "stolen packages",
+            ),
+        ),
         ("theft_shoplifting", ("shoplift", "retail theft")),
-        ("traffic_collision", ("traffic collision", "vehicle collision", "car accident", "crash")),
+        (
+            "traffic_collision",
+            (
+                "traffic collision",
+                "vehicle collision",
+                "vehicle accident",
+                "car accident",
+                "accident",
+                "hit and run",
+                "crash",
+            ),
+        ),
+        (
+            "vehicle_pursuit",
+            (
+                "vehicle pursuit",
+                "fleeing vehicle",
+                "vehicle fleeing",
+                "vehicle attempting to flee",
+                "attempting to flee in",
+            ),
+        ),
+        (
+            "traffic_violation",
+            (
+                "driving without lights",
+                "traveling without lights",
+                "wrong way",
+                "traffic violation",
+            ),
+        ),
         ("missing_person", ("missing person", "missing child", "abduction", "abducted")),
-        ("person_with_weapon", ("with a gun", "has a gun", "handgun", "firearm", "with a weapon", "armed suspect")),
         ("suspicious_activity", ("juveniles running", "suspect fleeing", "subject fleeing")),
+        ("trespassing", ("trespass", "trespassing", "refusing to leave", "refused to leave")),
+        (
+            "welfare_check",
+            (
+                "welfare check",
+                "check welfare",
+                "the welfare of",
+                "welfare of",
+                "check on the children",
+            ),
+        ),
         ("eviction_civil", ("eviction", "evicted", "landlord-tenant")),
         ("warrant_arrest", ("warrant", "placed under arrest", "taken into custody")),
         ("traffic_stop", ("traffic stop", "vehicle stop")),
+        (
+            "disturbance",
+            (
+                "having trouble with",
+                "beating on",
+                "screaming",
+                "yelling",
+                "arguing",
+                "getting ready to fight",
+                "preparing to fight",
+                "ready to fight",
+                "open line",
+            ),
+        ),
     )
     for event_type, phrases in rules:
         if any(phrase in value for phrase in phrases):
             return event_type
-    return fallback if fallback in EVENT_TYPES else "other"
+    return fallback if fallback in {"other", "unknown", "suspicious_activity"} else "other"
 
 
 def normalize_priority(event_type: str, priority: int) -> int:
     caps = {
         "traffic_stop": 2,
+        "traffic_violation": 3,
         "eviction_civil": 2,
+        "theft": 3,
         "theft_shoplifting": 3,
+        "trespassing": 3,
+        "welfare_check": 3,
+        "disturbance": 3,
         "suspicious_activity": 3,
         "warrant_arrest": 3,
         "other": 3,
-        "unknown": 3,
+        "unknown": 2,
     }
     return min(priority, caps.get(event_type, 5))
+
+
+def _incident_support_keywords(value: object) -> set[str]:
+    """Return conservative lexical anchors used to audit model claims."""
+
+    values: set[str] = set()
+    for word in _INCIDENT_SUPPORT_WORD.findall(str(value or "").lower()):
+        if len(word) < 3 or word in _INCIDENT_SUPPORT_STOP_WORDS:
+            continue
+        values.add(word)
+        if len(word) >= 5 and word.endswith("ies"):
+            values.add(word[:-3] + "y")
+        elif len(word) >= 5 and word.endswith("ing"):
+            values.add(word[:-3])
+        elif len(word) >= 4 and word.endswith("ed"):
+            values.add(word[:-2])
+            values.add(word[:-1])
+        elif len(word) >= 4 and word.endswith("s"):
+            values.add(word[:-1])
+    return values
+
+
+def _incident_attribute_text(value: object) -> str:
+    if isinstance(value, Mapping):
+        return " ".join(_incident_attribute_text(item) for item in value.values())
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        return " ".join(_incident_attribute_text(item) for item in value)
+    return str(value or "")
+
+
+def incident_claim_has_evidence_support(
+    title: object,
+    summary: object,
+    location: object,
+    attributes: object,
+    evidence_segments: Sequence[Mapping[str, Any]],
+) -> bool:
+    """Require meaningful claim words to occur in the exact cited ASR."""
+
+    claim_words = _incident_support_keywords(
+        " ".join(
+            (
+                str(title or ""),
+                str(summary or ""),
+                str(location or ""),
+                _incident_attribute_text(attributes),
+            )
+        )
+    )
+    if not claim_words:
+        return False
+    evidence_words = _incident_support_keywords(
+        " ".join(str(segment.get("text") or "") for segment in evidence_segments)
+    )
+    required_matches = min(2, len(claim_words))
+    if len(claim_words & evidence_words) < required_matches:
+        return False
+    for claim_concept, evidence_concept in _CRITICAL_INCIDENT_CONCEPTS:
+        if claim_words & claim_concept and not evidence_words & evidence_concept:
+            return False
+    return True
 
 
 def format_offset(seconds: float) -> str:
@@ -503,8 +1091,9 @@ class LlamaCppClient:
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
             ],
-            "temperature": 0.1,
-            "top_p": 0.9,
+            "temperature": 0.0,
+            "top_p": 1.0,
+            "seed": 0,
             "max_tokens": max_tokens,
             "response_format": {
                 "type": "json_schema",
@@ -794,6 +1383,8 @@ class IncidentAnalyzer:
             "to one incident. Return no incident for routine acknowledgements or unintelligible chatter. "
             "Use lower confidence for ambiguous ASR. Preserve useful street/cross-street/landmark locations, "
             "but omit private names, phone numbers, dates of birth, driver's-license numbers, and license plates. "
+            "Do not interpret a stray state or city word in garbled ASR as part of a location unless the "
+            "location is clearly spoken or repeated. "
             "Priority 5 means imminent life safety; 4 serious active response; 3 notable event; 2 routine response; "
             "1 low-information activity. Choose event_type from the actual evidence; a serious priority does "
             "not make an event a warrant/arrest or shots-fired event. Output only JSON matching the supplied schema."
@@ -819,6 +1410,13 @@ class IncidentAnalyzer:
         if not evidence_ids:
             return None
         evidence_segments = [segment_by_index[value] for value in evidence_ids]
+        evidence_segments.sort(key=lambda segment: float(segment["start_seconds"]))
+        if any(
+            float(current["start_seconds"]) - float(previous["end_seconds"])
+            > _MAX_INCIDENT_EVIDENCE_GAP_SECONDS
+            for previous, current in zip(evidence_segments, evidence_segments[1:])
+        ):
+            return None
         start_seconds = min(float(segment["start_seconds"]) for segment in evidence_segments)
         end_seconds = max(float(segment["end_seconds"]) for segment in evidence_segments)
         location = str(raw.get("location") or "").strip() or None
@@ -829,6 +1427,69 @@ class IncidentAnalyzer:
             raw.get("title") or raw_event_type.replace("_", " ").title()
         ).strip()[:160]
         summary = str(raw.get("summary") or title).strip()[:1_000]
+        attributes = (
+            raw.get("attributes") if isinstance(raw.get("attributes"), dict) else {}
+        )
+        evidence_text = " ".join(
+            str(segment["text"]) for segment in evidence_segments
+        )
+        if "arson" not in evidence_text.lower():
+            title = re.sub(
+                r"\barson(?:\s+investigation)?\b",
+                "Reported fire",
+                title,
+                flags=re.I,
+            )
+            summary = re.sub(r"\barson\b", "reported fire", summary, flags=re.I)
+        for form in _OUTCOME_FORMS.values():
+            if not re.search(rf"\b{form}\b", evidence_text, flags=re.I):
+                title = re.sub(
+                    rf"\b{form}\b",
+                    "Reported",
+                    title,
+                    flags=re.I,
+                )
+        summary = _remove_unsupported_outcome_sentences(summary, evidence_text)
+        if not summary:
+            summary = title
+        if location is not None and location.count("-") >= 6:
+            location = None
+        if not incident_claim_has_evidence_support(
+            title,
+            summary,
+            location,
+            attributes,
+            evidence_segments,
+        ):
+            return None
+        private_names = {
+            name
+            for segment in evidence_segments
+            for name in private_person_names(segment.get("text"))
+        }
+        title = redact_public_text(
+            title, additional_private_names=private_names
+        )[0][:160]
+        summary = redact_public_text(
+            summary, additional_private_names=private_names
+        )[0][:1_000]
+        if location is not None:
+            location = (
+                redact_public_text(
+                    location, additional_private_names=private_names
+                )[0]
+                or None
+            )
+        attributes = _redact_public_value(
+            attributes, additional_private_names=private_names
+        )
+        title = _clean_model_public_claim(title)[:160]
+        summary = _clean_model_public_claim(summary)[:1_000]
+        location, summary = _remove_uncertain_welfare_location_suffix(
+            location,
+            summary,
+            evidence_text,
+        )
         if not re.search(
             r"\b(?:report(?:ed|s|ing)?|dispatch|caller|radio traffic|possible|possibly|"
             r"may|might|appears?|requested|advised|stated)\b",
@@ -838,10 +1499,7 @@ class IncidentAnalyzer:
             lowered = summary[:1].lower() + summary[1:] if summary else title.lower()
             summary = f"Radio traffic reported: {lowered}"[:1_000]
         event_type = normalize_event_type(
-            " ".join(
-                [title, summary]
-                + [str(segment["text"]) for segment in evidence_segments]
-            ),
+            evidence_text,
             raw_event_type,
         )
         try:
@@ -849,6 +1507,17 @@ class IncidentAnalyzer:
         except (TypeError, ValueError):
             priority = 2
         priority = normalize_priority(event_type, priority)
+        if (
+            event_type == "medical"
+            and priority == 5
+            and not re.search(
+                r"\b(?:not breathing|agnally breathing|agonally breathing|"
+                r"unconscious|cardiac arrest|CPR|not completely alert)\b",
+                evidence_text,
+                flags=re.I,
+            )
+        ):
+            priority = 4
         try:
             confidence = max(0.0, min(1.0, float(raw.get("confidence", 0.5))))
         except (TypeError, ValueError):
@@ -888,7 +1557,7 @@ class IncidentAnalyzer:
             "priority": priority,
             "confidence": confidence,
             "evidence": evidence,
-            "attributes": raw.get("attributes") if isinstance(raw.get("attributes"), dict) else {},
+            "attributes": attributes,
         }
 
     @staticmethod
@@ -907,9 +1576,17 @@ class IncidentAnalyzer:
                 exact_evidence = bool(evidence_ids) and evidence_ids == existing_ids
                 if not exact_evidence and incident["event_type"] != existing["event_type"]:
                     continue
+                contained_evidence = bool(evidence_ids) and (
+                    evidence_ids <= existing_ids or existing_ids <= evidence_ids
+                )
                 union = evidence_ids | existing_ids
                 overlap = len(evidence_ids & existing_ids) / len(union) if union else 0.0
-                if exact_evidence or incident["fingerprint"] == existing["fingerprint"] or overlap >= 0.6:
+                if (
+                    exact_evidence
+                    or contained_evidence
+                    or incident["fingerprint"] == existing["fingerprint"]
+                    or overlap >= 0.6
+                ):
                     duplicate_index = index
                     break
             if duplicate_index is None:
@@ -960,7 +1637,9 @@ class IncidentAnalyzer:
         system = (
             "Write a concise end-of-day public-safety activity brief using only the supplied "
             "structured incidents. Lead with priority 4-5 events, then notable patterns. Distinguish "
-            "reported calls from confirmed outcomes and mention ASR/dispatch uncertainty. Omit private "
+            "reported calls from confirmed outcomes and mention ASR/dispatch uncertainty. Never say an "
+            "event was confirmed, determined, identified, resolved, or cleared unless the supplied incident "
+            "uses that exact outcome language for the same fact. Omit private "
             "personal identifiers. The summary must be non-empty and under 250 words. Output JSON only."
         )
         user = (
@@ -982,6 +1661,13 @@ class IncidentAnalyzer:
                     summary,
                     allowed_incident_ids,
                     len(incidents),
+                    [
+                        " ".join(
+                            str(incident.get(key) or "")
+                            for key in ("title", "summary", "location")
+                        )
+                        for incident in incidents
+                    ],
                 )
                 if grounding_issues:
                     self.progress(
@@ -995,9 +1681,13 @@ class IncidentAnalyzer:
                         "\n\nThe previous response was rejected because "
                         + "; ".join(grounding_issues)
                         + f". There are exactly {len(incidents)} supplied incidents: {allowed}. "
-                        "Do not add incident IDs, events, calls, or counts that are not present."
+                        "Do not add incident IDs, events, calls, counts, confirmations, resolutions, "
+                        "or outcomes that are not present."
                     )
                     continue
+                summary = redact_public_text(
+                    _clean_model_public_claim(summary)
+                )[0]
                 words = summary.split()
                 if len(words) > 250:
                     summary = " ".join(words[:250])
@@ -1014,6 +1704,7 @@ class IncidentAnalyzer:
         summary: str,
         allowed_incident_ids: set[int],
         incident_count: int,
+        source_claims: Sequence[str] = (),
     ) -> list[str]:
         issues: list[str] = []
         referenced_ids = {
@@ -1056,6 +1747,38 @@ class IncidentAnalyzer:
                 + str(incident_count)
                 + ": "
                 + ", ".join(str(value) for value in sorted(unsupported_counts))
+            )
+        outcome_pattern = re.compile(
+            r"\b(?P<verb>confirmed|determined|identified|resolved|cleared)\b"
+            r"(?:\s+(?:as|that|to\s+be))?\s+"
+            r"(?P<object>[a-z][a-z'’-]{2,})",
+            flags=re.I,
+        )
+        unsupported_outcomes: set[str] = set()
+        for match in outcome_pattern.finditer(summary):
+            if re.search(
+                r"\b(?:no|not)\s*$",
+                summary[max(0, match.start() - 8) : match.start()],
+                flags=re.I,
+            ):
+                continue
+            verb = match.group("verb")
+            outcome_object = match.group("object")
+            supported = any(
+                re.search(
+                    rf"\b{re.escape(verb)}\b.{{0,40}}"
+                    rf"\b{re.escape(outcome_object)}\b",
+                    source,
+                    flags=re.I,
+                )
+                for source in source_claims
+            )
+            if not supported:
+                unsupported_outcomes.add(f"{verb} {outcome_object}")
+        if unsupported_outcomes:
+            issues.append(
+                "outcome language absent from the same supplied incident: "
+                + ", ".join(sorted(unsupported_outcomes))
             )
         return issues
 
