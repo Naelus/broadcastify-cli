@@ -41,7 +41,12 @@ def test_systemd_unit_is_loopback_supervised_and_contains_no_secrets(
     assert "KillMode=control-group" in unit
     assert "NoNewPrivileges=yes" in unit
     assert "PrivateTmp=yes" in unit
-    assert "Radio Archive 100%%" in unit
+    working_directory = str(tmp_path.resolve() / "Radio Archive 100%")
+    escaped_working_directory = (
+        working_directory.replace("\\", "\\\\").replace("%", "%%")
+    )
+    assert f"WorkingDirectory={escaped_working_directory}" in unit
+    assert 'WorkingDirectory="' not in unit
     assert "0.0.0.0" not in unit
     assert "BROADCASTIFY_PASSWORD" not in unit
     assert "HUGGINGFACE_TOKEN" not in unit

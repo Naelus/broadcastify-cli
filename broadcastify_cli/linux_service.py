@@ -163,6 +163,22 @@ def _systemd_quote(value: str, *, command_argument: bool = False) -> str:
     return f'"{escaped}"'
 
 
+def _systemd_path_value(value: str) -> str:
+    if (
+        "\x00" in value
+        or "\n" in value
+        or "\r" in value
+        or value != value.strip()
+    ):
+        raise ValueError(
+            "systemd directive paths may not contain NUL, line breaks, or "
+            "leading/trailing whitespace."
+        )
+    # Path-valued directives do not use ExecStart's shell-like quote parser.
+    # Spaces remain literal; backslashes and systemd specifier markers do not.
+    return value.replace("\\", "\\\\").replace("%", "%%")
+
+
 def render_systemd_unit(config: LinuxServiceConfig, config_path: Path) -> str:
     config.validate()
     config_path = config_path.expanduser().resolve()
@@ -184,7 +200,7 @@ def render_systemd_unit(config: LinuxServiceConfig, config_path: Path) -> str:
             "",
             "[Service]",
             "Type=simple",
-            f"WorkingDirectory={_systemd_quote(config.working_dir)}",
+            f"WorkingDirectory={_systemd_path_value(config.working_dir)}",
             "Environment=PYTHONUNBUFFERED=1",
             f"ExecStart={command}",
             "Restart=on-failure",
