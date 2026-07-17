@@ -1,9 +1,13 @@
 import json
+from copy import deepcopy
 from datetime import date
 from pathlib import Path
 
+import pytest
+
 from broadcastify_cli.analysis import (
     IncidentAnalyzer,
+    LlamaCppClient,
     WeeklySummaryAnalyzer,
     archive_datetime_for_offset,
     build_transcript_windows,
@@ -43,6 +47,113 @@ class FakeLlamaClient:
     def chat_text(self, *_args: object, **_kwargs: object) -> str:
         self.calls += 1
         return "Two available days included reported shots-fired calls, with five dates missing from coverage."
+
+
+class FakeResponse:
+    def __init__(self, status_code: int, payload: dict[str, object]) -> None:
+        self.status_code = status_code
+        self._payload = payload
+        self.text = json.dumps(payload)
+
+    def json(self) -> dict[str, object]:
+        return self._payload
+
+    def raise_for_status(self) -> None:
+        if self.status_code >= 400:
+            raise RuntimeError(f"HTTP {self.status_code}")
+
+
+def test_llama_json_retries_schema_parser_500_as_json_object(monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+    responses = [
+        FakeResponse(500, {"error": {"message": "Failed to parse input at pos 1188"}}),
+        FakeResponse(
+            200,
+            {
+                "choices": [
+                    {
+                        "message": {"content": '{"summary":"CPU fallback works."}'},
+                        "finish_reason": "stop",
+                    }
+                ]
+            },
+        ),
+    ]
+
+    def fake_post(_url: str, *, json: dict[str, object], timeout: float) -> FakeResponse:
+        assert timeout == 30
+        calls.append(deepcopy(json))
+        return responses.pop(0)
+
+    monkeypatch.setattr("broadcastify_cli.analysis.requests.post", fake_post)
+    result = LlamaCppClient(timeout=30).chat_json(
+        system="Return JSON.",
+        user="Summarize.",
+        schema_name="summary",
+        schema={
+            "type": "object",
+            "properties": {"summary": {"type": "string"}},
+            "required": ["summary"],
+        },
+    )
+
+    assert result == {"summary": "CPU fallback works."}
+    assert calls[0]["response_format"]["type"] == "json_schema"
+    assert calls[1]["response_format"] == {"type": "json_object"}
+
+
+def test_llama_json_does_not_hide_unrelated_server_500(monkeypatch) -> None:
+    calls = 0
+
+    def fake_post(_url: str, *, json: dict[str, object], timeout: float) -> FakeResponse:
+        nonlocal calls
+        calls += 1
+        return FakeResponse(500, {"error": {"message": "model out of memory"}})
+
+    monkeypatch.setattr("broadcastify_cli.analysis.requests.post", fake_post)
+    with pytest.raises(RuntimeError, match="HTTP 500"):
+        LlamaCppClient().chat_json(
+            system="Return JSON.",
+            user="Summarize.",
+            schema_name="summary",
+            schema={"type": "object"},
+        )
+    assert calls == 1
+
+
+def test_daily_summary_schema_avoids_large_llama_grammar_repeat() -> None:
+    captured: dict[str, object] = {}
+
+    class CaptureClient:
+        model = "test"
+
+        def chat_json(self, **kwargs: object) -> dict[str, object]:
+            captured.update(kwargs)
+            return {"summary": "word " * 300}
+
+    analyzer = IncidentAnalyzer(None, CaptureClient())  # type: ignore[arg-type]
+    summary = analyzer._summarize_day(  # noqa: SLF001 - regression for local schema
+        "90001",
+        date(2026, 7, 16),
+        [
+            {
+                "id": 1,
+                "archive_date": "2026-07-16",
+                "manifest_path": "",
+                "start_seconds": 10.0,
+                "priority": 4,
+                "confidence": 0.8,
+                "event_type": "shots_fired",
+                "title": "Reported shots fired",
+                "summary": "Dispatch reported possible shots.",
+                "location": "Main Street",
+            }
+        ],
+    )
+
+    schema = captured["schema"]
+    assert "maxLength" not in schema["properties"]["summary"]
+    assert len(summary.split()) == 250
 
 
 def test_llama_lookup_tolerates_inaccessible_winget_cache(

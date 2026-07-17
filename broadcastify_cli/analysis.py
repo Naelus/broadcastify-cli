@@ -330,6 +330,23 @@ class LlamaCppClient:
         self.model = model
         self.timeout = timeout
 
+    @staticmethod
+    def _schema_response_failed(response: requests.Response) -> bool:
+        if response.status_code == 400:
+            return True
+        if response.status_code != 500:
+            return False
+        detail = response.text.lower()
+        return any(
+            marker in detail
+            for marker in (
+                "failed to parse input",
+                "failed to parse grammar",
+                "json_schema",
+                "response_format",
+            )
+        )
+
     def chat_json(
         self,
         system: str,
@@ -360,9 +377,14 @@ class LlamaCppClient:
             response = requests.post(
                 f"{self.base_url}/chat/completions", json=payload, timeout=self.timeout
             )
-            if response.status_code == 400:
+            if (
+                payload.get("response_format", {}).get("type") == "json_schema"
+                and self._schema_response_failed(response)
+            ):
                 # Older llama.cpp builds still support JSON grammar through the
-                # simpler OpenAI response-format shape.
+                # simpler OpenAI response-format shape. Some newer builds also
+                # return HTTP 500 when a JSON-schema grammar exceeds their
+                # parser limits, so retry only recognized schema/parser errors.
                 payload["response_format"] = {"type": "json_object"}
                 response = requests.post(
                     f"{self.base_url}/chat/completions", json=payload, timeout=self.timeout
@@ -771,7 +793,10 @@ class IncidentAnalyzer:
         schema = {
             "type": "object",
             "properties": {
-                "summary": {"type": "string", "minLength": 1, "maxLength": 2_500}
+                # Large maxLength values expand into bounded grammar repeats in
+                # llama.cpp and can exceed its parser's sane repetition limit.
+                # The prompt and the post-generation word clamp enforce size.
+                "summary": {"type": "string", "minLength": 1}
             },
             "required": ["summary"],
             "additionalProperties": False,
@@ -796,6 +821,9 @@ class IncidentAnalyzer:
             )
             summary = str(result.get("summary") or "").strip()
             if summary:
+                words = summary.split()
+                if len(words) > 250:
+                    summary = " ".join(words[:250])
                 return summary
             user += "\n\nThe previous response was empty. Return a non-empty activity brief."
         self.progress(
