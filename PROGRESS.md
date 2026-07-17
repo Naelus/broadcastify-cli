@@ -13,6 +13,17 @@ This is the dated verification and delivery log for `GOAL.md`. Keep forward-look
 - Added saved non-secret processing defaults and Windows Credential Locker login persistence.
 - Added the explicit `BundleLocalEnv=true` private build; ordinary builds remove stale bundled credentials.
 
+### First-run readiness and diarization regression
+
+- Added a compact five-step **Setup** tab to WinUI and a matching full-width Web overview. Account, writable storage, transcription, speaker labels, and analysis now show detected/configured/verified states with direct actions instead of requiring the user to infer readiness across three settings tabs.
+- Hardware profiles now expose independent `transcription_ready`, `diarization_ready`, and `analysis_ready` evidence. The ordinary check remains download-free; explicit transcription, speaker-label, and provider actions distinguish detection from model execution.
+- Added `diarization-self-test` across the worker, WinUI, and Web UI. It loads Community-1 on the selected CUDA/CPU device and runs generated local audio without making a Broadcastify request.
+- The first real UI test exposed the remaining combined-file failure: current pyannote/Torchaudio tried to route filenames through an incompatible TorchCodec/FFmpeg-DLL combination. The same problem reproduced outside the UI.
+- Replaced filename input with an FFmpeg-decoded float32 scratch file, memory-mapped as a PyTorch `waveform`/`sample_rate` dictionary. This bypasses TorchCodec, keeps day-long PCM off the Python heap, removes the raw scratch file after inference, and retains the compact lossless retry input.
+- The corrected native self-test passed on CUDA in **6.5 seconds** with one synthetic turn. A **250-second** slice from retained combined feed 90001 audio passed in **11.75 seconds**, returning **52 turns across three acoustic clusters**.
+- Native visual/accessibility QA passed at **1240×900**. Web QA passed at desktop and **390×844**, with no horizontal overflow and an empty console; the detection action moved the reference machine from 2/5 cheap prerequisites to 5/5 available stages.
+- Full Python suite: **109 passed**. Browser JavaScript syntax and the Release WinUI build passed with **0 warnings, 0 errors**. The public publish verifier confirmed no private environment and a ready bundled Windows ML runtime; the final owner-only publish independently verified the explicitly bundled ignored `.env`.
+
 ### Pipeline correctness
 
 - Added first-missing-stage discovery and local continuation.

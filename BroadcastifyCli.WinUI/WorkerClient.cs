@@ -513,6 +513,29 @@ internal sealed class WorkerClient
         return result;
     }
 
+    public async Task<DiarizationSelfTestStatus?> RunDiarizationSelfTestAsync(
+        DiarizationSelfTestRequest request,
+        Action<JsonElement> onMessage,
+        CancellationToken cancellationToken)
+    {
+        DiarizationSelfTestStatus? result = null;
+        await RunWorkerAsync(
+            ["-m", "broadcastify_cli.worker", "diarization-self-test"],
+            JsonSerializer.Serialize(request, JsonOptions),
+            message =>
+            {
+                if (message.TryGetProperty("type", out var type)
+                    && type.GetString() == "diarization_self_test"
+                    && message.TryGetProperty("result", out var value))
+                {
+                    result = value.Deserialize<DiarizationSelfTestStatus>(JsonOptions);
+                }
+                onMessage(message);
+            },
+            cancellationToken);
+        return result;
+    }
+
     public async Task<AnalysisProviderStatus?> GetAnalysisProviderDiagnosticsAsync(
         AnalysisProviderDiagnosticsRequest request,
         CancellationToken cancellationToken)

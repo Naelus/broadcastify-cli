@@ -27,6 +27,8 @@ This fork uses Broadcastify's website login and the same private web endpoints a
 - Quantized Gemma 4 through llama.cpp for incident extraction, daily briefs, and range Q&A
 - Opt-in OpenAI Responses, OpenAI-compatible, and saved-login Codex CLI analysis providers behind the same evidence schema
 - A native **Analysis & AI** Settings tab with explicit transcript-sharing consent, no-usage readiness checks, session/env keys, and optional Windows Credential Locker storage
+- A five-step first-run setup overview in both UIs covering account, storage, transcription, speaker labels, and analysis without hiding the stage-specific controls
+- Explicit transcription and speaker-label execution tests that use generated local audio and never consume Broadcastify archive quota
 - Cache/resume behavior for downloads, combined audio, transcripts, embeddings, incidents, and summaries
 - Automatic transcript import, incident extraction, summary, and semantic indexing after a completed UI job
 - Saved-day review, priority-filtered incident timeline, and evidence-grounded date-range questions in the UI
@@ -65,7 +67,7 @@ The default stack is split by responsibility so each stage can be fast and repla
 
 Hardware profiles are stage-specific rather than an all-or-nothing GPU switch. The reference Windows profile uses CUDA for faster-whisper and pyannote plus llama.cpp's detected GPU backend. Vulkan and Apple Metal use native whisper.cpp and llama.cpp acceleration while diarization falls back to CPU. The Vulkan ASR and quantized-LLM paths have completed real runs on an AMD Radeon 890M under Linux, including the optional locked-down container adapter; Metal is implemented but still awaits a real Mac run. OpenVINO uses the devices exposed by its runtime and retries a rejected accelerator/model pairing on CPU. Windows ML uses the optional ONNX Runtime GenAI helper and does not report ready until its configured model completes a real decode self-test. See [docs/hardware-backends.md](docs/hardware-backends.md), [FEATURES.md](FEATURES.md), and [BUGS.md](BUGS.md) for the setup and honest validation matrix.
 
-Both UIs provide an explicit **Test engine** action. It loads the exact selected ASR engine/model/device, decodes one second of locally generated synthetic audio, and reports the actual backend and any fallback stage without returning the model's hallucinated silence text. A managed model may download only after the user starts this test or a real transcription job; the ordinary hardware check does not start a model download.
+Both UIs provide explicit **Test transcription** and **Test speakers** actions. The transcription test loads the exact selected ASR engine/model/device, decodes one second of locally generated synthetic audio, and reports the actual backend and any fallback stage without returning the model's hallucinated silence text. The speaker test loads Community-1 on the selected CUDA/CPU path and runs generated audio through the complete model. A managed model may download only after the user starts its test or a real job; the ordinary hardware check does not start a model download.
 
 Whisper remains the practical fast ASR default for this radio workflow. Diarization is deliberately separate: current all-in-one audio models do not yet offer a clearly better combination of speed, mature speaker labeling, Windows support, and local deployment. WhisperX can remain an optional future word-alignment mode rather than adding its extra pass to every job.
 
@@ -78,7 +80,7 @@ For a combined daily job, the downloader now concatenates the archive blocks **b
 ## Requirements
 
 - Python 3.12
-- FFmpeg with shared libraries (`Gyan.FFmpeg.Shared`)
+- FFmpeg executable (the app does not require pyannote/TorchCodec to decode archive audio)
 - Broadcastify premium account for archive downloads
 - Hugging Face read token for the first pyannote model download
 - llama.cpp for local Gemma analysis
@@ -175,19 +177,19 @@ Every launch creates a random local session token. API and media routes require 
 
 ## Windows first run
 
-1. Open **Settings**, select **Sign in**, and enter the premium Broadcastify login. Leave **Save this login securely** enabled to keep it encrypted for this Windows account in Windows Credential Locker and automatically refresh an expired session. The session cookie remains in the ignored `cookies.json` file.
-2. Open **New archive**, search for and select a feed.
-3. Select the date range. The output folder and model/device defaults are in **Settings**.
-4. Enable **Create combined MP3** when you want one continuous timeline. Diarization requires this setting and the UI keeps it enabled so speaker labels cannot restart at archive boundaries.
-5. Leave `turbo`, `auto`, and batch size 8 selected for the RTX 3090 starting point.
-6. For diarization, accept the access conditions on the [pyannote Community-1 model page](https://huggingface.co/pyannote/speaker-diarization-community-1), create a read token, and paste it into **Settings**. The token is not saved by the UI. An environment token can instead be kept in the ignored `.env` file.
+1. Open **Settings → Setup**. The five-step overview checks account, writable storage, the selected transcription path, pyannote prerequisites, and the selected analysis provider. Detection does not download models or touch Broadcastify archive quota.
+2. Select the account item, enter the premium Broadcastify login, and leave **Save this login securely** enabled to keep it encrypted for this Windows account in Windows Credential Locker and automatically refresh an expired session. The session cookie remains in the ignored `cookies.json` file.
+3. For diarization, accept the access conditions on the [pyannote Community-1 model page](https://huggingface.co/pyannote/speaker-diarization-community-1), create a read token, and paste it into **Settings**. The token is not saved by the UI. An environment token can instead be kept in the ignored `.env` file. Select **Test speakers** if you want to prove the model/device before an unattended run.
+4. Open **New archive**, search for and select a feed, then choose the inclusive date range. The output folder and model/device defaults are in **Settings**.
+5. Enable **Create combined MP3** when you want one continuous timeline. Diarization requires this setting and the UI keeps it enabled so speaker labels cannot restart at archive boundaries.
+6. Leave `turbo`, `auto`, and batch size 8 selected for the RTX 3090 starting point. **Test transcription** proves the exact selected engine without using archive audio.
 7. Leave **Extract incidents, summarize, and index after transcription** selected for the complete automatic workflow. Saved days can be reanalyzed manually later without downloading or transcribing again.
 8. Open **Local library** at any time to browse retained feed-days. Selecting a day shows its five-stage timeline, combined recording, and timestamped transcript preview. **Verify & resume** uses the guarded downloader only when coverage is incomplete; later stages continue entirely locally, and an existing non-diarized transcript gains speakers without repeating Whisper.
 9. For regional monitoring, open **Area watch**, enter a center ZIP and radius (or choose an exact ordered ZIP list), then explicitly select and save the police/fire agencies for a named profile. Radius discovery caches the small Census ZCTA centroid file and labels its mileage as an approximation; it never downloads archive audio. **Run or resume nearest-first queue** persists every feed/date stop point, reuses the exact cache, and stops the entire profile at the first explicit quota response. Completed transcripts can then be analyzed sequentially. **Find story leads** ranks all retained incidents and prepares playable evidence packages. See [docs/area-coverage.md](docs/area-coverage.md).
 
 Models are downloaded into their normal local caches the first time they are used. The first transcription or diarization run will therefore take longer to start.
 
-Full-day diarization reports progress for segmentation, speaker counting, and embeddings. Its lossless 16 kHz preparation is atomically cached while a run is active and retained after an interruption or pipeline error, so a retry does not repeat a multi-gigabyte conversion. The app respects a downloaded pyannote pipeline's tuned embedding batch size and only raises it when the selected batch is larger.
+Full-day diarization reports progress for segmentation, speaker counting, and embeddings. Its lossless 16 kHz preparation is atomically cached and retained after an interruption or pipeline error. The app then gives pyannote a memory-mapped waveform dictionary decoded by FFmpeg instead of a filename, avoiding TorchCodec/FFmpeg-DLL compatibility failures while keeping day-long PCM off the Python heap. The raw PCM scratch file is removed after the model call. The app respects a downloaded pyannote pipeline's tuned embedding batch size and only raises it when the selected batch is larger.
 
 Archive downloads are resumable and normally start at least five seconds apart. Current URL IDs and server filenames use different identifiers, so cache reuse resolves the URL timestamp in the feed's own published time zone instead of redownloading completed blocks. If Broadcastify rate-limits a job, the app pauses all queued requests for the requested backoff or a conservative 30-second-to-5-minute exponential delay, retries transient failures, and runs the rest of the date-range job one at a time. The progress count includes only successfully saved or cached archives.
 
@@ -302,6 +304,7 @@ Feed `90001` was exercised end-to-end over July 11–12, 2026 through the authen
 - an unchanged full-day download/combine/transcribe rerun dropped from about 232 seconds to about 12 seconds through cache hits
 - the July 12 combined 24.4-hour file completed real pyannote diarization in about 25 minutes on the RTX 3090
 - that diarization produced 5,556 speaker turns across five anonymous clusters, spanned the complete daily timeline, and left zero transcript words without a speaker label
+- after a later TorchCodec/PyTorch mismatch reproduced the file-loader failure, the waveform-dictionary fix passed the generated-audio CUDA self-test in 6.5 seconds and a 250-second retained combined-audio slice in 11.75 seconds, producing 52 turns across three clusters
 - cached diarization, transcription, analysis, daily reports, and local Q&A were exercised through the WinUI Release build
 - a persisted seven-day brief ending July 12 correctly reported two available days, five missing dates, 87 incidents, 22 priority 4–5 records, and a deterministic list of notable incident IDs
 - a live six-ZIP Example City/East Example City/Example City discovery followed Example City and Example County county directories, found the current feed 90001 plus nearby police/fire feeds, and persisted a six-feed `Regional coverage desk` profile

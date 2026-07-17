@@ -24,7 +24,7 @@ Status labels: **Validated**, **Implemented**, **Foundation**, or **Planned**.
 | OpenVINO Whisper | Validated | Real AUTO/CPU decode passed; initialization and generation failures retry on CPU and retain the actual backend/fallback stage. |
 | whisper.cpp Vulkan | Validated | Native and opt-in locked-down container adapters exist; exact app path completed a real AMD Radeon 890M decode and retains backend evidence. |
 | Windows ML Whisper | Validated | Batched streaming C# helper and real CPU decode/self-test pass; provider discovery/acquisition is explicit, while DML/TensorRT acceleration stays gated after measured incompatibilities. |
-| pyannote diarization CUDA/CPU | Validated | Existing transcripts can gain labels without rerunning ASR. |
+| pyannote diarization CUDA/CPU | Validated | Existing transcripts can gain labels without rerunning ASR; FFmpeg-to-memory-mapped waveform input bypasses broken TorchCodec file loaders. |
 | Non-CUDA diarization acceleration | Planned | Current portable behavior is CPU fallback. |
 | SQLite transcript/incident/summary store | Validated | Includes FTS, embeddings, Q&A history, area profiles/queues, and cached briefs. |
 | Quantized llama.cpp analysis | Validated | Gemma GGUF local path; real AMD Vulkan generation offloaded all tested model layers. |
@@ -43,8 +43,10 @@ Status labels: **Validated**, **Implemented**, **Foundation**, or **Planned**.
 | Regional story leads | Validated | Evidence-backed assignment leads, not confirmations. |
 | Cross-platform browser UI | Validated | Windows retained-data QA plus a real immutable Linux host passed loopback security, static profile UX, byte-range media, and worker lifecycle; macOS remains untested. |
 | Explicit ASR runtime self-test | Validated | Native and Web Settings decode local synthetic audio using the selected model/device, with managed downloads only after a user starts the test. |
+| Explicit diarization runtime self-test | Validated | Native and Web Settings load Community-1 and execute generated waveform audio on the selected CUDA/CPU path; retained combined-audio regression also passed. |
+| First-run readiness overview | Validated | Five concise account/storage/transcription/speaker/analysis steps share stage diagnostics and direct setup/test actions in native and Web UIs. |
 | Verified Windows publish | Validated | Runnable WinUI resources plus namespaced Windows ML runtime; normal/private credential isolation is verified. |
-| Installer/model manager/onboarding | Foundation | Publish is fixed, but supervised Python/dependency setup and model/cache management remain before non-developer distribution. |
+| Installer/model manager/onboarding | Foundation | In-app readiness is implemented and publish is fixed, but supervised Python/dependency setup and model/cache management remain before non-developer distribution. |
 
 ## Hardware profile matrix
 

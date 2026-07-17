@@ -43,6 +43,21 @@ public sealed partial class MainWindow : Window
     private bool _broadcastifyRateLimitObserved;
     private bool _loadingSettings;
     private AreaCoverage _currentAreaCoverage = new();
+    private bool _diagnosticsLoaded;
+    private bool _archiveAccessConfigured;
+    private bool _archiveAccessVerified;
+    private bool _storageReady;
+    private string _storageReadinessMessage = "Checking the archive library folder.";
+    private bool _asrVerifiedThisSession;
+    private string _asrVerificationMessage = "";
+    private bool _diarizationVerifiedThisSession;
+    private string _diarizationVerificationMessage = "";
+    private bool? _analysisProviderReady;
+    private bool _analysisProviderVerified;
+    private string _analysisProviderReadinessMessage = "";
+    private bool _pyannotePackageInstalled;
+    private bool _huggingFaceTokenConfigured;
+    private bool _cudaAvailable;
 
     public MainWindow()
     {
@@ -107,6 +122,7 @@ public sealed partial class MainWindow : Window
 
     private async Task InitializeAsync()
     {
+        RefreshStorageReadiness();
         await TryAutoSignInAsync();
         await LoadDiagnosticsAndDaysAsync();
         await RefreshLibraryAsync();
@@ -177,7 +193,10 @@ public sealed partial class MainWindow : Window
                 SelectComboTag(DiarizationDeviceComboBox, "auto");
                 break;
         }
+        _asrVerifiedThisSession = false;
+        _diarizationVerifiedThisSession = false;
         ApplySelectedHardwareProfileDescription();
+        UpdateSetupSummary();
     }
 
     private void LoadUserSettings()
@@ -227,6 +246,7 @@ public sealed partial class MainWindow : Window
             settings.RememberAnalysisApiKey && savedAnalysisKey is not null;
         _loadingSettings = false;
         UpdateAnalysisProviderUi();
+        UpdateSetupSummary();
     }
 
     private void MainWindow_Closed(object sender, WindowEventArgs args)
@@ -334,20 +354,32 @@ public sealed partial class MainWindow : Window
                 }
                 break;
         }
+        _analysisProviderReady = null;
+        _analysisProviderVerified = false;
+        _analysisProviderReadinessMessage = "";
         AnalysisProviderStatusText.Text = "Provider settings changed; run the check before a large job.";
         UpdateAnalysisProviderUi();
+        UpdateSetupSummary();
     }
 
     private void AnalysisEndpoint_TextChanged(object sender, TextChangedEventArgs e)
     {
         if (!_loadingSettings)
         {
+            _analysisProviderReady = null;
+            _analysisProviderVerified = false;
             UpdateAnalysisProviderUi();
+            UpdateSetupSummary();
         }
     }
 
-    private void AllowExternalAnalysis_Toggled(object sender, RoutedEventArgs e) =>
+    private void AllowExternalAnalysis_Toggled(object sender, RoutedEventArgs e)
+    {
+        _analysisProviderReady = null;
+        _analysisProviderVerified = false;
         UpdateAnalysisProviderUi();
+        UpdateSetupSummary();
+    }
 
     private bool SelectedAnalysisProviderIsExternal()
     {
@@ -453,10 +485,18 @@ public sealed partial class MainWindow : Window
             }
             var verification = status.Verified ? "Verified" : status.Ready ? "Configured" : "Setup needed";
             AnalysisProviderStatusText.Text = $"{verification}: {status.Message}";
+            _analysisProviderReady = status.Ready;
+            _analysisProviderVerified = status.Verified;
+            _analysisProviderReadinessMessage = status.Message;
+            UpdateSetupSummary();
         }
         catch (Exception exception)
         {
             AnalysisProviderStatusText.Text = exception.Message;
+            _analysisProviderReady = false;
+            _analysisProviderVerified = false;
+            _analysisProviderReadinessMessage = exception.Message;
+            UpdateSetupSummary();
         }
         finally
         {
@@ -491,6 +531,212 @@ public sealed partial class MainWindow : Window
             string.IsNullOrWhiteSpace(profile.Note)
                 ? $"{profile.Name}: {profile.StateText.ToLowerInvariant()}."
                 : profile.Note;
+    }
+
+    private HardwareProfileStatus? SelectedHardwareProfile()
+    {
+        var id = (HardwareProfileComboBox?.SelectedItem as ComboBoxItem)?.Tag?.ToString()
+            ?? "auto";
+        return _hardwareProfiles.FirstOrDefault(value => value.Id == id);
+    }
+
+    private void RefreshStorageReadiness()
+    {
+        try
+        {
+            var configured = string.IsNullOrWhiteSpace(OutputFolderBox?.Text)
+                ? "archives"
+                : OutputFolderBox.Text.Trim();
+            var baseDirectory = _worker?.RepositoryRoot ?? Environment.CurrentDirectory;
+            var path = Path.GetFullPath(configured, baseDirectory);
+            Directory.CreateDirectory(path);
+            var probe = Path.Combine(path, $".radio-archive-write-{Guid.NewGuid():N}.tmp");
+            using (new FileStream(
+                       probe,
+                       FileMode.CreateNew,
+                       FileAccess.Write,
+                       FileShare.None,
+                       bufferSize: 1,
+                       FileOptions.DeleteOnClose))
+            {
+            }
+            if (File.Exists(probe))
+            {
+                File.Delete(probe);
+            }
+            _storageReady = true;
+            _storageReadinessMessage = $"Writable local library: {path}";
+        }
+        catch (Exception exception) when (exception is IOException
+                                          or UnauthorizedAccessException
+                                          or ArgumentException
+                                          or NotSupportedException)
+        {
+            _storageReady = false;
+            _storageReadinessMessage = exception.Message;
+        }
+        UpdateSetupSummary();
+    }
+
+    private void UpdateSetupSummary()
+    {
+        if (SetupReadinessInfoBar is null
+            || HardwareProfileComboBox is null
+            || AnalysisProviderComboBox is null
+            || DiarizationDeviceComboBox is null
+            || HuggingFaceTokenBox is null)
+        {
+            return;
+        }
+
+        var profile = SelectedHardwareProfile();
+        var tokenAvailable = _huggingFaceTokenConfigured
+            || !string.IsNullOrWhiteSpace(HuggingFaceTokenBox?.Password);
+        var selectedDiarizationDevice = SelectedComboValue(DiarizationDeviceComboBox, "auto");
+        var typedTokenMakesDiarizationAvailable = _pyannotePackageInstalled
+            && tokenAvailable
+            && (selectedDiarizationDevice != "cuda" || _cudaAvailable);
+        var transcriptionAvailable = _asrVerifiedThisSession
+            || profile?.TranscriptionReady == true;
+        var diarizationAvailable = _diarizationVerifiedThisSession
+            || profile?.DiarizationReady == true
+            || typedTokenMakesDiarizationAvailable;
+        var provider = SelectedComboValue(AnalysisProviderComboBox, "local");
+        var detectedLocalAnalysis = provider == "local" && profile?.AnalysisReady == true;
+        var analysisAvailable = _analysisProviderReady ?? detectedLocalAnalysis;
+
+        SetupAccountStateText.Text = _archiveAccessVerified
+            ? "Verified"
+            : _archiveAccessConfigured
+                ? "Configured"
+                : "Needs sign-in";
+        SetupAccountDetailText.Text = _archiveAccessVerified
+            ? "The premium website session was refreshed successfully in this app session."
+            : _archiveAccessConfigured
+                ? "A saved website session or secure login is available; the next archive request can refresh it."
+                : "Sign in with a premium Broadcastify website account before acquiring archives.";
+        SetupAccountActionButton.Content = _archiveAccessConfigured ? "Account" : "Sign in";
+
+        SetupStorageStateText.Text = _storageReady ? "Ready" : "Needs attention";
+        SetupStorageDetailText.Text = _storageReadinessMessage;
+
+        SetupTranscriptionStateText.Text = _asrVerifiedThisSession
+            ? "Verified"
+            : transcriptionAvailable
+                ? "Detected"
+                : _diagnosticsLoaded
+                    ? "Setup needed"
+                    : "Checking";
+        SetupTranscriptionDetailText.Text = _asrVerifiedThisSession
+            ? _asrVerificationMessage
+            : profile?.Transcription
+              ?? "Run the local hardware check to choose a transcription path.";
+        SetupTranscriptionActionButton.Content = _asrVerifiedThisSession ? "Retest" : "Test";
+
+        SetupDiarizationStateText.Text = _diarizationVerifiedThisSession
+            ? "Verified"
+            : diarizationAvailable
+                ? "Configured"
+                : _diagnosticsLoaded
+                    ? "Setup needed"
+                    : "Checking";
+        SetupDiarizationDetailText.Text = _diarizationVerifiedThisSession
+            ? _diarizationVerificationMessage
+            : profile?.Diarization
+              ?? "Run the local hardware check to inspect pyannote and its model token.";
+        SetupDiarizationActionButton.Content = _diarizationVerifiedThisSession ? "Retest" : "Test";
+
+        SetupAnalysisStateText.Text = _analysisProviderVerified
+            ? "Verified"
+            : analysisAvailable
+                ? "Configured"
+                : _diagnosticsLoaded
+                    ? "Check provider"
+                    : "Checking";
+        SetupAnalysisDetailText.Text = !string.IsNullOrWhiteSpace(_analysisProviderReadinessMessage)
+            ? _analysisProviderReadinessMessage
+            : detectedLocalAnalysis
+                ? profile?.Analysis ?? "Local llama.cpp is detected."
+                : $"Check {SelectedAnalysisProviderDisplayName()} without sending transcript text.";
+        SetupAnalysisActionButton.Content = _analysisProviderVerified ? "Recheck" : "Check";
+
+        var available = new[]
+        {
+            _archiveAccessConfigured,
+            _storageReady,
+            transcriptionAvailable,
+            diarizationAvailable,
+            analysisAvailable,
+        }.Count(value => value);
+        var verified = new[]
+        {
+            _archiveAccessVerified,
+            _asrVerifiedThisSession,
+            _diarizationVerifiedThisSession,
+            _analysisProviderVerified,
+        }.Count(value => value);
+        SetupReadinessProgress.Value = available;
+        SetupReadinessCountText.Text =
+            $"{available} of 5 setup steps available · {verified} execution "
+            + $"check{(verified == 1 ? "" : "s")} verified this session";
+        SetupReadinessInfoBar.Severity = !_diagnosticsLoaded
+            ? InfoBarSeverity.Informational
+            : available == 5
+                ? InfoBarSeverity.Success
+                : InfoBarSeverity.Warning;
+        SetupReadinessInfoBar.Title = !_diagnosticsLoaded
+            ? "Checking this computer"
+            : available == 5
+                ? "This computer is configured for the full pipeline"
+                : $"{5 - available} setup step{(available == 4 ? "" : "s")} need attention";
+        SetupReadinessInfoBar.Message = available == 5
+            ? "Detection is complete. Use the test actions to prove model execution before a long unattended run."
+            : "Open the item that needs attention; no Broadcastify quota is used by these setup checks.";
+    }
+
+    private void SetupAccount_Click(object sender, RoutedEventArgs e)
+    {
+        SettingsTabView.SelectedItem = AccountSettingsTab;
+        SignIn_Click(sender, e);
+    }
+
+    private void SetupStorage_Click(object sender, RoutedEventArgs e)
+    {
+        SettingsTabView.SelectedItem = ProcessingSettingsTab;
+        OutputFolderBox.Focus(FocusState.Programmatic);
+    }
+
+    private void SetupTranscription_Click(object sender, RoutedEventArgs e)
+    {
+        if (SelectedHardwareProfile()?.TranscriptionReady == true || _asrVerifiedThisSession)
+        {
+            AsrSelfTest_Click(sender, e);
+            return;
+        }
+        SettingsTabView.SelectedItem = ProcessingSettingsTab;
+        AsrEngineComboBox.Focus(FocusState.Programmatic);
+    }
+
+    private void SetupDiarization_Click(object sender, RoutedEventArgs e)
+    {
+        var tokenAvailable = _huggingFaceTokenConfigured
+            || !string.IsNullOrWhiteSpace(HuggingFaceTokenBox.Password);
+        if (_pyannotePackageInstalled && tokenAvailable)
+        {
+            DiarizationSelfTest_Click(sender, e);
+            return;
+        }
+        SettingsTabView.SelectedItem = ProcessingSettingsTab;
+        HuggingFaceTokenBox.Focus(FocusState.Programmatic);
+    }
+
+    private void SetupAnalysis_Click(object sender, RoutedEventArgs e) =>
+        CheckAnalysisProvider_Click(sender, e);
+
+    private void HuggingFaceToken_Changed(object sender, RoutedEventArgs e)
+    {
+        _diarizationVerifiedThisSession = false;
+        UpdateSetupSummary();
     }
 
     private async void RefreshDiagnostics_Click(object sender, RoutedEventArgs e)
@@ -551,18 +797,92 @@ public sealed partial class MainWindow : Window
             AsrSelfTestInfoBar.Message = string.IsNullOrWhiteSpace(result.FallbackReason)
                 ? result.Message
                 : $"{result.Message} Fallback during {result.FallbackStage}: {result.FallbackReason}";
+            _asrVerifiedThisSession = true;
+            _asrVerificationMessage = AsrSelfTestInfoBar.Message;
+            UpdateSetupSummary();
         }
         catch (OperationCanceledException)
         {
             AsrSelfTestInfoBar.Severity = InfoBarSeverity.Warning;
             AsrSelfTestInfoBar.Title = "Transcription test cancelled";
             AsrSelfTestInfoBar.Message = "No archive work was changed.";
+            _asrVerifiedThisSession = false;
+            UpdateSetupSummary();
         }
         catch (Exception exception)
         {
             AsrSelfTestInfoBar.Severity = InfoBarSeverity.Error;
             AsrSelfTestInfoBar.Title = "Selected transcription engine needs setup";
             AsrSelfTestInfoBar.Message = exception.Message;
+            _asrVerifiedThisSession = false;
+            _asrVerificationMessage = exception.Message;
+            UpdateSetupSummary();
+            AppendLog(exception.Message);
+        }
+        finally
+        {
+            _operationCancellation.Dispose();
+            _operationCancellation = null;
+            JobProgress.IsIndeterminate = false;
+            SetBusy(false);
+        }
+    }
+
+    private async void DiarizationSelfTest_Click(object sender, RoutedEventArgs e)
+    {
+        if (_worker is null || _operationCancellation is not null)
+        {
+            return;
+        }
+        _operationCancellation = new CancellationTokenSource();
+        SetBusy(true, "Testing the selected speaker-label engine…", jobRunning: true);
+        JobProgress.IsIndeterminate = true;
+        DiarizationSelfTestInfoBar.Severity = InfoBarSeverity.Informational;
+        DiarizationSelfTestInfoBar.Title = "Loading and executing the local speaker-label model";
+        DiarizationSelfTestInfoBar.Message =
+            "The first explicit test may download the pyannote model. Archive audio and quota are not used.";
+        try
+        {
+            var result = await _worker.RunDiarizationSelfTestAsync(
+                new DiarizationSelfTestRequest
+                {
+                    DiarizationDevice = SelectedComboValue(DiarizationDeviceComboBox, "auto"),
+                    DeviceIndex = RequiredInteger(GpuIndexBox.Value, 0),
+                    BatchSize = RequiredInteger(BatchSizeBox.Value, 8),
+                    HuggingFaceToken = string.IsNullOrWhiteSpace(HuggingFaceTokenBox.Password)
+                        ? null
+                        : HuggingFaceTokenBox.Password,
+                },
+                HandleWorkerMessage,
+                _operationCancellation.Token);
+            if (result is null || !result.Ready)
+            {
+                throw new InvalidOperationException(
+                    "The speaker-label worker ended without a successful self-test result.");
+            }
+            DiarizationSelfTestInfoBar.Severity = InfoBarSeverity.Success;
+            DiarizationSelfTestInfoBar.Title = "Selected speaker-label engine is ready";
+            DiarizationSelfTestInfoBar.Message = result.Message;
+            _diarizationVerifiedThisSession = true;
+            _diarizationVerificationMessage = result.Message;
+            UpdateSetupSummary();
+        }
+        catch (OperationCanceledException)
+        {
+            DiarizationSelfTestInfoBar.Severity = InfoBarSeverity.Warning;
+            DiarizationSelfTestInfoBar.Title = "Speaker-label test cancelled";
+            DiarizationSelfTestInfoBar.Message = "No archive work was changed.";
+            _diarizationVerifiedThisSession = false;
+            UpdateSetupSummary();
+        }
+        catch (Exception exception)
+        {
+            DiarizationSelfTestInfoBar.Severity = InfoBarSeverity.Error;
+            DiarizationSelfTestInfoBar.Title = "Selected speaker-label engine needs setup";
+            DiarizationSelfTestInfoBar.Message = exception.Message;
+            _diarizationVerifiedThisSession = false;
+            _diarizationVerificationMessage = exception.Message;
+            UpdateSetupSummary();
             AppendLog(exception.Message);
         }
         finally
@@ -1128,6 +1448,9 @@ public sealed partial class MainWindow : Window
                 AuthInfoBar.Severity = InfoBarSeverity.Success;
                 AuthInfoBar.Title = "Signed in";
                 AuthInfoBar.Message = "Premium archive session is ready and can refresh automatically when a saved login is available.";
+                _archiveAccessConfigured = true;
+                _archiveAccessVerified = true;
+                UpdateSetupSummary();
                 AppendLog("Broadcastify sign-in succeeded.");
             }
             catch (Exception exception)
@@ -1153,12 +1476,15 @@ public sealed partial class MainWindow : Window
         var saved = CredentialStore.TryLoad();
         if (saved is null)
         {
+            _archiveAccessConfigured = _worker.HasBundledEnvironment;
             SettingsAuthStatusText.Text = _worker.HasBundledEnvironment
                 ? "A private bundled .env is available. Archive jobs can refresh the Broadcastify session automatically."
                 : "No Windows Credential Locker login is saved. An existing session cookie or repository .env can still provide access.";
             ClearSavedLoginButton.IsEnabled = false;
+            UpdateSetupSummary();
             return;
         }
+        _archiveAccessConfigured = true;
         ClearSavedLoginButton.IsEnabled = true;
         SettingsAuthStatusText.Text = $"Refreshing the saved Broadcastify session for {saved.Username}…";
         try
@@ -1174,6 +1500,8 @@ public sealed partial class MainWindow : Window
             AuthInfoBar.Message = "Windows Credential Locker supplied the saved login and refreshed the premium session.";
             SettingsAuthStatusText.Text =
                 $"Automatic sign-in is enabled for {saved.Username}. The password remains in Windows Credential Locker.";
+            _archiveAccessVerified = true;
+            UpdateSetupSummary();
         }
         catch (Exception exception)
         {
@@ -1181,6 +1509,8 @@ public sealed partial class MainWindow : Window
             AuthInfoBar.Title = "Saved login needs attention";
             AuthInfoBar.Message = "Automatic sign-in failed. Use Sign in to replace the saved login.";
             SettingsAuthStatusText.Text = exception.Message;
+            _archiveAccessVerified = false;
+            UpdateSetupSummary();
             AppendLog($"Automatic sign-in: {exception.Message}");
         }
     }
@@ -1191,6 +1521,8 @@ public sealed partial class MainWindow : Window
         ClearSavedLoginButton.IsEnabled = false;
         SettingsAuthStatusText.Text =
             "The saved username and password were removed from Windows Credential Locker. The current session cookie was left intact.";
+        _archiveAccessConfigured = _archiveAccessVerified;
+        UpdateSetupSummary();
         AuthInfoBar.Severity = InfoBarSeverity.Informational;
         AuthInfoBar.Title = "Saved login removed";
         AuthInfoBar.Message = "You can continue with the current session or sign in again later.";
@@ -1205,6 +1537,7 @@ public sealed partial class MainWindow : Window
         if (folder is not null)
         {
             OutputFolderBox.Text = folder.Path;
+            RefreshStorageReadiness();
         }
     }
 
@@ -1413,6 +1746,7 @@ public sealed partial class MainWindow : Window
             {
                 var cuda = value.TryGetProperty("cuda_available", out var cudaValue)
                     && cudaValue.GetBoolean();
+                _cudaAvailable = cuda;
                 var gpu = value.TryGetProperty("cuda_devices", out var devices)
                     && devices.GetArrayLength() > 0
                     ? devices[0].GetString()
@@ -1422,6 +1756,7 @@ public sealed partial class MainWindow : Window
                     && !string.IsNullOrWhiteSpace(llama.GetString());
                 var tokenReady = value.TryGetProperty("huggingface_token_configured", out var token)
                     && token.GetBoolean();
+                _huggingFaceTokenConfigured = tokenReady;
                 var environmentCredentials = value.TryGetProperty(
                     "broadcastify_credentials_configured", out var credentials)
                     && credentials.GetBoolean();
@@ -1438,6 +1773,12 @@ public sealed partial class MainWindow : Window
                     foreach (var profile in profiles)
                     {
                         _hardwareProfiles.Add(profile);
+                    }
+                    if (acceleratorValue.TryGetProperty("speaker_labels", out var speakerLabels))
+                    {
+                        _pyannotePackageInstalled = speakerLabels.TryGetProperty(
+                            "package_installed", out var packageInstalled)
+                            && packageInstalled.GetBoolean();
                     }
                 }
                 var selectedProfileId =
@@ -1470,16 +1811,25 @@ public sealed partial class MainWindow : Window
                         ? "The private environment can refresh premium archive access automatically."
                         : "A saved Broadcastify session cookie is available.";
                 }
+                _archiveAccessConfigured = _archiveAccessConfigured
+                    || CredentialStore.TryLoad() is not null
+                    || environmentCredentials
+                    || savedSession;
+                _diagnosticsLoaded = true;
+                RefreshStorageReadiness();
+                UpdateSetupSummary();
             }
             await RefreshAnalysisDaysAsync();
             await RefreshAreaProfilesAsync();
         }
         catch (Exception exception)
         {
+            _diagnosticsLoaded = true;
             DiagnosticsInfoBar.Severity = InfoBarSeverity.Warning;
             DiagnosticsInfoBar.Title = "Diagnostics unavailable";
             DiagnosticsInfoBar.Message = exception.Message;
             AppendLog($"Diagnostics: {exception.Message}");
+            UpdateSetupSummary();
         }
     }
 
@@ -2462,6 +2812,11 @@ public sealed partial class MainWindow : Window
         GenerateAreaDigestButton.IsEnabled = !busy && _worker is not null;
         AnalysisProviderCheckButton.IsEnabled = !busy && _worker is not null;
         AsrSelfTestButton.IsEnabled = !busy && _worker is not null;
+        DiarizationSelfTestButton.IsEnabled = !busy && _worker is not null;
+        SetupAccountActionButton.IsEnabled = !busy && _worker is not null;
+        SetupTranscriptionActionButton.IsEnabled = !busy && _worker is not null;
+        SetupDiarizationActionButton.IsEnabled = !busy && _worker is not null;
+        SetupAnalysisActionButton.IsEnabled = !busy && _worker is not null;
         AreaProfileCombo.IsEnabled = !busy && _worker is not null;
         RefreshLibraryButton.IsEnabled = !busy && _worker is not null;
         LibraryList.IsEnabled = !busy && _worker is not null;

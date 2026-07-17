@@ -503,6 +503,42 @@ public sealed record AsrSelfTestStatus
     public string Message { get; init; } = "";
 }
 
+internal sealed record DiarizationSelfTestRequest
+{
+    [JsonPropertyName("diarization_device")]
+    public string DiarizationDevice { get; init; } = "auto";
+
+    [JsonPropertyName("device_index")]
+    public int DeviceIndex { get; init; }
+
+    [JsonPropertyName("batch_size")]
+    public int BatchSize { get; init; } = 8;
+
+    [JsonPropertyName("huggingface_token")]
+    public string? HuggingFaceToken { get; init; }
+}
+
+public sealed record DiarizationSelfTestStatus
+{
+    [JsonPropertyName("ready")]
+    public bool Ready { get; init; }
+
+    [JsonPropertyName("model")]
+    public string Model { get; init; } = "";
+
+    [JsonPropertyName("device")]
+    public string Device { get; init; } = "";
+
+    [JsonPropertyName("elapsed_seconds")]
+    public double ElapsedSeconds { get; init; }
+
+    [JsonPropertyName("turn_count")]
+    public int TurnCount { get; init; }
+
+    [JsonPropertyName("message")]
+    public string Message { get; init; } = "";
+}
+
 internal sealed record JobRunResult
 {
     [JsonPropertyName("feed_id")]
@@ -747,6 +783,15 @@ public sealed record HardwareProfileStatus
 
     [JsonPropertyName("ready")]
     public bool Ready { get; init; }
+
+    [JsonPropertyName("transcription_ready")]
+    public bool TranscriptionReady { get; init; }
+
+    [JsonPropertyName("diarization_ready")]
+    public bool DiarizationReady { get; init; }
+
+    [JsonPropertyName("analysis_ready")]
+    public bool AnalysisReady { get; init; }
 
     [JsonPropertyName("transcription")]
     public string Transcription { get; init; } = "";
