@@ -1,6 +1,6 @@
 # Broadcastify archive limits and measured behavior
 
-Last checked: July 16, 2026.
+Last checked: July 17, 2026.
 
 ## Public information
 
@@ -60,6 +60,17 @@ After archive downloads became available again, a guarded feed `90001` resume re
 - A combined July 3 recording, reuse of the already-complete July 11–12 caches, and safely resumable gaps for every incomplete day.
 
 This smaller observed window is strong evidence against documenting a stable fixed 200-request daily quota. It could reflect a rolling/shared budget, only a partial reset, prior account/IP use outside this process, or server-side policy that varies by context. The only defensible operational conclusion is that download availability can return by a later day, while neither the amount restored nor the reset boundary is predictable from public information.
+
+### July 17 retained two-day follow-up
+
+A later guarded run acquired the two latest complete Example City Public Safety (`90001`) days at the same serial five-second pacing:
+
+- 48 of 48 July 16 archive blocks.
+- 49 of 49 July 15 archive blocks.
+- 97 successful new media responses in total.
+- No HTTP 429 or explicit quota response during the run.
+
+The account had only one user-initiated archive download immediately before the earlier development work. This result is therefore another lower-bound observation, not evidence of a fixed 97-request allowance. Together, the measured 55-success/exhausted, 97-success/not-exhausted, and roughly 192-success/exhausted windows are consistent only with an unknown dynamic, rolling, shared, or policy-dependent budget. The application must continue to react to the server response rather than predict a reset or preallocate a numeric quota.
 
 ## Implemented policy
 

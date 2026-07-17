@@ -1,6 +1,6 @@
 # Feature inventory
 
-Last updated: July 16, 2026
+Last updated: July 17, 2026
 
 Status labels: **Validated**, **Implemented**, **Foundation**, or **Planned**.
 
@@ -27,6 +27,7 @@ Status labels: **Validated**, **Implemented**, **Foundation**, or **Planned**.
 | pyannote diarization CUDA/CPU | Validated | Existing transcripts can gain labels without rerunning ASR; FFmpeg-to-memory-mapped waveform input bypasses broken TorchCodec file loaders. |
 | Non-CUDA diarization acceleration | Planned | Current portable behavior is CPU fallback. |
 | SQLite transcript/incident/summary store | Validated | Includes FTS, embeddings, Q&A history, area profiles/queues, and cached briefs. |
+| Evidence/identity safety gates | Validated | Exact-citation claim/concept checks, bounded evidence gaps, deterministic category/priority correction, contained-evidence dedupe, outcome-language rejection, and public identifier/name redaction; original ASR remains available for internal audit. |
 | Quantized llama.cpp analysis | Validated | Gemma GGUF selector or explicit local path; retained removed quants are reused from older Hub snapshots, clean installs use the current `Q4_0` default, and real AMD Vulkan generation offloaded all tested model layers. |
 | Provider API/Codex harness | Validated | Native Settings and CLI support local Gemma, OpenAI Responses, compatible `/v1` endpoints, and ephemeral saved-login Codex with explicit transcript-sharing consent and readiness checks. |
 
@@ -38,7 +39,7 @@ Status labels: **Validated**, **Implemented**, **Foundation**, or **Planned**.
 | Local Library master/detail viewer | Validated | Processing timeline, audio playback, transcript preview, resume/open actions. |
 | Saved secure Broadcastify login | Implemented | Windows Credential Locker plus session refresh. |
 | Private `.env` build option | Implemented | Explicit opt-in only; normal builds remove stale copies. |
-| Daily incident/evidence review | Validated | Exact local clips and export actions. |
+| Daily incident/evidence review | Validated | Exact local clips and export actions; a real Example City long-span card was verified to cut/play the cited event rather than seek to the broad incident-envelope start. |
 | Seven-day summaries | Validated | Explicitly records available and missing days. |
 | Regional story leads | Validated | Evidence-backed assignment leads, not confirmations. |
 | Cross-platform browser UI | Validated | Windows visual QA plus an immutable Linux host passed loopback security, byte-range media, worker lifecycle, an exact protected ASR/diarization/analysis job, and the managed service lifecycle; Linux full-model visual QA and macOS remain open. |

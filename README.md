@@ -249,7 +249,9 @@ The text transcript uses entries such as:
 
 Speaker numbers are anonymous clustering labels, not identified people or radio units.
 
-Persistent analysis defaults to `archives/broadcastify-analysis.sqlite3`. It stores feed days, transcript segments, passages, incidents, daily/weekly briefs, area profiles, area story digests, embeddings, and question history. Raw transcript evidence can contain names or other details spoken on the radio; derived prompts omit private identifiers, and reports must be treated as unconfirmed dispatch traffic rather than findings of fact.
+Persistent analysis defaults to `archives/broadcastify-analysis.sqlite3`. It stores feed days, transcript segments, passages, incidents, daily/weekly briefs, area profiles, area story digests, embeddings, and question history. Raw transcript evidence can contain names or other details spoken on the radio. Public incident fields and displayed quotes apply deterministic obvious-identifier and context-supported private-name redaction while the original ASR remains internal for audit. Raw clips can still contain spoken identifiers, so they remain review aids rather than publication assets.
+
+Gemma output is not accepted on schema shape alone. Each incident must cite nearby exact transcript segments, share meaningful claim anchors with those citations, and carry any critical claim—such as shots, a weapon, theft, assault, fire, pursuit, collision, overdose, welfare, or trespass—in the cited ASR itself. Clear category/priority contradictions are corrected from evidence, unsupported outcome language is removed or rejected, and daily briefs fall back to deterministic evidence summaries when grounding checks fail. Reports still describe unconfirmed, noisy dispatch traffic rather than findings of fact.
 
 ZIP discovery mirrors the current Broadcastify website flow: a ZIP search first resolves to one or more county-directory links, and the app then parses and deduplicates those county feed tables. The public-safety-only filter is enabled by default. Nearby ZIPs in the same county intentionally produce one feed entry tagged with every matching ZIP rather than duplicate archive jobs.
 

@@ -1,6 +1,6 @@
 # Known bugs and gaps
 
-Last updated: July 16, 2026
+Last updated: July 17, 2026
 
 Use this file for reproducible defects and concrete blockers, not the general roadmap. Remove an entry only after its fix and verification are recorded in `PROGRESS.md`.
 
@@ -41,11 +41,15 @@ Use this file for reproducible defects and concrete blockers, not the general ro
 ### B-007 — Archive quota size/reset schedule remains inferred
 
 - **Severity:** Operational.
-- **Observed:** Broadcastify publishes no numeric archive-download quota or reset timestamp. One measured window allowed roughly 192 successful archive redirects, while the July 16 availability follow-up allowed only 55 new media downloads before the same explicit limit response.
+- **Observed:** Broadcastify publishes no numeric archive-download quota or reset timestamp. One measured window allowed roughly 192 successful archive redirects, the July 16 availability follow-up allowed only 55 before the explicit limit response, and a later Example City window allowed 97 consecutive new media responses with no 429.
 - **Control:** Sequential pacing, exact cache reuse, and immediate stop on explicit exhaustion.
 - **Next:** Ask Broadcastify support for authoritative details and prioritize future regional acquisition by user distance/importance rather than a guessed quota size.
 
 ## Recently fixed
+
+### F-015 — Model incident cards could cite unrelated audio and leak radio identifiers
+
+A live Example City run produced a “stolen squad car in Example Township” card whose citations said only that a subject was under arrest/being transported and that a person from an unrelated domestic call was waiting in a black car. Incident retention now requires meaningful lexical support plus exact-evidence coverage for critical event concepts, rejects citations scattered more than ten minutes apart, deterministically normalizes clear category/priority contradictions, and deduplicates citation subsets. Public text and quotes redact obvious identifiers and context-supported private names while retaining source ASR internally. Daily briefs reject unsupported outcome language, and local JSON extraction is deterministic. The final two-day Example City v9 audit retained 64 cards with zero post-persistence support failures or detected public-field name leaks; 12 exact clips were generated and all 142 tests pass.
 
 ### F-014 — A removed Gemma quant selector broke resumed local analysis
 

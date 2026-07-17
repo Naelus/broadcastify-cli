@@ -2,6 +2,20 @@
 
 This is the dated verification and delivery log for `GOAL.md`. Keep forward-looking capabilities in `FEATURES.md` and unresolved defects in `BUGS.md`.
 
+## July 17, 2026
+
+### retained two-day refresh and evidence hardening
+
+- Refreshed quota-free Example City discovery by city and ZIP/radius. The relevant live public-safety catalog included Example City Public Safety (`90001`), Example City City Fire Dispatch (`90004`), Example County Fire Digital (`11466`), Example County Sheriff (`20301`), Logan-Trivoli Fire/Rescue (`18278`), and the much broader Example State State Police Troops 1–5 feed (`21049`). The closest police feed was processed first rather than spending the unknown archive allowance across every match.
+- Acquired the two latest complete feed `90001` days: **48/48 July 16 blocks** and **49/49 July 15 blocks**, or **97 successful new archive media responses with no 429**. July 16 combined to 85,984.914 seconds and July 15 to 87,784.934 seconds. The extra July 15 listing block reflects the feed archive boundary/overlap rather than a failed duplicate.
+- The CUDA reference workflow retained **854 transcript segments / 5,685 words / 5,215 diarized turns / 3 acoustic clusters** for July 16 and **968 segments / 6,036 words / 5,932 turns / 4 clusters** for July 15. Both days have zero unlabeled turns.
+- A manual evidence audit caught a serious model error before reporting: an invented “stolen squad car in Example Township” card cited only an arrest/transport line and an unrelated domestic call. Structured extraction now requires at least two meaningful claim anchors in the exact cited ASR, rejects evidence bundles separated by more than ten minutes, and requires critical concepts such as shots, weapons, theft, assault, threats, fire, pursuit, collision, overdose, welfare, and trespass to occur in those exact citations.
+- Deterministic evidence normalization now corrects clear category contradictions, caps routine priorities, downgrades P5 medical cards without imminent-life evidence such as not-breathing/CPR/unconscious language, strips unsupported outcome sentences and legal-intent labels, removes ASR-fused location suffixes and plate-like pseudo-locations, and deduplicates contained citation sets.
+- Public incident fields and displayed quotes now redact obvious phone/email/long identifiers, DOB forms, and private-person names found in strong radio contexts. Exact source ASR stays internal for audit. Daily briefs reject unknown incident IDs, impossible counts, and unsupported “confirmed/identified/resolved” outcome wording.
+- Local llama.cpp JSON extraction now uses temperature zero and a fixed seed. The frozen v9 run retained **31 supported July 16 incidents (6 P4–5)** and **33 supported July 15 incidents (8 P4–5)**. A post-persistence audit found **zero unsupported cards and zero detected names in public fields**.
+- Prepared 12 independently playable, SHA-256-hashed evidence clips for the strongest or most reviewable reports. Each clip is 21.64–30.22 seconds and is cut from the selected evidence segment, including a long-span group-assault card whose correct clip begins at the later cited traffic rather than the incident envelope start.
+- Full Python suite: **142 passed in 5.10 seconds**; focused analysis/area-watch suite: **28 passed**; Python compile and Git whitespace checks passed. No Example City reanalysis or clip export made an archive request.
+
 ## July 16, 2026
 
 ### Local Gemma model continuity
