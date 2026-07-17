@@ -17,20 +17,20 @@ Use this file for reproducible defects and concrete blockers, not the general ro
 ### B-003 — Portable diarization is CPU-only outside CUDA
 
 - **Severity:** Medium; functionally correct but potentially slow.
-- **Observed:** pyannote's supported app path is PyTorch CUDA or CPU. Vulkan/OpenVINO/Windows ML profiles deliberately fall back to CPU.
+- **Observed:** pyannote's supported app path is PyTorch CUDA or CPU. Vulkan/OpenVINO/Windows ML profiles deliberately fall back to CPU. A 60-second retained combined-audio slice completed on the Windows CPU in 19.203 seconds; the exact Linux AMD joined run also completed CPU diarization before Vulkan ASR/analysis.
 - **Next:** Benchmark CPU on full-day audio and investigate supported Intel XPU/other backends without weakening the reliable fallback.
 
 ### B-004 — Full CPU-only end-to-end timing is not recorded
 
 - **Severity:** Medium.
-- **Observed:** CPU components and profile exist, but the complete multi-hour pipeline has not been benchmarked on the retained corpus.
-- **Next:** Use a bounded representative slice first, then a full day if practical; record ASR, diarization, and analysis time separately.
+- **Observed:** CPU components and profile exist. Bounded CPU diarization is now recorded, but the complete multi-hour all-CPU pipeline has not been benchmarked on the retained corpus.
+- **Next:** Run a longer representative slice and then a full day if practical; record CPU ASR, diarization, and CPU LLM time separately rather than extrapolating the 60-second result.
 
 ### B-005 — Complete cross-platform workflow is not yet validated or packaged on Linux/macOS
 
 - **Severity:** Medium for product portability; no impact on native Windows use.
-- **Observed:** Linux AMD Vulkan ASR and quantized LLM components pass real runs through the app adapter, including an immutable-host container path. The exact pushed Web UI commit now also passes on that Linux host: private dependency bootstrap, 96 tests, loopback startup, action-token enforcement, byte-range media, and a diagnostics child worker. Those component validations have not yet been joined into one pyannote-plus-analysis short workflow. Apple Metal is an explicit native whisper.cpp/llama.cpp profile with CPU diarization and macOS auto-selection when both Metal backends are detected, but no real Mac run has occurred. Cross-platform credential persistence is `.env`/session-only rather than an OS keychain.
-- **Next:** Run a short retained Linux day through ASR, pyannote CPU continuation, and local analysis from the Web UI, then a macOS install/CPU-or-Metal workflow; add a supervised launcher/package and platform keychain adapter without weakening the loopback/session-token boundary.
+- **Observed:** The exact current commit passes 109 tests inside the immutable Vulkan container and completed one joined, network-disabled retained-radio workflow: whisper.cpp on AMD Vulkan, pyannote on CPU, local Gemma on AMD Vulkan, embeddings, summary persistence, and final Ready-to-review state. The run used the same worker contract as the Web UI, but it was started by the supervised container command rather than a packaged browser launcher. Apple Metal is an explicit native whisper.cpp/llama.cpp profile with CPU diarization and macOS auto-selection when both Metal backends are detected, but no real Mac run has occurred. Cross-platform credential persistence is `.env`/session-only rather than an OS keychain.
+- **Next:** Exercise the same joined workflow through the browser job endpoint/launcher on Linux, then run a macOS install/CPU-or-Metal workflow; add a supervised launcher/package and platform keychain adapter without weakening the loopback/session-token boundary.
 
 ### B-006 — Feed display names are missing for some retained legacy days
 

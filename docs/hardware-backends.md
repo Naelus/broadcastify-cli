@@ -120,3 +120,9 @@ The isolated Linux validation used an AMD Radeon 890M (RADV GFX1150), the offici
 The separate llama.cpp b9637 Vulkan run used public `ggml-org/gemma-3-1b-it-GGUF:Q4_K_M`: all 27 layers offloaded, the Q4_K model occupied about 762 MiB of Vulkan memory, prompt evaluation reached about 320 tokens/second, and generation reached about 105 tokens/second. These are compatibility measurements, not promises for a 12B production model or other hardware.
 
 No packages, services, or storage configuration were changed on the appliance host. Image/model hashes and the remaining limitations are recorded in `PROGRESS.md` and `BUGS.md`.
+
+### Joined current-worker measurement
+
+The exact current commit (`historical-validation`) was placed in a fresh isolated clone. Because the TrueNAS home and `/tmp` mounts are deliberately `noexec`, Python 3.12 CPU wheels were built inside the already-recorded Vulkan image and stored in user-writable executable `/var/tmp`; no host package or mount setting changed. The resulting image/runtime combination passed 109 tests with networking disabled.
+
+A fresh 30-second retained-radio workflow then ran with warm caches and `--network none`. CPU pyannote completed five turns; whisper.cpp metadata retained `cpu` plus `vulkan` availability and explicit `using Vulkan0 backend` evidence for AMD Radeon 890M; the 1B Q4 Gemma server detected the same Vulkan device; one passage, one embedding, and one daily summary persisted; and the final state was Ready to review with zero invented incidents. End-to-end container time was 15.729 seconds. The root filesystem was read-only, all capabilities were dropped, `no-new-privileges` was set, and the completed container was removed.

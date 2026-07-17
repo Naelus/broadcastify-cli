@@ -24,6 +24,18 @@ This is the dated verification and delivery log for `GOAL.md`. Keep forward-look
 - Native visual/accessibility QA passed at **1240×900**. Web QA passed at desktop and **390×844**, with no horizontal overflow and an empty console; the detection action moved the reference machine from 2/5 cheap prerequisites to 5/5 available stages.
 - Full Python suite: **109 passed**. Browser JavaScript syntax and the Release WinUI build passed with **0 warnings, 0 errors**. The public publish verifier confirmed no private environment and a ready bundled Windows ML runtime; the final owner-only publish independently verified the explicitly bundled ignored `.env`.
 
+### Bounded CPU and joined Linux parity
+
+- A 60-second retained combined-audio slice completed real pyannote CPU diarization on the Windows reference machine in **19.203 seconds**, producing **23 turns across two clusters**. This is useful bounded evidence, not a linear full-day prediction; B-004 remains open.
+- Created a fresh isolated TrueNAS clone at exact pushed commit `historical-validation`. Its existing pure-Python target passed **109 tests in 0.87 seconds** without host changes.
+- TrueNAS home and `/tmp` are intentionally `noexec`. CPU Torch therefore could not map from the source dataset even though its wheels installed. A Python 3.12 private runtime was built inside the already-recorded whisper.cpp Vulkan image and placed in user-writable executable `/var/tmp`; no NAS package, service, group, or storage setting changed.
+- The exact commit plus that runtime passed **109 tests in 10.35 seconds** inside image `sha256:2f8d2507ee587a8b94c514d27545089234810e6da3e6dd0f2e1327f2f96de861` with networking disabled and the source mounted read-only.
+- A staged failure deliberately proved resumability: CPU diarization completed and cached before a library-path error; the next run reused the diarization and whisper preparation, completed Vulkan ASR, persisted the transcript, and a later run resumed at analysis rather than repeating either audio stage.
+- The final fresh warm-cache run used a new output directory, **network disabled**, read-only root, all capabilities dropped, `no-new-privileges`, numeric user 950, explicit AMD render groups, and bounded tmpfs. It completed the full 30-second retained-radio workflow in **15.729 seconds**.
+- Retained metadata reports `whisper.cpp`, device/backend `vulkan`, explicit `Vulkan0 / AMD Radeon 890M Graphics (RADV GFX1150)` runtime evidence, one transcript segment, CPU diarization complete with **5 turns**, and no fallback.
+- Local `ggml-org/gemma-3-1b-it-GGUF:Q4_K_M` loaded on the same AMD Vulkan device. The app correctly extracted **0** supported incidents from the short fixture, persisted **1 passage, 1 embedding, and 1 daily summary**, and finished at pipeline 100% / **Ready to review** instead of inventing an event.
+- The completed test container was removed. Exact source, model caches, transcript/database, and backend logs remain only under the user-owned isolated test paths for audit and future Web-launcher work.
+
 ### Pipeline correctness
 
 - Added first-missing-stage discovery and local continuation.

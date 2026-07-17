@@ -41,7 +41,7 @@ Status labels: **Validated**, **Implemented**, **Foundation**, or **Planned**.
 | Daily incident/evidence review | Validated | Exact local clips and export actions. |
 | Seven-day summaries | Validated | Explicitly records available and missing days. |
 | Regional story leads | Validated | Evidence-backed assignment leads, not confirmations. |
-| Cross-platform browser UI | Validated | Windows retained-data QA plus a real immutable Linux host passed loopback security, static profile UX, byte-range media, and worker lifecycle; macOS remains untested. |
+| Cross-platform browser UI | Validated | Windows retained-data QA plus an immutable Linux host passed loopback security, static profile UX, byte-range media, worker lifecycle, and the exact current backend's joined ASR/diarization/analysis workflow; macOS remains untested. |
 | Explicit ASR runtime self-test | Validated | Native and Web Settings decode local synthetic audio using the selected model/device, with managed downloads only after a user starts the test. |
 | Explicit diarization runtime self-test | Validated | Native and Web Settings load Community-1 and execute generated waveform audio on the selected CUDA/CPU path; retained combined-audio regression also passed. |
 | First-run readiness overview | Validated | Five concise account/storage/transcription/speaker/analysis steps share stage diagnostics and direct setup/test actions in native and Web UIs. |
@@ -53,8 +53,8 @@ Status labels: **Validated**, **Implemented**, **Foundation**, or **Planned**.
 | Profile | ASR | Diarization | Analysis | Current state |
 |---|---|---|---|---|
 | Automatic/NVIDIA | faster-whisper CUDA | pyannote CUDA | llama.cpp Vulkan/auto-offload | Validated on RTX 3090 |
-| CPU only | faster-whisper INT8 CPU | pyannote CPU | llama.cpp CPU | Implemented; full end-to-end timing still needed |
-| Vulkan | whisper.cpp Vulkan | pyannote CPU | llama.cpp Vulkan | Real AMD ASR and quantized generation validated; full-day CPU diarization timing remains |
+| CPU only | faster-whisper INT8 CPU | pyannote CPU | llama.cpp CPU | Implemented; 60 seconds of retained diarization took 19.203 seconds, but full CPU-only end-to-end timing remains |
+| Vulkan | whisper.cpp Vulkan | pyannote CPU | llama.cpp Vulkan | Exact current worker completed a 30-second joined offline AMD workflow in 15.729 seconds; full-day CPU diarization timing remains |
 | OpenVINO | OpenVINO Whisper AUTO/CPU | pyannote CPU | llama.cpp SYCL/auto/CPU | Real CPU decode and accelerator-to-CPU fallback validated |
 | Windows ML | ONNX Runtime GenAI CPU | pyannote CPU | llama.cpp auto/CPU | Real CPU decode validated; DML fails and the current TensorRT RTX provider is slower than CPU for Whisper |
 | Apple Metal | whisper.cpp Metal | pyannote CPU | llama.cpp Metal | Implemented with native-backend detection and explicit self-test; real Mac validation pending |

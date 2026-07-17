@@ -22,7 +22,7 @@ The tested Windows experience remains the reference behavior. A user should be a
 - CUDA reference flow remains green on the RTX 3090.
 - CPU transcription, CPU diarization, and CPU LLM fallback are exercised.
 - OpenVINO performs a real Whisper decode and safely falls back to CPU when an exposed accelerator rejects the model.
-- Vulkan performs a real whisper.cpp decode and llama.cpp generation on suitable AMD or Intel hardware; this now passes on AMD Radeon 890M, while diarization uses the documented CPU fallback and still needs a full-day portable timing run.
+- Vulkan performs a real whisper.cpp decode and llama.cpp generation on suitable AMD or Intel hardware; the exact current worker now passes a joined network-disabled AMD Radeon 890M ASR → CPU diarization → local analysis workflow, while full-day portable diarization timing remains open.
 - Windows ML performs a real ONNX Whisper decode through the packaged helper and is integrated only after the model/runtime self-test passes.
 - Settings explain the selected stage backends, consolidate account/storage/transcription/speaker/analysis readiness, offer explicit real-execution ASR and diarization self-tests in both UIs, and prevent unsupported combinations or CPU fallbacks from looking like the requested accelerator succeeded.
 - The Local Library viewer makes unfinished diarization or analysis obvious and offers the exact next action.
