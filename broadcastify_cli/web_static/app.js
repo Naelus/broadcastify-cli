@@ -36,7 +36,7 @@ const state = {
   areaSelectedFeedIds: new Set(),
   areaCoverage: { mode: "radius", center_zip: "", radius_miles: 25, max_zip_codes: 12, searched_zip_codes: [] },
   areaBriefResult: null,
-  areaStoriesExpanded: false,
+  areaSelectedStoryIndex: -1,
   settings: loadSettings(),
   activeJob: null,
   jobTimer: null,
@@ -665,11 +665,11 @@ function renderWeek(result) {
 
 function renderAreaBrief(result) {
   state.areaBriefResult = result;
-  state.areaStoriesExpanded = false;
+  state.areaSelectedStoryIndex = result?.stories?.length ? 0 : -1;
   renderAreaBriefContent();
 }
 
-function areaEvidenceMarkup(story) {
+function areaEvidenceMarkup(story, open = false) {
   const references = story.incident_references || [];
   if (!references.length) return '<div class="notice warning"><strong>No source package</strong><span>This lead should not be published until retained evidence is available.</span></div>';
   const clipCount = references.filter((reference) => reference.media_url).length;
@@ -684,7 +684,65 @@ function areaEvidenceMarkup(story) {
       <div class="evidence-actions">${clipMarkup}</div>
     </div>`;
   }).join("");
-  return `<details class="evidence-package"><summary><span>Evidence package</span><small>${references.length} source record${references.length === 1 ? "" : "s"} · ${clipCount} exact clip${clipCount === 1 ? "" : "s"}</small></summary><div class="evidence-body">${referenceMarkup}</div></details>`;
+  return `<details class="evidence-package"${open ? " open" : ""}><summary><span>Evidence package</span><small>${references.length} source record${references.length === 1 ? "" : "s"} · ${clipCount} exact clip${clipCount === 1 ? "" : "s"}</small></summary><div class="evidence-body">${referenceMarkup}</div></details>`;
+}
+
+function areaStoryIndexMarkup(stories) {
+  return stories.map((story, index) => {
+    const selected = index === state.areaSelectedStoryIndex;
+    const evidenceCount = (story.incident_references || []).length;
+    const reported = story.first_reported || story.location || "Time or place unavailable";
+    return `<button type="button" class="story-index-item${selected ? " active" : ""}" data-area-story-index="${index}" aria-pressed="${selected}">
+      <span class="story-rank">#${index + 1}</span>
+      <span class="story-index-copy">
+        <strong>${html(story.headline || "Untitled story lead")}</strong>
+        <small>${html(story.interest_level || "Lead")} · score ${Number(story.newsworthiness_score) || 0} · P${Number(story.priority) || 0}</small>
+        <small>${html(reported)} · ${evidenceCount} source record${evidenceCount === 1 ? "" : "s"}</small>
+      </span>
+    </button>`;
+  }).join("");
+}
+
+function areaStoryDetailMarkup(story, index) {
+  if (!story) return '<div class="empty-compact">Choose a ranked lead to inspect its complete evidence package.</div>';
+  const tags = [...(story.neighborhood_tags || []), ...(story.topic_tags || [])];
+  const meta = [story.first_reported, story.location].filter(Boolean).join(" · ");
+  return `<button class="story-back button secondary small" type="button" data-action="focus-story-index">← Ranked leads</button>
+    <div class="story-detail-head">
+      <div>
+        <span class="story-score">${html(story.interest_level || "Lead")} · score ${Number(story.newsworthiness_score) || 0} · P${Number(story.priority) || 0}</span>
+        <h3>${html(story.headline || "Untitled story lead")}</h3>
+      </div>
+      <span class="story-detail-rank">#${index + 1}</span>
+    </div>
+    ${meta ? `<p class="story-detail-meta">${html(meta)}</p>` : ""}
+    <p>${html(story.summary || "")}</p>
+    <div class="story-why"><strong>Why this surfaced</strong><span>${html(story.why_interesting || "")}</span></div>
+    <div class="tag-list">${tags.map((tag) => `<span class="tag">${html(words(tag))}</span>`).join("")}</div>
+    <p class="story-audience">${story.subscription_eligible ? "Neighborhood-ready after editor verification." : "Not eligible for neighborhood alerts without additional location or confidence."}</p>
+    ${areaEvidenceMarkup(story, true)}`;
+}
+
+function renderAreaStorySelection({ reveal = false } = {}) {
+  const stories = state.areaBriefResult?.stories || [];
+  if (!stories.length) return;
+  state.areaSelectedStoryIndex = Math.max(0, Math.min(
+    Number(state.areaSelectedStoryIndex) || 0,
+    stories.length - 1,
+  ));
+  document.querySelectorAll("[data-area-story-index]").forEach((button) => {
+    const selected = Number(button.dataset.areaStoryIndex) === state.areaSelectedStoryIndex;
+    button.classList.toggle("active", selected);
+    button.setAttribute("aria-pressed", String(selected));
+  });
+  const detail = byId("areaStoryDetail");
+  if (!detail) return;
+  detail.innerHTML = areaStoryDetailMarkup(
+    stories[state.areaSelectedStoryIndex],
+    state.areaSelectedStoryIndex,
+  );
+  detail.scrollTop = 0;
+  if (reveal) detail.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 function renderAreaBriefContent() {
@@ -696,24 +754,24 @@ function renderAreaBriefContent() {
   const coverage = result.coverage || {};
   const stories = result.stories || [];
   const staleFeedDays = coverage.stale_feed_days || [];
-  const visible = state.areaStoriesExpanded ? stories : stories.slice(0, 10);
+  state.areaSelectedStoryIndex = stories.length
+    ? Math.max(0, Math.min(Number(state.areaSelectedStoryIndex) || 0, stories.length - 1))
+    : -1;
   const staleText = staleFeedDays.length ? ` · ${staleFeedDays.length} retained feed-days need reanalysis` : "";
-  const cards = visible.map((story) => `<article class="story-card">
-    <span class="story-score">${html(story.interest_level || "Lead")} · score ${Number(story.newsworthiness_score) || 0} · P${Number(story.priority) || 0}</span>
-    <h3>${html(story.headline || "Untitled story lead")}</h3>
-    <p>${html(story.summary || "")}</p>
-    <p><strong>Why interesting:</strong> ${html(story.why_interesting || "")}</p>
-    <div class="tag-list">${[...(story.neighborhood_tags || []), ...(story.topic_tags || [])].map((tag) => `<span class="tag">${html(words(tag))}</span>`).join("")}</div>
-    ${areaEvidenceMarkup(story)}
-  </article>`).join("");
+  const browser = stories.length ? `<div class="story-browser">
+      <aside class="story-index" aria-label="Ranked story leads">
+        <div class="story-index-head"><strong>${stories.length} ranked leads</strong><span>Select one to audit</span></div>
+        <div class="story-index-list">${areaStoryIndexMarkup(stories)}</div>
+      </aside>
+      <article class="story-detail" id="areaStoryDetail" aria-live="polite">${areaStoryDetailMarkup(stories[state.areaSelectedStoryIndex], state.areaSelectedStoryIndex)}</article>
+    </div>` : '<div class="empty-compact">No story leads met the saved threshold.</div>';
   byId("areaBriefPanel").innerHTML = `
     <div class="notice ${Number(coverage.feeds_with_data) < Number(coverage.feed_count) || staleFeedDays.length ? "warning" : "success"}">
       <strong>${html(result.start_date)} through ${html(result.end_date)}</strong>
       <span>${Number(coverage.feeds_with_data) || 0}/${Number(coverage.feed_count) || 0} feeds with data · ${Number(coverage.feed_days_available) || 0}/${Number(coverage.feed_days_expected) || 0} feed-days · ${Number(coverage.incident_count) || 0} incidents${html(staleText)}</span>
     </div>
-    <p>${html(result.summary || "")}</p>
-    ${cards || '<div class="empty-compact">No story leads met the saved threshold.</div>'}
-    ${stories.length > 10 ? `<button class="button secondary wide" data-action="toggle-stories">${state.areaStoriesExpanded ? "Show highest-ranked only" : `Show all ${stories.length} story leads`}</button>` : ""}`;
+    ${result.summary ? `<details class="area-narrative"><summary>Generated assignment brief</summary><p>${html(result.summary)}</p></details>` : ""}
+    ${browser}`;
 }
 
 function renderFeedResults(results) {
@@ -819,6 +877,13 @@ document.addEventListener("click", async (event) => {
     }
     return;
   }
+  if (button.dataset.areaStoryIndex !== undefined) {
+    state.areaSelectedStoryIndex = Number(button.dataset.areaStoryIndex) || 0;
+    renderAreaStorySelection({
+      reveal: window.matchMedia("(max-width: 560px)").matches,
+    });
+    return;
+  }
   const action = button.dataset.action;
   if (action === "play-incident") {
     const audio = byId("dayAudio");
@@ -847,9 +912,12 @@ document.addEventListener("click", async (event) => {
     const panel = byId("detailPanel");
     if (panel) panel.innerHTML = incidentMarkup(state.selectedDayDetail?.incidents || []);
   }
-  if (action === "toggle-stories") {
-    state.areaStoriesExpanded = !state.areaStoriesExpanded;
-    renderAreaBriefContent();
+  if (action === "focus-story-index") {
+    const selected = document.querySelector(
+      `[data-area-story-index="${state.areaSelectedStoryIndex}"]`,
+    );
+    selected?.scrollIntoView({ behavior: "smooth", block: "center" });
+    selected?.focus({ preventScroll: true });
   }
   if (action === "primary-day") {
     const day = state.selectedDayDetail?.state;

@@ -2619,11 +2619,11 @@ public sealed partial class MainWindow : Window
             if (report is null)
             {
                 _areaStories.Clear();
+                ClearAreaStoryDetail(
+                    "Older story claims are hidden until their source days use the current evidence rules.");
                 AreaSummaryText.Text = "";
                 AreaCoverageText.Text =
                     "No current evidence-gated area brief is saved. Reanalyze retained feed-days, then find story leads again.";
-                AreaPlaybackStatusText.Text =
-                    "Older story claims are hidden until their source days use the current evidence rules.";
                 return;
             }
             if (DateTimeOffset.TryParse(report.StartDate, out var startDate))
@@ -2644,6 +2644,7 @@ public sealed partial class MainWindow : Window
 
     private void ApplyAreaDigest(AreaDigestReport report)
     {
+        var selectedStoryId = (AreaStoryList.SelectedItem as AreaStory)?.StoryId;
         AreaCoverageText.Text = report.CoverageSummary;
         AreaSummaryText.Text = report.Summary;
         _areaStories.Clear();
@@ -2651,9 +2652,64 @@ public sealed partial class MainWindow : Window
         {
             _areaStories.Add(story);
         }
-        AreaPlaybackStatusText.Text = report.Stories.Count == 0
-            ? "No story evidence is available for this range."
-            : "Choose a source clip to audit its transcript quote.";
+        var selectedStory = _areaStories.FirstOrDefault(
+                value => string.Equals(value.StoryId, selectedStoryId, StringComparison.Ordinal))
+            ?? _areaStories.FirstOrDefault();
+        AreaStoryList.SelectedItem = selectedStory;
+        if (selectedStory is null)
+        {
+            ClearAreaStoryDetail("No story evidence is available for this range.");
+        }
+        else
+        {
+            AreaStoryList.ScrollIntoView(selectedStory);
+        }
+    }
+
+    private void AreaStoryList_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (AreaStoryList.SelectedItem is AreaStory story)
+        {
+            ShowAreaStoryDetail(story);
+        }
+        else
+        {
+            ClearAreaStoryDetail(
+                _areaStories.Count == 0
+                    ? "No story evidence is available for this range."
+                    : "Choose a ranked lead to inspect its evidence.");
+        }
+    }
+
+    private void ShowAreaStoryDetail(AreaStory story)
+    {
+        _areaStoryMediaPlayer.Pause();
+        _areaStoryMediaPlayer.Source = null;
+        AreaStoryDetailEmptyText.Visibility = Visibility.Collapsed;
+        AreaStoryDetailScroll.Visibility = Visibility.Visible;
+        AreaStoryDetailScoreText.Text = story.ScoreSummary;
+        AreaStoryDetailHeadlineText.Text = story.Headline;
+        AreaStoryDetailTimePlaceText.Text = story.TimeAndPlace;
+        AreaStoryDetailSummaryText.Text = story.Summary;
+        AreaStoryDetailWhyText.Text = story.WhyInteresting;
+        AreaStoryDetailEvidenceSummaryText.Text = story.EvidenceSummary;
+        AreaStoryDetailAudienceText.Text = story.AudienceSummary;
+        AreaStoryEvidenceList.ItemsSource = story.IncidentReferences;
+        AreaPlaybackStatusText.Text = story.IncidentReferences.Any(value => value.ClipAvailable)
+            ? "Choose a source clip to audit its transcript quote by ear."
+            : "This lead has transcript evidence but no retained playable clip.";
+        AreaStoryDetailScroll.ChangeView(null, 0, null, true);
+    }
+
+    private void ClearAreaStoryDetail(string message)
+    {
+        _areaStoryMediaPlayer.Pause();
+        _areaStoryMediaPlayer.Source = null;
+        AreaStoryEvidenceList.ItemsSource = null;
+        AreaStoryDetailScroll.Visibility = Visibility.Collapsed;
+        AreaStoryDetailEmptyText.Text = message;
+        AreaStoryDetailEmptyText.Visibility = Visibility.Visible;
+        AreaPlaybackStatusText.Text = message;
     }
 
     private async void SaveAreaProfile_Click(object sender, RoutedEventArgs e)
@@ -2828,8 +2884,8 @@ public sealed partial class MainWindow : Window
         AreaSummaryText.Text = $"Working with {SelectedAnalysisProviderDisplayName()}…";
         _areaStoryMediaPlayer.Pause();
         _areaStoryMediaPlayer.Source = null;
-        AreaPlaybackStatusText.Text = "Preparing story evidence packages…";
         _areaStories.Clear();
+        ClearAreaStoryDetail("Preparing story evidence packages…");
         try
         {
             var report = await _worker.SummarizeAreaAsync(

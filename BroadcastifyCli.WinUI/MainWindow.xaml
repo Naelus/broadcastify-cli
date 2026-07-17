@@ -509,7 +509,7 @@
                             </TabViewItem>
                             <TabViewItem Header="Story leads" IsClosable="False">
                                 <Grid Padding="6,10,6,4" RowSpacing="10">
-                                    <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                                    <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
                                     <Grid ColumnSpacing="10">
                                         <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                                         <TextBlock Text="Evidence-backed assignment leads" Style="{StaticResource SubtitleTextBlockStyle}" VerticalAlignment="Center" />
@@ -521,41 +521,83 @@
                                     <ScrollViewer Grid.Row="3" MaxHeight="150">
                                         <TextBlock x:Name="AreaSummaryText" TextWrapping="Wrap" IsTextSelectionEnabled="True" />
                                     </ScrollViewer>
-                                    <ListView x:Name="AreaStoryList" Grid.Row="4" SelectionMode="None">
-                                        <ListView.ItemTemplate>
-                                            <DataTemplate x:DataType="local:AreaStory">
-                                                <StackPanel Padding="10" Spacing="5">
-                                                    <TextBlock Text="{x:Bind Headline}" Style="{StaticResource BodyStrongTextBlockStyle}" />
-                                                    <TextBlock Text="{x:Bind ScoreSummary}" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" />
-                                                    <TextBlock Text="{x:Bind TimeAndPlace}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                                    <TextBlock Text="{x:Bind Summary}" TextWrapping="Wrap" MaxLines="4" TextTrimming="CharacterEllipsis" />
-                                                    <TextBlock Text="{x:Bind WhyInteresting}" TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                                    <TextBlock Text="{x:Bind EvidenceSummary}" Style="{StaticResource BodyStrongTextBlockStyle}" />
-                                                    <TextBlock Text="{x:Bind AudienceSummary}" TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                                    <ItemsControl ItemsSource="{x:Bind IncidentReferences}">
-                                                        <ItemsControl.ItemTemplate>
-                                                            <DataTemplate x:DataType="local:AreaStoryReference">
-                                                                <Border Margin="0,4,0,0" Padding="10" CornerRadius="6" Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}">
-                                                                    <StackPanel Spacing="4">
-                                                                        <TextBlock Text="{x:Bind SourceAndTime}" Style="{StaticResource BodyStrongTextBlockStyle}" />
-                                                                        <TextBlock Text="{x:Bind QuoteDisplay}" TextWrapping="Wrap" IsTextSelectionEnabled="True" FontStyle="Italic" />
-                                                                        <TextBlock Text="{x:Bind ProvenanceSummary}" TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                                                        <StackPanel Orientation="Horizontal" Spacing="8">
-                                                                            <Button Content="Play evidence clip" IsEnabled="{x:Bind ClipAvailable}" Click="PlayStoryEvidence_Click" />
-                                                                            <Button Content="Export clip…" IsEnabled="{x:Bind ClipAvailable}" Click="ExportStoryEvidence_Click" />
-                                                                            <TextBlock Text="{x:Bind ClipStatus}" VerticalAlignment="Center" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                                                        </StackPanel>
-                                                                    </StackPanel>
-                                                                </Border>
-                                                            </DataTemplate>
-                                                        </ItemsControl.ItemTemplate>
-                                                    </ItemsControl>
+                                    <Grid Grid.Row="4" ColumnSpacing="12">
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="330" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                        <Border BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8"
+                                                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+                                            <Grid RowSpacing="6">
+                                                <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+                                                <StackPanel Padding="12,10,12,4" Spacing="2">
+                                                    <TextBlock Text="Ranked leads" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                                                    <TextBlock Text="Select one story to inspect its complete source package."
+                                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
                                                 </StackPanel>
-                                            </DataTemplate>
-                                        </ListView.ItemTemplate>
-                                    </ListView>
-                                    <TextBlock x:Name="AreaPlaybackStatusText" Grid.Row="5" Text="Choose a source clip to audit its transcript quote." TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                    <MediaPlayerElement x:Name="AreaStoryPlayer" Grid.Row="6" Height="72" AreTransportControlsEnabled="True" />
+                                                <ListView x:Name="AreaStoryList" Grid.Row="1" SelectionMode="Single"
+                                                          SelectionChanged="AreaStoryList_SelectionChanged">
+                                                    <ListView.ItemTemplate>
+                                                        <DataTemplate x:DataType="local:AreaStory">
+                                                            <StackPanel Padding="8,7" Spacing="3">
+                                                                <TextBlock Text="{x:Bind Headline}" Style="{StaticResource BodyStrongTextBlockStyle}"
+                                                                           TextWrapping="Wrap" MaxLines="2" TextTrimming="CharacterEllipsis" />
+                                                                <TextBlock Text="{x:Bind ScoreSummary}" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"
+                                                                           TextWrapping="Wrap" />
+                                                                <TextBlock Text="{x:Bind TimeAndPlace}" Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                                           TextWrapping="Wrap" MaxLines="2" TextTrimming="CharacterEllipsis" />
+                                                                <TextBlock Text="{x:Bind EvidenceSummary}" Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                                           TextWrapping="Wrap" />
+                                                            </StackPanel>
+                                                        </DataTemplate>
+                                                    </ListView.ItemTemplate>
+                                                </ListView>
+                                            </Grid>
+                                        </Border>
+                                        <Border Grid.Column="1" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1"
+                                                CornerRadius="8" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+                                            <Grid>
+                                                <TextBlock x:Name="AreaStoryDetailEmptyText"
+                                                           Text="Choose a ranked lead to inspect its summary, transcript quote, provenance, and exact local clip."
+                                                           TextWrapping="Wrap" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                           MaxWidth="420" TextAlignment="Center" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                <ScrollViewer x:Name="AreaStoryDetailScroll" Visibility="Collapsed">
+                                                    <StackPanel Padding="16,14" Spacing="9">
+                                                        <TextBlock x:Name="AreaStoryDetailScoreText" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" />
+                                                        <TextBlock x:Name="AreaStoryDetailHeadlineText" Style="{StaticResource SubtitleTextBlockStyle}" TextWrapping="Wrap" />
+                                                        <TextBlock x:Name="AreaStoryDetailTimePlaceText" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+                                                        <TextBlock x:Name="AreaStoryDetailSummaryText" TextWrapping="Wrap" IsTextSelectionEnabled="True" />
+                                                        <Border Padding="11" CornerRadius="7" Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}">
+                                                            <StackPanel Spacing="4">
+                                                                <TextBlock Text="Why this surfaced" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                                                                <TextBlock x:Name="AreaStoryDetailWhyText" TextWrapping="Wrap" IsTextSelectionEnabled="True" />
+                                                            </StackPanel>
+                                                        </Border>
+                                                        <TextBlock x:Name="AreaStoryDetailEvidenceSummaryText" Style="{StaticResource BodyStrongTextBlockStyle}" TextWrapping="Wrap" />
+                                                        <TextBlock x:Name="AreaStoryDetailAudienceText" TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                        <ItemsControl x:Name="AreaStoryEvidenceList">
+                                                            <ItemsControl.ItemTemplate>
+                                                                <DataTemplate x:DataType="local:AreaStoryReference">
+                                                                    <Border Margin="0,4,0,0" Padding="11" CornerRadius="7" Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}">
+                                                                        <StackPanel Spacing="5">
+                                                                            <TextBlock Text="{x:Bind SourceAndTime}" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                                                                            <TextBlock Text="{x:Bind QuoteDisplay}" TextWrapping="Wrap" IsTextSelectionEnabled="True" FontStyle="Italic" />
+                                                                            <TextBlock Text="{x:Bind ProvenanceSummary}" TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                                                                <Button Content="Play evidence clip" IsEnabled="{x:Bind ClipAvailable}" Click="PlayStoryEvidence_Click" />
+                                                                                <Button Content="Export clip…" IsEnabled="{x:Bind ClipAvailable}" Click="ExportStoryEvidence_Click" />
+                                                                                <TextBlock Text="{x:Bind ClipStatus}" VerticalAlignment="Center" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                                            </StackPanel>
+                                                                        </StackPanel>
+                                                                    </Border>
+                                                                </DataTemplate>
+                                                            </ItemsControl.ItemTemplate>
+                                                        </ItemsControl>
+                                                        <TextBlock x:Name="AreaPlaybackStatusText" Text="Choose a source clip to audit its transcript quote."
+                                                                   TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                        <MediaPlayerElement x:Name="AreaStoryPlayer" Height="72" AreTransportControlsEnabled="True" />
+                                                    </StackPanel>
+                                                </ScrollViewer>
+                                            </Grid>
+                                        </Border>
+                                    </Grid>
                                 </Grid>
                             </TabViewItem>
                         </TabView>

@@ -100,8 +100,19 @@ def test_loopback_web_app_serves_library_transcript_and_media(tmp_path: Path) ->
         assert cookie.startswith("radio_archive_session=")
         assert token_match is not None
         assert b'id="areaPublicSafetyOnly"' in body
-        assert b'/static/app.js?v=12' in body
+        assert b'/static/app.js?v=13' in body
         token = token_match.group(1).decode()
+
+        response, body = _request(connection, "GET", "/static/app.js?v=13")
+        assert response.status == 200
+        assert b"areaSelectedStoryIndex" in body
+        assert b"data-area-story-index" in body
+        assert b"story-browser" in body
+
+        response, body = _request(connection, "GET", "/static/app.css?v=13")
+        assert response.status == 200
+        assert b".story-browser" in body
+        assert b".story-index-item.active" in body
 
         response, body = _request(connection, "GET", "/api/bootstrap", cookie=cookie)
         bootstrap = json.loads(body)
