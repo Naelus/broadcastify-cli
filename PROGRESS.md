@@ -4,6 +4,18 @@ This is the dated verification and delivery log for `GOAL.md`. Keep forward-look
 
 ## July 17, 2026
 
+### Viewer integrity and area-selection UX
+
+- Added prompt-version integrity across the persistent viewer contract. Days analyzed before `police-radio-events-v9` now remain 80% complete with **Analysis update available**, retain their combined recording/transcript/diarization, and offer local-only reanalysis instead of review. Current July 15–16 Example City days remain 100% reviewable.
+- Daily report, date-range Q&A, weekly summary, and area-story queries now filter incident evidence to the current prompt. Weekly and area coverage explicitly list retained dates/feed-days that need reanalysis. Saved weekly/area summaries also require the current aggregate prompt and incident prompt before either UI will display their claims.
+- Native and Web Area Watch preserve the explicitly saved feed set through discovery and public-safety filtering. **Nearest 3** and **Clear** provide intentional bulk actions; save labels/status report the actual selected count rather than silently selecting every discovered feed.
+- The responsive Web navigation now includes an outside scrim with an accessible close action. Static cache versions were advanced so the updated behavior reaches an already-running local service after refresh.
+- Live QA against the real library verified 31 current incidents for July 16, 33 for July 15, explicit reanalysis states for July 11–12, and hidden pre-v9 Example City area claims in both the native 1240×900 app and 390×844 Web UI. The loopback service was restarted to load the new Python prompt gates; no archive request was made.
+- Regenerated the one-feed `Example City 12345` brief for July 15–16 under `police-radio-area-stories-v5-evidence-v9`: **2/2 feed-days, 64 current incidents, 25 ranked leads, 25 source references, and 25 exact clips**. Native Story Leads exposes each quote, provenance record, player, and export action. The Web viewer exposes the same packages through archive-relative media URLs, never serializes a local path, and has no horizontal overflow at 390×844.
+- A privacy audit caught a two-token private-person name immediately following a known incident location in an earlier area quote. The current quote sanitizer redacts that context, invalidates the older area prompt, and regenerated the brief with five redacted quotes and the known name absent.
+- Regenerated the seven-day brief ending July 16 from current evidence only: July 15–16 are available with **64 incidents / 14 priority 4–5 records**; July 11–12 are explicitly labeled analysis updates, while July 10 and July 13–14 are missing. No unavailable day is described as quiet.
+- Full Python suite: **148 passed in 12.63 seconds** using an isolated selected-runtime import check. JavaScript syntax, Python compilation, live native/Web checks, and the WinUI Release build passed with **0 warnings and 0 errors**.
+
 ### retained two-day refresh and evidence hardening
 
 - Refreshed quota-free Example City discovery by city and ZIP/radius. The relevant live public-safety catalog included Example City Public Safety (`90001`), Example City City Fire Dispatch (`90004`), Example County Fire Digital (`11466`), Example County Sheriff (`20301`), Logan-Trivoli Fire/Rescue (`18278`), and the much broader Example State State Police Troops 1–5 feed (`21049`). The closest police feed was processed first rather than spending the unknown archive allowance across every match.

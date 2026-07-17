@@ -9,7 +9,7 @@ The tested Windows experience remains the reference behavior. A user should be a
 ## Current acceptance targets
 
 1. **Pipeline parity:** CUDA, CPU, Vulkan, OpenVINO, and Windows ML profiles must each report stage-by-stage readiness honestly. A profile is called ready only after real transcription, diarization/fallback, and local-analysis checks appropriate to that profile pass.
-2. **Resumability:** downloads, combination, transcription, diarization, embeddings, incident extraction, and summaries persist independently. A retry starts at the first missing or invalid stage.
+2. **Resumability:** downloads, combination, transcription, diarization, embeddings, incident extraction, and summaries persist independently. A retry starts at the first missing or invalid stage; an evidence-rule upgrade reuses retained audio/transcripts while withholding older claims until local reanalysis finishes.
 3. **Evidence:** every surfaced event can be traced to timestamped transcript text and a playable/exportable local clip. Missing coverage is never described as inactivity.
 4. **Quota safety:** archive acquisition is sequential by default, paced, cache-aware, responsive to `Retry-After`, and stops all further media requests after the explicit Broadcastify download-limit response.
 5. **Usable UI:** primary workflows use clear navigation and master/detail views rather than one long page. Common actions fit at the reference 1240x900 window size; advanced hardware controls stay optional.
@@ -25,7 +25,7 @@ The tested Windows experience remains the reference behavior. A user should be a
 - Vulkan performs a real whisper.cpp decode and llama.cpp generation on suitable AMD or Intel hardware; exact commit `historical-validation` now passes a protected loopback Web job through network-disabled AMD Radeon 890M ASR → CPU diarization → local analysis, while full-day portable diarization timing remains open.
 - Windows ML performs a real ONNX Whisper decode through the packaged helper and is integrated only after the model/runtime self-test passes. Exact source commit `historical-validation` completes the matching fresh protected 60-second Web job in 32 seconds and an idempotent resume without repeating ASR, diarization, analysis, or embeddings.
 - Settings explain the selected stage backends, consolidate account/storage/transcription/speaker/analysis readiness, offer explicit real-execution ASR and diarization self-tests in both UIs, and prevent unsupported combinations or CPU fallbacks from looking like the requested accelerator succeeded.
-- The Local Library viewer makes unfinished diarization or analysis obvious and offers the exact next action.
+- The Local Library viewer makes unfinished diarization, analysis, and evidence-rule upgrades obvious, offers the exact next action, and never presents an older analysis version as current.
 - Linux has a wheel-packaged, loopback-only per-user service lifecycle validated from exact commit `historical-validation`; full-model visual/accessibility QA and real macOS validation still prevent calling portability complete.
 - The application receives another visual QA and accessibility pass after every material navigation/viewer change.
 

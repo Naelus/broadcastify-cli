@@ -14,7 +14,7 @@ This fork uses Broadcastify's website login and the same private web endpoints a
 - Feed search by agency, city, county, state, or ZIP, including the county-directory matches returned by the website
 - Premium website sign-in with an opt-in Windows Credential Locker login for automatic session refresh
 - A navigable WinUI shell for Local Library, New Archive, Review & Ask, Area Watch, and Settings instead of one long scrolling workspace
-- A master/detail local-library viewer for every retained feed/day, with a processing timeline, combined-audio playback, timestamped transcript preview, storage paths, and the exact resumable next action
+- A master/detail local-library viewer for every retained feed/day, with a processing timeline, combined-audio playback, timestamped transcript preview, storage paths, and the exact resumable next action; older analysis versions are withheld and can be rebuilt locally without another archive download
 - Diarization-only continuation for existing transcripts, so adding speaker labels does not rerun Whisper
 - Inclusive single-day or date-range archive jobs that acquire the range before starting GPU processing
 - Paced archive downloads with timezone-aware cache reuse, shared 429 cooldown, `Retry-After` support, and automatic one-at-a-time fallback
@@ -202,7 +202,7 @@ python scripts/web_job_smoke.py diagnostics \
 
 Use `continue-local` with `--payload-file` to exercise a retained day without downloading anything. The harness uses the same `/api/jobs` boundary as the browser; it is not a shortcut around its security checks.
 
-It exposes the retained Library and processing timeline, byte-range audio playback, bounded incident and transcript viewers, exact clip preparation, website feed search, guarded archive jobs, local continuation, provider-aware Q&A and weekly summaries, area profiles, retained regional briefs, hardware diagnostics, and session-only sign-in. One heavy job can run at a time, every archive job is forced to one download worker, and the explicit Broadcastify quota response still stops the range immediately.
+It exposes the retained Library and processing timeline, byte-range audio playback, bounded incident and transcript viewers, exact clip preparation, website feed search, guarded archive jobs, local continuation, provider-aware Q&A and weekly summaries, area profiles, retained regional briefs with redacted quote/provenance/clip packages, hardware diagnostics, and session-only sign-in. Media links are archive-relative and never serialize local filesystem paths. One heavy job can run at a time, every archive job is forced to one download worker, and the explicit Broadcastify quota response still stops the range immediately.
 
 Every launch creates a random local session token. API and media routes require the same-site session cookie; actions also require the token header and reject cross-origin submissions. Non-secret settings use browser-local storage. API keys and first-download Hugging Face tokens remain in the active tab or an ignored `.env`; once Community-1 is fully cached, diarization can run offline without supplying the token again. The cross-platform UI does not claim OS-keychain persistence yet. See [docs/web-ui.md](docs/web-ui.md) for the runtime contract and current portability boundary.
 
@@ -249,7 +249,7 @@ The text transcript uses entries such as:
 
 Speaker numbers are anonymous clustering labels, not identified people or radio units.
 
-Persistent analysis defaults to `archives/broadcastify-analysis.sqlite3`. It stores feed days, transcript segments, passages, incidents, daily/weekly briefs, area profiles, area story digests, embeddings, and question history. Raw transcript evidence can contain names or other details spoken on the radio. Public incident fields and displayed quotes apply deterministic obvious-identifier and context-supported private-name redaction while the original ASR remains internal for audit. Raw clips can still contain spoken identifiers, so they remain review aids rather than publication assets.
+Persistent analysis defaults to `archives/broadcastify-analysis.sqlite3`. It stores feed days, transcript segments, passages, incidents, daily/weekly briefs, area profiles, area story digests, embeddings, and question history. Every displayed analysis is version-gated: when evidence rules change, retained audio/transcripts remain reusable but older incident, weekly, and area claims are hidden until local reanalysis completes. Raw transcript evidence can contain names or other details spoken on the radio. Public incident fields and displayed quotes apply deterministic obvious-identifier and context-supported private-name redaction, including a private name immediately following a known incident location, while the original ASR remains internal for audit. Raw clips can still contain spoken identifiers, so they remain review aids rather than publication assets.
 
 Gemma output is not accepted on schema shape alone. Each incident must cite nearby exact transcript segments, share meaningful claim anchors with those citations, and carry any critical claim—such as shots, a weapon, theft, assault, fire, pursuit, collision, overdose, welfare, or trespass—in the cited ASR itself. Clear category/priority contradictions are corrected from evidence, unsupported outcome language is removed or rejected, and daily briefs fall back to deterministic evidence summaries when grounding checks fail. Reports still describe unconfirmed, noisy dispatch traffic rather than findings of fact.
 
@@ -343,6 +343,8 @@ Feed `90001` was exercised end-to-end over July 11–12, 2026 through the authen
 - a live six-ZIP Example City/East Example City/Example City discovery followed Example City and Example County county directories, found the current feed 90001 plus nearby police/fire feeds, and persisted a six-feed `Regional coverage desk` profile
 - the first regional brief correctly reported only 2 of 24 feed-days and 1 of 6 feeds with data, ranked 30 newsroom leads from 87 saved incidents, and retained feed/incident references without treating the five missing feeds as quiet
 - ranked area leads now retain transcript quotes and generate independently playable, hashed context clips from the matching combined-audio timestamps
+- a current evidence-v9 refresh acquired all 97 July 15–16 blocks with no 429, retained 64 supported incidents, and generated a 2/2-feed-day Example City brief with 25 ranked leads, 25 references, and 25 exact clips
+- the seven-day brief ending July 16 uses those two current days, flags July 11–12 for local analysis updates, names July 10 and July 13–14 as missing, and never treats unavailable coverage as quiet
 
 The five speaker labels are acoustic clusters rather than identified officers or radio unit IDs. Radio compression, overlapping traffic, dispatch consoles, and repeated users of the same equipment can split or merge real speakers, so they should be used as conversation structure rather than identity evidence.
 

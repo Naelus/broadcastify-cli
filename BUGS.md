@@ -47,6 +47,14 @@ Use this file for reproducible defects and concrete blockers, not the general ro
 
 ## Recently fixed
 
+### F-017 — Area evidence quotes could retain a private name immediately after a location
+
+The first current Example City area-brief audit found a two-token private-person name in a displayed quote immediately after a known incident location. The incident sanitizer already handled stronger radio-name contexts, but this location-adjacent form was not covered. Area quote redaction now receives the incident location, replaces a matching following name with `[private person]`, and leaves the original transcript internal for audit. The area prompt advanced to `police-radio-area-stories-v5-evidence-v9`, which hides the older brief. The regenerated July 15–16 brief retains 25 source-backed leads and 25 exact clips, contains five redacted quotes, and omits the known name. Regression coverage includes this location-adjacent form.
+
+### F-016 — Older incident and regional summaries looked current after evidence rules changed
+
+Daily summaries, incidents, weekly briefs, and area briefs were durable, but their viewers did not distinguish the earlier extraction prompt from the current evidence-gated v9 rules. A saved Example City area profile could therefore reopen older unsupported claims even though newer days used stricter citation validation. Storage queries now expose/filter prompt versions; Local Library marks affected days **Analysis update available**, disables review, and offers local reanalysis that reuses retained audio, transcript, and speaker labels. Daily, weekly, range-Q&A, and area aggregation read only current-version incidents, and both native and Web viewers hide stale saved briefs. The explicit area-feed selection also survives rediscovery instead of silently selecting every result. Live Example City native and 390×844 Web checks passed, the WinUI Release build has zero warnings/errors, and all **148 tests** pass.
+
 ### F-015 — Model incident cards could cite unrelated audio and leak radio identifiers
 
 A live Example City run produced a “stolen squad car in Example Township” card whose citations said only that a subject was under arrest/being transported and that a person from an unrelated domestic call was waiting in a black car. Incident retention now requires meaningful lexical support plus exact-evidence coverage for critical event concepts, rejects citations scattered more than ten minutes apart, deterministically normalizes clear category/priority contradictions, and deduplicates citation subsets. Public text and quotes redact obvious identifiers and context-supported private names while retaining source ASR internally. Daily briefs reject unsupported outcome language, and local JSON extraction is deterministic. The final two-day Example City v9 audit retained 64 cards with zero post-persistence support failures or detected public-field name leaks; 12 exact clips were generated and all 142 tests pass.
