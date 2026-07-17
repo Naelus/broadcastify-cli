@@ -10,6 +10,7 @@ This fork uses Broadcastify's website login and the same private web endpoints a
 
 - Native WinUI 3 desktop UI on .NET 10 and Windows App SDK 1.8
 - A responsive, loopback-only browser UI with the same Library, New Archive, Review & Ask, Area Watch, and Settings workflow for cross-platform use
+- A per-user Linux systemd launcher with install/start/stop/status/log commands, failure restart, private settings, and a fixed loopback-only service boundary
 - Feed search by agency, city, county, state, or ZIP, including the county-directory matches returned by the website
 - Premium website sign-in with an opt-in Windows Credential Locker login for automatic session refresh
 - A navigable WinUI shell for Local Library, New Archive, Review & Ask, Area Watch, and Settings instead of one long scrolling workspace
@@ -170,6 +171,25 @@ On Linux or macOS, use the equivalent environment entry point:
 ```bash
 ./.venv/bin/broadcastify-web --open
 ```
+
+On a Linux desktop with a systemd user session, the installed package can
+supervise the same Web app and reopen it after a process failure:
+
+```bash
+./.venv/bin/radio-archive-service install
+./.venv/bin/radio-archive-service status
+./.venv/bin/radio-archive-service start --open
+```
+
+The default user-owned layout is `~/.local/share/radio-archive` for the
+working/archive data and `~/.config/radio-archive` for service settings. The
+installer creates a comment-only, mode-0600 `.env` template; credentials are
+read by the app from that file and are never copied into the systemd unit or
+service JSON. Use `--working-dir`, `--output-dir`, `--database`, or
+`--env-file` to adopt an existing library. Uninstalling the service preserves
+the archive, models, settings, and `.env`. See
+[the Linux service guide](docs/linux-service.md) for installation choices,
+logs, headless sessions, and the non-systemd fallback.
 
 For headless validation or automation, the repository also includes a real Web-job harness. It starts the loopback service on an ephemeral port, performs the cookie/action-token handshake, submits one supported job, polls it, and emits the final JSON snapshot:
 

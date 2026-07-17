@@ -12,6 +12,13 @@ broadcastify-web --open
 
 The default address is `http://127.0.0.1:8765/`. `--port` may select another local port, `--output-dir` selects the archive root, and `--database` selects its SQLite evidence store. The host option accepts only `127.0.0.1`, `localhost`, or `::1`; there is deliberately no LAN bind switch.
 
+Linux users with a systemd user session can install the same entry point as a
+failure-restarting user service with `radio-archive-service install`. Its
+config, private `.env` reference, health check, lifecycle commands, and
+non-systemd fallback are documented in
+[linux-service.md](linux-service.md). The unit never contains credential
+values and cannot select a non-loopback host.
+
 ## Headless Web-job harness
 
 `scripts/web_job_smoke.py` exercises the real HTTP boundary without requiring desktop control. It starts the service on an ephemeral loopback port, receives the same-site cookie and embedded action token, posts one supported `/api/jobs` request with a matching origin, polls the job, and emits or saves the final snapshot.
@@ -59,4 +66,4 @@ The complete retained Library/review experience, responsive layout, transcript s
 
 Exact commit `historical-validation` also passed all 113 tests inside the immutable TrueNAS/Linux Vulkan image. The headless harness then completed a fresh protected `/api/jobs` request through ASR → pyannote CPU → local Gemma/embedding/summary in 15.139 seconds for a 30-second retained fixture, ending Ready to review. Networking was disabled and no Hugging Face token was supplied; the complete cached speaker model loaded successfully. This closes the joined HTTP-backend gap. A packaged/supervised Linux launcher, Linux full-model visual/accessibility pass, platform keychain work, and every real macOS/Metal run remain open.
 
-Exact commit `historical-validation` then passed all 119 tests and completed the same protected job in 21.282 seconds with no GPU devices exposed: CPU whisper.cpp, CPU pyannote, CPU llama.cpp, embeddings, and grounded persistence. The daily-summary gate rejected two live attempts that cited unsupported activity and saved the deterministic evidence-only brief. Packaged/supervised launch, Linux full-model visual/accessibility QA, platform keychain work, longer CPU timing, and every real macOS/Metal run remain open.
+Exact commit `historical-validation` then passed all 119 tests and completed the same protected job in 21.282 seconds with no GPU devices exposed: CPU whisper.cpp, CPU pyannote, CPU llama.cpp, embeddings, and grounded persistence. The daily-summary gate rejected two live attempts that cited unsupported activity and saved the deterministic evidence-only brief. A wheel-packaged per-user systemd launcher is now implemented and locally covered; exact real-host unit validation is still required before closing that part of the portability gap. Linux full-model visual/accessibility QA, platform keychain work, longer CPU timing, and every real macOS/Metal run remain open.

@@ -4,6 +4,15 @@ This is the dated verification and delivery log for `GOAL.md`. Keep forward-look
 
 ## July 16, 2026
 
+### Managed Linux Web launcher
+
+- Added the wheel-packaged `radio-archive-service` entry point with install, start, restart, status, stop, journal, unit-preview, and conservative uninstall commands for a per-user systemd service.
+- The service persists only absolute non-secret paths and a fixed `127.0.0.1` endpoint in owner-only JSON. It references a separate mode-0600, comment-only `.env` template; credential values never enter the unit or service JSON.
+- The generated unit supervises failure restart, uses SIGINT plus a bounded stop window, an owner-only umask, `NoNewPrivileges`, private temporary storage, and read-only system paths without blocking outbound website/model traffic. The shared Web cookie/action-token/origin and archive quota boundaries remain unchanged.
+- The default working/archive layout follows XDG user directories. Custom absolute paths can adopt an existing library, uninstall preserves all data/private settings, and the recorded venv Python path is not dereferenced to a dependency-free system interpreter.
+- Refactored `broadcastify-web` into a reusable runner and added explicit `--working-dir`, keeping service cookies, `.env` discovery, and worker children on the selected private path.
+- Eight new service/parser tests, including a real selected-venv import check, bring the complete local suite to **127 passed in 6.09 seconds**. The final `broadcastify_cli-0.4.0-py3-none-any.whl` is 182,202 bytes with SHA-256 `154c8fcd3a17cfcdd4882f05abefb75a58b5e548565c371a16388c32e3fb0f55`; archive inspection confirms the service module, all Web static assets, and the `radio-archive-service` console entry. Exact real-Linux unit/wheel validation remains open under B-005 and will be recorded separately.
+
 ### Local Library and UI
 
 - Replaced the long workspace with WinUI navigation for Local Library, New Archive, Review & Ask, Area Watch, and Settings.

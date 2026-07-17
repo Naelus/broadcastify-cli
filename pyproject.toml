@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "broadcastify-cli"
-version = "0.3.0"
+version = "0.4.0"
 description = "Evidence-first local radio archive intelligence application"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -61,9 +61,12 @@ dev = [
 broadcastify-cli = "broadcastify_cli.broadcastify_cli:cli"
 broadcastify-analysis = "broadcastify_cli.analysis_cli:cli"
 broadcastify-web = "broadcastify_cli.web_app:main"
+radio-archive-service = "broadcastify_cli.linux_service:main"
 
 [project.urls]
-Homepage = "https://github.com/it360mz/broadcastify-cli"
+Homepage = "https://github.com/Naelus/broadcastify-cli"
+Repository = "https://github.com/Naelus/broadcastify-cli"
+Issues = "https://github.com/Naelus/broadcastify-cli/issues"
 
 [tool.setuptools.packages.find]
 include = ["broadcastify_cli*"]

@@ -885,25 +885,40 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--output-dir", default="archives")
     parser.add_argument("--database")
+    parser.add_argument(
+        "--working-dir",
+        help=(
+            "Directory used for cookies, .env discovery, and worker processes. "
+            "Defaults to the current directory."
+        ),
+    )
     parser.add_argument("--host", default="127.0.0.1", choices=["127.0.0.1", "localhost", "::1"])
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--open", action="store_true", dest="open_browser")
     return parser
 
 
-def main() -> int:
-    arguments = build_parser().parse_args()
+def run_web_app(
+    *,
+    output_dir: str | Path = "archives",
+    database_path: str | Path | None = None,
+    working_dir: str | Path | None = None,
+    host: str = "127.0.0.1",
+    port: int = 8765,
+    open_browser: bool = False,
+) -> int:
     server = create_server(
-        output_dir=arguments.output_dir,
-        database_path=arguments.database,
-        host=arguments.host,
-        port=arguments.port,
+        output_dir=output_dir,
+        database_path=database_path,
+        working_dir=working_dir,
+        host=host,
+        port=port,
     )
-    host, port = server.server_address[:2]
-    display_host = "127.0.0.1" if host in {"0.0.0.0", "::"} else host
-    url = f"http://{display_host}:{port}/"
+    bound_host, bound_port = server.server_address[:2]
+    display_host = "127.0.0.1" if bound_host in {"0.0.0.0", "::"} else bound_host
+    url = f"http://{display_host}:{bound_port}/"
     print(f"Radio Archive Intelligence is available at {url}", flush=True)
-    if arguments.open_browser:
+    if open_browser:
         webbrowser.open(url)
     try:
         server.serve_forever(poll_interval=0.25)
@@ -912,6 +927,18 @@ def main() -> int:
     finally:
         server.server_close()
     return 0
+
+
+def main() -> int:
+    arguments = build_parser().parse_args()
+    return run_web_app(
+        output_dir=arguments.output_dir,
+        database_path=arguments.database,
+        working_dir=arguments.working_dir,
+        host=arguments.host,
+        port=arguments.port,
+        open_browser=arguments.open_browser,
+    )
 
 
 if __name__ == "__main__":

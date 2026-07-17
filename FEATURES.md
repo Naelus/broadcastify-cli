@@ -42,11 +42,12 @@ Status labels: **Validated**, **Implemented**, **Foundation**, or **Planned**.
 | Seven-day summaries | Validated | Explicitly records available and missing days. |
 | Regional story leads | Validated | Evidence-backed assignment leads, not confirmations. |
 | Cross-platform browser UI | Validated | Windows visual QA plus an immutable Linux host passed loopback security, byte-range media, worker lifecycle, and an exact protected HTTP job through ASR/diarization/analysis; packaged Linux launch and macOS remain open. |
+| Managed Linux Web launcher | Implemented | Wheel entry point generates an owner-only config and per-user systemd unit with loopback-only health/lifecycle commands; exact real-host service validation remains open. |
 | Explicit ASR runtime self-test | Validated | Native and Web Settings decode local synthetic audio using the selected model/device, with managed downloads only after a user starts the test. |
 | Explicit diarization runtime self-test | Validated | Native and Web Settings load Community-1 and execute generated waveform audio on CUDA/CPU; a complete cache now works offline without retaining a token. |
 | First-run readiness overview | Validated | Five concise account/storage/transcription/speaker/analysis steps share stage diagnostics and direct setup/test actions in native and Web UIs. |
 | Verified Windows publish | Validated | Runnable WinUI resources plus namespaced Windows ML runtime; normal/private credential isolation is verified. |
-| Installer/model manager/onboarding | Foundation | In-app readiness is implemented and publish is fixed, but supervised Python/dependency setup and model/cache management remain before non-developer distribution. |
+| Installer/model manager/onboarding | Foundation | In-app readiness, verified Windows publish, and the managed Linux service are implemented; dependency/model acquisition and non-developer packaging remain. |
 
 ## Hardware profile matrix
 

@@ -1,0 +1,126 @@
+# Managed Linux Web service
+
+`radio-archive-service` installs the loopback browser companion as a per-user
+systemd service. It is the managed Linux launch path for the same Library,
+acquisition, transcription, diarization, analysis, and evidence workflow used
+by `broadcastify-web`.
+
+It does not expose a LAN server. The generated configuration fixes the listener
+to `127.0.0.1`; the Web app still creates a random session token at every
+launch, requires its same-site cookie for data/media, and requires both the
+cookie and action token for every mutation.
+
+## Install the Python package
+
+Python 3.10 or newer, FFmpeg, and a functioning systemd user session are
+required. From a source checkout:
+
+```bash
+python3 -m venv ~/.local/share/radio-archive/venv
+~/.local/share/radio-archive/venv/bin/python -m pip install --upgrade pip
+~/.local/share/radio-archive/venv/bin/python -m pip install \
+  -e '.[transcription,analysis]'
+```
+
+Add `openvino` to the extras only for an OpenVINO profile:
+
+```bash
+~/.local/share/radio-archive/venv/bin/python -m pip install \
+  -e '.[transcription,analysis,openvino]'
+```
+
+whisper.cpp and llama.cpp are native runtimes rather than Python wheels. Set
+their executable/model paths in the private service environment file as
+described in [hardware-backends.md](hardware-backends.md).
+
+## Install and open the user service
+
+Run this with the venv that contains the package:
+
+```bash
+~/.local/share/radio-archive/venv/bin/radio-archive-service install
+~/.local/share/radio-archive/venv/bin/radio-archive-service status
+~/.local/share/radio-archive/venv/bin/radio-archive-service start --open
+```
+
+The defaults are:
+
+- working data and session cookie:
+  `~/.local/share/radio-archive`
+- audio, transcripts, evidence database:
+  `~/.local/share/radio-archive/archives`
+- private environment file:
+  `~/.config/radio-archive/.env`
+- non-secret service configuration:
+  `~/.config/radio-archive/service.json`
+- systemd user unit:
+  `~/.config/systemd/user/radio-archive-web.service`
+- local address:
+  `http://127.0.0.1:8765/`
+
+The installer creates directories and a comment-only `.env` template. It does
+not copy an existing repository `.env`, prompt for credentials, download a
+model, or contact Broadcastify. Add private values manually and keep the file
+owner-readable only:
+
+```bash
+chmod 600 ~/.config/radio-archive/.env
+```
+
+To adopt an existing retained library:
+
+```bash
+radio-archive-service install --force \
+  --working-dir /absolute/path/to/private-working-data \
+  --output-dir /absolute/path/to/archives \
+  --database /absolute/path/to/archives/broadcastify-analysis.sqlite3 \
+  --env-file /absolute/path/to/private.env
+```
+
+The exact venv Python path is retained rather than resolving its symlink to the
+system interpreter. This matters because the system interpreter usually does
+not contain pyannote, Torch, OpenVINO, or the installed app.
+
+## Lifecycle and diagnostics
+
+```bash
+radio-archive-service restart --open
+radio-archive-service stop
+radio-archive-service logs --lines 200
+radio-archive-service logs --follow
+radio-archive-service print-unit
+radio-archive-service uninstall
+```
+
+`status` requires both an active systemd unit and the app's exact minimal
+loopback `/health` response. Start/restart waits up to 15 seconds for that
+response before directing the user to the journal.
+
+The unit restarts on process failure, sends SIGINT for bounded cleanup, keeps a
+private temporary directory, uses an owner-only umask, prevents privilege
+gains, and makes system locations read-only. It deliberately does not disable
+outbound networking because website sign-in, archive acquisition, and explicit
+first-time model downloads require it. Archive request pacing and quota stops
+remain enforced by the shared worker, not by systemd.
+
+`uninstall` removes only the unit. It preserves archives, transcripts, models,
+the SQLite evidence store, service configuration, and `.env`.
+
+## Session and non-systemd behavior
+
+A user service normally follows that user's systemd session. For unattended
+operation after logout, ask the machine administrator whether lingering is
+appropriate for that account; the app does not enable it or change host policy.
+
+On a Linux appliance without a usable systemd user session, use the foreground
+entry point under the appliance's existing supervisor:
+
+```bash
+broadcastify-web \
+  --working-dir /absolute/path/to/private-working-data \
+  --output-dir /absolute/path/to/archives \
+  --database /absolute/path/to/archives/broadcastify-analysis.sqlite3
+```
+
+The host remains restricted to loopback. `--host 0.0.0.0` is rejected rather
+than becoming an undocumented remote deployment mode.
