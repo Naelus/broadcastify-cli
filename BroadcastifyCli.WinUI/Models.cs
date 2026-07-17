@@ -352,6 +352,9 @@ public sealed record AreaDigestCoverage
 
     [JsonPropertyName("incident_count")]
     public int IncidentCount { get; init; }
+
+    [JsonPropertyName("stale_feed_days")]
+    public List<string> StaleFeedDays { get; init; } = [];
 }
 
 public sealed record AreaDigestReport
@@ -380,7 +383,10 @@ public sealed record AreaDigestReport
     public string CoverageSummary =>
         $"{StartDate} through {EndDate} · {Coverage.FeedDaysAvailable}/{Coverage.FeedDaysExpected} feed-days · "
         + $"{Coverage.FeedsWithData}/{Coverage.FeedCount} feeds with data · {Coverage.IncidentCount} extracted incidents · "
-        + $"{Stories.Count} ranked leads";
+        + $"{Stories.Count} ranked leads"
+        + (Coverage.StaleFeedDays.Count == 0
+            ? ""
+            : $" · {Coverage.StaleFeedDays.Count} retained feed-days need reanalysis");
 }
 
 internal sealed record JobRequest
@@ -682,6 +688,9 @@ public sealed record LibraryDay
     [JsonPropertyName("has_analysis")]
     public bool HasAnalysis { get; init; }
 
+    [JsonPropertyName("has_stale_analysis")]
+    public bool HasStaleAnalysis { get; init; }
+
     [JsonPropertyName("incident_count")]
     public int IncidentCount { get; init; }
 
@@ -884,11 +893,18 @@ public sealed record AnalysisDay
     [JsonPropertyName("has_summary")]
     public int HasSummaryValue { get; init; }
 
+    [JsonPropertyName("analysis_current")]
+    public bool AnalysisCurrent { get; init; }
+
+    [JsonPropertyName("analysis_update_required")]
+    public bool AnalysisUpdateRequired { get; init; }
+
     [JsonPropertyName("has_diarization")]
     public int HasDiarizationValue { get; init; }
 
     public string FeedAndDate => $"Feed {FeedId} · {ArchiveDate}";
-    public string ProcessingSummary => $"{SegmentCount:N0} segments · {IncidentCount:N0} incidents · {DurationSeconds / 3600:0.0} hours";
+    public string ProcessingSummary => $"{SegmentCount:N0} segments · {IncidentCount:N0} incidents · {DurationSeconds / 3600:0.0} hours"
+        + (AnalysisUpdateRequired ? " · analysis update required" : "");
     public string SpeakerSummary => HasDiarizationValue != 0
         ? $"Diarized · {SpeakerCount} transcript clusters"
         : "Not diarized";
@@ -983,6 +999,12 @@ public sealed record DayReport
 
     [JsonPropertyName("has_diarization")]
     public bool HasDiarization { get; init; }
+
+    [JsonPropertyName("analysis_current")]
+    public bool AnalysisCurrent { get; init; }
+
+    [JsonPropertyName("analysis_update_required")]
+    public bool AnalysisUpdateRequired { get; init; }
 }
 
 internal sealed record AnalysisRequest : AnalysisProviderRequest
@@ -1041,6 +1063,9 @@ public sealed record WeeklyReport
     [JsonPropertyName("missing_dates")]
     public List<string> MissingDates { get; init; } = [];
 
+    [JsonPropertyName("analysis_update_dates")]
+    public List<string> AnalysisUpdateDates { get; init; } = [];
+
     [JsonPropertyName("incident_count")]
     public int IncidentCount { get; init; }
 
@@ -1053,7 +1078,10 @@ public sealed record WeeklyReport
     public string CoverageSummary =>
         $"{StartDate} through {EndDate} · {DaysAvailable}/{DaysExpected} days available · "
         + $"{IncidentCount} incidents · {SeriousIncidentCount} priority 4–5"
-        + (MissingDates.Count == 0 ? "" : $" · Missing: {string.Join(", ", MissingDates)}");
+        + (MissingDates.Count == 0 ? "" : $" · Missing: {string.Join(", ", MissingDates)}")
+        + (AnalysisUpdateDates.Count == 0
+            ? ""
+            : $" · Reanalysis needed: {string.Join(", ", AnalysisUpdateDates)}");
 
     public string NotableRecordsSummary => NotableIncidentIds.Count == 0
         ? ""

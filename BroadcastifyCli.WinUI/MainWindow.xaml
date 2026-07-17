@@ -447,7 +447,7 @@
                                     <Grid.ColumnDefinitions><ColumnDefinition Width="3*" /><ColumnDefinition Width="2*" /></Grid.ColumnDefinitions>
                                     <Border Style="{StaticResource CardBorderStyle}">
                                         <Grid RowSpacing="10">
-                                            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                                            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                                             <TextBox x:Name="AreaProfileNameBox" Header="Area profile name" PlaceholderText="Regional coverage desk" />
                                             <Grid Grid.Row="1" ColumnSpacing="8">
                                                 <Grid.ColumnDefinitions><ColumnDefinition Width="170" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
@@ -464,9 +464,18 @@
                                                 <NumberBox x:Name="AreaMaxZipCodesBox" Grid.Column="1" Header="ZIP search cap" Value="12" Minimum="1" Maximum="20" SpinButtonPlacementMode="Compact" />
                                                 <TextBlock Grid.Column="2" Text="Radius mode caches Census ZIP centroids once, checks nearby ZIP areas first, and never starts archive downloads." TextWrapping="Wrap" VerticalAlignment="Bottom" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                             </Grid>
-                                            <CheckBox x:Name="AreaPublicSafetyOnlyCheckBox" Grid.Row="3" Content="Show public-safety feeds only (recommended)" IsChecked="True"
-                                                      Checked="AreaPublicSafetyOnly_Changed" Unchecked="AreaPublicSafetyOnly_Changed" />
-                                            <ListView x:Name="AreaFeedResults" Grid.Row="4" SelectionMode="Multiple" IsMultiSelectCheckBoxEnabled="True">
+                                            <Grid Grid.Row="3" ColumnSpacing="8">
+                                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                                <CheckBox x:Name="AreaPublicSafetyOnlyCheckBox" Content="Show public-safety feeds only (recommended)" IsChecked="True"
+                                                          Checked="AreaPublicSafetyOnly_Changed" Unchecked="AreaPublicSafetyOnly_Changed" />
+                                                <Button Grid.Column="1" Content="Nearest 3" Click="SelectNearestAreaFeeds_Click" />
+                                                <Button Grid.Column="2" Content="Clear" Click="ClearAreaFeeds_Click" />
+                                            </Grid>
+                                            <TextBlock x:Name="AreaFeedSelectionText" Grid.Row="4"
+                                                       Text="Discover feeds, then choose the agencies this area watch should monitor."
+                                                       TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                            <ListView x:Name="AreaFeedResults" Grid.Row="5" SelectionMode="Multiple" IsMultiSelectCheckBoxEnabled="True"
+                                                      SelectionChanged="AreaFeedResults_SelectionChanged">
                                                 <ListView.ItemTemplate>
                                                     <DataTemplate x:DataType="local:FeedSearchResult">
                                                         <Grid Padding="8" ColumnSpacing="12">
@@ -481,7 +490,7 @@
                                                     </DataTemplate>
                                                 </ListView.ItemTemplate>
                                             </ListView>
-                                            <Button x:Name="SaveAreaProfileButton" Grid.Row="5" Content="Save selected nearest-first feeds" Click="SaveAreaProfile_Click" />
+                                            <Button x:Name="SaveAreaProfileButton" Grid.Row="6" Content="Save selected nearest-first feeds" Click="SaveAreaProfile_Click" />
                                         </Grid>
                                     </Border>
                                     <Border Grid.Column="1" Style="{StaticResource CardBorderStyle}">

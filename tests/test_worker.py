@@ -4,6 +4,7 @@ from contextlib import nullcontext
 from datetime import date
 from pathlib import Path
 
+from broadcastify_cli.analysis import PROMPT_VERSION
 from broadcastify_cli.storage import AnalysisStore
 from broadcastify_cli.worker import (
     _day_report,
@@ -228,14 +229,14 @@ def test_day_report_exposes_playback_metadata_without_raw_evidence(tmp_path: Pat
                 }
             ],
             model="test-model",
-            prompt_version="test-prompt",
+            prompt_version=PROMPT_VERSION,
         )
         store.save_daily_summary(
             imported.day_id,
             "A shots-fired report was dispatched.",
             incident_ids,
             model="test-model",
-            prompt_version="test-prompt",
+            prompt_version=PROMPT_VERSION,
             transcript_sha256=imported.transcript_sha256,
         )
 
@@ -261,6 +262,59 @@ def test_day_report_exposes_playback_metadata_without_raw_evidence(tmp_path: Pat
     }
     assert "evidence" not in incident
     assert "attributes" not in incident
+
+
+def test_day_report_hides_incidents_from_older_evidence_rules(tmp_path: Path) -> None:
+    archive_date = date(2026, 7, 11)
+    transcript = tmp_path / "transcript.json"
+    transcript.write_text(
+        json.dumps(
+            {
+                "duration": 30.0,
+                "segments": [
+                    {"start": 1.0, "end": 2.0, "text": "Older extracted claim."}
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    with AnalysisStore(tmp_path / "analysis.sqlite3") as store:
+        imported = store.import_transcript("90001", archive_date, transcript)
+        incident_ids = store.replace_incidents(
+            imported.day_id,
+            [
+                {
+                    "fingerprint": "old",
+                    "event_type": "other",
+                    "title": "Old claim",
+                    "summary": "Old claim.",
+                    "location": "",
+                    "start_seconds": 1.0,
+                    "end_seconds": 2.0,
+                    "priority": 3,
+                    "confidence": 0.7,
+                    "evidence": [],
+                    "attributes": {},
+                }
+            ],
+            model="test-model",
+            prompt_version="older-evidence-rules",
+        )
+        store.save_daily_summary(
+            imported.day_id,
+            "Older summary.",
+            incident_ids,
+            model="test-model",
+            prompt_version="older-evidence-rules",
+            transcript_sha256=imported.transcript_sha256,
+        )
+
+        report = _day_report(store, "90001", archive_date)
+
+    assert report["summary"] == ""
+    assert report["incidents"] == []
+    assert report["analysis_current"] is False
+    assert report["analysis_update_required"] is True
 
 
 def test_incident_clip_uses_a_timestamped_cache_key(

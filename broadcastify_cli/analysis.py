@@ -26,7 +26,7 @@ LEGACY_LLM_MODELS = {
 }
 DEFAULT_EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"
 PROMPT_VERSION = "police-radio-events-v9"
-WEEKLY_PROMPT_VERSION = "police-radio-weekly-v1"
+WEEKLY_PROMPT_VERSION = "police-radio-weekly-v2-evidence-v9"
 EVENT_TYPES = {
     "shots_fired",
     "fire",
@@ -1830,17 +1830,29 @@ class WeeklySummaryAnalyzer:
     ) -> dict[str, Any]:
         start_date = week_ending - timedelta(days=6)
         expected_dates = [start_date + timedelta(days=offset) for offset in range(7)]
-        days = [
+        retained_days = [
             value
             for value in self.store.list_days(feed_id)
             if start_date.isoformat()
             <= str(value["archive_date"])
             <= week_ending.isoformat()
         ]
+        analysis_update_dates = sorted(
+            str(value["archive_date"])
+            for value in retained_days
+            if bool(value.get("has_summary"))
+            and str(value.get("summary_prompt_version") or "") != PROMPT_VERSION
+        )
+        days = [
+            value
+            for value in retained_days
+            if str(value.get("summary_prompt_version") or "") == PROMPT_VERSION
+        ]
         days.sort(key=lambda value: str(value["archive_date"]))
         if not days:
             raise ValueError(
-                f"No analyzed days for feed {feed_id} between {start_date} and {week_ending}."
+                f"No current evidence-gated analysis exists for feed {feed_id} "
+                f"between {start_date} and {week_ending}. Reanalyze retained days first."
             )
 
         available_dates = {str(value["archive_date"]) for value in days}
@@ -1858,7 +1870,12 @@ class WeeklySummaryAnalyzer:
                     "summary": str(saved["summary"]) if saved else "",
                 }
             )
-        incidents = self.store.get_incidents(feed_id, start_date, week_ending)
+        incidents = self.store.get_incidents(
+            feed_id,
+            start_date,
+            week_ending,
+            prompt_version=PROMPT_VERSION,
+        )
         category_counts: dict[str, int] = {}
         for incident in incidents:
             event_type = str(incident["event_type"])
@@ -1866,6 +1883,7 @@ class WeeklySummaryAnalyzer:
         serious_count = sum(int(value["priority"]) >= 4 for value in incidents)
 
         source_payload = {
+            "incident_prompt_version": PROMPT_VERSION,
             "days": [
                 {
                     "date": str(value["archive_date"]),
@@ -1911,6 +1929,7 @@ class WeeklySummaryAnalyzer:
                 len(incidents),
                 serious_count,
                 category_counts,
+                analysis_update_dates,
                 cached=True,
             )
 
@@ -2015,6 +2034,7 @@ class WeeklySummaryAnalyzer:
             len(incidents),
             serious_count,
             category_counts,
+            analysis_update_dates,
             cached=False,
         )
 
@@ -2041,6 +2061,7 @@ class WeeklySummaryAnalyzer:
         incident_count: int,
         serious_count: int,
         category_counts: dict[str, int],
+        analysis_update_dates: Sequence[str],
         cached: bool,
     ) -> dict[str, Any]:
         return {
@@ -2055,6 +2076,8 @@ class WeeklySummaryAnalyzer:
             "incident_count": incident_count,
             "priority_4_5_count": serious_count,
             "category_counts": category_counts,
+            "analysis_update_dates": list(analysis_update_dates),
+            "incident_prompt_version": PROMPT_VERSION,
             "cached": cached,
         }
 
@@ -2201,7 +2224,12 @@ class RangeQuestionAnswerer:
             evidence = self.store.search_passages(
                 feed_id, start_date, end_date, question, limit=limit
             )
-        incidents = self.store.get_incidents(feed_id, start_date, end_date)
+        incidents = self.store.get_incidents(
+            feed_id,
+            start_date,
+            end_date,
+            prompt_version=PROMPT_VERSION,
+        )
         evidence_lines = []
         evidence_records = []
         for index, value in enumerate(evidence, start=1):

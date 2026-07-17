@@ -6,7 +6,7 @@
   <meta name="app-token" content="__SESSION_TOKEN__">
   <meta name="color-scheme" content="light dark">
   <title>Radio Archive Intelligence</title>
-  <link rel="stylesheet" href="/static/app.css?v=8">
+  <link rel="stylesheet" href="/static/app.css?v=12">
 </head>
 <body>
   <div class="app-shell">
@@ -28,10 +28,11 @@
       <button class="nav-item" data-view="settings"><span aria-hidden="true">⚙</span>Settings</button>
       <div class="local-only"><span class="status-dot"></span>Loopback only</div>
     </aside>
+    <button class="sidebar-scrim" id="sidebarScrim" type="button" aria-label="Close navigation"></button>
 
     <main class="main-content">
       <header class="topbar">
-        <button class="menu-button" id="menuButton" aria-label="Toggle navigation">☰</button>
+        <button class="menu-button" id="menuButton" aria-label="Toggle navigation" aria-expanded="false">☰</button>
         <div class="topbar-copy">
           <strong id="topbarTitle">Local library</strong>
           <span id="topbarSubtitle">Retained evidence stays on this computer</span>
@@ -276,6 +277,6 @@
   </aside>
 
   <div class="toast-region" id="toastRegion" aria-live="polite"></div>
-  <script src="/static/app.js?v=8" defer></script>
+  <script src="/static/app.js?v=12" defer></script>
 </body>
 </html>

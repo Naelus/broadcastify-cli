@@ -39,7 +39,7 @@ from .analysis_providers import (
     diagnose_analysis_provider,
     open_analysis_client,
 )
-from .area_watch import AreaStoryAnalyzer
+from .area_watch import AREA_PROMPT_VERSION, AreaStoryAnalyzer
 from .area_acquisition import AreaAcquisitionRunner
 from .broadcastify import BroadcastifyClient
 from .geography import CENSUS_ZCTA_YEAR, ZipCentroidCatalog
@@ -451,6 +451,12 @@ def diarization_self_test(payload: dict[str, Any] | None = None) -> int:
 def analysis_days(feed_id: str | None) -> int:
     with AnalysisStore(DEFAULT_DATABASE) as store:
         days = store.list_days(feed_id)
+    for day in days:
+        analysis_current = (
+            str(day.get("summary_prompt_version") or "") == PROMPT_VERSION
+        )
+        day["analysis_current"] = analysis_current
+        day["analysis_update_required"] = bool(day.get("has_summary")) and not analysis_current
     emit({"type": "analysis_days", "days": days})
     return 0
 
@@ -478,8 +484,15 @@ def _day_report(store: AnalysisStore, feed_id: str, archive_date: date) -> dict[
     if day is None:
         raise ValueError(f"No imported transcript for feed {feed_id} on {archive_date}.")
     summary = store.get_latest_daily_summary(int(day["id"]))
+    analysis_prompt_version = str(summary["prompt_version"]) if summary else ""
+    analysis_current = analysis_prompt_version == PROMPT_VERSION
     incidents = []
-    for stored in store.get_incidents(feed_id, archive_date, archive_date):
+    for stored in store.get_incidents(
+        feed_id,
+        archive_date,
+        archive_date,
+        prompt_version=PROMPT_VERSION,
+    ):
         # Keep the routine list/report response compact. Raw transcript evidence
         # stays in the local database for retrieval and question answering.
         incidents.append(
@@ -501,10 +514,14 @@ def _day_report(store: AnalysisStore, feed_id: str, archive_date: date) -> dict[
     return {
         "feed_id": feed_id,
         "archive_date": archive_date.isoformat(),
-        "summary": str(summary["summary"]) if summary else "",
+        "summary": str(summary["summary"]) if summary and analysis_current else "",
         "incidents": incidents,
         "audio_path": str(day["audio_path"] or ""),
         "has_diarization": bool(day["has_diarization"]),
+        "analysis_current": analysis_current,
+        "analysis_update_required": bool(summary) and not analysis_current,
+        "analysis_prompt_version": analysis_prompt_version,
+        "expected_analysis_prompt_version": PROMPT_VERSION,
     }
 
 
@@ -822,19 +839,28 @@ def summarize_area() -> int:
 
 def latest_area_digest(profile_name: str) -> int:
     with AnalysisStore(DEFAULT_DATABASE) as store:
-        row = store.get_latest_area_story_digest(profile_name)
+        latest_any = store.get_latest_area_story_digest(profile_name)
+        row = store.get_latest_area_story_digest(
+            profile_name,
+            prompt_version=AREA_PROMPT_VERSION,
+        )
     result = None
+    stale = latest_any is not None and row is None
     if row is not None:
-        result = {
-            "profile_name": str(row["profile_name"]),
-            "start_date": str(row["start_date"]),
-            "end_date": str(row["end_date"]),
-            "summary": str(row["summary"]),
-            "stories": json.loads(str(row["stories_json"])),
-            "coverage": json.loads(str(row["coverage_json"])),
-            "cached": True,
-        }
-    emit({"type": "saved_area_digest", "result": result})
+        coverage = json.loads(str(row["coverage_json"]))
+        if str(coverage.get("incident_prompt_version") or "") != PROMPT_VERSION:
+            stale = True
+        else:
+            result = {
+                "profile_name": str(row["profile_name"]),
+                "start_date": str(row["start_date"]),
+                "end_date": str(row["end_date"]),
+                "summary": str(row["summary"]),
+                "stories": json.loads(str(row["stories_json"])),
+                "coverage": coverage,
+                "cached": True,
+            }
+    emit({"type": "saved_area_digest", "result": result, "stale": stale})
     return 0
 
 

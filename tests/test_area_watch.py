@@ -2,6 +2,7 @@ import json
 from datetime import date
 from pathlib import Path
 
+from broadcastify_cli.analysis import PROMPT_VERSION
 from broadcastify_cli.area_watch import AreaStoryAnalyzer, _public_quote
 from broadcastify_cli.storage import AnalysisStore
 
@@ -25,6 +26,17 @@ def test_public_quote_redacts_contextual_name_and_phone() -> None:
     assert changed is True
     assert "Summer Gibson" not in quote
     assert "309-555-0123" not in quote
+
+
+def test_public_quote_redacts_a_name_after_the_known_incident_location() -> None:
+    quote, changed = _public_quote(
+        "The subjects live at 2134 Wellington, Jordan Example.",
+        location="2134 Wellington",
+    )
+
+    assert changed is True
+    assert "Jordan Example" not in quote
+    assert quote.endswith("[private person].")
 
 
 def _transcript(path: Path, text: str) -> None:
@@ -91,7 +103,15 @@ def test_area_digest_clusters_cross_feed_reports_and_is_cached(tmp_path: Path) -
                     )
                 ],
                 "test-model",
-                "test-prompt",
+                PROMPT_VERSION,
+            )
+            store.save_daily_summary(
+                imported.day_id,
+                "Current evidence-gated day.",
+                [],
+                model="test-model",
+                prompt_version=PROMPT_VERSION,
+                transcript_sha256=imported.transcript_sha256,
             )
 
         # This routine singleton should remain below the newsroom-interest threshold.
@@ -119,7 +139,15 @@ def test_area_digest_clusters_cross_feed_reports_and_is_cached(tmp_path: Path) -
                 ),
             ],
             "test-model",
-            "test-prompt",
+            PROMPT_VERSION,
+        )
+        store.save_daily_summary(
+            int(day["id"]),
+            "Current evidence-gated day.",
+            [],
+            model="test-model",
+            prompt_version=PROMPT_VERSION,
+            transcript_sha256=str(day["transcript_sha256"]),
         )
         assert len(current) == 1
         store.save_area_profile(
@@ -178,7 +206,15 @@ def test_area_digest_does_not_merge_same_category_without_shared_place(tmp_path:
                     )
                 ],
                 "test-model",
-                "test-prompt",
+                PROMPT_VERSION,
+            )
+            store.save_daily_summary(
+                imported.day_id,
+                "Current evidence-gated day.",
+                [],
+                model="test-model",
+                prompt_version=PROMPT_VERSION,
+                transcript_sha256=imported.transcript_sha256,
             )
         store.save_area_profile(
             "Metro desk",
@@ -224,7 +260,15 @@ def test_area_digest_merges_near_duplicate_same_feed_reports(tmp_path: Path) -> 
                 ),
             ],
             "test-model",
-            "test-prompt",
+            PROMPT_VERSION,
+        )
+        store.save_daily_summary(
+            imported.day_id,
+            "Current evidence-gated day.",
+            [],
+            model="test-model",
+            prompt_version=PROMPT_VERSION,
+            transcript_sha256=imported.transcript_sha256,
         )
         store.save_area_profile(
             "Metro desk", ["75201"], [{"feed_id": "100", "name": "Police"}]
@@ -235,3 +279,47 @@ def test_area_digest_merges_near_duplicate_same_feed_reports(tmp_path: Path) -> 
 
     assert len(result["stories"]) == 1
     assert len(result["stories"][0]["incident_references"]) == 2
+
+
+def test_area_digest_excludes_stale_daily_claims(tmp_path: Path) -> None:
+    archive_date = date(2026, 7, 12)
+    writer = FakeWriter()
+    with AnalysisStore(tmp_path / "analysis.sqlite3") as store:
+        transcript = tmp_path / "100.json"
+        _transcript(transcript, "An older extracted event claim.")
+        imported = store.import_transcript("100", archive_date, transcript)
+        incident_ids = store.replace_incidents(
+            imported.day_id,
+            [
+                _incident(
+                    "old-claim",
+                    "shots_fired",
+                    "Older shots-fired claim",
+                    "An older analysis classified a shots-fired report.",
+                    "Main and First",
+                    5,
+                )
+            ],
+            "test-model",
+            "older-evidence-rules",
+        )
+        store.save_daily_summary(
+            imported.day_id,
+            "Older daily summary.",
+            incident_ids,
+            model="test-model",
+            prompt_version="older-evidence-rules",
+            transcript_sha256=imported.transcript_sha256,
+        )
+        store.save_area_profile(
+            "Metro desk", ["75201"], [{"feed_id": "100", "name": "Police"}]
+        )
+
+        result = AreaStoryAnalyzer(store, writer).summarize(
+            "Metro desk", archive_date, archive_date
+        )
+
+    assert result["stories"] == []
+    assert result["coverage"]["incident_count"] == 0
+    assert result["coverage"]["feed_days_available"] == 0
+    assert result["coverage"]["stale_feed_days"] == ["100:2026-07-12"]

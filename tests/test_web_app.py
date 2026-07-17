@@ -9,8 +9,14 @@ from pathlib import Path
 
 import pytest
 
+from broadcastify_cli.analysis import PROMPT_VERSION
 from broadcastify_cli.storage import AnalysisStore
-from broadcastify_cli.web_app import JobManager, WebRequestError, create_server
+from broadcastify_cli.web_app import (
+    JobManager,
+    WebRequestError,
+    _area_stories_for_web,
+    create_server,
+)
 
 
 def _request(
@@ -36,7 +42,12 @@ def _request(
     return response, response.read()
 
 
-def _retained_day(root: Path, database: Path) -> None:
+def _retained_day(
+    root: Path,
+    database: Path,
+    *,
+    prompt_version: str = PROMPT_VERSION,
+) -> None:
     day = root / "90001" / "20260712"
     transcript = day / "transcripts" / "combined_90001_20260712.json"
     audio = day / "combined_90001_20260712.mp3"
@@ -66,7 +77,7 @@ def _retained_day(root: Path, database: Path) -> None:
             "One retained dispatch call.",
             [],
             model="test",
-            prompt_version="test",
+            prompt_version=prompt_version,
             transcript_sha256=imported.transcript_sha256,
         )
         store.save_feed_catalog([{"feed_id": "90001", "name": "Example City Public Safety"}])
@@ -89,7 +100,7 @@ def test_loopback_web_app_serves_library_transcript_and_media(tmp_path: Path) ->
         assert cookie.startswith("radio_archive_session=")
         assert token_match is not None
         assert b'id="areaPublicSafetyOnly"' in body
-        assert b'/static/app.js?v=8' in body
+        assert b'/static/app.js?v=12' in body
         token = token_match.group(1).decode()
 
         response, body = _request(connection, "GET", "/api/bootstrap", cookie=cookie)
@@ -159,6 +170,44 @@ def test_loopback_web_app_serves_library_transcript_and_media(tmp_path: Path) ->
         thread.join(timeout=3)
 
 
+def test_loopback_web_app_hides_stale_daily_claims(tmp_path: Path) -> None:
+    output = tmp_path / "archives"
+    database = output / "broadcastify-analysis.sqlite3"
+    _retained_day(output, database, prompt_version="older-evidence-rules")
+    server = create_server(output, database, port=0, working_dir=Path.cwd())
+    server.quiet = True  # type: ignore[attr-defined]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)
+    try:
+        response, _body = _request(connection, "GET", "/")
+        cookie = response.getheader("Set-Cookie", "").split(";", 1)[0]
+
+        response, body = _request(connection, "GET", "/api/bootstrap", cookie=cookie)
+        bootstrap = json.loads(body)
+        assert response.status == 200
+        assert bootstrap["days"][0]["has_analysis"] is False
+        assert bootstrap["days"][0]["has_stale_analysis"] is True
+        assert bootstrap["days"][0]["primary_action"] == "continue_local"
+
+        response, body = _request(
+            connection,
+            "GET",
+            "/api/day?feed_id=90001&date=2026-07-12",
+            cookie=cookie,
+        )
+        detail = json.loads(body)
+        assert response.status == 200
+        assert detail["summary"] == ""
+        assert detail["incidents"] == []
+        assert detail["state"]["has_stale_analysis"] is True
+    finally:
+        connection.close()
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=3)
+
+
 def test_web_app_rejects_non_loopback_binding(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="loopback"):
         create_server(tmp_path, host="0.0.0.0", port=0)
@@ -212,6 +261,37 @@ def test_web_area_jobs_force_the_same_quota_boundary(tmp_path: Path) -> None:
     assert payload["job"]["combine"] is True
     assert payload["job"]["transcribe"] is True
     assert payload["job"]["output_dir"] == str(tmp_path)
+
+
+def test_web_area_story_packages_use_safe_media_urls_without_local_paths(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "archives"
+    clip = output / "90001" / "20260716" / "evidence-clips" / "I694.mp3"
+    clip.parent.mkdir(parents=True)
+    clip.write_bytes(b"clip")
+    stories = [
+        {
+            "story_id": "S1",
+            "incident_references": [
+                {
+                    "incident_id": 694,
+                    "clip_path": str(clip),
+                    "source_audio_path": str(output / "90001" / "day.mp3"),
+                    "quote": "A redacted report.",
+                }
+            ],
+        }
+    ]
+
+    rendered = _area_stories_for_web(output, stories)
+    reference = rendered[0]["incident_references"][0]
+
+    assert reference["media_url"] == "/media?path=90001/20260716/evidence-clips/I694.mp3"
+    assert reference["filename"] == "I694.mp3"
+    assert "clip_path" not in reference
+    assert "source_audio_path" not in reference
+    assert "clip_path" in stories[0]["incident_references"][0]
 
 
 def test_web_jobs_validate_area_zip_codes(tmp_path: Path) -> None:

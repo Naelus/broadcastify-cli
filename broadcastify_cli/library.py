@@ -7,6 +7,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any, Callable
 
+from .analysis import PROMPT_VERSION
 from .storage import AnalysisStore
 from .transcription import LocalTranscriber
 
@@ -107,7 +108,12 @@ def _state_for_day(
         transcript_has_diarization(transcript)
         or bool(stored and stored.get("has_diarization"))
     )
-    has_analysis = bool(stored and stored.get("has_summary"))
+    has_saved_analysis = bool(stored and stored.get("has_summary"))
+    analysis_prompt_version = (
+        str(stored.get("summary_prompt_version") or "") if stored else ""
+    )
+    has_analysis = has_saved_analysis and analysis_prompt_version == PROMPT_VERSION
+    has_stale_analysis = has_saved_analysis and not has_analysis
     incident_count = int(stored.get("incident_count") or 0) if stored else 0
     segment_count = int(stored.get("segment_count") or 0) if stored else 0
 
@@ -131,6 +137,14 @@ def _state_for_day(
         action = "continue_local"
         status = "Transcript ready"
         status_detail = "Transcript exists; diarization can run without repeating Whisper"
+    elif has_stale_analysis:
+        next_step = "Re-run evidence analysis"
+        action = "continue_local"
+        status = "Analysis update available"
+        status_detail = (
+            "Saved results predate the current evidence rules; retained audio, "
+            "transcript, and speaker labels will be reused"
+        )
     elif not has_analysis:
         next_step = "Extract and summarize incidents"
         action = "continue_local"
@@ -152,7 +166,11 @@ def _state_for_day(
         "Combined" if has_combined else "Not combined",
         f"Transcript {segment_count:,} segments" if has_transcript and segment_count else "Transcribed" if has_transcript else "Not transcribed",
         "Diarized" if has_diarization else "Not diarized",
-        f"Analyzed {incident_count} incidents" if has_analysis else "Not analyzed",
+        f"Analyzed {incident_count} incidents"
+        if has_analysis
+        else "Analysis update required"
+        if has_stale_analysis
+        else "Not analyzed",
     ]
     return {
         "feed_id": feed_id,
@@ -167,6 +185,9 @@ def _state_for_day(
         "has_transcript": has_transcript,
         "has_diarization": has_diarization,
         "has_analysis": has_analysis,
+        "has_stale_analysis": has_stale_analysis,
+        "analysis_prompt_version": analysis_prompt_version,
+        "expected_analysis_prompt_version": PROMPT_VERSION,
         "incident_count": incident_count,
         "segment_count": segment_count,
         "storage_bytes": _directory_size(day_directory),

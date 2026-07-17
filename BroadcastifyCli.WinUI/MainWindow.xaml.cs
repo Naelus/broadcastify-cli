@@ -20,9 +20,11 @@ namespace BroadcastifyCli.WinUI;
 public sealed partial class MainWindow : Window
 {
     private const string DefaultAnalysisModel = "ggml-org/gemma-4-12B-it-GGUF:Q4_0";
+    private const int NearestAreaFeedShortcutCount = 3;
     private readonly ObservableCollection<FeedSearchResult> _feeds = [];
     private readonly ObservableCollection<FeedSearchResult> _areaFeeds = [];
     private List<FeedSearchResult> _allAreaFeeds = [];
+    private readonly HashSet<string> _selectedAreaFeedIds = new(StringComparer.Ordinal);
     private readonly ObservableCollection<AreaProfile> _areaProfiles = [];
     private readonly ObservableCollection<AreaStory> _areaStories = [];
     private readonly ObservableCollection<AnalysisDay> _analysisDays = [];
@@ -42,6 +44,7 @@ public sealed partial class MainWindow : Window
     private int _librarySelectionVersion;
     private bool _broadcastifyRateLimitObserved;
     private bool _loadingSettings;
+    private bool _refreshingAreaFeedSelection;
     private AreaCoverage _currentAreaCoverage = new();
     private bool _diagnosticsLoaded;
     private bool _archiveAccessConfigured;
@@ -1043,6 +1046,8 @@ public sealed partial class MainWindow : Window
                 : "○  4. Speaker labels — waits for a transcript";
         LibraryAnalysisStageText.Text = day.HasAnalysis
             ? $"✓  5. Event analysis — {day.IncidentCount:N0} incidents saved"
+            : day.HasStaleAnalysis
+                ? "→  5. Event analysis — saved results need current evidence rules"
             : day.HasTranscript
                 ? "→  5. Event analysis — local classification and summary remain"
                 : "○  5. Event analysis — waits for a transcript";
@@ -1906,12 +1911,22 @@ public sealed partial class MainWindow : Window
         _incidentMediaPlayer.Source = null;
         _pendingIncidentClip = null;
         _currentReport = report;
-        PlaybackStatusText.Text = string.IsNullOrWhiteSpace(report.AudioPath)
-            ? "Combined audio is unavailable for this saved day."
-            : "Play or export an exact local evidence clip for an incident.";
-        SummaryText.Text = string.IsNullOrWhiteSpace(report.Summary)
-            ? "This day has not been summarized yet."
-            : report.Summary;
+        if (report.AnalysisUpdateRequired)
+        {
+            PlaybackStatusText.Text =
+                "Saved incident claims are hidden until the retained transcript is reanalyzed.";
+            SummaryText.Text =
+                "Saved analysis predates the current evidence rules. Choose Analyze to rebuild it from the retained transcript without downloading the archive again.";
+        }
+        else
+        {
+            PlaybackStatusText.Text = string.IsNullOrWhiteSpace(report.AudioPath)
+                ? "Combined audio is unavailable for this saved day."
+                : "Play or export an exact local evidence clip for an incident.";
+            SummaryText.Text = string.IsNullOrWhiteSpace(report.Summary)
+                ? "This day has not been summarized yet."
+                : report.Summary;
+        }
         ApplyIncidentFilter();
     }
 
@@ -2339,22 +2354,111 @@ public sealed partial class MainWindow : Window
     private void AreaPublicSafetyOnly_Changed(object sender, RoutedEventArgs e)
         => RefreshAreaFeedFilter();
 
-    private void RefreshAreaFeedFilter()
+    private HashSet<string> SelectedAreaFeedIds()
+        => _selectedAreaFeedIds.ToHashSet(StringComparer.Ordinal);
+
+    private List<FeedSearchResult> SelectedAreaFeedsInPriorityOrder()
+        => _allAreaFeeds
+            .Where(value => _selectedAreaFeedIds.Contains(value.FeedId))
+            .ToList();
+
+    private void RefreshAreaFeedFilter(IEnumerable<string>? preferredFeedIds = null)
     {
         if (AreaFeedResults is null)
         {
             return;
         }
+        if (preferredFeedIds is not null)
+        {
+            var availableFeedIds = _allAreaFeeds
+                .Select(value => value.FeedId)
+                .ToHashSet(StringComparer.Ordinal);
+            _selectedAreaFeedIds.Clear();
+            foreach (var feedId in preferredFeedIds.Where(availableFeedIds.Contains))
+            {
+                _selectedAreaFeedIds.Add(feedId);
+            }
+        }
         var visible = AreaPublicSafetyOnlyCheckBox?.IsChecked == true
             ? _allAreaFeeds.Where(value => string.Equals(
                 value.Genre, "Public Safety", StringComparison.OrdinalIgnoreCase))
             : _allAreaFeeds;
-        _areaFeeds.Clear();
-        foreach (var feed in visible)
+        _refreshingAreaFeedSelection = true;
+        try
         {
-            _areaFeeds.Add(feed);
+            _areaFeeds.Clear();
+            foreach (var feed in visible)
+            {
+                _areaFeeds.Add(feed);
+            }
+            AreaFeedResults.SelectedItems.Clear();
+            foreach (var feed in _areaFeeds.Where(
+                         value => _selectedAreaFeedIds.Contains(value.FeedId)))
+            {
+                AreaFeedResults.SelectedItems.Add(feed);
+            }
         }
-        AreaFeedResults.SelectAll();
+        finally
+        {
+            _refreshingAreaFeedSelection = false;
+        }
+        UpdateAreaFeedSelectionSummary();
+    }
+
+    private void AreaFeedResults_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_refreshingAreaFeedSelection)
+        {
+            return;
+        }
+        foreach (var feed in e.RemovedItems.OfType<FeedSearchResult>())
+        {
+            _selectedAreaFeedIds.Remove(feed.FeedId);
+        }
+        foreach (var feed in e.AddedItems.OfType<FeedSearchResult>())
+        {
+            _selectedAreaFeedIds.Add(feed.FeedId);
+        }
+        UpdateAreaFeedSelectionSummary();
+    }
+
+    private void SelectNearestAreaFeeds_Click(object sender, RoutedEventArgs e)
+    {
+        _selectedAreaFeedIds.Clear();
+        foreach (var feed in _areaFeeds.Take(NearestAreaFeedShortcutCount))
+        {
+            _selectedAreaFeedIds.Add(feed.FeedId);
+        }
+        RefreshAreaFeedFilter();
+    }
+
+    private void ClearAreaFeeds_Click(object sender, RoutedEventArgs e)
+    {
+        _selectedAreaFeedIds.Clear();
+        RefreshAreaFeedFilter();
+    }
+
+    private void UpdateAreaFeedSelectionSummary()
+    {
+        if (AreaFeedSelectionText is null || SaveAreaProfileButton is null)
+        {
+            return;
+        }
+        var selectedCount = _selectedAreaFeedIds.Count;
+        var visibleSelectedCount = AreaFeedResults?.SelectedItems.Count ?? 0;
+        var visibleCount = _areaFeeds.Count;
+        AreaFeedSelectionText.Text = selectedCount == 0
+            ? $"{visibleCount} nearby feed{(visibleCount == 1 ? "" : "s")} shown; none selected. Choose individually or start with the nearest {Math.Min(NearestAreaFeedShortcutCount, visibleCount)}."
+            : selectedCount == visibleSelectedCount
+                ? $"{selectedCount} of {visibleCount} shown feed{(visibleCount == 1 ? "" : "s")} selected. Archive work will keep this nearest-first order."
+                : $"{selectedCount} feeds selected; {visibleSelectedCount} of {visibleCount} currently shown. Hidden selections remain explicit until cleared.";
+        SaveAreaProfileButton.Content = selectedCount == 0
+            ? "Select feeds to save this area"
+            : $"Save {selectedCount} selected feed{(selectedCount == 1 ? "" : "s")} nearest first";
+        if (StatusText is not null && AreaPage?.Visibility == Visibility.Visible)
+        {
+            StatusText.Text = $"{selectedCount} selected · {visibleCount} nearby feed{(visibleCount == 1 ? "" : "s")} shown";
+        }
     }
 
     private async void DiscoverAreaFeeds_Click(object sender, RoutedEventArgs e)
@@ -2384,6 +2488,7 @@ public sealed partial class MainWindow : Window
 
         var radiusMiles = Math.Clamp(AreaRadiusBox.Value, 1, 100);
         var maxZipCodes = Math.Clamp(RequiredInteger(AreaMaxZipCodesBox.Value, 12), 1, 20);
+        var selectedFeedIds = SelectedAreaFeedIds();
         SetBusy(
             true,
             radiusMode
@@ -2401,13 +2506,15 @@ public sealed partial class MainWindow : Window
             _currentAreaCoverage = response.Coverage;
             var results = response.Results;
             _allAreaFeeds = results.ToList();
-            RefreshAreaFeedFilter();
+            RefreshAreaFeedFilter(selectedFeedIds);
             var visibleCount = _areaFeeds.Count;
+            var selectedCount = _selectedAreaFeedIds.Count;
             var searchedCount = _currentAreaCoverage.SearchedZipCodes.Count;
             AreaCoverageText.Text =
-                $"Showing {visibleCount} of {results.Count} unique feeds from {searchedCount} ZIP area{(searchedCount == 1 ? "" : "s")}, already ordered nearest first. Uncheck agencies this desk should not monitor.";
+                $"Showing {visibleCount} of {results.Count} unique feeds from {searchedCount} ZIP area{(searchedCount == 1 ? "" : "s")}, already ordered nearest first. {selectedCount} prior selection{(selectedCount == 1 ? "" : "s")} preserved.";
+            StatusText.Text = $"Found {results.Count} nearby feed{(results.Count == 1 ? "" : "s")} · {selectedCount} selected";
             AppendLog(
-                $"Area search returned {results.Count} unique feed(s); showing {visibleCount} in quota priority order.");
+                $"Area search returned {results.Count} unique feed(s); showing {visibleCount} in quota priority order with {selectedCount} selected.");
         }
         catch (Exception exception)
         {
@@ -2470,7 +2577,7 @@ public sealed partial class MainWindow : Window
             : Math.Min(20, profile.ZipCodes.Count);
         UpdateAreaCoverageControls();
         _allAreaFeeds = profile.Feeds.ToList();
-        RefreshAreaFeedFilter();
+        RefreshAreaFeedFilter(profile.Feeds.Select(value => value.FeedId));
         AreaCoverageText.Text =
             $"Loaded {profile.DisplayName} for {profile.CoverageArea}. Selected feeds are explicit and can be changed before saving.";
         await LoadLatestAreaQueueAsync(profile.Name);
@@ -2511,6 +2618,12 @@ public sealed partial class MainWindow : Window
             var report = await _worker.GetLatestAreaDigestAsync(profile.Name, cancellation.Token);
             if (report is null)
             {
+                _areaStories.Clear();
+                AreaSummaryText.Text = "";
+                AreaCoverageText.Text =
+                    "No current evidence-gated area brief is saved. Reanalyze retained feed-days, then find story leads again.";
+                AreaPlaybackStatusText.Text =
+                    "Older story claims are hidden until their source days use the current evidence rules.";
                 return;
             }
             if (DateTimeOffset.TryParse(report.StartDate, out var startDate))
@@ -2549,10 +2662,7 @@ public sealed partial class MainWindow : Window
         {
             return;
         }
-        var selected = AreaFeedResults.SelectedItems
-            .OfType<FeedSearchResult>()
-            .OrderBy(value => _areaFeeds.IndexOf(value))
-            .ToList();
+        var selected = SelectedAreaFeedsInPriorityOrder();
         if (selected.Count == 0)
         {
             await ShowMessageAsync("Feeds required", "Select at least one discovered feed.");
@@ -2621,10 +2731,7 @@ public sealed partial class MainWindow : Window
                 "Save the reviewed nearest-first feed selection before starting a resumable area queue.");
             return;
         }
-        var selected = AreaFeedResults.SelectedItems
-            .OfType<FeedSearchResult>()
-            .OrderBy(value => _areaFeeds.IndexOf(value))
-            .ToList();
+        var selected = profile.Feeds;
         if (selected.Count == 0)
         {
             await ShowMessageAsync("Feeds required", "Select the feeds to archive and analyze.");

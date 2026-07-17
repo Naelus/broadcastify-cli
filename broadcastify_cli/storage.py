@@ -514,7 +514,11 @@ class AnalysisStore:
                    (SELECT COUNT(*) FROM incidents i WHERE i.day_id=d.id)
                        AS incident_count,
                    EXISTS(SELECT 1 FROM daily_summaries ds WHERE ds.day_id=d.id)
-                       AS has_summary
+                       AS has_summary,
+                   (SELECT ds.prompt_version FROM daily_summaries ds WHERE ds.day_id=d.id)
+                       AS summary_prompt_version,
+                   (SELECT ds.model FROM daily_summaries ds WHERE ds.day_id=d.id)
+                       AS summary_model
             FROM feed_days d
             {where}
             ORDER BY d.archive_date DESC, d.feed_id
@@ -679,18 +683,30 @@ class AnalysisStore:
         return ids
 
     def get_incidents(
-        self, feed_id: str, start_date: date, end_date: date
+        self,
+        feed_id: str,
+        start_date: date,
+        end_date: date,
+        *,
+        prompt_version: str | None = None,
     ) -> list[dict[str, Any]]:
+        prompt_clause = " AND i.prompt_version=?" if prompt_version else ""
+        parameters: tuple[object, ...] = (
+            feed_id,
+            start_date.isoformat(),
+            end_date.isoformat(),
+            *((prompt_version,) if prompt_version else ()),
+        )
         rows = self.connection.execute(
-            """
+            f"""
             SELECT i.*, d.feed_id, d.archive_date, d.manifest_path,
                    d.audio_path, d.audio_sha256, d.transcript_sha256,
                    d.has_diarization
             FROM incidents i JOIN feed_days d ON d.id=i.day_id
-            WHERE d.feed_id=? AND d.archive_date BETWEEN ? AND ?
+            WHERE d.feed_id=? AND d.archive_date BETWEEN ? AND ?{prompt_clause}
             ORDER BY d.archive_date, i.start_seconds, i.priority DESC
             """,
-            (feed_id, start_date.isoformat(), end_date.isoformat()),
+            parameters,
         ).fetchall()
         values = []
         for row in rows:
@@ -742,22 +758,34 @@ class AnalysisStore:
         return values
 
     def get_incidents_for_feeds(
-        self, feed_ids: Sequence[str], start_date: date, end_date: date
+        self,
+        feed_ids: Sequence[str],
+        start_date: date,
+        end_date: date,
+        *,
+        prompt_version: str | None = None,
     ) -> list[dict[str, Any]]:
         normalized = list(dict.fromkeys(str(value) for value in feed_ids if str(value)))
         if not normalized:
             return []
         placeholders = ",".join("?" for _ in normalized)
+        prompt_clause = " AND i.prompt_version=?" if prompt_version else ""
+        parameters: tuple[object, ...] = (
+            *normalized,
+            start_date.isoformat(),
+            end_date.isoformat(),
+            *((prompt_version,) if prompt_version else ()),
+        )
         rows = self.connection.execute(
             f"""
             SELECT i.*, d.feed_id, d.archive_date, d.manifest_path,
                    d.audio_path, d.audio_sha256, d.transcript_sha256,
                    d.has_diarization
             FROM incidents i JOIN feed_days d ON d.id=i.day_id
-            WHERE d.feed_id IN ({placeholders}) AND d.archive_date BETWEEN ? AND ?
+            WHERE d.feed_id IN ({placeholders}) AND d.archive_date BETWEEN ? AND ?{prompt_clause}
             ORDER BY d.archive_date, i.start_seconds, i.priority DESC
             """,
-            (*normalized, start_date.isoformat(), end_date.isoformat()),
+            parameters,
         ).fetchall()
         values = []
         for row in rows:
@@ -1177,17 +1205,24 @@ class AnalysisStore:
             ),
         ).fetchone()
 
-    def get_latest_area_story_digest(self, profile_name: str) -> sqlite3.Row | None:
+    def get_latest_area_story_digest(
+        self, profile_name: str, prompt_version: str | None = None
+    ) -> sqlite3.Row | None:
+        prompt_clause = " AND d.prompt_version=?" if prompt_version else ""
+        parameters: tuple[object, ...] = (
+            profile_name.strip(),
+            *((prompt_version,) if prompt_version else ()),
+        )
         return self.connection.execute(
-            """
+            f"""
             SELECT d.*, p.name AS profile_name
             FROM area_story_digests d
             JOIN area_profiles p ON p.id=d.profile_id
-            WHERE p.name=?
+            WHERE p.name=?{prompt_clause}
             ORDER BY d.created_at DESC, d.id DESC
             LIMIT 1
             """,
-            (profile_name.strip(),),
+            parameters,
         ).fetchone()
 
     def save_area_story_digest(
@@ -1314,14 +1349,26 @@ class AnalysisStore:
         ).fetchone()
 
     def get_latest_weekly_summary(
-        self, feed_id: str, start_date: date, end_date: date
+        self,
+        feed_id: str,
+        start_date: date,
+        end_date: date,
+        prompt_version: str | None = None,
     ) -> sqlite3.Row | None:
+        prompt_clause = " AND prompt_version=?" if prompt_version else ""
+        parameters: tuple[object, ...] = (
+            feed_id,
+            start_date.isoformat(),
+            end_date.isoformat(),
+            *((prompt_version,) if prompt_version else ()),
+        )
         return self.connection.execute(
-            """
+            f"""
             SELECT * FROM weekly_summaries
             WHERE feed_id=? AND start_date=? AND end_date=?
+              {prompt_clause}
             """,
-            (feed_id, start_date.isoformat(), end_date.isoformat()),
+            parameters,
         ).fetchone()
 
     def save_weekly_summary(

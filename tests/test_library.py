@@ -2,6 +2,7 @@ import json
 from datetime import date
 from pathlib import Path
 
+from broadcastify_cli.analysis import PROMPT_VERSION
 from broadcastify_cli.library import (
     LocalProcessingRequest,
     prepare_local_day,
@@ -52,7 +53,7 @@ def test_library_discovers_partial_and_analyzed_days(tmp_path: Path) -> None:
             "One dispatch call was retained.",
             [],
             model="test",
-            prompt_version="test",
+            prompt_version=PROMPT_VERSION,
             transcript_sha256=imported.transcript_sha256,
         )
         store.save_feed_catalog(
@@ -73,6 +74,53 @@ def test_library_discovers_partial_and_analyzed_days(tmp_path: Path) -> None:
     assert incomplete["raw_file_count"] == 1
     assert incomplete["needs_network"] is True
     assert incomplete["primary_action"] == "resume_download"
+
+
+def test_library_marks_older_analysis_for_local_evidence_update(tmp_path: Path) -> None:
+    ready = _day(tmp_path, "90001", "2026-07-11")
+    audio = ready / "combined_90001_20260711.mp3"
+    transcript = ready / "transcripts" / "combined_90001_20260711.json"
+    audio.write_bytes(b"audio")
+    transcript.parent.mkdir()
+    transcript.write_text(
+        json.dumps(
+            {
+                "duration": 60.0,
+                "segments": [
+                    {
+                        "start": 1.0,
+                        "end": 2.0,
+                        "text": "Unit responding.",
+                        "speaker": "SPEAKER_00",
+                    }
+                ],
+                "diarization_requested": True,
+                "diarization_model": "pyannote/test",
+            }
+        ),
+        encoding="utf-8",
+    )
+    database = tmp_path / "analysis.sqlite3"
+    with AnalysisStore(database) as store:
+        imported = store.import_transcript("90001", date(2026, 7, 11), transcript, audio)
+        store.save_daily_summary(
+            imported.day_id,
+            "An older summary.",
+            [],
+            model="test",
+            prompt_version="older-evidence-rules",
+            transcript_sha256=imported.transcript_sha256,
+        )
+
+    state = scan_local_library(tmp_path, database)[0]
+
+    assert state["has_analysis"] is False
+    assert state["has_stale_analysis"] is True
+    assert state["status"] == "Analysis update available"
+    assert state["next_step"] == "Re-run evidence analysis"
+    assert state["primary_action"] == "continue_local"
+    assert state["can_open_review"] is False
+    assert state["needs_network"] is False
 
 
 def test_prepare_local_day_uses_diarization_only_for_existing_transcript(

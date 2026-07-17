@@ -298,10 +298,17 @@ def report_day(
             )
         incidents = [
             value
-            for value in store.get_incidents(feed_id, date_value, date_value)
+            for value in store.get_incidents(
+                feed_id,
+                date_value,
+                date_value,
+                prompt_version=PROMPT_VERSION,
+            )
             if int(value["priority"]) >= min_priority
         ]
         summary = store.get_latest_daily_summary(int(day["id"]))
+        if summary is not None and str(summary["prompt_version"]) != PROMPT_VERSION:
+            summary = None
     if json_output:
         console.print_json(json.dumps(incidents, ensure_ascii=False))
         return

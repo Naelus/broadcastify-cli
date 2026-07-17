@@ -33,6 +33,7 @@ const state = {
   transcript: { segments: [], offset: 0, total: 0, hasMore: false, query: "" },
   selectedFeed: null,
   areaDiscovered: [],
+  areaSelectedFeedIds: new Set(),
   areaCoverage: { mode: "radius", center_zip: "", radius_miles: 25, max_zip_codes: 12, searched_zip_codes: [] },
   areaBriefResult: null,
   areaStoriesExpanded: false,
@@ -190,6 +191,11 @@ function setBusyLabel(message) {
   byId("topbarStatus").innerHTML = `<span class="status-dot"></span>${html(message)}`;
 }
 
+function closeNavigation() {
+  document.querySelector(".sidebar").classList.remove("open");
+  byId("menuButton").setAttribute("aria-expanded", "false");
+}
+
 function setView(name) {
   document.querySelectorAll(".view").forEach((value) => value.classList.toggle("active", value.id === `view-${name}`));
   document.querySelectorAll(".nav-item[data-view]").forEach((value) => {
@@ -206,7 +212,7 @@ function setView(name) {
   };
   byId("topbarTitle").textContent = labels[name][0];
   byId("topbarSubtitle").textContent = labels[name][1];
-  document.querySelector(".sidebar").classList.remove("open");
+  closeNavigation();
   history.replaceState(null, "", `#${name}`);
   if (name === "settings") renderSetupReadiness();
 }
@@ -312,12 +318,17 @@ function syncReviewInputs(day) {
 }
 
 function stageCards(day) {
+  const analysisDetail = day.has_analysis
+    ? `${day.incident_count || 0} incidents`
+    : day.has_stale_analysis
+      ? "update required"
+      : "not ready";
   const stages = [
     [Boolean(day.raw_file_count || day.has_combined), "Archive audio", day.raw_file_count ? `${day.raw_file_count} source blocks` : "retained audio"],
     [day.has_combined, "Combine", day.has_combined ? "continuous timeline" : "not ready"],
     [day.has_transcript, "Transcription", day.has_transcript ? `${day.segment_count || 0} segments` : "not ready"],
     [day.has_diarization, "Speaker labels", day.has_diarization ? "attached" : "not ready"],
-    [day.has_analysis, "Event analysis", day.has_analysis ? `${day.incident_count || 0} incidents` : "not ready"],
+    [day.has_analysis, "Event analysis", analysisDetail],
   ];
   return stages.map(([done, label, detail], index) => `<div class="stage${done ? " done" : ""}"><span class="stage-index">${done ? "✓" : index + 1}</span><strong>${html(label)}</strong><small>${html(detail)}</small></div>`).join("");
 }
@@ -334,7 +345,7 @@ function renderDayDetail(activeTab = "incidents") {
     <div class="notice ${day.is_complete ? "success" : day.needs_network ? "warning" : "success"}"><strong>${html(day.status)}</strong><span>${html(day.status_detail)}. Next: ${html(day.next_step)}.</span></div>
     <div class="pipeline">${stageCards(day)}</div>
     ${detail.audio_url ? `<div class="audio-block"><audio id="dayAudio" controls preload="metadata" src="${html(detail.audio_url)}"></audio><small>Retained continuous recording. Incident play buttons jump to the cited time without contacting Broadcastify.</small></div>` : ""}
-    ${detail.summary ? `<div class="notice success"><strong>Daily brief</strong><span>${html(detail.summary)}</span></div>` : ""}
+    ${day.has_stale_analysis ? '<div class="notice warning"><strong>Analysis update required</strong><span>Older incident claims are hidden. Finish this day to apply the current evidence rules using the retained transcript—no archive download is needed.</span></div>' : detail.summary ? `<div class="notice success"><strong>Daily brief</strong><span>${html(detail.summary)}</span></div>` : ""}
     <div class="detail-tabs"><button class="detail-tab${activeTab === "incidents" ? " active" : ""}" data-detail-tab="incidents">Incidents (${detail.incidents.length})</button><button class="detail-tab${activeTab === "transcript" ? " active" : ""}" data-detail-tab="transcript">Transcript (${day.segment_count || state.transcript.total || 0})</button></div>
     <div class="detail-panel" id="detailPanel">${activeTab === "incidents" ? incidentMarkup(detail.incidents) : transcriptMarkup()}</div>`;
 }
@@ -645,15 +656,35 @@ function renderWeek(result) {
     return;
   }
   const missing = result.missing_dates || [];
+  const updates = result.analysis_update_dates || [];
   const notable = result.notable_incident_ids || [];
   const coverageText = missing.length ? ` · Missing ${missing.join(", ")}` : " · Complete date coverage";
-  byId("weekPanel").innerHTML = `<h3>${html(result.start_date)} through ${html(result.end_date)}</h3><p>${html(result.summary || "")}</p><div class="notice ${missing.length ? "warning" : "success"}"><strong>${Number(result.days_available) || 0}/7 days available</strong><span>${Number(result.incident_count) || 0} retained incidents${html(coverageText)}</span></div>${notable.length ? `<div class="citation-list">${notable.map((value) => `<div class="citation">Notable record I${html(value)}</div>`).join("")}</div>` : ""}`;
+  const updateText = updates.length ? ` · Reanalysis needed ${updates.join(", ")}` : "";
+  byId("weekPanel").innerHTML = `<h3>${html(result.start_date)} through ${html(result.end_date)}</h3><p>${html(result.summary || "")}</p><div class="notice ${missing.length || updates.length ? "warning" : "success"}"><strong>${Number(result.days_available) || 0}/7 days available</strong><span>${Number(result.incident_count) || 0} retained incidents${html(coverageText)}${html(updateText)}</span></div>${notable.length ? `<div class="citation-list">${notable.map((value) => `<div class="citation">Notable record I${html(value)}</div>`).join("")}</div>` : ""}`;
 }
 
 function renderAreaBrief(result) {
   state.areaBriefResult = result;
   state.areaStoriesExpanded = false;
   renderAreaBriefContent();
+}
+
+function areaEvidenceMarkup(story) {
+  const references = story.incident_references || [];
+  if (!references.length) return '<div class="notice warning"><strong>No source package</strong><span>This lead should not be published until retained evidence is available.</span></div>';
+  const clipCount = references.filter((reference) => reference.media_url).length;
+  const referenceMarkup = references.map((reference) => {
+    const provenance = reference.source_audio_sha256 ? ` · audio ${String(reference.source_audio_sha256).slice(0, 12)}…` : "";
+    const clipMarkup = reference.media_url
+      ? `<audio controls preload="none" src="${html(reference.media_url)}"></audio><a class="button secondary small" href="${html(reference.media_url)}" download="${html(reference.filename || `incident-I${reference.incident_id}.mp3`)}">Download exact clip</a>`
+      : '<span class="evidence-unavailable">Transcript evidence only; no retained clip is available.</span>';
+    return `<div class="evidence-reference">
+      <div class="evidence-source">${html(reference.feed_name || `Feed ${reference.feed_id}`)} · I${html(reference.incident_id)} · ${html(reference.archive_time || reference.archive_date || "")} · ${Math.round((Number(reference.confidence) || 0) * 100)}% extraction confidence${html(provenance)}</div>
+      ${reference.quote ? `<blockquote class="evidence-quote">“${html(reference.quote)}”</blockquote>` : '<div class="evidence-unavailable">No display quote is available.</div>'}
+      <div class="evidence-actions">${clipMarkup}</div>
+    </div>`;
+  }).join("");
+  return `<details class="evidence-package"><summary><span>Evidence package</span><small>${references.length} source record${references.length === 1 ? "" : "s"} · ${clipCount} exact clip${clipCount === 1 ? "" : "s"}</small></summary><div class="evidence-body">${referenceMarkup}</div></details>`;
 }
 
 function renderAreaBriefContent() {
@@ -664,8 +695,25 @@ function renderAreaBriefContent() {
   }
   const coverage = result.coverage || {};
   const stories = result.stories || [];
+  const staleFeedDays = coverage.stale_feed_days || [];
   const visible = state.areaStoriesExpanded ? stories : stories.slice(0, 10);
-  byId("areaBriefPanel").innerHTML = `<div class="notice ${Number(coverage.feeds_with_data) < Number(coverage.feed_count) ? "warning" : "success"}"><strong>${html(result.start_date)} through ${html(result.end_date)}</strong><span>${Number(coverage.feeds_with_data) || 0}/${Number(coverage.feed_count) || 0} feeds with data · ${Number(coverage.feed_days_available) || 0}/${Number(coverage.feed_days_expected) || 0} feed-days · ${Number(coverage.incident_count) || 0} incidents</span></div><p>${html(result.summary || "")}</p>${visible.map((story) => `<article class="story-card"><span class="story-score">${html(story.interest_level || "Lead")} · score ${Number(story.newsworthiness_score) || 0} · P${Number(story.priority) || 0}</span><h3>${html(story.headline || "Untitled story lead")}</h3><p>${html(story.summary || "")}</p><p><strong>Why interesting:</strong> ${html(story.why_interesting || "")}</p><div class="tag-list">${[...(story.neighborhood_tags || []), ...(story.topic_tags || [])].map((tag) => `<span class="tag">${html(words(tag))}</span>`).join("")}</div></article>`).join("") || '<div class="empty-compact">No story leads met the saved threshold.</div>'}${stories.length > 10 ? `<button class="button secondary wide" data-action="toggle-stories">${state.areaStoriesExpanded ? "Show highest-ranked only" : `Show all ${stories.length} story leads`}</button>` : ""}`;
+  const staleText = staleFeedDays.length ? ` · ${staleFeedDays.length} retained feed-days need reanalysis` : "";
+  const cards = visible.map((story) => `<article class="story-card">
+    <span class="story-score">${html(story.interest_level || "Lead")} · score ${Number(story.newsworthiness_score) || 0} · P${Number(story.priority) || 0}</span>
+    <h3>${html(story.headline || "Untitled story lead")}</h3>
+    <p>${html(story.summary || "")}</p>
+    <p><strong>Why interesting:</strong> ${html(story.why_interesting || "")}</p>
+    <div class="tag-list">${[...(story.neighborhood_tags || []), ...(story.topic_tags || [])].map((tag) => `<span class="tag">${html(words(tag))}</span>`).join("")}</div>
+    ${areaEvidenceMarkup(story)}
+  </article>`).join("");
+  byId("areaBriefPanel").innerHTML = `
+    <div class="notice ${Number(coverage.feeds_with_data) < Number(coverage.feed_count) || staleFeedDays.length ? "warning" : "success"}">
+      <strong>${html(result.start_date)} through ${html(result.end_date)}</strong>
+      <span>${Number(coverage.feeds_with_data) || 0}/${Number(coverage.feed_count) || 0} feeds with data · ${Number(coverage.feed_days_available) || 0}/${Number(coverage.feed_days_expected) || 0} feed-days · ${Number(coverage.incident_count) || 0} incidents${html(staleText)}</span>
+    </div>
+    <p>${html(result.summary || "")}</p>
+    ${cards || '<div class="empty-compact">No story leads met the saved threshold.</div>'}
+    ${stories.length > 10 ? `<button class="button secondary wide" data-action="toggle-stories">${state.areaStoriesExpanded ? "Show highest-ranked only" : `Show all ${stories.length} story leads`}</button>` : ""}`;
 }
 
 function renderFeedResults(results) {
@@ -678,7 +726,11 @@ function renderFeedResults(results) {
 }
 
 function renderAreaResults(results) {
-  if (results !== state.areaDiscovered) state.areaDiscovered = results;
+  if (results !== state.areaDiscovered) {
+    state.areaDiscovered = results;
+    const available = new Set(results.map((feed) => String(feed.feed_id)));
+    state.areaSelectedFeedIds = new Set([...state.areaSelectedFeedIds].filter((feedId) => available.has(feedId)));
+  }
   const visible = state.areaDiscovered
     .map((feed, index) => ({ feed, index }))
     .filter(({ feed }) => !byId("areaPublicSafetyOnly").checked || String(feed.genre || "").toLowerCase() === "public safety");
@@ -686,10 +738,12 @@ function renderAreaResults(results) {
     byId("areaSearchResults").innerHTML = '<div class="empty-compact">No public-safety feeds were found for those ZIPs.</div>';
     return;
   }
-  byId("areaSearchResults").innerHTML = `<div class="result-summary">Showing ${visible.length} of ${state.areaDiscovered.length} discovered feeds · no archive audio requested</div>` + visible.map(({ feed, index }) => {
+  const selectedCount = state.areaSelectedFeedIds.size;
+  byId("areaSearchResults").innerHTML = `<div class="result-summary"><span id="areaSelectionSummary">Showing ${visible.length} of ${state.areaDiscovered.length} discovered feeds · ${selectedCount} selected · no archive audio requested</span><span class="result-summary-actions"><button type="button" data-area-selection="nearest">Nearest 3</button><button type="button" data-area-selection="clear">Clear</button></span></div>` + visible.map(({ feed, index }) => {
     const priority = Number(feed.priority_rank) || index + 1;
     const distance = feed.distance_miles == null ? `ZIP ${html(feed.nearest_zip_code || "priority")}` : `about ${Number(feed.distance_miles).toFixed(1)} mi`;
-    return `<label class="feed-result"><input type="checkbox" data-area-feed-index="${index}" checked><div><h3>${html(feed.name || `Feed ${feed.feed_id}`)}</h3><p>Priority ${priority} · ${distance} · Feed ${html(feed.feed_id)}${feed.location ? ` · ${html(feed.location)}` : ""}</p></div><span class="listener-count">${Number(feed.listeners) || 0} listeners</span></label>`;
+    const checked = state.areaSelectedFeedIds.has(String(feed.feed_id)) ? " checked" : "";
+    return `<label class="feed-result"><input type="checkbox" data-area-feed-index="${index}"${checked}><div><h3>${html(feed.name || `Feed ${feed.feed_id}`)}</h3><p>Priority ${priority} · ${distance} · Feed ${html(feed.feed_id)}${feed.location ? ` · ${html(feed.location)}` : ""}</p></div><span class="listener-count">${Number(feed.listeners) || 0} listeners</span></label>`;
   }).join("");
 }
 
@@ -715,6 +769,7 @@ function applySelectedAreaProfile() {
   byId("areaMaxZipCodes").value = coverage.max_zip_codes || Math.min(20, profile.zip_codes?.length || 12);
   byId("areaProfileName").value = profile.name;
   state.areaDiscovered = profile.feeds || [];
+  state.areaSelectedFeedIds = new Set(state.areaDiscovered.map((feed) => String(feed.feed_id)));
   renderAreaResults(state.areaDiscovered);
   updateAreaCoverageControls();
 }
@@ -735,6 +790,9 @@ async function openSavedArea() {
   try {
     const payload = await api(`/api/saved-area-digest?profile_name=${encodeURIComponent(profileName)}`);
     renderAreaBrief(payload.result);
+    if (payload.stale) {
+      byId("areaBriefPanel").innerHTML = '<div class="notice warning"><strong>Saved brief needs an evidence update</strong><span>This brief predates the current incident evidence rules, so its story claims are hidden. Reanalyze retained days, then find story leads again.</span></div>';
+    }
   } catch (error) { toast(error.message, true); }
 }
 
@@ -810,7 +868,11 @@ document.addEventListener("click", async (event) => {
   }
 });
 
-byId("menuButton").addEventListener("click", () => document.querySelector(".sidebar").classList.toggle("open"));
+byId("menuButton").addEventListener("click", () => {
+  const open = document.querySelector(".sidebar").classList.toggle("open");
+  byId("menuButton").setAttribute("aria-expanded", String(open));
+});
+byId("sidebarScrim").addEventListener("click", closeNavigation);
 byId("refreshLibraryButton").addEventListener("click", () => refreshBootstrap());
 byId("librarySearch").addEventListener("input", renderLibrary);
 byId("libraryFilter").addEventListener("change", renderLibrary);
@@ -904,9 +966,35 @@ byId("areaSearchForm").addEventListener("submit", async (event) => {
     renderAreaResults(result.results || []);
   } });
 });
+byId("areaSearchResults").addEventListener("change", (event) => {
+  const checkbox = event.target.closest("[data-area-feed-index]");
+  if (!checkbox) return;
+  const feed = state.areaDiscovered[Number(checkbox.dataset.areaFeedIndex)];
+  if (!feed) return;
+  const feedId = String(feed.feed_id);
+  if (checkbox.checked) state.areaSelectedFeedIds.add(feedId);
+  else state.areaSelectedFeedIds.delete(feedId);
+  const summary = byId("areaSelectionSummary");
+  if (summary) summary.textContent = `Showing ${document.querySelectorAll("[data-area-feed-index]").length} of ${state.areaDiscovered.length} discovered feeds · ${state.areaSelectedFeedIds.size} selected · no archive audio requested`;
+});
+byId("areaSearchResults").addEventListener("click", (event) => {
+  const action = event.target.closest("[data-area-selection]")?.dataset.areaSelection;
+  if (!action) return;
+  if (action === "clear") {
+    state.areaSelectedFeedIds.clear();
+  } else if (action === "nearest") {
+    state.areaSelectedFeedIds.clear();
+    state.areaDiscovered
+      .filter((feed) => !byId("areaPublicSafetyOnly").checked || String(feed.genre || "").toLowerCase() === "public safety")
+      .slice(0, 3)
+      .forEach((feed) => state.areaSelectedFeedIds.add(String(feed.feed_id)));
+  }
+  renderAreaResults(state.areaDiscovered);
+});
 byId("saveAreaProfileForm").addEventListener("submit", async (event) => {
   event.preventDefault();
-  const feeds = [...document.querySelectorAll("[data-area-feed-index]:checked")].map((value) => state.areaDiscovered[Number(value.dataset.areaFeedIndex)]).filter(Boolean);
+  const feeds = state.areaDiscovered.filter((feed) => state.areaSelectedFeedIds.has(String(feed.feed_id)));
+  if (!feeds.length) return toast("Select at least one discovered feed.", true);
   const searched = state.areaCoverage?.searched_zip_codes || [];
   const zipCodes = searched.map((value) => value.zip_code).filter(Boolean).length
     ? searched.map((value) => value.zip_code).filter(Boolean)

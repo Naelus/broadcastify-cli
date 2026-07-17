@@ -27,6 +27,8 @@ from urllib.parse import parse_qs, quote, unquote, urlparse
 
 from dotenv import dotenv_values
 
+from .analysis import PROMPT_VERSION, WEEKLY_PROMPT_VERSION
+from .area_watch import AREA_PROMPT_VERSION
 from .library import scan_local_library
 from .storage import AnalysisStore
 
@@ -123,6 +125,43 @@ class JobRecord:
         }
 
 
+def _retained_media_url(
+    output_dir: str | Path,
+    path_value: str | Path | None,
+) -> str:
+    if not path_value:
+        return ""
+    root = Path(output_dir).resolve()
+    path = Path(path_value).resolve()
+    try:
+        relative = path.relative_to(root)
+    except ValueError:
+        return ""
+    return f"/media?path={quote(relative.as_posix(), safe='/')}"
+
+
+def _area_stories_for_web(
+    output_dir: str | Path,
+    stories: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Add safe clip URLs without exposing workstation paths to the browser."""
+
+    rendered: list[dict[str, Any]] = []
+    for raw_story in stories:
+        story = dict(raw_story)
+        references: list[dict[str, Any]] = []
+        for raw_reference in raw_story.get("incident_references", []):
+            reference = dict(raw_reference)
+            clip_path = str(reference.pop("clip_path", "") or "")
+            reference.pop("source_audio_path", None)
+            reference["media_url"] = _retained_media_url(output_dir, clip_path)
+            reference["filename"] = Path(clip_path).name if reference["media_url"] else ""
+            references.append(reference)
+        story["incident_references"] = references
+        rendered.append(story)
+    return rendered
+
+
 class JobManager:
     """Run the existing JSON worker behind a small, bounded local job API."""
 
@@ -203,6 +242,13 @@ class JobManager:
                 except ValueError:
                     clip["media_url"] = ""
                 event = {**event, "clip": clip}
+            if event.get("type") == "area_digest" and isinstance(event.get("result"), dict):
+                result = dict(event["result"])
+                result["stories"] = _area_stories_for_web(
+                    self.output_dir,
+                    list(result.get("stories") or []),
+                )
+                event = {**event, "result": result}
             event = {**event, "event_index": len(job.events), "received_at": utc_now()}
             job.events.append(event)
             if len(job.events) > MAX_EVENTS:
@@ -418,14 +464,7 @@ def _safe_media_path(state: WebAppState, relative_value: str) -> Path:
 
 
 def _media_url(state: WebAppState, path_value: str | Path | None) -> str:
-    if not path_value:
-        return ""
-    path = Path(path_value).resolve()
-    try:
-        relative = path.relative_to(state.output_dir)
-    except ValueError:
-        return ""
-    return f"/media?path={quote(relative.as_posix(), safe='/')}"
+    return _retained_media_url(state.output_dir, path_value)
 
 
 def _library_payload(state: WebAppState) -> dict[str, Any]:
@@ -482,11 +521,25 @@ def _day_payload(state: WebAppState, feed_id: str, archive_date: date) -> dict[s
         stored_day = store.get_day(feed_id, archive_date)
         if stored_day is not None:
             stored_summary = store.get_latest_daily_summary(int(stored_day["id"]))
-            summary = str(stored_summary["summary"]) if stored_summary else ""
-            incidents = [
-                _compact_incident(value)
-                for value in store.get_incidents(feed_id, archive_date, archive_date)
-            ]
+            analysis_current = bool(
+                stored_summary
+                and str(stored_summary["prompt_version"]) == PROMPT_VERSION
+            )
+            summary = (
+                str(stored_summary["summary"])
+                if stored_summary and analysis_current
+                else ""
+            )
+            if analysis_current:
+                incidents = [
+                    _compact_incident(value)
+                    for value in store.get_incidents(
+                        feed_id,
+                        archive_date,
+                        archive_date,
+                        prompt_version=PROMPT_VERSION,
+                    )
+                ]
     return {
         "state": day_state,
         "summary": summary,
@@ -676,18 +729,30 @@ def create_server(
                 if not profile_name:
                     raise WebRequestError(HTTPStatus.BAD_REQUEST, "An area profile name is required.")
                 with AnalysisStore(state.database_path) as store:
-                    row = store.get_latest_area_story_digest(profile_name)
+                    latest_any = store.get_latest_area_story_digest(profile_name)
+                    row = store.get_latest_area_story_digest(
+                        profile_name,
+                        prompt_version=AREA_PROMPT_VERSION,
+                    )
                 result = None
+                stale = latest_any is not None and row is None
                 if row is not None:
-                    result = {
-                        "profile_name": str(row["profile_name"]),
-                        "start_date": str(row["start_date"]),
-                        "end_date": str(row["end_date"]),
-                        "summary": str(row["summary"]),
-                        "stories": json.loads(str(row["stories_json"])),
-                        "coverage": json.loads(str(row["coverage_json"])),
-                    }
-                self._json(HTTPStatus.OK, {"result": result})
+                    coverage = json.loads(str(row["coverage_json"]))
+                    if str(coverage.get("incident_prompt_version") or "") != PROMPT_VERSION:
+                        stale = True
+                    else:
+                        result = {
+                            "profile_name": str(row["profile_name"]),
+                            "start_date": str(row["start_date"]),
+                            "end_date": str(row["end_date"]),
+                            "summary": str(row["summary"]),
+                            "stories": _area_stories_for_web(
+                                state.output_dir,
+                                json.loads(str(row["stories_json"])),
+                            ),
+                            "coverage": coverage,
+                        }
+                self._json(HTTPStatus.OK, {"result": result, "stale": stale})
                 return
             if parsed.path == "/api/saved-week":
                 feed_id = str((query.get("feed_id") or [""])[0]).strip()
@@ -696,7 +761,12 @@ def create_server(
                     raise WebRequestError(HTTPStatus.BAD_REQUEST, "A numeric feed ID is required.")
                 week_start = week_ending - timedelta(days=6)
                 with AnalysisStore(state.database_path) as store:
-                    row = store.get_latest_weekly_summary(feed_id, week_start, week_ending)
+                    row = store.get_latest_weekly_summary(
+                        feed_id,
+                        week_start,
+                        week_ending,
+                        prompt_version=WEEKLY_PROMPT_VERSION,
+                    )
                 result = None
                 if row is not None:
                     result = dict(row)

@@ -7,12 +7,17 @@ from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any, Callable, Protocol, Sequence
 
-from .analysis import archive_datetime_for_offset, format_archive_time, redact_public_text
+from .analysis import (
+    PROMPT_VERSION,
+    archive_datetime_for_offset,
+    format_archive_time,
+    redact_public_text,
+)
 from .audio import AudioClipError, extract_audio_clip
 from .storage import AnalysisStore
 
 
-AREA_PROMPT_VERSION = "police-radio-area-stories-v3-evidence"
+AREA_PROMPT_VERSION = "police-radio-area-stories-v5-evidence-v9"
 MIN_STORY_SCORE = 48
 MAX_STORIES = 30
 EVIDENCE_CONTEXT_BEFORE_SECONDS = 8.0
@@ -91,9 +96,26 @@ def _incident_time(value: dict[str, Any]) -> datetime:
     )
 
 
-def _public_quote(value: str) -> tuple[str, bool]:
+def _public_quote(value: str, *, location: str = "") -> tuple[str, bool]:
     """Redact obvious identifiers while preserving a locally auditable ASR quote."""
-    quote, changed = redact_public_text(value)
+
+    additional_private_names: list[str] = []
+    normalized_location = re.sub(r"\s+", " ", str(location or "")).strip()
+    if normalized_location:
+        # Dispatch lines often end with "<known incident location>, First Last".
+        # The location is useful public context; the trailing private name is not.
+        suffix = re.search(
+            rf"(?i:{re.escape(normalized_location)})\s*,\s*"
+            r"(?P<name>[A-Z][A-Za-z'’-]{1,30}\s+[A-Z][A-Za-z'’-]{1,30})"
+            r"\s*[.!?]?\s*$",
+            value,
+        )
+        if suffix:
+            additional_private_names.append(suffix.group("name"))
+    quote, changed = redact_public_text(
+        value,
+        additional_private_names=additional_private_names,
+    )
     if len(quote) > 800:
         quote = quote[:797].rstrip() + "…"
         changed = True
@@ -159,7 +181,10 @@ def _evidence_reference(
         if segment_index >= 0 and segment_index not in segment_indexes:
             segment_indexes.append(segment_index)
 
-    quote, quote_redacted = _public_quote(" ".join(quote_parts))
+    quote, quote_redacted = _public_quote(
+        " ".join(quote_parts),
+        location=str(value.get("location") or ""),
+    )
     source_audio = str(value.get("audio_path") or "")
     clip_path = ""
     if source_audio:
@@ -408,12 +433,28 @@ class AreaStoryAnalyzer:
             raise ValueError(f"Area profile not found: {profile_name}.")
         feed_ids = list(profile["feed_ids"])
         feed_names = {str(value["feed_id"]): str(value["name"]) for value in profile["feeds"]}
-        incidents = self.store.get_incidents_for_feeds(feed_ids, start_date, end_date)
-        days = [
+        incidents = self.store.get_incidents_for_feeds(
+            feed_ids,
+            start_date,
+            end_date,
+            prompt_version=PROMPT_VERSION,
+        )
+        retained_days = [
             value
             for value in self.store.list_days()
             if str(value["feed_id"]) in feed_ids
             and start_date.isoformat() <= str(value["archive_date"]) <= end_date.isoformat()
+        ]
+        stale_days = [
+            value
+            for value in retained_days
+            if bool(value.get("has_summary"))
+            and str(value.get("summary_prompt_version") or "") != PROMPT_VERSION
+        ]
+        days = [
+            value
+            for value in retained_days
+            if str(value.get("summary_prompt_version") or "") == PROMPT_VERSION
         ]
         available = {(str(value["feed_id"]), str(value["archive_date"])) for value in days}
         date_count = (end_date - start_date).days + 1
@@ -429,10 +470,17 @@ class AreaStoryAnalyzer:
             "feed_days_available": len(available),
             "feed_days_expected": len(expected),
             "missing_feed_days": missing,
+            "retained_feed_days": len(retained_days),
+            "stale_feed_days": [
+                f"{value['feed_id']}:{value['archive_date']}" for value in stale_days
+            ],
             "incident_count": len(incidents),
+            "incident_prompt_version": PROMPT_VERSION,
+            "area_prompt_version": self.prompt_version,
         }
 
         source = {
+            "incident_prompt_version": PROMPT_VERSION,
             "profile_updated_at": profile["updated_at"],
             "feed_ids": feed_ids,
             "days": [
