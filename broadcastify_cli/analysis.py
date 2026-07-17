@@ -687,6 +687,14 @@ class IncidentAnalyzer:
             raw.get("title") or raw_event_type.replace("_", " ").title()
         ).strip()[:160]
         summary = str(raw.get("summary") or title).strip()[:1_000]
+        if not re.search(
+            r"\b(?:report(?:ed|s|ing)?|dispatch|caller|radio traffic|possible|possibly|"
+            r"may|might|appears?|requested|advised|stated)\b",
+            summary,
+            flags=re.I,
+        ):
+            lowered = summary[:1].lower() + summary[1:] if summary else title.lower()
+            summary = f"Radio traffic reported: {lowered}"[:1_000]
         event_type = normalize_event_type(
             " ".join(
                 [title, summary]
@@ -703,6 +711,12 @@ class IncidentAnalyzer:
             confidence = max(0.0, min(1.0, float(raw.get("confidence", 0.5))))
         except (TypeError, ValueError):
             confidence = 0.5
+        # Model confidence describes extraction from noisy ASR, never certainty
+        # that the reported event occurred. Coarse single-segment evidence is
+        # useful but cannot justify the same score as repeated precise excerpts.
+        confidence = min(confidence, 0.95)
+        if len(evidence_segments) == 1 and end_seconds - start_seconds >= 20.0:
+            confidence = min(confidence, 0.90)
         evidence = [
             {
                 "segment_index": int(segment["segment_index"]),

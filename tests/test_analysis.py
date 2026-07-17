@@ -293,6 +293,35 @@ def test_clear_evidence_corrects_category_and_routine_priority() -> None:
     assert normalize_priority("theft_shoplifting", 5) == 3
 
 
+def test_incident_normalization_marks_radio_report_and_caps_coarse_asr_confidence() -> None:
+    incident = IncidentAnalyzer._validate_incident(  # noqa: SLF001
+        {
+            "event_type": "person_with_weapon",
+            "title": "Chase with gun",
+            "summary": "A person was chased with a gun.",
+            "location": "Unknown",
+            "priority": 4,
+            "confidence": 1.0,
+            "evidence_segment_ids": [0],
+            "attributes": {},
+        },
+        {0},
+        {
+            0: {
+                "segment_index": 0,
+                "start_seconds": 0.0,
+                "end_seconds": 30.0,
+                "speaker": "SPEAKER_00",
+                "text": "I was chased with someone with a gun.",
+            }
+        },
+    )
+
+    assert incident is not None
+    assert incident["summary"] == "Radio traffic reported: a person was chased with a gun."
+    assert incident["confidence"] == 0.90
+
+
 def test_manifest_maps_audio_offset_to_archive_wall_time(tmp_path: Path) -> None:
     manifest = tmp_path / "combined.manifest.json"
     manifest.write_text(
