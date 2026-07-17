@@ -39,6 +39,17 @@ def test_public_quote_redacts_a_name_after_the_known_incident_location() -> None
     assert quote.endswith("[private person].")
 
 
+def test_public_quote_redacts_a_location_adjacent_name_before_dispatch_clause() -> None:
+    quote, changed = _public_quote(
+        "9805, Jordan Example, for an intrusion alarm on the garage door.",
+        location="9805",
+    )
+
+    assert changed is True
+    assert "Jordan Example" not in quote
+    assert quote == "9805, [private person], for an intrusion alarm on the garage door."
+
+
 def _transcript(path: Path, text: str) -> None:
     path.write_text(
         json.dumps(

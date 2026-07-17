@@ -17,7 +17,7 @@ from .audio import AudioClipError, extract_audio_clip
 from .storage import AnalysisStore
 
 
-AREA_PROMPT_VERSION = "police-radio-area-stories-v5-evidence-v9"
+AREA_PROMPT_VERSION = "police-radio-area-stories-v6-evidence-v9"
 MIN_STORY_SCORE = 48
 MAX_STORIES = 30
 EVIDENCE_CONTEXT_BEFORE_SECONDS = 8.0
@@ -102,16 +102,21 @@ def _public_quote(value: str, *, location: str = "") -> tuple[str, bool]:
     additional_private_names: list[str] = []
     normalized_location = re.sub(r"\s+", " ", str(location or "")).strip()
     if normalized_location:
-        # Dispatch lines often end with "<known incident location>, First Last".
-        # The location is useful public context; the trailing private name is not.
-        suffix = re.search(
-            rf"(?i:{re.escape(normalized_location)})\s*,\s*"
-            r"(?P<name>[A-Z][A-Za-z'’-]{1,30}\s+[A-Z][A-Za-z'’-]{1,30})"
-            r"\s*[.!?]?\s*$",
-            value,
-        )
-        if suffix:
-            additional_private_names.append(suffix.group("name"))
+        # Dispatch lines often use "<known incident location>, First Last"
+        # either at the end or before a clause such as ", for an alarm".
+        # The location is useful public context; the private name is not.
+        location_prefix = rf"(?i:{re.escape(normalized_location)})\s*,\s*"
+        name = r"(?P<name>[A-Z][A-Za-z'’-]{1,30}\s+[A-Z][A-Za-z'’-]{1,30})"
+        for pattern in (
+            location_prefix + name + r"\s*[.!?]?\s*$",
+            location_prefix
+            + name
+            + r"(?=\s*,\s*(?i:for|regarding|about|who|caller|complainant|"
+            r"subject|resident|owner|reports?|reporting|alarm|welfare)\b)",
+        ):
+            match = re.search(pattern, value)
+            if match:
+                additional_private_names.append(match.group("name"))
     quote, changed = redact_public_text(
         value,
         additional_private_names=additional_private_names,
