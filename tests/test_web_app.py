@@ -101,7 +101,13 @@ def test_loopback_web_app_serves_library_transcript_and_media(tmp_path: Path) ->
         assert token_match is not None
         assert b'id="areaPublicSafetyOnly"' in body
         assert b'/static/app.js?v=13' in body
+        assert b'/static/favicon.svg' in body
         token = token_match.group(1).decode()
+
+        response, body = _request(connection, "GET", "/static/favicon.svg")
+        assert response.status == 200
+        assert response.getheader("Content-Type") == "image/svg+xml"
+        assert b"<svg" in body
 
         response, body = _request(connection, "GET", "/static/app.js?v=13")
         assert response.status == 200
