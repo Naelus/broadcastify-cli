@@ -27,7 +27,7 @@ Status labels: **Validated**, **Implemented**, **Foundation**, or **Planned**.
 | pyannote diarization CUDA/CPU | Validated | Existing transcripts can gain labels without rerunning ASR; FFmpeg-to-memory-mapped waveform input bypasses broken TorchCodec file loaders. |
 | Non-CUDA diarization acceleration | Planned | Current portable behavior is CPU fallback. |
 | SQLite transcript/incident/summary store | Validated | Includes FTS, embeddings, Q&A history, area profiles/queues, cached briefs, and prompt-version invalidation so retained media survives an evidence-rule upgrade while older claims are withheld. |
-| Evidence/identity safety gates | Validated | Exact-citation claim/concept checks, bounded evidence gaps, deterministic category/priority correction, contained-evidence dedupe, outcome-language rejection, and public identifier/name redaction; original ASR remains available for internal audit. |
+| Evidence/identity safety gates | Validated | Exact-citation claim/concept checks, bounded evidence gaps, deterministic category/priority correction, contained-evidence dedupe, outcome-language rejection, and public identifier/name redaction including location-adjacent dispatch forms; original ASR remains available for internal audit. |
 | Quantized llama.cpp analysis | Validated | Gemma GGUF selector or explicit local path; retained removed quants are reused from older Hub snapshots, clean installs use the current `Q4_0` default, and real AMD Vulkan generation offloaded all tested model layers. |
 | Provider API/Codex harness | Validated | Native Settings and CLI support local Gemma, OpenAI Responses, compatible `/v1` endpoints, and ephemeral saved-login Codex with explicit transcript-sharing consent and readiness checks. |
 

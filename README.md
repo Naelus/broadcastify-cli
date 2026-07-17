@@ -343,7 +343,7 @@ Feed `90001` was exercised end-to-end over July 11–12, 2026 through the authen
 - a live six-ZIP Example City/East Example City/Example City discovery followed Example City and Example County county directories, found the current feed 90001 plus nearby police/fire feeds, and persisted a six-feed `Regional coverage desk` profile
 - the first regional brief correctly reported only 2 of 24 feed-days and 1 of 6 feeds with data, ranked 30 newsroom leads from 87 saved incidents, and retained feed/incident references without treating the five missing feeds as quiet
 - ranked area leads now retain transcript quotes and generate independently playable, hashed context clips from the matching combined-audio timestamps
-- a current evidence-v9 refresh acquired all 97 July 15–16 blocks with no 429, retained 64 supported incidents, and generated a 2/2-feed-day Example City brief with 25 ranked leads, 25 references, and 25 exact clips
+- a current evidence-v9 refresh acquired all 97 July 15–16 blocks with no 429, retained 64 supported incidents, and generated a 2/2-feed-day Example City brief with 25 ranked leads, 25 references, and 25 exact clips; the current v6 area contract exposes six redacted public quotes while keeping source ASR internal
 - the seven-day brief ending July 16 uses those two current days, flags July 11–12 for local analysis updates, names July 10 and July 13–14 as missing, and never treats unavailable coverage as quiet
 
 The five speaker labels are acoustic clusters rather than identified officers or radio unit IDs. Radio compression, overlapping traffic, dispatch consoles, and repeated users of the same equipment can split or merge real speakers, so they should be used as conversation structure rather than identity evidence.

@@ -47,6 +47,10 @@ Use this file for reproducible defects and concrete blockers, not the general ro
 
 ## Recently fixed
 
+### F-020 — An inline location-adjacent alarm quote could retain a private name
+
+The v5 sanitizer covered strong radio-name contexts and a name ending a quote after the known incident location, but a retained alarm line placed the same two-token form between the location and `for an intrusion alarm`. The sanitizer now recognizes the bounded `location, First Last, for/regarding…` dispatch form, the area contract advances to `police-radio-area-stories-v6-evidence-v9`, and older digests stay hidden until regenerated. The local-only July 15–16 rebuild retains 25 leads/references/clips, increases public redactions from five to six, and leaves the original transcript internal. All **149 tests** pass.
+
 ### F-019 — The packaged Web UI emitted a missing-favicon console error
 
 The full-model Linux browser pass found a single SEVERE console entry: Chromium's automatic `/favicon.ico` request returned 404. The Web package now declares and serves a code-native SVG favicon with the correct `image/svg+xml` content type, and the HTTP regression test covers both the document link and static response. Exact commit `historical-validation` passes all **148 tests** locally and on TrueNAS/Linux; the repeated desktop/mobile matrix has zero failures and no warning/error/severe browser entries.

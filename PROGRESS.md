@@ -4,6 +4,15 @@ This is the dated verification and delivery log for `GOAL.md`. Keep forward-look
 
 ## July 17, 2026
 
+### Example City inline quote-safety follow-up
+
+- Reopened the current July 15–16 `Example City 12345` digest read-only and audited all 25 public evidence packages before reporting them. The audit found one additional two-token private-person name between a known numeric location and a continuing dispatch clause; the original source ASR remains internal.
+- Extended location-adjacent quote redaction to cover both sentence-final names and the inline `location, First Last, for/regarding…` form. Added a focused regression with synthetic names and advanced the aggregate contract to `police-radio-area-stories-v6-evidence-v9`, so older saved briefs are hidden until rebuilt.
+- Regenerated the brief from the 64 retained current-version incidents with cached local Gemma in **20.3 seconds**. No feed lookup, authentication, archive listing, media download, combination, ASR, diarization, or incident reanalysis ran.
+- The persisted result remains **2/2 feed-days, 25 ranked leads, 25 source references, and 25 playable exact clips**. Public quote redaction increased from five to six; the newly matched package retains its location, alarm context, timestamp, diarization provenance, and clip while replacing only the private name.
+- Refreshed the already-running native Area Watch through its named accessibility control, selected the affected alarm lead, and verified the v6 `[private person]` quote, current coverage line, exact source record, and responsive window in the rendered UI. The app remains open on that corrected evidence package.
+- Focused area-watch suite: **7 passed**. Complete suite: **149 passed in 6.39 seconds**. Python compilation, Git whitespace, and a changed-file credential-pattern scan passed.
+
 ### Linux full-model visual and accessibility validation
 
 - Cloned exact pushed commit `historical-validation4db7f9aa038a0911490f7f366d7af0907` into a fresh user-owned TrueNAS/Linux source tree and kept the earlier full-model fixture intact. The clean checkout passed the complete suite: **148 passed in 2.84 seconds**.
