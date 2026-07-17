@@ -12,6 +12,7 @@ from broadcastify_cli.linux_service import (
     install_service,
     load_service_config,
     render_systemd_unit,
+    show_service_logs,
 )
 from broadcastify_cli.web_app import build_parser as build_web_parser
 
@@ -47,6 +48,14 @@ def test_systemd_unit_is_loopback_supervised_and_contains_no_secrets(
     )
     assert f"WorkingDirectory={escaped_working_directory}" in unit
     assert 'WorkingDirectory="' not in unit
+    escaped_log_path = (
+        str(tmp_path.resolve() / "Radio Archive 100%" / "radio-archive-web.log")
+        .replace("\\", "\\\\")
+        .replace("%", "%%")
+    )
+    assert f"StandardOutput=append:{escaped_log_path}" in unit
+    assert f"StandardError=append:{escaped_log_path}" in unit
+    assert "StandardOutput=journal" not in unit
     assert "0.0.0.0" not in unit
     assert "BROADCASTIFY_PASSWORD" not in unit
     assert "HUGGINGFACE_TOKEN" not in unit
@@ -140,6 +149,31 @@ def test_service_config_rejects_non_loopback_host(tmp_path: Path) -> None:
     }
     with pytest.raises(ValueError, match="127.0.0.1"):
         LinuxServiceConfig.from_mapping(value)
+
+
+def test_service_logs_show_only_the_requested_tail(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config = _config(tmp_path)
+    log_path = Path(config.working_dir) / "radio-archive-web.log"
+    log_path.parent.mkdir(parents=True)
+    log_path.write_text("one\ntwo\nthree\n", encoding="utf-8")
+
+    result = show_service_logs(config, lines=2)
+
+    assert result == 0
+    assert capsys.readouterr().out == "two\nthree\n"
+
+
+def test_service_logs_report_when_the_service_has_not_started(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    result = show_service_logs(_config(tmp_path), lines=20)
+
+    assert result == 1
+    assert "Start the service first" in capsys.readouterr().err
 
 
 def test_service_config_preserves_virtual_environment_python_path(

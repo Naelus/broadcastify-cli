@@ -6,12 +6,12 @@ This is the dated verification and delivery log for `GOAL.md`. Keep forward-look
 
 ### Managed Linux Web launcher
 
-- Added the wheel-packaged `radio-archive-service` entry point with install, start, restart, status, stop, journal, unit-preview, and conservative uninstall commands for a per-user systemd service.
+- Added the wheel-packaged `radio-archive-service` entry point with install, start, restart, status, stop, owner-log, unit-preview, and conservative uninstall commands for a per-user systemd service.
 - The service persists only absolute non-secret paths and a fixed `127.0.0.1` endpoint in owner-only JSON. It references a separate mode-0600, comment-only `.env` template; credential values never enter the unit or service JSON.
 - The generated unit supervises failure restart, uses SIGINT plus a bounded stop window, an owner-only umask, `NoNewPrivileges`, private temporary storage, and read-only system paths without blocking outbound website/model traffic. The shared Web cookie/action-token/origin and archive quota boundaries remain unchanged.
 - The default working/archive layout follows XDG user directories. Custom absolute paths can adopt an existing library, uninstall preserves all data/private settings, and the recorded venv Python path is not dereferenced to a dependency-free system interpreter.
 - Refactored `broadcastify-web` into a reusable runner and added explicit `--working-dir`, keeping service cookies, `.env` discovery, and worker children on the selected private path.
-- Eight new service/parser tests, including a real selected-venv import check, bring the complete local suite to **127 passed in 5.97 seconds**. The corrected `broadcastify_cli-0.4.0-py3-none-any.whl` is 182,360 bytes with SHA-256 `36c48a10f37fb2ff9c7e13c283bafe6e219b5b54f05572fda3043fc81f5a1524`; archive inspection confirms the service module, all Web static assets, and the `radio-archive-service` console entry. Exact real-Linux unit/wheel validation remains open under B-005 and will be recorded separately.
+- Ten service/parser tests, including a real selected-venv import check and bounded owner-log viewing, bring the complete local suite to **129 passed in 5.89 seconds**. The current `broadcastify_cli-0.4.0-py3-none-any.whl` is 182,581 bytes with SHA-256 `5234c6bd92321772902b93bc974ab3778f0055928a12401d45376efcc66f1cda`; archive inspection confirms the service module, all Web static assets, and the `radio-archive-service` console entry. Exact real-Linux unit/wheel validation remains open under B-005 and will be recorded separately.
 
 ### Local Library and UI
 

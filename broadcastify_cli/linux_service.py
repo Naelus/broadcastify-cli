@@ -11,6 +11,7 @@ import sys
 import tempfile
 import time
 import webbrowser
+from collections import deque
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Sequence
@@ -182,6 +183,7 @@ def _systemd_path_value(value: str) -> str:
 def render_systemd_unit(config: LinuxServiceConfig, config_path: Path) -> str:
     config.validate()
     config_path = config_path.expanduser().resolve()
+    log_path = Path(config.working_dir) / "radio-archive-web.log"
     command = " ".join(
         [
             _systemd_quote(config.python_executable, command_argument=True),
@@ -212,8 +214,8 @@ def render_systemd_unit(config: LinuxServiceConfig, config_path: Path) -> str:
             "NoNewPrivileges=yes",
             "PrivateTmp=yes",
             "ProtectSystem=full",
-            "StandardOutput=journal",
-            "StandardError=journal",
+            f"StandardOutput=append:{_systemd_path_value(str(log_path))}",
+            f"StandardError=append:{_systemd_path_value(str(log_path))}",
             "SyslogIdentifier=radio-archive-web",
             "",
             "[Install]",
@@ -404,6 +406,35 @@ def wait_until_ready(config: LinuxServiceConfig, timeout: float = 15.0) -> bool:
     return health_ready(config)
 
 
+def show_service_logs(
+    config: LinuxServiceConfig,
+    *,
+    lines: int = 100,
+    follow: bool = False,
+) -> int:
+    bounded_lines = max(1, min(int(lines), 10_000))
+    log_path = Path(config.working_dir) / "radio-archive-web.log"
+    if not log_path.is_file():
+        print(
+            f"No owner log exists yet at {log_path}. Start the service first.",
+            file=sys.stderr,
+        )
+        return 1
+    if follow:
+        executable = shutil.which("tail")
+        if not executable:
+            raise RuntimeError("The `tail` command required for --follow was not found.")
+        return subprocess.run(
+            [executable, "--lines", str(bounded_lines), "--follow=name", str(log_path)],
+            check=False,
+        ).returncode
+    with log_path.open("r", encoding="utf-8", errors="replace") as handle:
+        retained = deque(handle, maxlen=bounded_lines)
+    for line in retained:
+        print(line, end="" if line.endswith("\n") else "\n")
+    return 0
+
+
 def _require_linux_systemd() -> None:
     if platform.system() != "Linux":
         raise RuntimeError(
@@ -552,26 +583,20 @@ def _main(arguments: argparse.Namespace) -> int:
 
     if arguments.command == "stop":
         _systemctl("stop", SERVICE_NAME)
-        print("Stopped the local Web service. Retained jobs remain resumable.")
+        print(
+            "Stopped the local Web service. Retained jobs remain resumable; "
+            "because the unit stays enabled, it starts again with the next "
+            "user-manager login."
+        )
         return 0
-    if arguments.command == "logs":
-        lines = max(1, min(int(arguments.lines), 10_000))
-        executable = shutil.which("journalctl")
-        if not executable:
-            raise RuntimeError("journalctl was not found.")
-        command = [
-            executable,
-            "--user-unit",
-            SERVICE_NAME,
-            "--lines",
-            str(lines),
-            "--no-pager",
-        ]
-        if arguments.follow:
-            command.append("--follow")
-        return subprocess.run(command, check=False).returncode
 
     config = load_service_config(config_path)
+    if arguments.command == "logs":
+        return show_service_logs(
+            config,
+            lines=arguments.lines,
+            follow=arguments.follow,
+        )
     if arguments.command in {"start", "restart"}:
         return _start_and_wait(
             config,

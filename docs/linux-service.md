@@ -51,6 +51,8 @@ The defaults are:
   `~/.local/share/radio-archive/archives`
 - private environment file:
   `~/.config/radio-archive/.env`
+- owner-readable service log:
+  `~/.local/share/radio-archive/radio-archive-web.log`
 - non-secret service configuration:
   `~/.config/radio-archive/service.json`
 - systemd user unit:
@@ -94,7 +96,10 @@ radio-archive-service uninstall
 
 `status` requires both an active systemd unit and the app's exact minimal
 loopback `/health` response. Start/restart waits up to 15 seconds for that
-response before directing the user to the journal.
+response before directing the user to `radio-archive-service logs`. The unit
+appends stdout and stderr to the owner-only working-directory log so diagnostics
+remain available on appliances where an ordinary user cannot read the system
+journal.
 
 The unit restarts on process failure, sends SIGINT for bounded cleanup, keeps a
 private temporary directory, uses an owner-only umask, prevents privilege
