@@ -156,6 +156,94 @@ def test_daily_summary_schema_avoids_large_llama_grammar_repeat() -> None:
     assert len(summary.split()) == 250
 
 
+def test_daily_summary_retries_unknown_ids_and_unsupported_counts() -> None:
+    calls = 0
+    progress: list[str] = []
+
+    class GroundingClient:
+        model = "test"
+
+        def chat_json(self, **_kwargs: object) -> dict[str, object]:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                return {
+                    "summary": (
+                        "Four priority events were identified: I1 was reported, "
+                        "and I2 through I4 require follow-up."
+                    )
+                }
+            return {"summary": "I1 was a reported weapon-related call with no confirmed outcome."}
+
+    analyzer = IncidentAnalyzer(  # type: ignore[arg-type]
+        None,
+        GroundingClient(),
+        progress=progress.append,
+    )
+    summary = analyzer._summarize_day(  # noqa: SLF001
+        "90001",
+        date(2026, 7, 16),
+        [
+            {
+                "id": 1,
+                "archive_date": "2026-07-16",
+                "manifest_path": "",
+                "start_seconds": 10.0,
+                "priority": 4,
+                "confidence": 0.8,
+                "event_type": "person_with_weapon",
+                "title": "Reported person with weapon",
+                "summary": "Dispatch audio may describe a person with a weapon.",
+                "location": "not stated",
+            }
+        ],
+    )
+
+    assert calls == 2
+    assert summary.startswith("I1")
+    assert "I2" not in summary
+    assert any("unsupported daily activity" in value for value in progress)
+
+
+def test_daily_summary_uses_deterministic_fallback_after_two_ungrounded_briefs() -> None:
+    progress: list[str] = []
+
+    class UngroundedClient:
+        model = "test"
+
+        def chat_json(self, **_kwargs: object) -> dict[str, object]:
+            return {"summary": "I99 was one of five priority incidents."}
+
+    analyzer = IncidentAnalyzer(  # type: ignore[arg-type]
+        None,
+        UngroundedClient(),
+        progress=progress.append,
+    )
+    summary = analyzer._summarize_day(  # noqa: SLF001
+        "90001",
+        date(2026, 7, 16),
+        [
+            {
+                "id": 1,
+                "archive_date": "2026-07-16",
+                "manifest_path": "",
+                "start_seconds": 10.0,
+                "priority": 4,
+                "confidence": 0.8,
+                "event_type": "person_with_weapon",
+                "title": "Reported person with weapon",
+                "summary": "Dispatch audio may describe a person with a weapon.",
+                "location": "not stated",
+            }
+        ],
+    )
+
+    assert "I99" not in summary
+    assert "Reported person with weapon" in summary
+    assert summary.endswith("not confirmed outcomes.")
+    assert any("deterministic evidence summary" in value for value in progress)
+
+
 def test_llama_lookup_tolerates_inaccessible_winget_cache(
     monkeypatch, tmp_path: Path
 ) -> None:

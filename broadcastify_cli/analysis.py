@@ -811,6 +811,7 @@ class IncidentAnalyzer:
             f"Feed {feed_id}, date {archive_date.isoformat()} incidents:\n"
             + "\n".join(incident_lines)
         )
+        allowed_incident_ids = {int(value["id"]) for value in incidents}
         for attempt in range(2):
             result = self.client.chat_json(
                 system=system,
@@ -821,15 +822,86 @@ class IncidentAnalyzer:
             )
             summary = str(result.get("summary") or "").strip()
             if summary:
+                grounding_issues = self._daily_summary_grounding_issues(
+                    summary,
+                    allowed_incident_ids,
+                    len(incidents),
+                )
+                if grounding_issues:
+                    self.progress(
+                        "The local model cited unsupported daily activity; "
+                        "retrying with the exact retained incident set."
+                    )
+                    allowed = ", ".join(
+                        f"I{incident_id}" for incident_id in sorted(allowed_incident_ids)
+                    )
+                    user += (
+                        "\n\nThe previous response was rejected because "
+                        + "; ".join(grounding_issues)
+                        + f". There are exactly {len(incidents)} supplied incidents: {allowed}. "
+                        "Do not add incident IDs, events, calls, or counts that are not present."
+                    )
+                    continue
                 words = summary.split()
                 if len(words) > 250:
                     summary = " ".join(words[:250])
                 return summary
             user += "\n\nThe previous response was empty. Return a non-empty activity brief."
         self.progress(
-            "The local model returned an empty brief twice; using the deterministic evidence summary."
+            "The local model returned an empty or unsupported brief twice; "
+            "using the deterministic evidence summary."
         )
         return self._fallback_summary(incidents)
+
+    @staticmethod
+    def _daily_summary_grounding_issues(
+        summary: str,
+        allowed_incident_ids: set[int],
+        incident_count: int,
+    ) -> list[str]:
+        issues: list[str] = []
+        referenced_ids = {
+            int(value) for value in re.findall(r"\bI(\d+)\b", summary, flags=re.I)
+        }
+        unsupported_ids = sorted(referenced_ids - allowed_incident_ids)
+        if unsupported_ids:
+            issues.append(
+                "unknown incident IDs "
+                + ", ".join(f"I{incident_id}" for incident_id in unsupported_ids)
+            )
+
+        count_words = {
+            "zero": 0,
+            "one": 1,
+            "two": 2,
+            "three": 3,
+            "four": 4,
+            "five": 5,
+            "six": 6,
+            "seven": 7,
+            "eight": 8,
+            "nine": 9,
+            "ten": 10,
+        }
+        count_pattern = re.compile(
+            r"\b(?P<count>\d+|zero|one|two|three|four|five|six|seven|eight|nine|ten)\s+"
+            r"(?:priority\s+)?(?:events?|incidents?|calls?|reports?)\b",
+            flags=re.I,
+        )
+        unsupported_counts: set[int] = set()
+        for match in count_pattern.finditer(summary):
+            raw = match.group("count").lower()
+            count = int(raw) if raw.isdigit() else count_words[raw]
+            if count > incident_count:
+                unsupported_counts.add(count)
+        if unsupported_counts:
+            issues.append(
+                "activity counts above the supplied total "
+                + str(incident_count)
+                + ": "
+                + ", ".join(str(value) for value in sorted(unsupported_counts))
+            )
+        return issues
 
     @staticmethod
     def _fallback_summary(incidents: Sequence[dict[str, Any]]) -> str:
