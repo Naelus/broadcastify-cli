@@ -11,13 +11,13 @@ Use this file for reproducible defects and concrete blockers, not the general ro
 - **Severity:** High for Windows ML parity; no impact on the default CUDA path.
 - **Observed:** Stable 0.13.1 and installed 0.14.1 builder/runtime combinations fail with current DML Whisper Tiny exports. A non-shared cache is rejected by automatic graph capture; forcing the shared cache reaches `DmlFusedNode_0_0` with `invalid unordered_map<K, T> key`.
 - **Second provider:** Windows ML successfully acquired and registered certified `NvTensorRTRTXExecutionProvider` 1.8.24.0, but TensorRT RTX reported 36 unsupported Whisper attention nodes. The retained 22.7-second clip decoded correctly through partition/fallback in 15.895 seconds, versus 0.622 seconds on the CPU model after warm caches, so it is deliberately not selected as an accelerated profile.
-- **Control:** The corrected C# helper, Python streaming adapter, and CPU FP32 model perform a real decode and identify the backend as CPU. Broken or partially-falling-back models must pass the selected-engine self-test and are not advertised as acceleration.
+- **Control:** The corrected C# helper, Python streaming adapter, and CPU FP32 model perform a real decode and identify the backend as CPU. Exact source `historical-validation` also completes a protected 60-second CPU-pyannote → Windows ML CPU → local-Gemma Web job in 32 seconds and resumes idempotently. Broken or partially-falling-back models must pass the selected-engine self-test and are not advertised as acceleration.
 - **Next:** Retest a published compatible graph or upstream runtime/provider fix. Prefer the validated CUDA, OpenVINO, or whisper.cpp Vulkan paths for Windows GPU ASR in the meantime.
 
 ### B-003 — Portable diarization is CPU-only outside CUDA
 
 - **Severity:** Medium; functionally correct but potentially slow.
-- **Observed:** pyannote's supported app path is PyTorch CUDA or CPU. Vulkan/OpenVINO/Windows ML profiles deliberately fall back to CPU. A 60-second retained combined-audio slice completed on the Windows CPU in 19.203 seconds; the exact Linux AMD joined run also completed CPU diarization before Vulkan ASR/analysis.
+- **Observed:** pyannote's supported app path is PyTorch CUDA or CPU. Vulkan/OpenVINO/Windows ML profiles deliberately fall back to CPU. A 60-second retained combined-audio slice completed on the Windows CPU in 19.203 seconds; exact joined Vulkan, OpenVINO, and Windows ML jobs all completed CPU diarization before their selected ASR/analysis stages.
 - **Next:** Benchmark CPU on full-day audio and investigate supported Intel XPU/other backends without weakening the reliable fallback.
 
 ### B-004 — Full CPU-only end-to-end timing is not recorded

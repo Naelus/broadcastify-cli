@@ -16,6 +16,16 @@ This is the dated verification and delivery log for `GOAL.md`. Keep forward-look
 - Prepared 12 independently playable, SHA-256-hashed evidence clips for the strongest or most reviewable reports. Each clip is 21.64–30.22 seconds and is cut from the selected evidence segment, including a long-span group-assault card whose correct clip begins at the later cited traffic rather than the incident envelope start.
 - Full Python suite: **142 passed in 5.10 seconds**; focused analysis/area-watch suite: **28 passed**; Python compile and Git whitespace checks passed. No Example City reanalysis or clip export made an archive request.
 
+### Joined OpenVINO and Windows ML parity
+
+- Resumed the prepared OpenVINO fixture that had already persisted CPU diarization and OpenVINO CPU ASR before the removed Gemma quant stopped analysis. Current code resolved the exact 7.4 GB legacy quant from the older local Hub snapshot, reused every completed audio stage, and reached analysis, one passage/embedding, one daily summary, and `Ready to review` in a ten-second protected loopback Web job.
+- Repeated OpenVINO from a fresh fixture containing only the retained 60-second MP3, exact clean source commit `historical-validation`, cached models, and Hugging Face/Transformers offline flags. The single protected Web job completed all **18** lifecycle events in **31 seconds**: CPU pyannote, OpenVINO CPU ASR, local Gemma, embedding persistence, deterministic zero-incident summary, and `local_complete`.
+- The OpenVINO transcript records **14 ASR segments, 278 word records, 21 speaker turns, two anonymous clusters, one unmatched ASR segment**, `OpenVINO CPU`, requested device `CPU`, and no fallback. SQLite records one feed-day, 14 transcript segments, one passage/embedding, and one daily summary.
+- A fresh Windows ML fixture initially stopped before processing because the headless harness did not inherit the packaged desktop's helper location. Supplying the documented `WINDOWS_ML_HELPER_PATH` to the exact Release helper completed the protected job without changing the runtime/model.
+- The fresh Windows ML job completed all **22** lifecycle events in **32 seconds**: CPU pyannote, three persistent-helper ASR chunks, cached Gemma, embedding persistence, deterministic zero-incident summary, and `local_complete`. Metadata records `Windows ML / ONNX Runtime GenAI CPU`, **3 ASR segments, 21 turns, two clusters, zero unlabeled segments**, 28-second chunks, and no fallback.
+- An immediate Windows ML resume completed in about one second of job time. It reported `operation=reused`, skipped ASR/diarization, reused the saved zero-incident analysis, indexed zero new passages, and remained 100% / `Ready to review`.
+- Both Windows runs used offline model flags and retained local inputs; neither made a Broadcastify archive request. This closes functional joined-stage parity for OpenVINO and Windows ML. B-001 remains open for genuine Windows ML GPU acceleration, B-003 for portable diarization acceleration, and B-004 for full-day CPU timing.
+
 ## July 16, 2026
 
 ### Local Gemma model continuity

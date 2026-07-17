@@ -9,8 +9,8 @@ The application chooses a backend independently for transcription, diarization, 
 | Windows CUDA | faster-whisper CUDA | pyannote CUDA | llama.cpp auto-offload | Full retained-day reference workflow on RTX 3090 |
 | CPU | faster-whisper INT8 or whisper.cpp CPU | pyannote CPU | llama.cpp CPU | Protected 30-second all-CPU Web job validated; full-day benchmark remains open |
 | AMD Vulkan/Linux | whisper.cpp Vulkan | pyannote CPU fallback | llama.cpp Vulkan | Protected end-to-end Web job validated on Radeon 890M; full-day CPU diarization timing remains open |
-| OpenVINO | OpenVINO GenAI AUTO/CPU | pyannote CPU fallback | llama.cpp SYCL/auto/CPU | Real CPU ASR and rejected-accelerator-to-CPU fallback |
-| Windows ML | ONNX Runtime GenAI CPU | pyannote CPU fallback | llama.cpp auto/CPU | Real ASR decode; DML fails and TensorRT RTX currently partitions/falls back slower than CPU |
+| OpenVINO | OpenVINO GenAI AUTO/CPU | pyannote CPU fallback | llama.cpp SYCL/auto/CPU | Exact `historical-validation` protected 60-second job completed all stages in 31 seconds; rejected-accelerator-to-CPU fallback also validated |
+| Windows ML | ONNX Runtime GenAI CPU | pyannote CPU fallback | llama.cpp auto/CPU | Exact `historical-validation` protected 60-second job completed all stages in 32 seconds and resumed idempotently; DML/TensorRT acceleration remains gated |
 | macOS | whisper.cpp Metal or CPU | pyannote CPU | llama.cpp Metal or CPU | Explicit profile and detection exist; a real Mac install and model run remain required |
 
 The official [whisper.cpp project](https://github.com/ggml-org/whisper.cpp) documents Windows, Linux, macOS, Docker, quantized models, Metal, OpenVINO, and `GGML_VULKAN=1`. The official [llama.cpp project](https://github.com/ggml-org/llama.cpp) documents native packages/releases, Vulkan and SYCL backends, quantized GGUF models, and its OpenAI-compatible server.
@@ -75,6 +75,8 @@ The adapter uses INT8 model mappings for Tiny through Large V3 Turbo, including 
 
 If the requested accelerator rejects model compilation, initialization retries on CPU. If it compiles but rejects generation, that first chunk retries on CPU and subsequent chunks stay there. The transcript and self-test result record the actual backend, requested device, fallback stage, and bounded first-line reason. The Windows reference machine exposes an AMD CPU and NVIDIA GPU through OpenVINO rather than Intel hardware: AUTO decoded the retained 22.7-second clip in 1.093 seconds; explicit GPU failed at generation and the CPU fallback returned the identical 23 words/3 segments in 1.828 seconds. This validates the contract and fallback, not Intel GPU/NPU performance.
 
+Exact clean source commit `historical-validation` also completed a fresh protected loopback Web job from only a retained 60-second MP3, with Hugging Face/Transformers offline flags. CPU pyannote produced 21 turns across two anonymous clusters; OpenVINO CPU produced 14 segments/278 word records; local Gemma retained zero unsupported incidents; one passage, embedding, and daily summary persisted; and the library reached 100% `Ready to review` in 31 seconds. One ASR segment did not overlap a diarization turn, so portable diarization is functional rather than perfect.
+
 ## Windows ML and ONNX Runtime GenAI
 
 The validated Windows ML functional path is a CPU FP32 Whisper model. The helper uses `Config`, passes a one-item prompt batch to the multimodal processor, keeps one model process alive across archive chunks, and reports the provider parsed from `genai_config.json`. A scalar prompt call is not equivalent for Whisper and caused the formerly misleading `DivideByZeroException`.
@@ -93,6 +95,8 @@ $helper = ".\BroadcastifyCli.WindowsML\bin\Release\net10.0-windows10.0.26100.0\w
 `--ensure-winml` is never invoked by ordinary transcription. It can take minutes and changes system-wide provider package state, so it belongs behind an explicit setup/test action. Registration uses ONNX Runtime GenAI's native provider environment; registering only the general C# `OrtEnv` does not make a provider visible to GenAI.
 
 GPU acceleration remains gated. ONNX Runtime GenAI 0.13.1 and 0.14.1 DML Whisper Tiny exports fail at graph capture or a fused DML node. The certified Windows ML TensorRT RTX 1.8.24.0 provider registered and decoded, but rejected 36 attention nodes and took 15.895 seconds for the retained 22.7-second clip while the CPU model took 0.622 seconds after warm caches. A successful decode with provider partitioning is therefore not reported as a validated speed path.
+
+Exact clean source commit `historical-validation` completed the matching fresh protected 60-second Web job after the headless harness received the documented `WINDOWS_ML_HELPER_PATH`. CPU pyannote produced 21 turns/two clusters with zero unlabeled ASR segments; the persistent helper decoded three 28-second-bounded chunks into three segments; local Gemma, one passage/embedding, and a daily summary persisted; and the library reached 100% `Ready to review` in 32 seconds. An immediate resume reported `operation=reused`, repeated no audio/model stage, indexed zero new passages, and completed in about one second of job time.
 
 ## macOS and Apple Metal
 
