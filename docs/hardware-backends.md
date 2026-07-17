@@ -71,6 +71,8 @@ If the requested accelerator rejects model compilation, initialization retries o
 
 The validated Windows ML functional path is a CPU FP32 Whisper model. The helper uses `Config`, passes a one-item prompt batch to the multimodal processor, keeps one model process alive across archive chunks, and reports the provider parsed from `genai_config.json`. A scalar prompt call is not equivalent for Whisper and caused the formerly misleading `DivideByZeroException`.
 
+Verified Windows publish folders carry the helper and its complete runtime under `windowsml/`. The desktop sets `WINDOWS_ML_HELPER_PATH` for Python children only when the user has not explicitly configured another helper. The published helper's FP32 CPU model self-test completed in 0.589 seconds and reported `Windows ML / ONNX Runtime GenAI CPU`; see [windows-publish.md](windows-publish.md).
+
 Provider management is explicit and follows Microsoft's [Windows ML execution-provider catalog](https://learn.microsoft.com/en-us/windows/ai/new-windows-ml/initialize-execution-providers). These commands respectively inspect, activate only an already-installed provider, or allow Windows to download and register compatible certified providers:
 
 ```powershell

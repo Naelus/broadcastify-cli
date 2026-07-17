@@ -43,7 +43,8 @@ Status labels: **Validated**, **Implemented**, **Foundation**, or **Planned**.
 | Regional story leads | Validated | Evidence-backed assignment leads, not confirmations. |
 | Cross-platform browser UI | Validated | Windows retained-data QA plus a real immutable Linux host passed loopback security, static profile UX, byte-range media, and worker lifecycle; macOS remains untested. |
 | Explicit ASR runtime self-test | Validated | Native and Web Settings decode local synthetic audio using the selected model/device, with managed downloads only after a user starts the test. |
-| Installer/model manager/onboarding | Planned | Required before non-developer distribution. |
+| Verified Windows publish | Validated | Runnable WinUI resources plus namespaced Windows ML runtime; normal/private credential isolation is verified. |
+| Installer/model manager/onboarding | Foundation | Publish is fixed, but supervised Python/dependency setup and model/cache management remain before non-developer distribution. |
 
 ## Hardware profile matrix
 

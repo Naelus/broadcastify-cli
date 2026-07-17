@@ -16,19 +16,78 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <BundleLocalEnv Condition="'$(BundleLocalEnv)' == ''">false</BundleLocalEnv>
+    <WindowsMLProjectPath>$(MSBuildProjectDirectory)\..\BroadcastifyCli.WindowsML\BroadcastifyCli.WindowsML.csproj</WindowsMLProjectPath>
+    <WindowsMLTargetFramework>net10.0-windows10.0.26100.0</WindowsMLTargetFramework>
+    <WindowsMLBuildOutput>$(MSBuildProjectDirectory)\..\BroadcastifyCli.WindowsML\bin\$(Configuration)\$(WindowsMLTargetFramework)\$(RuntimeIdentifier)\</WindowsMLBuildOutput>
   </PropertyGroup>
 
   <ItemGroup>
     <Manifest Include="$(ApplicationManifest)" />
-    <ProjectReference Include="..\BroadcastifyCli.WindowsML\BroadcastifyCli.WindowsML.csproj"
-                      ReferenceOutputAssembly="false" />
     <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.7705" />
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.8.260317003" />
   </ItemGroup>
 
+  <!--
+    The Windows ML helper is a sibling executable, not a runtime assembly
+    reference. A ProjectReference made dotnet publish merge both self-contained
+    Windows App SDK graphs and fail with NETSDK1152 duplicate MsixContent paths.
+    Build it independently and keep its complete runtime in a namespaced folder.
+  -->
+  <Target Name="BuildWindowsMLHelper"
+          BeforeTargets="Build"
+          Condition="'$(DesignTimeBuild)' != 'true'">
+    <MSBuild Projects="$(WindowsMLProjectPath)"
+             Targets="Build"
+             Properties="Configuration=$(Configuration);RuntimeIdentifier=$(RuntimeIdentifier)"
+             RemoveProperties="OutDir;OutputPath;PublishDir;BundleLocalEnv;Platform" />
+  </Target>
+
+  <Target Name="CollectWindowsMLHelperFiles"
+          DependsOnTargets="BuildWindowsMLHelper"
+          Condition="'$(DesignTimeBuild)' != 'true'">
+    <ItemGroup>
+      <_WindowsMLHelperFiles Include="$(WindowsMLBuildOutput)**\*"
+                             Exclude="$(WindowsMLBuildOutput)publish\**\*" />
+    </ItemGroup>
+    <Error Condition="!Exists('$(WindowsMLBuildOutput)BroadcastifyCli.WindowsML.exe')"
+           Text="Windows ML helper build did not produce $(WindowsMLBuildOutput)BroadcastifyCli.WindowsML.exe" />
+  </Target>
+
+  <Target Name="CopyWindowsMLHelperForBuild"
+          AfterTargets="Build"
+          DependsOnTargets="CollectWindowsMLHelperFiles"
+          Condition="'$(DesignTimeBuild)' != 'true' and '$(_IsPublishing)' != 'true'">
+    <Copy SourceFiles="@(_WindowsMLHelperFiles)"
+          DestinationFiles="@(_WindowsMLHelperFiles->'$(OutDir)windowsml\%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
+  </Target>
+
+  <Target Name="CopyWindowsMLHelperForPublish"
+          AfterTargets="Publish"
+          DependsOnTargets="CollectWindowsMLHelperFiles"
+          Condition="'$(DesignTimeBuild)' != 'true'">
+    <Copy SourceFiles="@(_WindowsMLHelperFiles)"
+          DestinationFiles="@(_WindowsMLHelperFiles->'$(PublishDir)windowsml\%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
+  </Target>
+
+  <!-- dotnet publish omits unpackaged WinUI's compiled XAML/PRI files. -->
+  <Target Name="CopyWinUIResourcesForPublish"
+          AfterTargets="Publish"
+          Condition="'$(DesignTimeBuild)' != 'true'">
+    <ItemGroup>
+      <_WinUIPublishResources Include="$(TargetDir)*.xbf;$(TargetDir)$(AssemblyName).pri" />
+    </ItemGroup>
+    <Error Condition="!Exists('$(TargetDir)App.xbf') or !Exists('$(TargetDir)MainWindow.xbf') or !Exists('$(TargetDir)$(AssemblyName).pri')"
+           Text="The unpackaged WinUI build did not produce its compiled XAML/PRI resources under $(TargetDir)." />
+    <Copy SourceFiles="@(_WinUIPublishResources)"
+          DestinationFiles="@(_WinUIPublishResources->'$(PublishDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
+  </Target>
+
   <Target Name="BundlePrivateEnvironmentForBuild"
           AfterTargets="Build"
-          Condition="'$(BundleLocalEnv)' == 'true' and Exists('$(MSBuildProjectDirectory)\..\.env')">
+          Condition="'$(_IsPublishing)' != 'true' and '$(BundleLocalEnv)' == 'true' and Exists('$(MSBuildProjectDirectory)\..\.env')">
     <Copy SourceFiles="$(MSBuildProjectDirectory)\..\.env"
           DestinationFiles="$(OutDir)broadcastify-desktop.env" />
     <Message Text="Bundled the ignored local .env into this private build output."
@@ -37,7 +96,7 @@
 
   <Target Name="RemovePrivateEnvironmentFromNormalBuild"
           AfterTargets="Build"
-          Condition="'$(BundleLocalEnv)' != 'true' and Exists('$(OutDir)broadcastify-desktop.env')">
+          Condition="'$(_IsPublishing)' != 'true' and '$(BundleLocalEnv)' != 'true' and Exists('$(OutDir)broadcastify-desktop.env')">
     <Delete Files="$(OutDir)broadcastify-desktop.env" />
   </Target>
 

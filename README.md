@@ -51,7 +51,7 @@ Broadcastify's published terms restrict commercial use and AI/ML use without a l
 
 WinUI 3 is Microsoft's current native Windows UI framework and is the right default for this new Windows-only app. It supplies the current Fluent controls, Mica, modern DPI behavior, and Windows App SDK lifecycle while keeping the UI native. WinForms would be simpler for a disposable utility, but it is an older UI stack and was not the best long-term choice here.
 
-The Windows UI is an unpackaged x64 desktop app, so development does not require MSIX. Packaging and an installer can be added after the archive and model workflows are fully validated. The browser companion is the portability surface; WinUI remains the polished Windows reference instead of forcing Windows users into a generic wrapper.
+The Windows UI is an unpackaged x64 desktop app, so development does not require MSIX. A verified `dotnet publish` folder is available, including the namespaced Windows ML helper, but it still uses the repository Python environment and is not yet a standalone installer. The browser companion is the portability surface; WinUI remains the polished Windows reference instead of forcing Windows users into a generic wrapper.
 
 ## Local model stack
 
@@ -138,18 +138,22 @@ dotnet build .\BroadcastifyCli.WinUI\BroadcastifyCli.WinUI.csproj -c Release
 & ".\BroadcastifyCli.WinUI\bin\Release\net10.0-windows10.0.26100.0\win-x64\Broadcastify Desktop.exe"
 ```
 
-For a private personal build that carries the ignored repository `.env` alongside the executable, opt in explicitly:
+Create and verify a normal publish folder:
 
 ```powershell
-$privateOutput = "$PWD\BroadcastifyCli.WinUI\bin\Private\win-x64\"
-dotnet build .\BroadcastifyCli.WinUI\BroadcastifyCli.WinUI.csproj `
-  -c Release `
-  -p:OutDir=$privateOutput `
-  -p:BundleLocalEnv=true
-& "$privateOutput\Broadcastify Desktop.exe"
+.\scripts\verify_windows_publish.ps1 `
+  -OutputDirectory .\BroadcastifyCli.WinUI\bin\Publish\win-x64
 ```
 
-This writes `broadcastify-desktop.env` into the dedicated private build output. It is ignored by Git and the worker loads it before starting a job, but it is still a plaintext credential file inside the private build directory. Do not distribute or upload that build. Omit `BundleLocalEnv` for a normal shareable build; a normal build also removes any stale private env copy from its own output. The current runnable delivery is `dotnet build`, not `dotnet publish`; see B-009 in [BUGS.md](BUGS.md).
+For a private personal publish that carries the ignored repository `.env` alongside the executable, opt in explicitly:
+
+```powershell
+.\scripts\verify_windows_publish.ps1 `
+  -OutputDirectory .\BroadcastifyCli.WinUI\bin\Private\publish-win-x64 `
+  -BundleLocalEnv
+```
+
+This writes `broadcastify-desktop.env` into the dedicated private publish output and verifies it against the ignored source by hash without displaying either file. It is still a plaintext credential file inside that private directory: do not distribute or upload it. A normal verifier run rejects and removes a stale private environment. The verifier also checks the compiled WinUI resources and runs the published Windows ML helper probe. See [docs/windows-publish.md](docs/windows-publish.md) for the verified layout and remaining source-tree/Python boundary.
 
 ## Cross-platform local Web UI
 

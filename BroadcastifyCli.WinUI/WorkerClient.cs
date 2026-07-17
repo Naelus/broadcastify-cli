@@ -11,12 +11,18 @@ internal sealed class WorkerClient
     public string PythonDisplayName => _python.DisplayName;
     public string BundledEnvironmentPath { get; }
     public bool HasBundledEnvironment => File.Exists(BundledEnvironmentPath);
+    public string BundledWindowsMlHelperPath { get; }
+    public bool HasBundledWindowsMlHelper => File.Exists(BundledWindowsMlHelperPath);
 
     public WorkerClient()
     {
         RepositoryRoot = FindRepositoryRoot();
         _python = ResolvePython(RepositoryRoot);
         BundledEnvironmentPath = Path.Combine(AppContext.BaseDirectory, "broadcastify-desktop.env");
+        BundledWindowsMlHelperPath = Path.Combine(
+            AppContext.BaseDirectory,
+            "windowsml",
+            "BroadcastifyCli.WindowsML.exe");
     }
 
     public async Task<IReadOnlyList<FeedSearchResult>> SearchFeedsAsync(
@@ -615,6 +621,12 @@ internal sealed class WorkerClient
         if (HasBundledEnvironment)
         {
             startInfo.Environment["BROADCASTIFY_ENV_FILE"] = BundledEnvironmentPath;
+        }
+        if (HasBundledWindowsMlHelper
+            && (!startInfo.Environment.TryGetValue("WINDOWS_ML_HELPER_PATH", out var configuredHelper)
+                || string.IsNullOrWhiteSpace(configuredHelper)))
+        {
+            startInfo.Environment["WINDOWS_ML_HELPER_PATH"] = BundledWindowsMlHelperPath;
         }
         if (environment is not null)
         {

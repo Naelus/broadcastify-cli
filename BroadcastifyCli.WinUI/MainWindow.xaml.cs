@@ -90,6 +90,9 @@ public sealed partial class MainWindow : Window
             _worker = new WorkerClient();
             AppendLog($"Worker: {_worker.PythonDisplayName}");
             AppendLog($"Repository: {_worker.RepositoryRoot}");
+            AppendLog(_worker.HasBundledWindowsMlHelper
+                ? "Windows ML helper: bundled runtime"
+                : "Windows ML helper: repository/runtime discovery");
             _ = InitializeAsync();
         }
         catch (Exception exception)

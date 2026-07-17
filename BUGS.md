@@ -45,14 +45,11 @@ Use this file for reproducible defects and concrete blockers, not the general ro
 - **Control:** Sequential pacing, exact cache reuse, and immediate stop on explicit exhaustion.
 - **Next:** Ask Broadcastify support for authoritative details and prioritize future regional acquisition by user distance/importance rather than a guessed quota size.
 
-### B-009 — `dotnet publish` collides on duplicated Windows App SDK assets
-
-- **Severity:** Low for current source/private builds; blocking for installer packaging.
-- **Observed:** The WinUI app's build-only Windows ML project reference causes `NETSDK1152` during `dotnet publish` because both projects contribute the same Windows App SDK `MsixContent` paths.
-- **Control:** `dotnet build` produces the validated runnable unpackaged app. A dedicated `bin/Private/win-x64` build successfully bundles the ignored `.env`; a subsequent ordinary Release build was verified to remove the credential file from its own output.
-- **Next:** Replace the build-only project reference with an explicit helper build/copy target or separate packaged artifact before claiming publish/MSIX/installer support.
-
 ## Recently fixed
+
+### F-009 — `dotnet publish` collided on Windows App SDK assets and omitted XAML resources
+
+The build-only Windows ML `ProjectReference` was replaced with an explicit helper build and namespaced `windowsml/` copy. This prevents the two self-contained Windows App SDK graphs from merging. The publish target also copies the unpackaged WinUI `App.xbf`, `MainWindow.xbf`, and application PRI that the SDK omitted. A normal/private/normal credential cycle passed, the published helper completed a real CPU Whisper decode, and the actual published desktop stayed open, loaded the retained library, and logged `Windows ML helper: bundled runtime`. The remaining installer/Python/model-manager work stays under B-005 and the roadmap.
 
 ### F-008 — Area jobs could continue after a feed exhausted the archive quota
 

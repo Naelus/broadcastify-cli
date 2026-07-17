@@ -147,6 +147,16 @@ This is the dated verification and delivery log for `GOAL.md`. Keep forward-look
 - Produced the current private runnable Windows build at `BroadcastifyCli.WinUI/bin/Private/win-x64` with the ignored `.env` verified byte-for-byte by SHA-256 comparison without displaying it. A normal Release rebuild then verified its output contains no bundled environment file. Both builds completed with **0 warnings, 0 errors**.
 - Attempted `dotnet publish` and documented the real `NETSDK1152` duplicate Windows App SDK asset collision as B-009 rather than treating an unpackaged build as a successful publish.
 
+### Runnable Windows publish and bundled Windows ML runtime
+
+- Removed the build-only Windows ML `ProjectReference` from the WinUI dependency graph. A custom MSBuild target now builds the sibling executable independently and copies its complete self-contained runtime to `windowsml/`, eliminating the `NETSDK1152` duplicate `MsixContent` collision.
+- Found and fixed a second publish-only defect: the SDK omitted `App.xbf`, `MainWindow.xbf`, and `Broadcastify Desktop.pri`, causing an immediate `Microsoft.UI.Xaml.dll`/`0xc000027b` crash. The publish target now verifies and copies those compiled resources.
+- Added `scripts/verify_windows_publish.ps1`. It validates required desktop/helper/runtime files, private/normal environment isolation, stale-private cleanup, and a live helper probe without printing credentials.
+- A private → normal publish cycle passed. The private `.env` matched by hash without being displayed or leaking into normal build output; the subsequent normal publish removed the stale private copy.
+- The private published helper completed a real FP32 CPU Whisper decode in **0.589 seconds**, reporting `decode_ready=true`, provider `CPU`, and backend `Windows ML / ONNX Runtime GenAI CPU`.
+- Launched the corrected normal publish through Windows, confirmed it remained open and loaded all nine retained library days, and inspected its Activity Log: `.venv Python`, the expected repository, and `Windows ML helper: bundled runtime`.
+- The verified private publish is `BroadcastifyCli.WinUI/bin/Private/publish-win-x64`. It is runnable from the source tree; supervised Python/dependency/model packaging remains explicit future work.
+
 ## Earlier validated work
 
 - Feed 90001 completed July 11–12 end to end with 97 retained archive blocks, continuous daily audio, 1,716 transcript segments, 87 incidents, daily summaries, semantic Q&A, and a seven-day brief with explicit missing coverage.
