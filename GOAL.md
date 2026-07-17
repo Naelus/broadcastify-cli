@@ -14,7 +14,7 @@ The tested Windows experience remains the reference behavior. A user should be a
 4. **Quota safety:** archive acquisition is sequential by default, paced, cache-aware, responsive to `Retry-After`, and stops all further media requests after the explicit Broadcastify download-limit response.
 5. **Usable UI:** primary workflows use clear navigation and master/detail views rather than one long page. Common actions fit at the reference 1240x900 window size; advanced hardware controls stay optional.
 6. **Portable providers:** local engines remain the default, with explicit provider contracts for supported OpenAI-compatible APIs or an authenticated Codex CLI harness. Secrets must not be persisted in ordinary settings or committed.
-7. **Cross-platform direction:** the loopback Python service and browser UI expose the same library/review/action contract on Windows, Linux, and macOS, while the native WinUI app remains the polished Windows shell. Real-machine Linux/macOS validation and packaging are required before calling portability complete.
+7. **Cross-platform direction:** the loopback Python service and browser UI expose the same library/review/action contract on Windows, Linux, and macOS, while the native WinUI app remains the polished Windows shell. Real-machine Linux full-model and visual/accessibility validation is complete; real macOS validation and non-developer packaging are required before calling portability complete.
 8. **Reviewable delivery:** substantial sections are committed and pushed separately, with tests, real-machine evidence, limitations, and security checks recorded in `PROGRESS.md` and `BUGS.md`.
 
 ## Definition of done for the active parity phase
@@ -27,7 +27,7 @@ The tested Windows experience remains the reference behavior. A user should be a
 - Settings explain the selected stage backends, consolidate account/storage/transcription/speaker/analysis readiness, offer explicit real-execution ASR and diarization self-tests in both UIs, and prevent unsupported combinations or CPU fallbacks from looking like the requested accelerator succeeded.
 - The Local Library viewer makes unfinished diarization, analysis, and evidence-rule upgrades obvious, offers the exact next action, and never presents an older analysis version as current.
 - Regional story review keeps the ranked lead list and one selected evidence package visible as a bounded master/detail workspace in both UIs, including responsive phone navigation, rather than rendering every full story card in one long page.
-- Linux has a wheel-packaged, loopback-only per-user service lifecycle validated from exact commit `historical-validation`; full-model visual/accessibility QA and real macOS validation still prevent calling portability complete.
+- Linux has a wheel-packaged, loopback-only per-user service lifecycle validated from exact commit `historical-validation`, and exact commit `historical-validation` passes the full-model desktop/mobile visual and accessibility matrix plus all 148 host tests. Real macOS validation still prevents calling portability complete.
 - The application receives another visual QA and accessibility pass after every material navigation/viewer change.
 
 This goal is intentionally not marked complete yet.

@@ -26,11 +26,11 @@ Use this file for reproducible defects and concrete blockers, not the general ro
 - **Observed:** Exact commit `historical-validation` completed a protected 30-second all-CPU Web job in 21.282 seconds: whisper.cpp CPU, pyannote CPU, llama.cpp CPU, embeddings, persistence, and grounded daily summary. This proves the fallback contract but does not predict multi-hour throughput.
 - **Next:** Run a longer representative slice and then a full day if practical; record CPU ASR, diarization, and CPU LLM time separately rather than extrapolating the short result.
 
-### B-005 — Cross-platform visual QA, keychain, and real macOS validation remain incomplete
+### B-005 — Cross-platform keychain and real macOS validation remain incomplete
 
 - **Severity:** Medium for product portability; no impact on native Windows use.
-- **Observed:** Exact commit `historical-validation` completed a fresh network-disabled retained-radio workflow through the real loopback HTTP job boundary: same-site session cookie, action token, `continue-local` worker, whisper.cpp on AMD Vulkan, pyannote on CPU, local Gemma on AMD Vulkan, embeddings, summary persistence, and final Ready-to-review state. Exact commit `historical-validation` then closed the managed Linux launch gap: its verified 0.4.0 wheel and systemd user unit passed real start/health/session/bootstrap, loopback bind, failure restart, 0600 config/env/unit/owner-log, useful log viewing without journal access, graceful stop, and data-preserving uninstall on the same TrueNAS/Linux host. There is still no Linux browser visual/accessibility pass against a full model job. Apple Metal is implemented with CPU diarization and macOS auto-selection when both Metal backends are detected, but no real Mac run has occurred. Cross-platform credential persistence is `.env`/session-only rather than an OS keychain.
-- **Next:** Visually exercise the complete browser workflow during a Linux full-model job, then run a macOS install/CPU-or-Metal workflow; add a platform keychain adapter without weakening the loopback/session-token boundary.
+- **Observed:** Exact commit `historical-validation` completed a fresh network-disabled retained-radio workflow through the real loopback HTTP job boundary: same-site session cookie, action token, `continue-local` worker, whisper.cpp on AMD Vulkan, pyannote on CPU, local Gemma on AMD Vulkan, embeddings, summary persistence, and final Ready-to-review state. Exact commit `historical-validation` closed the managed Linux launch gap with a verified wheel and per-user systemd lifecycle. Exact commit `historical-validation` now closes the Linux full-model visual/accessibility gap: 148/148 host tests plus Local Library, Review, Area Watch, Settings, media, navigation, and keyboard QA at 1365×900 and 390×844, with exact document/client widths and no browser errors. Apple Metal is implemented with CPU diarization and macOS auto-selection when both Metal backends are detected, but no real Mac run has occurred. Cross-platform credential persistence is `.env`/session-only rather than an OS keychain.
+- **Next:** Run a real macOS install and CPU-or-Metal workflow; add a platform keychain adapter without weakening the loopback/session-token boundary. Non-developer packaging/model acquisition also remains roadmap work.
 
 ### B-006 — Feed display names are missing for some retained legacy days
 
@@ -46,6 +46,10 @@ Use this file for reproducible defects and concrete blockers, not the general ro
 - **Next:** Ask Broadcastify support for authoritative details and prioritize future regional acquisition by user distance/importance rather than a guessed quota size.
 
 ## Recently fixed
+
+### F-019 — The packaged Web UI emitted a missing-favicon console error
+
+The full-model Linux browser pass found a single SEVERE console entry: Chromium's automatic `/favicon.ico` request returned 404. The Web package now declares and serves a code-native SVG favicon with the correct `image/svg+xml` content type, and the HTTP regression test covers both the document link and static response. Exact commit `historical-validation` passes all **148 tests** locally and on TrueNAS/Linux; the repeated desktop/mobile matrix has zero failures and no warning/error/severe browser entries.
 
 ### F-018 — Regional story review rendered every evidence package in one long page
 

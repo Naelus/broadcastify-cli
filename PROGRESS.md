@@ -4,6 +4,17 @@ This is the dated verification and delivery log for `GOAL.md`. Keep forward-look
 
 ## July 17, 2026
 
+### Linux full-model visual and accessibility validation
+
+- Cloned exact pushed commit `historical-validation4db7f9aa038a0911490f7f366d7af0907` into a fresh user-owned TrueNAS/Linux source tree and kept the earlier full-model fixture intact. The clean checkout passed the complete suite: **148 passed in 2.84 seconds**.
+- Refreshed the retained 30-second full-model fixture under the current evidence-v9 contract without an archive request. The resumable Web job reused its combined audio, transcript, and CPU speaker labels; cached Gemma 3 1B `Q4_K_M` ran on the AMD Radeon 890M through Vulkan at roughly 55 generated tokens/second, FastEmbed reused the persisted passage index, and the day returned to 100% / **Ready to review** with the correct zero-incident summary.
+- The NAS user dataset is intentionally `noexec`, so ONNX Runtime could not map from a private user-site install. Copying only the isolated QA runtime to executable `/var/tmp` restored FastEmbed without installing a host package or changing a system service, storage setting, group, or archive.
+- Served the exact source on `127.0.0.1:18767` and ran Chromium 148/Selenium on the same host in a read-only, capability-dropped, `no-new-privileges`, numeric-user container. The archive service never bound to the LAN; SSH forwarding was unavailable and was not worked around by widening the listener.
+- Exercised Local Library, Review & Ask, Area Watch, Settings, the mobile navigation drawer, retained MP3 byte-range playback, and keyboard traversal at 1365×900 and 390×844. Desktop document/client width was **1350/1350** and mobile was **375/375**; every view had no horizontal overflow, duplicate IDs, unnamed visible buttons, or unlabeled visible controls.
+- Direct screenshot review found one harness artifact where the first phone capture landed during the 200 ms drawer transition. Waiting for the computed sidebar position produced a clean steady-state Review view; no product CSS change was needed.
+- The first run exposed one real browser defect: Chromium requested an absent `/favicon.ico`, producing the only SEVERE console entry. Commit `historical-validation` packages an SVG favicon and a serving/content-type regression test. The final matrix reported **zero failures and no warning/error/severe browser entries**. Four DEBUG-only Chromium recommendations remain for the intentionally session-only Hugging Face/API-key password fields, which are not website login forms.
+- Stopped the verified loopback QA PID and removed only the exact isolated Gemma container/image after validation. Health closed as expected; the exact source checkout, browser report/screenshots, reanalysis result/logs, private QA runtime, retained media, transcript, and SQLite fixture remain preserved for audit.
+
 ### Regional story master/detail review
 
 - Replaced the Web Area Watch stack of full story cards with a bounded two-column review workspace: all 25 ranked leads remain searchable by scrolling the index while only the selected story renders its complete source package. The generated assignment brief stays separately collapsible.
