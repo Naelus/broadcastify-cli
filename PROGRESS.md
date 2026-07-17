@@ -4,6 +4,15 @@ This is the dated verification and delivery log for `GOAL.md`. Keep forward-look
 
 ## July 17, 2026
 
+### Regional story master/detail review
+
+- Replaced the Web Area Watch stack of full story cards with a bounded two-column review workspace: all 25 ranked leads remain searchable by scrolling the index while only the selected story renders its complete source package. The generated assignment brief stays separately collapsible.
+- Added the matching native WinUI workspace with a 330-pixel ranked list, independent selected-story scroller, preserved selection across refreshes, and explicit empty/stale states. Changing stories stops old playback before rebinding the quote, provenance, exact-clip actions, and media player.
+- The Web phone layout changes to one column at 560 pixels, caps the ranked index at 300 pixels, scrolls the selected detail into view, and offers a keyboard-focus-preserving **Ranked leads** return action.
+- Live July 15–16 `Example City 12345` QA verified **25 leads, one active selection, open evidence, and exact media URLs** at 1365×900 and 390×844. Selecting the West Parker report updated its headline and redacted transcript evidence; the phone return action restored focus to lead 2. Both sizes had exact document/client width and the browser console had no errors.
+- The rebuilt native Release app opened the same retained brief at 1228×894, selected the first lead automatically, then switched to the West Parker report while retaining its redacted quote and playable/exportable exact clip. The app remains open on that evidence pane for inspection.
+- Added static-asset regression checks for the selected-story state, ranked-item data contract, master/detail CSS, and cache version 13. Full Python suite: **148 passed in 8.75 seconds**; Python compilation, bundled-Node JavaScript syntax, Git whitespace, and the WinUI Release build passed with **0 warnings and 0 errors**.
+
 ### Viewer integrity and area-selection UX
 
 - Added prompt-version integrity across the persistent viewer contract. Days analyzed before `police-radio-events-v9` now remain 80% complete with **Analysis update available**, retain their combined recording/transcript/diarization, and offer local-only reanalysis instead of review. Current July 15–16 Example City days remain 100% reviewable.

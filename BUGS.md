@@ -47,6 +47,10 @@ Use this file for reproducible defects and concrete blockers, not the general ro
 
 ## Recently fixed
 
+### F-018 — Regional story review rendered every evidence package in one long page
+
+The retained Example City brief contains 25 ranked leads, and the earlier Web viewer expanded them as full cards while the native view had no persistent selected-story audit pane. Both UIs now use the same master/detail interaction: a bounded ranked index on the left and one independently scrollable evidence package on the right. Selection preserves the source quote, provenance, exact-clip playback/export, audience guidance, and score context. The Web layout becomes one column at 390×844, caps the lead index at 300 pixels, scrolls a chosen story into view, and provides a **Ranked leads** return action. Live July 15–16 Example City checks passed at 1365×900, 390×844, and the native 1228×894 window with 25 leads, one active selection, open evidence, no horizontal overflow, and no browser console errors. The complete suite remains **148 passed** and the WinUI Release build has zero warnings/errors.
+
 ### F-017 — Area evidence quotes could retain a private name immediately after a location
 
 The first current Example City area-brief audit found a two-token private-person name in a displayed quote immediately after a known incident location. The incident sanitizer already handled stronger radio-name contexts, but this location-adjacent form was not covered. Area quote redaction now receives the incident location, replaces a matching following name with `[private person]`, and leaves the original transcript internal for audit. The area prompt advanced to `police-radio-area-stories-v5-evidence-v9`, which hides the older brief. The regenerated July 15–16 brief retains 25 source-backed leads and 25 exact clips, contains five redacted quotes, and omits the known name. Regression coverage includes this location-adjacent form.

@@ -26,6 +26,7 @@ The tested Windows experience remains the reference behavior. A user should be a
 - Windows ML performs a real ONNX Whisper decode through the packaged helper and is integrated only after the model/runtime self-test passes. Exact source commit `historical-validation` completes the matching fresh protected 60-second Web job in 32 seconds and an idempotent resume without repeating ASR, diarization, analysis, or embeddings.
 - Settings explain the selected stage backends, consolidate account/storage/transcription/speaker/analysis readiness, offer explicit real-execution ASR and diarization self-tests in both UIs, and prevent unsupported combinations or CPU fallbacks from looking like the requested accelerator succeeded.
 - The Local Library viewer makes unfinished diarization, analysis, and evidence-rule upgrades obvious, offers the exact next action, and never presents an older analysis version as current.
+- Regional story review keeps the ranked lead list and one selected evidence package visible as a bounded master/detail workspace in both UIs, including responsive phone navigation, rather than rendering every full story card in one long page.
 - Linux has a wheel-packaged, loopback-only per-user service lifecycle validated from exact commit `historical-validation`; full-model visual/accessibility QA and real macOS validation still prevent calling portability complete.
 - The application receives another visual QA and accessibility pass after every material navigation/viewer change.
 

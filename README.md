@@ -36,7 +36,7 @@ This fork uses Broadcastify's website login and the same private web endpoints a
 - Persisted seven-day activity briefs with explicit coverage gaps, exact category counts, and deterministic notable-record IDs
 - Center-plus-radius or ordered-ZIP area watch that follows Broadcastify's ZIP-to-county results, deduplicates feeds, defaults to a live public-safety filter, and saves explicit nearest-first newsroom feed profiles
 - Persisted nearest-first multi-feed archive queues that recover interrupted work, skip completed feeds, and stop every lower priority at the first explicit quota response
-- Sequential post-transcription analysis plus persisted cross-feed story briefs with deterministic source references and coverage gaps
+- Sequential post-transcription analysis plus persisted cross-feed story briefs with deterministic source references, coverage gaps, and a bounded ranked-list/selected-evidence master/detail viewer in both UIs
 - Newsworthiness ranking separate from dispatch priority, with conservative time/location clustering and routine single-person calls suppressed
 - One-click incident playback that cuts and plays a compact clip around the strongest cited transcript segment, avoiding unreliable seeks inside day-long MP3s
 - Native **Export clip…** actions for saved incidents and area-story evidence; exports are local MP3 copies and never trigger an archive download
