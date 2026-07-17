@@ -18,7 +18,7 @@ const DEFAULT_SETTINGS = {
   batchSize: 8,
   asrModelPath: "",
   analysisProvider: "local",
-  analysisModel: "ggml-org/gemma-4-12B-it-GGUF:Q4_K_M",
+  analysisModel: "ggml-org/gemma-4-12B-it-GGUF:Q4_0",
   analysisEndpoint: "",
   apiKeyEnvironment: "OPENAI_API_KEY",
   codexPath: "",
@@ -816,7 +816,7 @@ byId("librarySearch").addEventListener("input", renderLibrary);
 byId("libraryFilter").addEventListener("change", renderLibrary);
 byId("saveSettingsButton").addEventListener("click", saveSettings);
 byId("settingAnalysisProvider").addEventListener("change", () => {
-  const defaults = { local: "ggml-org/gemma-4-12B-it-GGUF:Q4_K_M", "openai-responses": "gpt-5.6-luna", "openai-compatible": "", "codex-cli": "" };
+  const defaults = { local: "ggml-org/gemma-4-12B-it-GGUF:Q4_0", "openai-responses": "gpt-5.6-luna", "openai-compatible": "", "codex-cli": "" };
   byId("settingAnalysisModel").value = defaults[byId("settingAnalysisProvider").value] || "";
   state.analysisProviderStatus = null;
   updateProviderNotice();

@@ -63,7 +63,7 @@ The default stack is split by responsibility so each stage can be fast and repla
 - `faster-whisper` with the Whisper `turbo` model for transcription
 - `pyannote/speaker-diarization-community-1` for speaker boundaries and labels
 - BAAI `bge-small-en-v1.5` through FastEmbed for CPU semantic retrieval
-- Gemma 4 12B Instruct `Q4_K_M` through llama.cpp for structured event extraction, summaries, and questions
+- Gemma 4 12B Instruct `Q4_0` through llama.cpp for structured event extraction, summaries, and questions
 - CUDA float16 batched ASR; quantized local LLM inference to conserve VRAM
 
 Hardware profiles are stage-specific rather than an all-or-nothing GPU switch. The reference Windows profile uses CUDA for faster-whisper and pyannote plus llama.cpp's detected GPU backend. Vulkan and Apple Metal use native whisper.cpp and llama.cpp acceleration while diarization falls back to CPU. Exact commit `historical-validation` completed a protected, network-disabled Linux Web job on an AMD Radeon 890M—Vulkan ASR, CPU diarization, Vulkan Gemma, embeddings, and summary persistence—in 15.139 seconds for a 30-second retained fixture. Exact `historical-validation` completed the matching no-GPU path—CPU Whisper, CPU pyannote, CPU Gemma, and grounded persistence—in 21.282 seconds. Metal is implemented but still awaits a real Mac run. OpenVINO uses the devices exposed by its runtime and retries a rejected accelerator/model pairing on CPU. Windows ML uses the optional ONNX Runtime GenAI helper and does not report ready until its configured model completes a real decode self-test. See [docs/hardware-backends.md](docs/hardware-backends.md), [FEATURES.md](FEATURES.md), and [BUGS.md](BUGS.md) for the setup and honest validation matrix.
@@ -308,7 +308,7 @@ Generate or reuse a persisted seven-day brief ending on a selected date:
 
 The weekly brief reuses daily incidents and summaries; it does not rerun transcription. If fewer than seven saved days are available, the report names every missing date and never treats missing coverage as inactivity. Use `--force` to refresh the narrative after changing the weekly prompt.
 
-The first analysis run downloads the quantized `ggml-org/gemma-4-12B-it-GGUF:Q4_K_M` model and the small BGE embedding model into their normal caches. `analyze-day` resumes from saved incidents after a summary-only failure; use `--force-summary` to refresh only a brief or `--force` to rebuild all derived incidents for the day. Show persistent counts with:
+The first analysis run downloads the quantized `ggml-org/gemma-4-12B-it-GGUF:Q4_0` model and the small BGE embedding model into their normal caches. If the former `Q4_K_M` default is still saved in settings, the app reuses that exact file when it is already in the Hugging Face cache; otherwise it migrates to `Q4_0`. An explicit local `.gguf` path is also accepted for fully offline deployments. `analyze-day` resumes from saved incidents after a summary-only failure; use `--force-summary` to refresh only a brief or `--force` to rebuild all derived incidents for the day. Show persistent counts with:
 
 ```powershell
 .\.venv\Scripts\broadcastify-analysis.exe stats

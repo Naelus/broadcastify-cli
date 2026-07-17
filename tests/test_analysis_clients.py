@@ -82,6 +82,23 @@ def test_explicit_ui_provider_values_override_environment(monkeypatch) -> None:
     assert config.allow_external is False
 
 
+def test_removed_local_model_selector_migrates_when_not_cached(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "broadcastify_cli.analysis.find_cached_huggingface_gguf",
+        lambda *_args, **_kwargs: None,
+    )
+
+    config = AnalysisProviderConfig.from_mapping(
+        {
+            "analysis_provider": "local",
+            "analysis_model": "ggml-org/gemma-4-12B-it-GGUF:Q4_K_M",
+        }
+    )
+
+    assert config.model == "ggml-org/gemma-4-12B-it-GGUF:Q4_0"
+    assert config.cache_model == "ggml-org/gemma-4-12B-it-GGUF:Q4_0"
+
+
 def test_openai_responses_uses_structured_output_without_storage(monkeypatch) -> None:
     captured: dict[str, object] = {}
 

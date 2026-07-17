@@ -11,10 +11,13 @@ from broadcastify_cli.analysis import (
     WeeklySummaryAnalyzer,
     archive_datetime_for_offset,
     build_transcript_windows,
+    find_cached_huggingface_gguf,
     find_llama_server,
+    normalize_local_model_reference,
     normalize_event_type,
     normalize_priority,
     prepare_llama_environment,
+    resolve_local_llama_model,
 )
 from broadcastify_cli.storage import AnalysisStore
 
@@ -272,6 +275,50 @@ def test_llama_environment_provides_rootless_cache_paths(
     assert Path(prepared["LLAMA_CACHE"]).is_dir()
     assert Path(prepared["HF_HOME"]).is_dir()
     assert prepared["HF_TOKEN"] == "test-token"
+
+
+def test_legacy_llama_model_reuses_main_gguf_from_older_hub_snapshot(
+    tmp_path: Path,
+) -> None:
+    hub = tmp_path / "hub"
+    model_root = hub / "models--ggml-org--gemma-4-12B-it-GGUF"
+    (model_root / "refs").mkdir(parents=True)
+    (model_root / "refs" / "main").write_text("new-revision", encoding="utf-8")
+    old_snapshot = model_root / "snapshots" / "old-revision"
+    old_snapshot.mkdir(parents=True)
+    main_model = old_snapshot / "gemma-4-12B-it-Q4_K_M.gguf"
+    main_model.write_bytes(b"model")
+    (old_snapshot / "mmproj-gemma-4-12B-it-Q4_K_M.gguf").write_bytes(b"projector")
+    legacy = "ggml-org/gemma-4-12B-it-GGUF:Q4_K_M"
+
+    assert find_cached_huggingface_gguf(legacy, cache_roots=[hub]) == main_model
+    assert normalize_local_model_reference(legacy, cache_roots=[hub]) == legacy
+    assert resolve_local_llama_model(legacy, cache_roots=[hub]) == (
+        main_model,
+        legacy,
+    )
+
+
+def test_missing_legacy_llama_model_migrates_to_available_quant(
+    tmp_path: Path,
+) -> None:
+    legacy = "ggml-org/gemma-4-12B-it-GGUF:Q4_K_M"
+
+    assert normalize_local_model_reference(
+        legacy, cache_roots=[tmp_path / "empty"]
+    ) == "ggml-org/gemma-4-12B-it-GGUF:Q4_0"
+    assert resolve_local_llama_model(
+        legacy, cache_roots=[tmp_path / "empty"]
+    ) == (None, "ggml-org/gemma-4-12B-it-GGUF:Q4_0")
+
+
+def test_explicit_local_gguf_is_resolved_without_hub_lookup(tmp_path: Path) -> None:
+    model = tmp_path / "portable-model.gguf"
+    model.write_bytes(b"model")
+
+    assert resolve_local_llama_model(
+        str(model), cache_roots=[tmp_path / "empty"]
+    ) == (model.resolve(), str(model))
 
 
 def test_windows_cover_full_timeline() -> None:

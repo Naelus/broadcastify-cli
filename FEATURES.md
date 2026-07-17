@@ -27,7 +27,7 @@ Status labels: **Validated**, **Implemented**, **Foundation**, or **Planned**.
 | pyannote diarization CUDA/CPU | Validated | Existing transcripts can gain labels without rerunning ASR; FFmpeg-to-memory-mapped waveform input bypasses broken TorchCodec file loaders. |
 | Non-CUDA diarization acceleration | Planned | Current portable behavior is CPU fallback. |
 | SQLite transcript/incident/summary store | Validated | Includes FTS, embeddings, Q&A history, area profiles/queues, and cached briefs. |
-| Quantized llama.cpp analysis | Validated | Gemma GGUF local path; real AMD Vulkan generation offloaded all tested model layers. |
+| Quantized llama.cpp analysis | Validated | Gemma GGUF selector or explicit local path; retained removed quants are reused from older Hub snapshots, clean installs use the current `Q4_0` default, and real AMD Vulkan generation offloaded all tested model layers. |
 | Provider API/Codex harness | Validated | Native Settings and CLI support local Gemma, OpenAI Responses, compatible `/v1` endpoints, and ephemeral saved-login Codex with explicit transcript-sharing consent and readiness checks. |
 
 ## User experience

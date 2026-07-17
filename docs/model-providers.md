@@ -2,6 +2,8 @@
 
 The default analysis provider is local llama.cpp with quantized Gemma. It is the recommended bulk-processing path because it keeps radio transcript text on the machine, avoids per-token charges, and has already been exercised on the retained corpus.
 
+The current managed default is `ggml-org/gemma-4-12B-it-GGUF:Q4_0`. A model repository can change its available quant filenames, so the launcher first honors an explicit local `.gguf` path, then checks current and older Hugging Face cache snapshots for the requested quant, and only then asks llama.cpp to resolve an uncached repository selector. The former `Q4_K_M` default therefore remains usable when its exact file is already cached; otherwise it migrates to the current `Q4_0` selector. This avoids discarding multi-gigabyte local assets while keeping clean installs functional.
+
 Three opt-in alternatives implement the same `chat_json` / `chat_text` contract and preserve the existing evidence validation, clips, SQLite records, and summaries:
 
 | Provider | Transport | Credential | External-data acknowledgement |

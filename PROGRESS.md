@@ -4,6 +4,15 @@ This is the dated verification and delivery log for `GOAL.md`. Keep forward-look
 
 ## July 16, 2026
 
+### Local Gemma model continuity
+
+- A fresh joined OpenVINO job reached local analysis after completing and persisting OpenVINO CPU transcription plus CPU diarization, then exposed an upstream compatibility break: the Gemma 4 12B GGUF repository had removed the configured `Q4_K_M` file and now offers `Q4_0`, `Q8_0`, and BF16.
+- Changed the clean-install default to `ggml-org/gemma-4-12B-it-GGUF:Q4_0` in Python, WinUI, Web UI, and documentation.
+- Added deterministic Hugging Face cache discovery across configured/default Hub roots and older snapshots. An existing `Q4_K_M` setting retains that exact cached model; without it, the setting normalizes to `Q4_0`. Explicit local `.gguf` paths launch directly.
+- Managed llama.cpp now uses `--model` for resolved local files, `--hf-repo` for uncached repository selectors, and a stable `--alias` that the analysis client also uses. Provider cache identity follows the effective model instead of attributing new results to a removed selector.
+- The reference machine resolved its existing 7,381,382,048-byte `Q4_K_M` file from the older cached snapshot without network access. Installed llama-server help confirms the model-path, Hub-repository, and API-alias flags used by the launcher.
+- Regression coverage brings the complete Python suite to **133 passed in 5.43 seconds**. Python compile validation passed; WinUI Release build: **0 warnings, 0 errors**.
+
 ### Managed Linux Web launcher
 
 - Added the wheel-packaged `radio-archive-service` entry point with install, start, restart, status, stop, owner-log, unit-preview, and conservative uninstall commands for a per-user systemd service.

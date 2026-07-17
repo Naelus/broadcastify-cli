@@ -15,6 +15,7 @@ from .analysis import (
     LlamaCppClient,
     LlamaServerProcess,
     find_llama_server,
+    normalize_local_model_reference,
 )
 from .analysis_clients import (
     AnalysisClient,
@@ -90,6 +91,8 @@ class AnalysisProviderConfig:
             explicit_model = str(value.get("model") or DEFAULT_LLM_MODEL)
         if not explicit_model and provider == "openai-responses":
             explicit_model = DEFAULT_OPENAI_MODEL
+        if provider == "local":
+            explicit_model = normalize_local_model_reference(explicit_model)
         endpoint_value = (
             value.get("analysis_endpoint")
             if "analysis_endpoint" in value
@@ -233,7 +236,7 @@ def open_analysis_client(
         with LlamaServerProcess(model=config.model) as server:
             yield LlamaCppClient(
                 base_url=server.base_url,
-                model=config.model,
+                model=server.effective_model,
                 timeout=config.timeout,
             )
         return

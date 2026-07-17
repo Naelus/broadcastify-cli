@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Callable, Iterable, Sequence
+from typing import Any, Callable, Iterable, Mapping, Sequence
 
 import requests
 
@@ -20,7 +20,10 @@ from .analysis_clients import AnalysisClient
 from .storage import AnalysisStore
 
 
-DEFAULT_LLM_MODEL = "ggml-org/gemma-4-12B-it-GGUF:Q4_K_M"
+DEFAULT_LLM_MODEL = "ggml-org/gemma-4-12B-it-GGUF:Q4_0"
+LEGACY_LLM_MODELS = {
+    "ggml-org/gemma-4-12B-it-GGUF:Q4_K_M": DEFAULT_LLM_MODEL,
+}
 DEFAULT_EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"
 PROMPT_VERSION = "police-radio-events-v3"
 WEEKLY_PROMPT_VERSION = "police-radio-weekly-v1"
@@ -160,6 +163,136 @@ def find_llama_server() -> str | None:
     return str(candidates[0]) if candidates else None
 
 
+def huggingface_hub_cache_roots(
+    environment: Mapping[str, str] | None = None,
+) -> tuple[Path, ...]:
+    """Return Hugging Face Hub roots in the same precedence used by its clients."""
+
+    values = os.environ if environment is None else environment
+    candidates: list[Path] = []
+    if values.get("HF_HUB_CACHE"):
+        candidates.append(Path(values["HF_HUB_CACHE"]).expanduser())
+    if values.get("HUGGINGFACE_HUB_CACHE"):
+        candidates.append(Path(values["HUGGINGFACE_HUB_CACHE"]).expanduser())
+    if values.get("HF_HOME"):
+        candidates.append(Path(values["HF_HOME"]).expanduser() / "hub")
+    if values.get("XDG_CACHE_HOME"):
+        candidates.append(
+            Path(values["XDG_CACHE_HOME"]).expanduser() / "huggingface" / "hub"
+        )
+    candidates.append(Path.home() / ".cache" / "huggingface" / "hub")
+
+    roots: list[Path] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        identity = os.path.normcase(os.path.abspath(candidate))
+        if identity not in seen:
+            roots.append(candidate)
+            seen.add(identity)
+    return tuple(roots)
+
+
+def _huggingface_model_parts(model: str) -> tuple[str, str] | None:
+    repository, separator, selector = model.strip().rpartition(":")
+    if not separator or "/" not in repository or not selector:
+        return None
+    return repository, selector
+
+
+def find_cached_huggingface_gguf(
+    model: str,
+    *,
+    cache_roots: Sequence[str | Path] | None = None,
+) -> Path | None:
+    """Find a selected main GGUF in the Hub cache, including an older snapshot."""
+
+    parts = _huggingface_model_parts(model)
+    if parts is None:
+        return None
+    repository, selector = parts
+    roots = (
+        tuple(Path(value).expanduser() for value in cache_roots)
+        if cache_roots is not None
+        else huggingface_hub_cache_roots()
+    )
+    repository_directory = "models--" + repository.replace("/", "--")
+    expected_suffix = f"-{selector}.gguf".lower()
+
+    for root in roots:
+        model_root = root / repository_directory
+        snapshots_root = model_root / "snapshots"
+        snapshots: list[Path] = []
+        try:
+            main_revision = (model_root / "refs" / "main").read_text(
+                encoding="utf-8"
+            ).strip()
+            if main_revision:
+                snapshots.append(snapshots_root / main_revision)
+        except OSError:
+            pass
+        try:
+            snapshots.extend(
+                sorted(
+                    (item for item in snapshots_root.iterdir() if item.is_dir()),
+                    key=lambda item: item.stat().st_mtime,
+                    reverse=True,
+                )
+            )
+        except OSError:
+            pass
+
+        checked: set[str] = set()
+        for snapshot in snapshots:
+            identity = os.path.normcase(os.path.abspath(snapshot))
+            if identity in checked:
+                continue
+            checked.add(identity)
+            try:
+                candidates = sorted(snapshot.glob("*.gguf"))
+            except OSError:
+                continue
+            for candidate in candidates:
+                name = candidate.name.lower()
+                if name.startswith(("mmproj-", "mtp-")):
+                    continue
+                if name.endswith(expected_suffix) and candidate.is_file():
+                    return candidate
+    return None
+
+
+def normalize_local_model_reference(
+    model: str,
+    *,
+    cache_roots: Sequence[str | Path] | None = None,
+) -> str:
+    """Migrate a removed remote selector unless its exact GGUF remains cached."""
+
+    value = model.strip()
+    replacement = LEGACY_LLM_MODELS.get(value)
+    if replacement and find_cached_huggingface_gguf(
+        value, cache_roots=cache_roots
+    ) is None:
+        return replacement
+    return value
+
+
+def resolve_local_llama_model(
+    model: str,
+    *,
+    cache_roots: Sequence[str | Path] | None = None,
+) -> tuple[Path | None, str]:
+    """Resolve an explicit/cached GGUF and the stable API model alias."""
+
+    value = normalize_local_model_reference(model, cache_roots=cache_roots)
+    explicit_path = Path(value).expanduser()
+    if explicit_path.suffix.lower() == ".gguf" and explicit_path.is_file():
+        return explicit_path.resolve(), value
+    return (
+        find_cached_huggingface_gguf(value, cache_roots=cache_roots),
+        value,
+    )
+
+
 def prepare_llama_environment(
     environment: dict[str, str],
     runtime_root: str | Path,
@@ -220,6 +353,8 @@ class LlamaServerProcess:
         self.health_url = f"http://127.0.0.1:{port}/health"
         self.log_path = Path(log_path)
         self.startup_timeout = startup_timeout
+        self.effective_model = normalize_local_model_reference(model)
+        self.model_path: Path | None = None
         self.process: subprocess.Popen[str] | None = None
         self._log_handle: Any = None
         self._owns_process = False
@@ -245,10 +380,17 @@ class LlamaServerProcess:
         environment = prepare_llama_environment(
             os.environ.copy(), self.log_path.parent / ".runtime"
         )
+        self.model_path, self.effective_model = resolve_local_llama_model(self.model)
+        model_arguments = (
+            ["--model", str(self.model_path)]
+            if self.model_path is not None
+            else ["-hf", self.effective_model]
+        )
         arguments = [
             executable,
-            "-hf",
-            self.model,
+            *model_arguments,
+            "--alias",
+            self.effective_model,
             "--host",
             "127.0.0.1",
             "--port",

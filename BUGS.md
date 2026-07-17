@@ -47,6 +47,10 @@ Use this file for reproducible defects and concrete blockers, not the general ro
 
 ## Recently fixed
 
+### F-014 — A removed Gemma quant selector broke resumed local analysis
+
+The upstream Gemma 4 12B GGUF repository removed the former `Q4_K_M` file while existing settings still selected it, so llama.cpp exited before incident analysis even when that exact 7.4 GB file remained in an older local Hub snapshot. The managed launcher now detects explicit local GGUF paths and selected GGUFs in current or older Hugging Face snapshots, launches cached files with a stable API alias, and preserves the true model identity used for SQLite caching. The default is the repository's available `Q4_0` quant; an old saved selector reuses its exact cached file or migrates to `Q4_0` when no cache exists. The complete Python suite passes **133 tests**, the WinUI Release build has **0 warnings and 0 errors**, and the reference cache resolves without a network request.
+
 ### F-013 — Local daily briefs could invent incident IDs and overstate ASR certainty
 
 An exact CPU job retained only incident I1, but the free-form daily brief invented I2-I4 and claimed four priority events. Daily summaries now reject unknown incident IDs and counts above the supplied record set, retry once, and fall back to a deterministic evidence-only brief when still ungrounded. Incident normalization caps noisy-ASR extraction confidence below certainty, caps one coarse 20-second-or-longer segment at 0.90, and marks unhedged claims as radio-reported. Exact commit `historical-validation` rejected both unsupported live summary attempts and persisted only the cited I1 evidence.

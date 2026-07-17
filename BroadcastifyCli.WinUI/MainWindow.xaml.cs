@@ -19,7 +19,7 @@ namespace BroadcastifyCli.WinUI;
 
 public sealed partial class MainWindow : Window
 {
-    private const string DefaultAnalysisModel = "ggml-org/gemma-4-12B-it-GGUF:Q4_K_M";
+    private const string DefaultAnalysisModel = "ggml-org/gemma-4-12B-it-GGUF:Q4_0";
     private readonly ObservableCollection<FeedSearchResult> _feeds = [];
     private readonly ObservableCollection<FeedSearchResult> _areaFeeds = [];
     private List<FeedSearchResult> _allAreaFeeds = [];
