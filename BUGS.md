@@ -32,12 +32,6 @@ Use this file for reproducible defects and concrete blockers, not the general ro
 - **Observed:** Exact commit `historical-validation` completed a fresh network-disabled retained-radio workflow through the real loopback HTTP job boundary: same-site session cookie, action token, `continue-local` worker, whisper.cpp on AMD Vulkan, pyannote on CPU, local Gemma on AMD Vulkan, embeddings, summary persistence, and final Ready-to-review state. Exact commit `historical-validation` closed the managed Linux launch gap with a verified wheel and per-user systemd lifecycle. Exact commit `historical-validation` now closes the Linux full-model visual/accessibility gap: 148/148 host tests plus Local Library, Review, Area Watch, Settings, media, navigation, and keyboard QA at 1365×900 and 390×844, with exact document/client widths and no browser errors. Apple Metal is implemented with CPU diarization and macOS auto-selection when both Metal backends are detected, but no real Mac run has occurred. Cross-platform credential persistence is `.env`/session-only rather than an OS keychain.
 - **Next:** Run a real macOS install and CPU-or-Metal workflow; add a platform keychain adapter without weakening the loopback/session-token boundary. Non-developer packaging/model acquisition also remains roadmap work.
 
-### B-006 — Feed display names are missing for some retained legacy days
-
-- **Severity:** Low.
-- **Observed:** Local Library shows `Feed 90003` when that feed was downloaded before its search result entered the persistent catalog.
-- **Next:** Backfill feed metadata from saved manifests or a quota-free directory lookup.
-
 ### B-007 — Archive quota size/reset schedule remains inferred
 
 - **Severity:** Operational.
@@ -46,6 +40,10 @@ Use this file for reproducible defects and concrete blockers, not the general ro
 - **Next:** Ask Broadcastify support for authoritative details and prioritize future regional acquisition by user distance/importance rather than a guessed quota size.
 
 ## Recently fixed
+
+### F-021 — Retained feed days could lose their human-readable name
+
+Archive jobs now carry the selected feed name through native, Web, and area-queue requests, save it to the persistent feed catalog before acquisition, and record it in the combined-audio manifest. A cached current manifest can be enriched atomically without re-encoding its MP3, while Library discovery falls back to the manifest if the catalog is rebuilt. A directory-only lookup repaired legacy feed `90003` as `Example Regional Public Safety.` with no archive-media request; all five retained days show that name after a native Library refresh. The complete suite passes **150 tests**, and the isolated WinUI Release build has zero warnings/errors.
 
 ### F-020 — An inline location-adjacent alarm quote could retain a private name
 

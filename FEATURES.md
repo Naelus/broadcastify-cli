@@ -9,7 +9,7 @@ Status labels: **Validated**, **Implemented**, **Foundation**, or **Planned**.
 | Capability | Status | Notes |
 |---|---|---|
 | Website-login feed search | Validated | Uses Broadcastify's website endpoints, not the official API. |
-| City/county/state/ZIP discovery | Validated | Includes county-directory results and feed catalog persistence. |
+| City/county/state/ZIP discovery | Validated | Includes county-directory results and durable feed catalog persistence. |
 | Radius and ordered-ZIP area profiles | Validated | Census ZCTA centroid expansion, live opt-out public-safety filter, explicit feed review, and persisted approximate distance/priority; discovery makes no archive requests. |
 | Persisted nearest-first acquisition cascade | Validated | Shared native/Web queue skips completed feeds, recovers interrupted items, and stops all lower priorities on explicit quota exhaustion. |
 | Sequential cache-aware archive acquisition | Validated | Five-second minimum pacing, retries, shared cooldown, exact timezone cache keys. |
@@ -36,7 +36,7 @@ Status labels: **Validated**, **Implemented**, **Foundation**, or **Planned**.
 | Capability | Status | Notes |
 |---|---|---|
 | WinUI 3 navigation shell | Validated | Local Library, New Archive, Review & Ask, Area Watch, Settings. |
-| Local Library master/detail viewer | Validated | Processing timeline, audio playback, transcript preview, resume/open actions, and a distinct local-only reanalysis state for summaries created under older evidence rules. |
+| Local Library master/detail viewer | Validated | Processing timeline, audio playback, transcript preview, resume/open actions, durable human-readable names from catalog/manifest identity, and a distinct local-only reanalysis state for summaries created under older evidence rules. |
 | Saved secure Broadcastify login | Implemented | Windows Credential Locker plus session refresh. |
 | Private `.env` build option | Implemented | Explicit opt-in only; normal builds remove stale copies. |
 | Daily incident/evidence review | Validated | Exact local clips and export actions; a real Example City long-span card was verified to cut/play the cited event rather than seek to the broad incident-envelope start. |

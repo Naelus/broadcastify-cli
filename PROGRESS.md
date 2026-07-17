@@ -4,6 +4,14 @@ This is the dated verification and delivery log for `GOAL.md`. Keep forward-look
 
 ## July 17, 2026
 
+### Durable feed identity and legacy Library repair
+
+- Added a bounded `feed_name` to the shared archive-job contract and carried it through native WinUI, the cross-platform Web UI, and each per-feed regional queue item. The worker persists selected identity before acquisition, and completed combination records it in the versioned audio manifest.
+- Current cached manifests can now gain a missing or corrected feed name through the atomic manifest writer without invoking FFmpeg or touching source audio. Local Library resolves identity from the persistent catalog first, then the retained manifest, and only then falls back to `Feed <id>`.
+- Used the website's feed-directory search—not its archive listing or media endpoint—to refresh legacy feed `90003` as `Example Regional Public Safety.`. A direct offline Library scan then resolved all five retained July 3–7 days by name.
+- Refreshed the already-running native Library and verified the repaired name on the July 7 quota-interrupted day and the four retained combined/transcribed/diarized days. The viewer still distinguishes **Resume archive download** from local-only **Re-run evidence analysis**, and the rendered 1840×1335 window remains readable without changing the selected Example City/Example County data.
+- Focused persistence/UI suite: **34 passed**. Complete suite: **150 passed in 8.37 seconds**. Python compilation, bundled-Node JavaScript syntax, Git whitespace, and an isolated WinUI Release build passed with **0 warnings and 0 errors**; the alternate build output kept the inspected native executable open.
+
 ### Example City inline quote-safety follow-up
 
 - Reopened the current July 15–16 `Example City 12345` digest read-only and audited all 25 public evidence packages before reporting them. The audit found one additional two-token private-person name between a known numeric location and a continuing dispatch clause; the original source ASR remains internal.
