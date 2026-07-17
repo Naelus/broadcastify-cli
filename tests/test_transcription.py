@@ -1,6 +1,8 @@
 import json
+import sys
 from contextlib import nullcontext
 from pathlib import Path
+from types import ModuleType
 from types import SimpleNamespace
 
 import pytest
@@ -14,6 +16,19 @@ from broadcastify_cli.transcription import (
     group_words,
     speaker_for_interval,
 )
+
+
+def _fake_diarization_modules(monkeypatch, from_pretrained) -> None:
+    torch_module = ModuleType("torch")
+    torch_module.cuda = SimpleNamespace(is_available=lambda: False)  # type: ignore[attr-defined]
+    torch_module.device = lambda value: value  # type: ignore[attr-defined]
+    audio_module = ModuleType("pyannote.audio")
+    audio_module.Pipeline = SimpleNamespace(from_pretrained=from_pretrained)  # type: ignore[attr-defined]
+    pyannote_module = ModuleType("pyannote")
+    pyannote_module.audio = audio_module  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "torch", torch_module)
+    monkeypatch.setitem(sys.modules, "pyannote", pyannote_module)
+    monkeypatch.setitem(sys.modules, "pyannote.audio", audio_module)
 
 
 def test_whisper_cpp_auto_device_prefers_metal_on_macos(monkeypatch) -> None:
@@ -31,6 +46,58 @@ def test_whisper_cpp_auto_device_prefers_metal_on_macos(monkeypatch) -> None:
     )
 
     assert transcriber.device == "metal"
+
+
+def test_diarization_reuses_cached_model_without_huggingface_token(monkeypatch) -> None:
+    loaded: dict[str, object] = {}
+
+    class FakePipeline:
+        def to(self, target: object) -> None:
+            loaded["target"] = target
+
+    pipeline = FakePipeline()
+
+    def from_pretrained(model: str, *, token: str | None) -> FakePipeline:
+        loaded.update(model=model, token=token)
+        return pipeline
+
+    monkeypatch.delenv("HUGGINGFACE_TOKEN", raising=False)
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    _fake_diarization_modules(monkeypatch, from_pretrained)
+
+    transcriber = LocalTranscriber(
+        asr_engine="whisper.cpp",
+        device="cpu",
+        diarization_device="cpu",
+        diarize=True,
+        load_asr=False,
+    )
+
+    assert transcriber._diarization_pipeline is pipeline
+    assert loaded == {
+        "model": LocalTranscriber.DIARIZATION_MODEL,
+        "token": None,
+        "target": "cpu",
+    }
+
+
+def test_diarization_without_token_explains_cache_miss(monkeypatch) -> None:
+    def from_pretrained(_model: str, *, token: str | None) -> object:
+        assert token is None
+        raise OSError("cache miss")
+
+    monkeypatch.delenv("HUGGINGFACE_TOKEN", raising=False)
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    _fake_diarization_modules(monkeypatch, from_pretrained)
+
+    with pytest.raises(RuntimeError, match="no usable cached speaker-label model"):
+        LocalTranscriber(
+            asr_engine="whisper.cpp",
+            device="cpu",
+            diarization_device="cpu",
+            diarize=True,
+            load_asr=False,
+        )
 
 
 def test_speaker_uses_largest_overlap_not_first_overlap() -> None:

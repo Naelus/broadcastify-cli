@@ -346,17 +346,26 @@ class LocalTranscriber:
                 or os.getenv("HUGGINGFACE_TOKEN")
                 or os.getenv("HF_TOKEN")
             )
-            if not token:
-                raise RuntimeError(
-                    "A Hugging Face read token is required for the first local diarization model download."
+            try:
+                self._diarization_pipeline = Pipeline.from_pretrained(
+                    self.DIARIZATION_MODEL, token=token or None
                 )
-            self._diarization_pipeline = Pipeline.from_pretrained(
-                self.DIARIZATION_MODEL, token=token
-            )
+            except Exception as exc:
+                if not token:
+                    raise RuntimeError(
+                        "No Hugging Face read token was supplied and no usable cached "
+                        "speaker-label model could be loaded. Add a read token for the "
+                        "first download, then the cached model can run offline."
+                    ) from exc
+                raise
             if self._diarization_pipeline is None:
-                raise RuntimeError(
-                    "Unable to load the diarization model. Confirm the Hugging Face model terms were accepted."
+                message = (
+                    "No Hugging Face read token was supplied and no usable cached "
+                    "speaker-label model was found. Add a read token for the first download."
+                    if not token
+                    else "Unable to load the diarization model. Confirm the Hugging Face model terms were accepted."
                 )
+                raise RuntimeError(message)
             requested_diarization_device = (diarization_device or "auto").lower()
             if requested_diarization_device == "auto":
                 requested_diarization_device = "cuda" if cuda_available else "cpu"

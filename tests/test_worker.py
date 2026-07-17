@@ -124,6 +124,39 @@ def test_diarization_self_test_executes_generated_audio_without_returning_token(
     assert "private-test-token" not in json.dumps(emitted)
 
 
+def test_diarization_self_test_can_reuse_cached_model_without_token(monkeypatch) -> None:
+    emitted: list[dict[str, object]] = []
+    loaded: dict[str, object] = {}
+
+    class FakeAnnotation:
+        def itertracks(self, *, yield_label: bool = False):
+            assert yield_label is True
+            yield object(), object(), "SPEAKER_00"
+
+    class FakePipeline:
+        embedding_batch_size = 1
+
+        def __call__(self, _audio: dict[str, object]) -> FakeAnnotation:
+            return FakeAnnotation()
+
+    def fake_load(**kwargs: object) -> tuple[FakePipeline, str]:
+        loaded.update(kwargs)
+        return FakePipeline(), "cpu"
+
+    monkeypatch.delenv("HUGGINGFACE_TOKEN", raising=False)
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    monkeypatch.setattr("broadcastify_cli.worker._load_diarization_pipeline", fake_load)
+    monkeypatch.setattr(
+        "broadcastify_cli.worker.decoded_diarization_audio",
+        lambda _path: nullcontext({"waveform": object(), "sample_rate": 16_000}),
+    )
+    monkeypatch.setattr("broadcastify_cli.worker.emit", emitted.append)
+
+    assert diarization_self_test({"diarization_device": "cpu"}) == 0
+    assert loaded["token"] == ""
+    assert any(value["type"] == "diarization_self_test" for value in emitted)
+
+
 def test_explicit_private_environment_overrides_repository_defaults(
     monkeypatch, tmp_path: Path
 ) -> None:

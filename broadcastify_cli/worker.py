@@ -332,11 +332,26 @@ def _load_diarization_pipeline(
             "CUDA speaker labeling was selected, but PyTorch cannot see a CUDA device."
         )
 
-    pipeline = Pipeline.from_pretrained(LocalTranscriber.DIARIZATION_MODEL, token=token)
-    if pipeline is None:
-        raise RuntimeError(
-            "The speaker-label model could not be loaded. Confirm that its Hugging Face terms were accepted."
+    try:
+        pipeline = Pipeline.from_pretrained(
+            LocalTranscriber.DIARIZATION_MODEL, token=token or None
         )
+    except Exception as exc:
+        if not token:
+            raise RuntimeError(
+                "No Hugging Face read token was supplied and no usable cached "
+                "speaker-label model could be loaded. Add a read token for the "
+                "first download, then the cached model can run offline."
+            ) from exc
+        raise
+    if pipeline is None:
+        message = (
+            "No Hugging Face read token was supplied and no usable cached speaker-label "
+            "model was found. Add a read token for the first download."
+            if not token
+            else "The speaker-label model could not be loaded. Confirm that its Hugging Face terms were accepted."
+        )
+        raise RuntimeError(message)
     target = (
         torch.device(f"cuda:{max(0, int(device_index))}")
         if selected_device == "cuda"
@@ -383,10 +398,6 @@ def diarization_self_test(payload: dict[str, Any] | None = None) -> int:
     started = time.monotonic()
     token = str(settings.get("huggingface_token") or "").strip()
     token = token or os.getenv("HUGGINGFACE_TOKEN", "") or os.getenv("HF_TOKEN", "")
-    if not token:
-        raise RuntimeError(
-            "A Hugging Face read token is required to load the local speaker-label model."
-        )
     requested_device = str(settings.get("diarization_device") or "auto")
     emit(
         {
@@ -395,7 +406,8 @@ def diarization_self_test(payload: dict[str, Any] | None = None) -> int:
             "current": 0,
             "total": 0,
             "message": (
-                "Loading the local speaker-label model; the first explicit test may download it"
+                "Loading the local speaker-label model; a complete cache is reused offline, "
+                "and the first download requires a read token"
             ),
         }
     )
