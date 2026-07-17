@@ -89,7 +89,7 @@ def test_loopback_web_app_serves_library_transcript_and_media(tmp_path: Path) ->
         assert cookie.startswith("radio_archive_session=")
         assert token_match is not None
         assert b'id="areaPublicSafetyOnly"' in body
-        assert b'/static/app.js?v=7' in body
+        assert b'/static/app.js?v=8' in body
         token = token_match.group(1).decode()
 
         response, body = _request(connection, "GET", "/api/bootstrap", cookie=cookie)
@@ -98,6 +98,8 @@ def test_loopback_web_app_serves_library_transcript_and_media(tmp_path: Path) ->
         assert bootstrap["summary"]["day_count"] == 1
         assert bootstrap["days"][0]["feed_name"] == "Example City Public Safety"
         assert bootstrap["runtime"]["loopback_only"] is True
+        assert bootstrap["runtime"]["storage_ready"] is True
+        assert isinstance(bootstrap["runtime"]["account"]["configured"], bool)
 
         response, body = _request(
             connection,
@@ -253,4 +255,23 @@ def test_web_jobs_forward_explicit_asr_self_test_settings(tmp_path: Path) -> Non
     assert payload is not None
     assert payload["model"] == "tiny.en"
     assert payload["device"] == "openvino-npu"
+    assert payload["huggingface_token"] == "session-only-test-token"
+
+
+def test_web_jobs_forward_explicit_diarization_self_test_settings(
+    tmp_path: Path,
+) -> None:
+    manager = JobManager(tmp_path, tmp_path / "analysis.sqlite3", tmp_path)
+    arguments, payload = manager._worker_request(  # noqa: SLF001
+        "diarization-self-test",
+        {
+            "diarization_device": "cpu",
+            "huggingface_token": "session-only-test-token",
+            "batch_size": 4,
+        },
+    )
+
+    assert arguments == ["diarization-self-test"]
+    assert payload is not None
+    assert payload["diarization_device"] == "cpu"
     assert payload["huggingface_token"] == "session-only-test-token"

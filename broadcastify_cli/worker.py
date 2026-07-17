@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
+import struct
 import sys
 import tempfile
 import time
 import traceback
+import warnings
 import wave
 from datetime import date
 from pathlib import Path
@@ -44,7 +47,7 @@ from .jobs import JobRunner
 from .library import LocalProcessingRequest, prepare_local_day, scan_local_library
 from .models import JobRequest
 from .storage import AnalysisStore, sha256_file
-from .transcription import LocalTranscriber
+from .transcription import LocalTranscriber, decoded_diarization_audio
 
 
 DEFAULT_DATABASE = Path(
@@ -296,6 +299,140 @@ def asr_self_test(payload: dict[str, Any] | None = None) -> int:
         f"{result['elapsed_seconds']:.1f} seconds."
     )
     emit({"type": "asr_self_test", "result": result, "message": result["message"]})
+    return 0
+
+
+def _load_diarization_pipeline(
+    *,
+    token: str,
+    device: str,
+    device_index: int,
+) -> tuple[Any, str]:
+    try:
+        warnings.filterwarnings(
+            "ignore",
+            category=UserWarning,
+            module=r"pyannote\.audio\.core\.io",
+        )
+        import torch
+        from pyannote.audio import Pipeline
+    except ModuleNotFoundError as exc:
+        raise RuntimeError(
+            "pyannote.audio and PyTorch are required for speaker labeling."
+        ) from exc
+
+    selected_device = str(device or "auto").strip().lower()
+    cuda_available = bool(torch.cuda.is_available())
+    if selected_device == "auto":
+        selected_device = "cuda" if cuda_available else "cpu"
+    if selected_device not in {"cuda", "cpu"}:
+        raise ValueError("Speaker-label testing supports CUDA or CPU.")
+    if selected_device == "cuda" and not cuda_available:
+        raise RuntimeError(
+            "CUDA speaker labeling was selected, but PyTorch cannot see a CUDA device."
+        )
+
+    pipeline = Pipeline.from_pretrained(LocalTranscriber.DIARIZATION_MODEL, token=token)
+    if pipeline is None:
+        raise RuntimeError(
+            "The speaker-label model could not be loaded. Confirm that its Hugging Face terms were accepted."
+        )
+    target = (
+        torch.device(f"cuda:{max(0, int(device_index))}")
+        if selected_device == "cuda"
+        else torch.device("cpu")
+    )
+    pipeline.to(target)
+    return pipeline, selected_device
+
+
+def _write_diarization_test_audio(path: Path) -> None:
+    sample_rate = 16_000
+    frames = bytearray()
+    # Alternating low-amplitude tones and gaps exercise the complete local
+    # pipeline without using archive audio or pretending to be real speech.
+    for index in range(sample_rate * 4):
+        second = index / sample_rate
+        active = int(second * 2) % 2 == 0
+        frequency = 260.0 if second < 2.0 else 520.0
+        sample = int(2400 * math.sin(2.0 * math.pi * frequency * second)) if active else 0
+        frames.extend(struct.pack("<h", sample))
+    with wave.open(str(path), "wb") as output:
+        output.setnchannels(1)
+        output.setsampwidth(2)
+        output.setframerate(sample_rate)
+        output.writeframes(frames)
+
+
+def _speaker_turn_count(output: Any) -> int:
+    annotation = getattr(output, "exclusive_speaker_diarization", None)
+    if annotation is None:
+        annotation = getattr(output, "speaker_diarization", None)
+    if annotation is None:
+        annotation = output
+    if hasattr(annotation, "itertracks"):
+        return sum(1 for _value in annotation.itertracks(yield_label=True))
+    try:
+        return sum(1 for _value in annotation)
+    except TypeError:
+        return 0
+
+
+def diarization_self_test(payload: dict[str, Any] | None = None) -> int:
+    settings = payload if payload is not None else json.load(sys.stdin)
+    started = time.monotonic()
+    token = str(settings.get("huggingface_token") or "").strip()
+    token = token or os.getenv("HUGGINGFACE_TOKEN", "") or os.getenv("HF_TOKEN", "")
+    if not token:
+        raise RuntimeError(
+            "A Hugging Face read token is required to load the local speaker-label model."
+        )
+    requested_device = str(settings.get("diarization_device") or "auto")
+    emit(
+        {
+            "type": "progress",
+            "phase": "diarization_self_test",
+            "current": 0,
+            "total": 0,
+            "message": (
+                "Loading the local speaker-label model; the first explicit test may download it"
+            ),
+        }
+    )
+    pipeline, selected_device = _load_diarization_pipeline(
+        token=token,
+        device=requested_device,
+        device_index=max(0, int(settings.get("device_index", 0))),
+    )
+    if hasattr(pipeline, "embedding_batch_size"):
+        pipeline.embedding_batch_size = max(
+            int(getattr(pipeline, "embedding_batch_size", 1)),
+            max(1, int(settings.get("batch_size", 8))),
+        )
+    with tempfile.TemporaryDirectory(prefix="radio-archive-speaker-test-") as temporary:
+        audio_path = Path(temporary) / "generated-test.wav"
+        _write_diarization_test_audio(audio_path)
+        with decoded_diarization_audio(audio_path) as diarization_audio:
+            output = pipeline(diarization_audio)
+            turn_count = _speaker_turn_count(output)
+    result = {
+        "ready": True,
+        "model": LocalTranscriber.DIARIZATION_MODEL,
+        "device": selected_device,
+        "elapsed_seconds": round(time.monotonic() - started, 3),
+        "turn_count": turn_count,
+    }
+    result["message"] = (
+        f"Speaker-label self-test passed on {selected_device} in "
+        f"{result['elapsed_seconds']:.1f} seconds. Synthetic-audio turn count: {turn_count}."
+    )
+    emit(
+        {
+            "type": "diarization_self_test",
+            "result": result,
+            "message": result["message"],
+        }
+    )
     return 0
 
 
@@ -711,6 +848,7 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("authenticate")
     subparsers.add_parser("diagnostics")
     subparsers.add_parser("asr-self-test")
+    subparsers.add_parser("diarization-self-test")
     subparsers.add_parser("analysis-provider-diagnostics")
     library = subparsers.add_parser("library")
     library.add_argument("--output-dir", default="archives")
@@ -785,6 +923,8 @@ def main() -> int:
             return diagnostics()
         if arguments.command == "asr-self-test":
             return asr_self_test()
+        if arguments.command == "diarization-self-test":
+            return diarization_self_test()
         if arguments.command == "analysis-provider-diagnostics":
             return analysis_provider_diagnostics()
         if arguments.command == "library":

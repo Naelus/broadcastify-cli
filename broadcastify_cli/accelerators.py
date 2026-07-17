@@ -361,11 +361,22 @@ def _profile(
     diarization: str,
     analysis: str,
     note: str = "",
+    *,
+    transcription_ready: bool | None = None,
+    diarization_ready: bool | None = None,
+    analysis_ready: bool | None = None,
 ) -> dict[str, Any]:
     return {
         "id": identifier,
         "name": name,
         "ready": ready,
+        "transcription_ready": ready
+        if transcription_ready is None
+        else transcription_ready,
+        "diarization_ready": ready
+        if diarization_ready is None
+        else diarization_ready,
+        "analysis_ready": ready if analysis_ready is None else analysis_ready,
         "transcription": transcription,
         "diarization": diarization,
         "analysis": analysis,
@@ -444,6 +455,17 @@ def collect_accelerator_diagnostics(llama_server: str | Path | None) -> dict[str
             automatic_diarization,
             automatic_analysis,
             automatic_note,
+            transcription_ready=(
+                cuda_ready
+                if cuda_ready
+                else metal_asr
+                if sys.platform == "darwin" and metal_asr and metal_llm
+                else vulkan_asr
+                if sys.platform.startswith("linux") and vulkan_asr and vulkan_llm
+                else cpu_ready
+            ),
+            diarization_ready=pyannote_ready,
+            analysis_ready=llama_ready,
         ),
         _profile(
             "cuda",
@@ -452,6 +474,9 @@ def collect_accelerator_diagnostics(llama_server: str | Path | None) -> dict[str
             "faster-whisper / CUDA" if cuda_ready else "CUDA ASR dependencies unavailable",
             "pyannote / CUDA" if torch["cuda_available"] and pyannote_ready else cpu_diarization,
             "llama.cpp auto-offload" if llama_ready else "llama.cpp missing",
+            transcription_ready=cuda_ready,
+            diarization_ready=bool(torch["cuda_available"] and pyannote_ready),
+            analysis_ready=llama_ready,
         ),
         _profile(
             "vulkan",
@@ -461,6 +486,9 @@ def collect_accelerator_diagnostics(llama_server: str | Path | None) -> dict[str
             cpu_diarization,
             "llama.cpp / Vulkan" if vulkan_llm else "needs a Vulkan llama.cpp build",
             "Diarization intentionally falls back to CPU because pyannote has no Vulkan backend.",
+            transcription_ready=vulkan_asr,
+            diarization_ready=pyannote_ready,
+            analysis_ready=vulkan_llm,
         ),
         _profile(
             "openvino",
@@ -480,6 +508,9 @@ def collect_accelerator_diagnostics(llama_server: str | Path | None) -> dict[str
                 else "llama.cpp auto-offload or CPU"
             ),
             "Uses devices exposed by the installed OpenVINO runtime; unsupported model/device combinations retry on CPU.",
+            transcription_ready=openvino_asr,
+            diarization_ready=pyannote_ready,
+            analysis_ready=llama_ready,
         ),
         _profile(
             "windowsml",
@@ -493,13 +524,16 @@ def collect_accelerator_diagnostics(llama_server: str | Path | None) -> dict[str
                 else "needs the Windows ML helper and a compatible ONNX Whisper model"
             ),
             cpu_diarization,
-            "llama.cpp auto-offload or CPU",
+            "llama.cpp auto-offload or CPU" if llama_ready else "llama.cpp missing",
             (
                 "The configured model passed an actual silent-audio decode self-test. "
                 "Diarization uses the dependable CPU fallback."
                 if windows_ml_decode
                 else "A runtime-only probe is not enough; this profile remains unavailable until a model decode passes."
             ),
+            transcription_ready=windows_ml_decode,
+            diarization_ready=pyannote_ready,
+            analysis_ready=llama_ready,
         ),
     ]
     if sys.platform == "darwin":
@@ -512,6 +546,9 @@ def collect_accelerator_diagnostics(llama_server: str | Path | None) -> dict[str
                 cpu_diarization,
                 "llama.cpp / Metal" if metal_llm else "needs a Metal llama.cpp build",
                 "Apple GPU acceleration is native-only; pyannote diarization intentionally uses CPU.",
+                transcription_ready=metal_asr,
+                diarization_ready=pyannote_ready,
+                analysis_ready=metal_llm,
             )
         )
     profiles.append(
@@ -523,6 +560,9 @@ def collect_accelerator_diagnostics(llama_server: str | Path | None) -> dict[str
             cpu_diarization,
             "llama.cpp / CPU" if llama_ready else "llama.cpp missing",
             "Slowest but portable and a dependable fallback for every stage.",
+            transcription_ready=cpu_ready,
+            diarization_ready=pyannote_ready,
+            analysis_ready=llama_ready,
         )
     )
 
@@ -532,6 +572,12 @@ def collect_accelerator_diagnostics(llama_server: str | Path | None) -> dict[str
         "openvino": openvino,
         "onnx": onnx,
         "windows_ml": windows_ml,
+        "speaker_labels": {
+            "package_installed": module_available("pyannote.audio"),
+            "token_configured": token_ready,
+            "configured": pyannote_ready,
+            "cuda_available": bool(torch["cuda_available"]),
+        },
         "whisper_cpp": {
             "executable": whisper_executable,
             "backends": whisper_backends,

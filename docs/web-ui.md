@@ -23,7 +23,8 @@ The default address is `http://127.0.0.1:8765/`. `--port` may select another loc
 - evidence-grounded range Q&A and persisted seven-day briefs with missing dates
 - center/radius or ordered-ZIP discovery, explicit area profiles, persisted nearest-first stop/resume queues, and retained regional story-lead briefs with coverage gaps
 - automatic/CUDA/CPU/Vulkan/OpenVINO/Apple Metal/Windows ML processing profiles with a collapsed stage-by-stage readiness comparison
-- explicit selected-engine synthetic-audio self-test, with user-controlled managed-model download and actual fallback reporting
+- five-step first-run readiness for account, storage, transcription, speaker labels, and analysis
+- explicit selected-engine transcription and diarization synthetic-audio self-tests, with user-controlled managed-model download and actual fallback/device reporting
 - local Gemma, OpenAI Responses, compatible `/v1`, and Codex-login analysis settings with the same explicit external-text gate as WinUI
 - hardware and provider readiness checks that do not send transcript text
 
@@ -43,4 +44,4 @@ WinUI can additionally use Windows Credential Locker. A portable OS-keychain ada
 
 ## Current validation boundary
 
-The complete retained Library/review experience, responsive layout, transcript search, saved weekly summary, saved area digest, and provider checks have been exercised on the Windows reference machine. The exact pushed source also ran on an immutable TrueNAS/Linux host: a private non-system dependency install, all 96 tests, loopback startup, session/action-token security, byte-range media, v4 portable profile assets, and the diagnostics worker passed. Linux ASR and quantized LLM components were separately validated on the same AMD host, but a single Web-triggered ASR → pyannote CPU → analysis run is still pending. No real macOS install or Metal model run has occurred.
+The complete retained Library/review experience, responsive layout, transcript search, saved weekly summary, saved area digest, provider checks, and the five-step setup view have been exercised on the Windows reference machine. Setup QA passed at desktop and 390×844 with no horizontal overflow or console errors; the hardware action moved the reference machine from two cheap prerequisites to five detected stages. The current local suite is 109 tests. An earlier exact pushed source also ran on an immutable TrueNAS/Linux host: a private non-system dependency install, all then-current 96 tests, loopback startup, session/action-token security, byte-range media, v4 portable profile assets, and the diagnostics worker passed. Linux ASR and quantized LLM components were separately validated on the same AMD host, but a single Web-triggered ASR → pyannote CPU → analysis run is still pending. No real macOS install or Metal model run has occurred.

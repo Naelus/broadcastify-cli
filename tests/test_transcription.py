@@ -1,4 +1,5 @@
 import json
+from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -154,7 +155,9 @@ def test_diarization_reports_inner_pipeline_progress_without_lowering_model_batc
     class FakePipeline:
         embedding_batch_size = pipeline_batch_size
 
-        def __call__(self, _path: str, *, hook=None, **_kwargs: object):
+        def __call__(self, audio: dict[str, object], *, hook=None, **_kwargs: object):
+            assert audio["sample_rate"] == 16_000
+            assert "waveform" in audio
             assert hook is not None
             assert self.embedding_batch_size == expected_batch_size
             hook("segmentation", None, file={"uri": "test"}, total=4, completed=1)
@@ -169,6 +172,10 @@ def test_diarization_reports_inner_pipeline_progress_without_lowering_model_batc
     transcriber.max_speakers = None
     monkeypatch.setattr(
         transcriber, "_prepare_diarization_input", lambda _path: (prepared, True)
+    )
+    monkeypatch.setattr(
+        "broadcastify_cli.transcription.decoded_diarization_audio",
+        lambda _path: nullcontext({"waveform": object(), "sample_rate": 16_000}),
     )
 
     turns = transcriber._diarize(audio, progress=messages.append)
@@ -191,7 +198,7 @@ def test_diarization_keeps_prepared_input_after_pipeline_failure(
     class FailingPipeline:
         embedding_batch_size = 32
 
-        def __call__(self, _path: str, **_kwargs: object):
+        def __call__(self, _audio: dict[str, object], **_kwargs: object):
             raise RuntimeError("diarization failed")
 
     transcriber = object.__new__(LocalTranscriber)
@@ -201,6 +208,10 @@ def test_diarization_keeps_prepared_input_after_pipeline_failure(
     transcriber.max_speakers = None
     monkeypatch.setattr(
         transcriber, "_prepare_diarization_input", lambda _path: (prepared, True)
+    )
+    monkeypatch.setattr(
+        "broadcastify_cli.transcription.decoded_diarization_audio",
+        lambda _path: nullcontext({"waveform": object(), "sample_rate": 16_000}),
     )
 
     with pytest.raises(RuntimeError, match="diarization failed"):

@@ -25,6 +25,8 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import parse_qs, quote, unquote, urlparse
 
+from dotenv import dotenv_values
+
 from .library import scan_local_library
 from .storage import AnalysisStore
 
@@ -38,6 +40,53 @@ ZIP_PATTERN = re.compile(r"^\d{5}$")
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _readiness_environment(working_dir: Path) -> tuple[dict[str, str], str]:
+    """Return non-secret setup flags using the worker's environment precedence."""
+
+    values = {key: str(value) for key, value in os.environ.items()}
+    loaded_path = ""
+    candidates = [working_dir / ".env"]
+    configured = os.getenv("BROADCASTIFY_ENV_FILE")
+    if configured:
+        candidates.append(Path(configured).expanduser())
+    for candidate in candidates:
+        if not candidate.is_file():
+            continue
+        try:
+            parsed = dotenv_values(candidate)
+        except (OSError, UnicodeError):
+            continue
+        values.update(
+            {key: str(value) for key, value in parsed.items() if value is not None}
+        )
+        loaded_path = str(candidate.resolve())
+    return values, loaded_path
+
+
+def _runtime_readiness(state: "WebAppState") -> dict[str, Any]:
+    values, environment_file = _readiness_environment(state.working_dir)
+    username = values.get("BROADCASTIFY_USERNAME") or values.get("USERNAME")
+    password = values.get("BROADCASTIFY_PASSWORD") or values.get("PASSWORD")
+    session_path = state.working_dir / "cookies.json"
+    probe = state.output_dir if state.output_dir.exists() else state.output_dir.parent
+    storage_ready = bool(
+        probe.is_dir()
+        and os.access(probe, os.R_OK | os.W_OK)
+        and (not state.output_dir.exists() or state.output_dir.is_dir())
+    )
+    credentials_configured = bool(username and password)
+    saved_session = session_path.is_file()
+    return {
+        "storage_ready": storage_ready,
+        "account": {
+            "configured": credentials_configured or saved_session,
+            "credentials_configured": credentials_configured,
+            "saved_session_available": saved_session,
+            "environment_file_available": bool(environment_file),
+        },
+    }
 
 
 class WebRequestError(Exception):
@@ -310,6 +359,7 @@ class JobManager:
             "analysis-provider-diagnostics",
             "analyze-day",
             "asr-self-test",
+            "diarization-self-test",
             "ask",
             "authenticate",
             "continue-local",
@@ -598,6 +648,7 @@ def create_server(
                             "output_dir": str(state.output_dir),
                             "database_path": str(state.database_path),
                             "loopback_only": True,
+                            **_runtime_readiness(state),
                         },
                     },
                 )

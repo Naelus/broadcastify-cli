@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import json
+import gc
 import os
 import subprocess
 import sys
 import time
+import warnings
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Callable, Iterable, Sequence
@@ -114,6 +117,74 @@ def format_timestamp(seconds: float) -> str:
 
 class TranscriptionDependencyError(RuntimeError):
     pass
+
+
+@contextmanager
+def decoded_diarization_audio(audio_path: Path):
+    """Give pyannote a waveform without relying on its TorchCodec file loader."""
+
+    try:
+        import torch
+    except ModuleNotFoundError as exc:
+        raise TranscriptionDependencyError(
+            "PyTorch is required for local speaker labeling."
+        ) from exc
+    ffmpeg = find_ffmpeg()
+    if not ffmpeg:
+        raise RuntimeError("FFmpeg is required to decode audio for speaker labeling.")
+    directory = audio_path.parent
+    raw_path = directory / (
+        f".{audio_path.stem}.{os.getpid()}.{time.time_ns()}.pyannote.f32le"
+    )
+    process = subprocess.run(
+        [
+            ffmpeg,
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-i",
+            str(audio_path),
+            "-ar",
+            "16000",
+            "-ac",
+            "1",
+            "-f",
+            "f32le",
+            "-c:a",
+            "pcm_f32le",
+            "-y",
+            str(raw_path),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if process.returncode != 0 or not raw_path.is_file() or raw_path.stat().st_size < 4:
+        raw_path.unlink(missing_ok=True)
+        raise RuntimeError(
+            process.stderr.strip()
+            or "FFmpeg could not decode audio for the speaker-label model."
+        )
+    sample_count = raw_path.stat().st_size // 4
+    waveform = torch.from_file(
+        str(raw_path),
+        shared=False,
+        size=sample_count,
+        dtype=torch.float32,
+    ).reshape(1, sample_count)
+    audio = {"waveform": waveform, "sample_rate": 16_000}
+    try:
+        yield audio
+    finally:
+        audio.clear()
+        del waveform
+        gc.collect()
+        try:
+            raw_path.unlink(missing_ok=True)
+        except OSError:
+            # A force-terminated process may leave this uniquely named raw
+            # scratch file behind; the retained FLAC cache is still reusable.
+            pass
 
 
 class LocalTranscriber:
@@ -259,6 +330,11 @@ class LocalTranscriber:
         self._diarization_pipeline = None
         if self.diarize:
             try:
+                warnings.filterwarnings(
+                    "ignore",
+                    category=UserWarning,
+                    module=r"pyannote\.audio\.core\.io",
+                )
                 from pyannote.audio import Pipeline
             except ModuleNotFoundError as exc:
                 raise TranscriptionDependencyError(
@@ -641,11 +717,12 @@ class LocalTranscriber:
             last_step = step
             last_emit = now
 
-        output = self._diarization_pipeline(
-            str(diarization_input),
-            hook=diarization_progress if progress is not None else None,
-            **diarization_args,
-        )
+        with decoded_diarization_audio(diarization_input) as diarization_audio:
+            output = self._diarization_pipeline(
+                diarization_audio,
+                hook=diarization_progress if progress is not None else None,
+                **diarization_args,
+            )
         annotation = getattr(output, "exclusive_speaker_diarization", None)
         if annotation is None:
             annotation = getattr(output, "speaker_diarization", None)

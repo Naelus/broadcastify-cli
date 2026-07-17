@@ -1,5 +1,6 @@
 import json
 import os
+from contextlib import nullcontext
 from datetime import date
 from pathlib import Path
 
@@ -8,6 +9,7 @@ from broadcastify_cli.worker import (
     _day_report,
     _incident_clip,
     asr_self_test,
+    diarization_self_test,
     load_worker_environment,
 )
 
@@ -71,6 +73,55 @@ def test_asr_self_test_uses_selected_engine_without_returning_transcript_text(
     assert result["ready"] is True
     assert result["fallback_stage"] == "initialization"
     assert "never return" not in json.dumps(result)
+
+
+def test_diarization_self_test_executes_generated_audio_without_returning_token(
+    monkeypatch,
+) -> None:
+    emitted: list[dict[str, object]] = []
+    loaded: dict[str, object] = {}
+
+    class FakeAnnotation:
+        def itertracks(self, *, yield_label: bool = False):
+            assert yield_label is True
+            yield object(), object(), "SPEAKER_00"
+
+    class FakePipeline:
+        embedding_batch_size = 2
+
+        def __call__(self, audio: dict[str, object]) -> FakeAnnotation:
+            assert audio["sample_rate"] == 16_000
+            return FakeAnnotation()
+
+    def fake_load(**kwargs: object) -> tuple[FakePipeline, str]:
+        loaded.update(kwargs)
+        return FakePipeline(), "cpu"
+
+    monkeypatch.setattr("broadcastify_cli.worker._load_diarization_pipeline", fake_load)
+    monkeypatch.setattr(
+        "broadcastify_cli.worker.decoded_diarization_audio",
+        lambda _path: nullcontext({"waveform": object(), "sample_rate": 16_000}),
+    )
+    monkeypatch.setattr("broadcastify_cli.worker.emit", emitted.append)
+
+    exit_code = diarization_self_test(
+        {
+            "huggingface_token": "private-test-token",
+            "diarization_device": "cpu",
+            "batch_size": 4,
+        }
+    )
+
+    result = next(
+        value["result"]
+        for value in emitted
+        if value["type"] == "diarization_self_test"
+    )
+    assert exit_code == 0
+    assert loaded["token"] == "private-test-token"
+    assert result["ready"] is True
+    assert result["turn_count"] == 1
+    assert "private-test-token" not in json.dumps(emitted)
 
 
 def test_explicit_private_environment_overrides_repository_defaults(

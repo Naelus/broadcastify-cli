@@ -47,6 +47,10 @@ Use this file for reproducible defects and concrete blockers, not the general ro
 
 ## Recently fixed
 
+### F-010 — pyannote file decoding failed when TorchCodec could not load compatible FFmpeg DLLs
+
+Current pyannote/Torchaudio delegated filename decoding to TorchCodec, which was installed but incompatible with the reference PyTorch/FFmpeg combination. Both the new speaker self-test and the same combined-file path failed before model inference. Diarization now uses FFmpeg to create a bounded-lifetime float32 PCM scratch file, memory-maps it as a PyTorch waveform dictionary, and passes that directly to pyannote. This avoids TorchCodec while keeping a day-long waveform off the Python heap. The generated-audio CUDA test passed in 6.5 seconds; a 250-second slice from retained combined feed 90001 audio passed in 11.75 seconds with 52 turns and three acoustic clusters.
+
 ### F-009 — `dotnet publish` collided on Windows App SDK assets and omitted XAML resources
 
 The build-only Windows ML `ProjectReference` was replaced with an explicit helper build and namespaced `windowsml/` copy. This prevents the two self-contained Windows App SDK graphs from merging. The publish target also copies the unpackaged WinUI `App.xbf`, `MainWindow.xbf`, and application PRI that the SDK omitted. A normal/private/normal credential cycle passed, the published helper completed a real CPU Whisper decode, and the actual published desktop stayed open, loaded the retained library, and logged `Windows ML helper: bundled runtime`. The remaining installer/Python/model-manager work stays under B-005 and the roadmap.

@@ -96,6 +96,9 @@ def test_vulkan_profile_requires_vulkan_llama_backend(monkeypatch) -> None:
     vulkan = next(value for value in diagnostics["profiles"] if value["id"] == "vulkan")
 
     assert vulkan["ready"] is False
+    assert vulkan["transcription_ready"] is True
+    assert vulkan["diarization_ready"] is True
+    assert vulkan["analysis_ready"] is False
     assert vulkan["analysis"] == "needs a Vulkan llama.cpp build"
 
 
@@ -184,6 +187,9 @@ def test_macos_profile_requires_and_reports_both_metal_engines(monkeypatch) -> N
     metal = next(value for value in diagnostics["profiles"] if value["id"] == "metal")
 
     assert automatic["ready"] is True
+    assert automatic["transcription_ready"] is True
+    assert automatic["diarization_ready"] is True
+    assert automatic["analysis_ready"] is True
     assert automatic["transcription"] == "whisper.cpp on Apple Metal"
     assert metal["ready"] is True
     assert metal["analysis"] == "llama.cpp / Metal"

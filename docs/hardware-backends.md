@@ -15,6 +15,14 @@ The application chooses a backend independently for transcription, diarization, 
 
 The official [whisper.cpp project](https://github.com/ggml-org/whisper.cpp) documents Windows, Linux, macOS, Docker, quantized models, Metal, OpenVINO, and `GGML_VULKAN=1`. The official [llama.cpp project](https://github.com/ggml-org/llama.cpp) documents native packages/releases, Vulkan and SYCL backends, quantized GGUF models, and its OpenAI-compatible server.
 
+## Diarization decoding and proof
+
+Both UIs expose **Test speakers** separately from hardware detection. It loads `pyannote/speaker-diarization-community-1`, selects the requested CUDA or CPU device, and executes generated local audio. The action is explicit because its first run may download the gated model; it never uses Broadcastify archive quota.
+
+The app does not give archive filenames to pyannote's optional TorchCodec loader. FFmpeg decodes the already-prepared 16 kHz mono input to a temporary float32 PCM file, PyTorch memory-maps it, and pyannote receives `waveform` plus `sample_rate`. This avoids TorchCodec/PyTorch/FFmpeg-DLL compatibility failures and prevents a day-long waveform from being copied onto the Python heap. The raw scratch file is removed after inference; the compact lossless preparation remains reusable after an interruption.
+
+On the Windows CUDA reference machine, the generated-audio proof completed in 6.5 seconds. A separate 250-second slice from retained combined feed 90001 audio completed in 11.75 seconds and returned 52 turns across three anonymous acoustic clusters. These tests prove execution and continuous-file decoding; the clusters are not officer identities.
+
 ## Native whisper.cpp
 
 Build a native Vulkan binary with the upstream flags:

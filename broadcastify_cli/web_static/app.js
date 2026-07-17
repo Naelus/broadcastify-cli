@@ -42,6 +42,10 @@ const state = {
   jobCallback: null,
   analysisQueue: [],
   hardwareDiagnostics: null,
+  asrSelfTest: null,
+  diarizationSelfTest: null,
+  analysisProviderStatus: null,
+  accountVerified: false,
 };
 
 let applyingHardwareProfile = false;
@@ -77,6 +81,7 @@ function readSettingsForm() {
     allowExternal: byId("settingAllowExternal").checked,
   };
   updateProviderNotice();
+  renderSetupReadiness();
 }
 
 function applySettingsForm() {
@@ -94,6 +99,7 @@ function applySettingsForm() {
   byId("settingCodexPath").value = state.settings.codexPath;
   byId("settingAllowExternal").checked = Boolean(state.settings.allowExternal);
   updateProviderNotice();
+  renderSetupReadiness();
 }
 
 function applyHardwareProfile(profile, notify = true) {
@@ -107,7 +113,15 @@ function applyHardwareProfile(profile, notify = true) {
     cpu: ["faster-whisper", "cpu", "cpu"],
   };
   const choice = choices[profile];
-  if (!choice) return;
+  if (!choice) {
+    state.asrSelfTest = null;
+    state.diarizationSelfTest = null;
+    readSettingsForm();
+    renderSetupReadiness();
+    return;
+  }
+  state.asrSelfTest = null;
+  state.diarizationSelfTest = null;
   applyingHardwareProfile = true;
   byId("settingHardwareProfile").value = profile;
   byId("settingAsrEngine").value = choice[0];
@@ -115,6 +129,7 @@ function applyHardwareProfile(profile, notify = true) {
   byId("settingDiarizationDevice").value = choice[2];
   applyingHardwareProfile = false;
   readSettingsForm();
+  renderSetupReadiness();
   if (notify) toast(`${byId("settingHardwareProfile").selectedOptions[0].textContent} defaults applied.`);
 }
 
@@ -193,6 +208,7 @@ function setView(name) {
   byId("topbarSubtitle").textContent = labels[name][1];
   document.querySelector(".sidebar").classList.remove("open");
   history.replaceState(null, "", `#${name}`);
+  if (name === "settings") renderSetupReadiness();
 }
 
 function bytes(value) {
@@ -389,6 +405,101 @@ function renderRuntime() {
     ["Default behavior", runtime.platform === "Windows" ? "Tested Windows automatic profile" : "Portable automatic detection"],
   ].map(([label, value]) => `<div class="runtime-fact"><span>${html(label)}</span><strong>${html(value)}</strong></div>`).join("");
   renderHardwareProfiles();
+  renderSetupReadiness();
+}
+
+function selectedHardwareProfile() {
+  const profiles = state.hardwareDiagnostics?.accelerators?.profiles || [];
+  const selected = byId("settingHardwareProfile")?.value || state.settings.hardwareProfile;
+  return profiles.find((profile) => profile.id === selected) || null;
+}
+
+function renderSetupReadiness() {
+  const region = byId("setupReadinessGrid");
+  if (!region) return;
+  const runtime = state.bootstrap.runtime || {};
+  const account = runtime.account || {};
+  const profile = selectedHardwareProfile();
+  const speakerLabels = state.hardwareDiagnostics?.accelerators?.speaker_labels || {};
+  const tokenInTab = Boolean(byId("settingHuggingFaceToken")?.value);
+  const selectedDiarization = byId("settingDiarizationDevice")?.value || state.settings.diarizationDevice;
+  const tokenConfigured = Boolean(speakerLabels.token_configured || tokenInTab);
+  const typedTokenReady = Boolean(
+    speakerLabels.package_installed
+    && tokenConfigured
+    && (selectedDiarization !== "cuda" || speakerLabels.cuda_available)
+  );
+  const accountReady = Boolean(state.accountVerified || account.configured);
+  const storageReady = Boolean(runtime.storage_ready);
+  const transcriptionReady = Boolean(state.asrSelfTest?.ready || profile?.transcription_ready);
+  const diarizationReady = Boolean(
+    state.diarizationSelfTest?.ready || profile?.diarization_ready || typedTokenReady
+  );
+  const provider = byId("settingAnalysisProvider")?.value || state.settings.analysisProvider;
+  const localAnalysisDetected = provider === "local" && Boolean(profile?.analysis_ready);
+  const analysisReady = state.analysisProviderStatus
+    ? Boolean(state.analysisProviderStatus.ready)
+    : localAnalysisDetected;
+
+  const items = [
+    {
+      id: "account", icon: "◉", title: "Archive account", available: accountReady,
+      state: state.accountVerified ? "Verified" : accountReady ? "Configured" : "Sign in",
+      detail: state.accountVerified
+        ? "Premium website session refreshed in this browser session."
+        : accountReady
+          ? "An environment login or saved website session is available."
+          : "A premium Broadcastify website login is needed for archives.",
+      action: accountReady ? "Review" : "Sign in",
+    },
+    {
+      id: "storage", icon: "▣", title: "Storage", available: storageReady,
+      state: storageReady ? "Ready" : "Needs attention",
+      detail: storageReady ? `Writable library: ${runtime.output_dir || "archives"}` : "The archive library path is not writable.",
+      action: "Review path",
+    },
+    {
+      id: "transcription", icon: "≋", title: "Transcription", available: transcriptionReady,
+      state: state.asrSelfTest?.ready ? "Verified" : transcriptionReady ? "Detected" : state.hardwareDiagnostics ? "Setup needed" : "Check",
+      detail: state.asrSelfTest?.message || profile?.transcription || "Check this computer to choose a Whisper path.",
+      action: state.asrSelfTest?.ready ? "Retest" : transcriptionReady ? "Test" : "Check",
+    },
+    {
+      id: "diarization", icon: "◎", title: "Speaker labels", available: diarizationReady,
+      state: state.diarizationSelfTest?.ready ? "Verified" : diarizationReady ? "Configured" : state.hardwareDiagnostics ? "Setup needed" : "Check",
+      detail: state.diarizationSelfTest?.message || profile?.diarization || "Check pyannote, model access, and its CUDA or CPU path.",
+      action: state.diarizationSelfTest?.ready ? "Retest" : diarizationReady ? "Test" : "Configure",
+    },
+    {
+      id: "analysis", icon: "✦", title: "Event analysis", available: analysisReady,
+      state: state.analysisProviderStatus?.verified ? "Verified" : analysisReady ? "Configured" : state.hardwareDiagnostics ? "Check provider" : "Check",
+      detail: state.analysisProviderStatus?.message || (localAnalysisDetected ? profile.analysis : "Check the selected local, API, endpoint, or Codex provider."),
+      action: state.analysisProviderStatus ? "Recheck" : "Check",
+    },
+  ];
+  const available = items.filter((item) => item.available).length;
+  const verified = [
+    state.accountVerified,
+    state.asrSelfTest?.ready,
+    state.diarizationSelfTest?.ready,
+    state.analysisProviderStatus?.verified,
+  ].filter(Boolean).length;
+  byId("setupReadinessSummary").textContent = `${available} of 5 setup steps available · ${verified} execution check${verified === 1 ? "" : "s"} verified this session`;
+  byId("setupProgressBar").style.width = `${available * 20}%`;
+  region.innerHTML = items.map((item) => `
+    <article class="setup-item${item.available ? " available" : ""}">
+      <span class="setup-icon" aria-hidden="true">${item.icon}</span>
+      <div class="setup-copy"><strong>${html(item.title)}</strong><span>${html(item.state)}</span></div>
+      <p>${html(item.detail)}</p>
+      <button class="button secondary small" data-setup-action="${html(item.id)}">${html(item.action)}</button>
+    </article>`).join("");
+
+  const loginNotice = byId("loginNotice");
+  if (loginNotice) {
+    loginNotice.className = `notice${accountReady ? " success" : " warning"}`;
+    loginNotice.querySelector("strong").textContent = state.accountVerified ? "Session verified" : accountReady ? "Archive access configured" : "Sign-in needed";
+    loginNotice.querySelector("span").textContent = items[0].detail;
+  }
 }
 
 function renderHardwareProfiles() {
@@ -707,10 +818,24 @@ byId("saveSettingsButton").addEventListener("click", saveSettings);
 byId("settingAnalysisProvider").addEventListener("change", () => {
   const defaults = { local: "ggml-org/gemma-4-12B-it-GGUF:Q4_K_M", "openai-responses": "gpt-5.6-luna", "openai-compatible": "", "codex-cli": "" };
   byId("settingAnalysisModel").value = defaults[byId("settingAnalysisProvider").value] || "";
+  state.analysisProviderStatus = null;
   updateProviderNotice();
+  renderSetupReadiness();
 });
-byId("settingAnalysisEndpoint").addEventListener("input", () => updateProviderNotice());
-byId("settingAllowExternal").addEventListener("change", () => updateProviderNotice());
+["settingAnalysisModel", "settingAnalysisEndpoint", "settingApiKeyEnvironment", "settingCodexPath", "settingAnalysisApiKey"].forEach((id) => byId(id).addEventListener("input", () => {
+  state.analysisProviderStatus = null;
+  updateProviderNotice();
+  renderSetupReadiness();
+}));
+byId("settingAllowExternal").addEventListener("change", () => {
+  state.analysisProviderStatus = null;
+  updateProviderNotice();
+  renderSetupReadiness();
+});
+byId("settingHuggingFaceToken").addEventListener("input", () => {
+  state.diarizationSelfTest = null;
+  renderSetupReadiness();
+});
 byId("jobDrawerToggle").addEventListener("click", () => {
   const open = byId("jobDrawer").classList.toggle("open");
   byId("jobDrawerToggle").setAttribute("aria-expanded", String(open));
@@ -835,13 +960,17 @@ byId("areaProfileSelect").addEventListener("change", async () => {
 byId("areaCoverageMode").addEventListener("change", updateAreaCoverageControls);
 byId("areaPublicSafetyOnly").addEventListener("change", () => renderAreaResults(state.areaDiscovered));
 
-byId("providerCheckButton").addEventListener("click", async () => {
+async function runProviderCheck() {
   await startJob("analysis-provider-diagnostics", providerPayload(), { label: "Checking analysis provider", onComplete: (job) => {
     const result = eventOf(job, "analysis_provider_diagnostics")?.result;
-    if (result) updateProviderNotice(`${result.verified ? "Verified" : result.ready ? "Configured" : "Setup needed"}: ${result.message}`);
+    if (!result) return;
+    state.analysisProviderStatus = result;
+    updateProviderNotice(`${result.verified ? "Verified" : result.ready ? "Configured" : "Setup needed"}: ${result.message}`);
+    renderSetupReadiness();
   } });
-});
-byId("runtimeCheckButton").addEventListener("click", async () => {
+}
+
+async function runHardwareCheck() {
   await startJob("diagnostics", {}, { label: "Checking local hardware", onComplete: (job) => {
     const result = eventOf(job, "diagnostics");
     if (!result) return;
@@ -851,34 +980,93 @@ byId("runtimeCheckButton").addEventListener("click", async () => {
     const summary = [result.cuda_available ? `CUDA: ${(result.cuda_devices || []).join(", ")}` : "CUDA unavailable", result.ffmpeg ? "FFmpeg ready" : "FFmpeg missing", result.llama_server ? "llama.cpp ready" : "llama.cpp missing", `Profiles: ${profiles.length || "checked"}`].join(" · ");
     byId("runtimeDescription").textContent = summary;
     renderHardwareProfiles();
+    renderSetupReadiness();
   } });
-});
+}
+
+async function runAsrSelfTest() {
+  await startJob("asr-self-test", processingPayload(), { label: "Testing selected transcription engine", onComplete: (job) => {
+    const result = eventOf(job, "asr_self_test")?.result;
+    if (!result) return;
+    state.asrSelfTest = result;
+    const notice = byId("asrSelfTestNotice");
+    notice.className = "notice success";
+    notice.querySelector("strong").textContent = "Transcription ready";
+    const fallback = result.fallback_reason ? ` Fallback: ${result.fallback_reason}` : "";
+    notice.querySelector("span").textContent = `${result.message}${fallback}`;
+    renderSetupReadiness();
+  } });
+}
+
+async function runDiarizationSelfTest() {
+  await startJob("diarization-self-test", processingPayload(), { label: "Testing selected speaker-label engine", onComplete: (job) => {
+    const result = eventOf(job, "diarization_self_test")?.result;
+    if (!result) return;
+    state.diarizationSelfTest = result;
+    const notice = byId("diarizationSelfTestNotice");
+    notice.className = "notice success";
+    notice.querySelector("strong").textContent = "Speaker labels ready";
+    notice.querySelector("span").textContent = result.message;
+    renderSetupReadiness();
+  } });
+}
+
+byId("providerCheckButton").addEventListener("click", runProviderCheck);
+byId("runtimeCheckButton").addEventListener("click", runHardwareCheck);
+byId("setupCheckButton").addEventListener("click", runHardwareCheck);
 byId("settingHardwareProfile").addEventListener("change", (event) => applyHardwareProfile(event.target.value));
 ["settingAsrEngine", "settingDevice", "settingDiarizationDevice"].forEach((id) => byId(id).addEventListener("change", () => {
-  if (!applyingHardwareProfile) byId("settingHardwareProfile").value = "custom";
+  if (!applyingHardwareProfile) {
+    byId("settingHardwareProfile").value = "custom";
+    state.asrSelfTest = null;
+    state.diarizationSelfTest = null;
+  }
+  renderSetupReadiness();
 }));
 byId("runtimeProfiles").addEventListener("click", (event) => {
   const button = event.target.closest("[data-use-hardware-profile]");
   if (!button) return;
   applyHardwareProfile(button.dataset.useHardwareProfile);
 });
-byId("asrSelfTestButton").addEventListener("click", async () => {
-  await startJob("asr-self-test", processingPayload(), { label: "Testing selected transcription engine", onComplete: (job) => {
-    const result = eventOf(job, "asr_self_test")?.result;
-    if (!result) return;
-    const notice = byId("asrSelfTestNotice");
-    notice.className = "notice success";
-    notice.querySelector("strong").textContent = "Transcription ready";
-    const fallback = result.fallback_reason ? ` Fallback: ${result.fallback_reason}` : "";
-    notice.querySelector("span").textContent = `${result.message}${fallback}`;
-  } });
+byId("setupReadinessGrid").addEventListener("click", async (event) => {
+  const button = event.target.closest("[data-setup-action]");
+  if (!button) return;
+  const action = button.dataset.setupAction;
+  if (action === "account") {
+    byId("loginForm").scrollIntoView({ behavior: "smooth", block: "center" });
+    byId("loginUsername").focus();
+  } else if (action === "storage") {
+    byId("runtimeFacts").scrollIntoView({ behavior: "smooth", block: "center" });
+  } else if (action === "transcription") {
+    if (!state.hardwareDiagnostics) await runHardwareCheck(); else await runAsrSelfTest();
+  } else if (action === "diarization") {
+    const speaker = state.hardwareDiagnostics?.accelerators?.speaker_labels || {};
+    const tokenReady = speaker.token_configured || byId("settingHuggingFaceToken").value;
+    if (speaker.package_installed && tokenReady) {
+      await runDiarizationSelfTest();
+    } else if (!state.hardwareDiagnostics) {
+      await runHardwareCheck();
+    } else {
+      byId("settingHuggingFaceToken").scrollIntoView({ behavior: "smooth", block: "center" });
+      byId("settingHuggingFaceToken").focus();
+    }
+  } else if (action === "analysis") {
+    await runProviderCheck();
+  }
 });
+byId("asrSelfTestButton").addEventListener("click", runAsrSelfTest);
+byId("diarizationSelfTestButton").addEventListener("click", runDiarizationSelfTest);
 byId("loginForm").addEventListener("submit", async (event) => {
   event.preventDefault();
   const username = byId("loginUsername").value;
   const password = byId("loginPassword").value;
   byId("loginPassword").value = "";
-  await startJob("authenticate", { username, password }, { label: "Signing in to Broadcastify", onComplete: () => toast("Broadcastify website session refreshed.") });
+  await startJob("authenticate", { username, password }, { label: "Signing in to Broadcastify", onComplete: async () => {
+    state.accountVerified = true;
+    await refreshBootstrap();
+    renderSetupReadiness();
+    toast("Broadcastify website session refreshed.");
+  } });
 });
 
 const today = new Date();

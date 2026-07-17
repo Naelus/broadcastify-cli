@@ -6,7 +6,7 @@
   <meta name="app-token" content="__SESSION_TOKEN__">
   <meta name="color-scheme" content="light dark">
   <title>Radio Archive Intelligence</title>
-  <link rel="stylesheet" href="/static/app.css?v=7">
+  <link rel="stylesheet" href="/static/app.css?v=8">
 </head>
 <body>
   <div class="app-shell">
@@ -206,13 +206,22 @@
           <button class="button primary" id="saveSettingsButton">Save non-secret settings</button>
         </div>
         <div class="settings-grid">
+          <div class="card padded setup-overview">
+            <div class="section-heading">
+              <div><p class="eyebrow">First-run readiness</p><h2>Ready for a first archive</h2><p id="setupReadinessSummary">Checking account, storage, and local engines…</p></div>
+              <button class="button primary small" id="setupCheckButton">Check this computer</button>
+            </div>
+            <div class="setup-progress" aria-hidden="true"><div id="setupProgressBar"></div></div>
+            <div class="setup-grid" id="setupReadinessGrid" aria-live="polite"></div>
+            <p class="setup-footnote">Detection does not download models or use Broadcastify quota. Execution tests use generated local audio; provider checks send no transcript text.</p>
+          </div>
           <div class="card padded">
             <div class="section-heading"><div><h2>Runtime</h2><p id="runtimeDescription">Loading local runtime…</p></div><button class="button secondary small" id="runtimeCheckButton">Check hardware</button></div>
             <div class="runtime-facts" id="runtimeFacts"></div>
             <div id="runtimeProfiles" class="runtime-profiles"><div class="runtime-profile-empty">Run the hardware check to compare stage-by-stage profiles.</div></div>
           </div>
           <div class="card padded">
-            <div class="section-heading"><div><h2>Transcription &amp; speakers</h2><p>Automatic keeps the tested Windows behavior and chooses safe fallbacks elsewhere.</p></div><button class="button secondary small" id="asrSelfTestButton">Test engine</button></div>
+            <div class="section-heading"><div><h2>Transcription &amp; speakers</h2><p>Automatic keeps the tested Windows behavior and chooses safe fallbacks elsewhere.</p></div><div class="button-row"><button class="button secondary small" id="asrSelfTestButton">Test transcription</button><button class="button secondary small" id="diarizationSelfTestButton">Test speakers</button></div></div>
             <div class="form-grid two">
               <label class="full-row"><span>Hardware profile</span><select id="settingHardwareProfile"><option value="auto">Automatic (recommended)</option><option value="cuda">NVIDIA CUDA</option><option value="vulkan">Cross-vendor Vulkan</option><option value="openvino">OpenVINO</option><option value="metal">Apple Metal</option><option value="windowsml">Windows ML</option><option value="cpu">CPU only</option><option value="custom">Custom overrides</option></select><small>Applies a compatible transcription, diarization, and analysis-device starting point.</small></label>
               <label><span>Whisper model</span><select id="settingWhisperModel"><option>turbo</option><option>distil-large-v3</option><option>large-v3</option><option>medium.en</option><option>small.en</option><option>base.en</option><option>tiny.en</option></select></label>
@@ -224,6 +233,7 @@
             </div>
             <label class="secret-field"><span>Hugging Face token for this tab</span><input id="settingHuggingFaceToken" type="password" autocomplete="off" placeholder="Or set HUGGINGFACE_TOKEN in .env"></label>
             <div class="notice" id="asrSelfTestNotice"><strong>Not tested this session</strong><span>Testing decodes local synthetic audio and may download the selected managed model.</span></div>
+            <div class="notice" id="diarizationSelfTestNotice"><strong>Speakers not tested this session</strong><span>The explicit test runs pyannote on generated audio and may download its model once.</span></div>
           </div>
           <div class="card padded">
             <div class="section-heading"><div><h2>Analysis &amp; AI</h2><p>Local Gemma is private by default. Hosted text transmission is always opt-in.</p></div><button class="button secondary small" id="providerCheckButton">Check provider</button></div>
@@ -245,6 +255,7 @@
               <label><span>Password</span><input id="loginPassword" type="password" autocomplete="current-password"></label>
               <button class="button secondary" type="submit">Sign in for this local session</button>
             </form>
+            <div class="notice" id="loginNotice"><strong>Checking access</strong><span>Looking for an ignored environment login or saved website session.</span></div>
           </div>
         </div>
       </section>
@@ -265,6 +276,6 @@
   </aside>
 
   <div class="toast-region" id="toastRegion" aria-live="polite"></div>
-  <script src="/static/app.js?v=7" defer></script>
+  <script src="/static/app.js?v=8" defer></script>
 </body>
 </html>
