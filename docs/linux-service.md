@@ -129,3 +129,14 @@ broadcastify-web \
 
 The host remains restricted to loopback. `--host 0.0.0.0` is rejected rather
 than becoming an undocumented remote deployment mode.
+
+## Validation boundary
+
+Exact commit `historical-validation` was installed from its
+hash-verified 0.4.0 wheel on systemd 252 under an ordinary TrueNAS user. The
+generated unit passed `systemd-analyze`, started on loopback, served the
+cookie/token-protected bootstrap, restarted after a deliberate process failure,
+retained useful mode-0600 logs without journal permissions, stopped with no
+listener, and uninstalled while preserving every user-data path. No host
+package, system service, Broadcastify request, or model download was used in
+that launcher test.

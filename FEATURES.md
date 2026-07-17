@@ -41,8 +41,8 @@ Status labels: **Validated**, **Implemented**, **Foundation**, or **Planned**.
 | Daily incident/evidence review | Validated | Exact local clips and export actions. |
 | Seven-day summaries | Validated | Explicitly records available and missing days. |
 | Regional story leads | Validated | Evidence-backed assignment leads, not confirmations. |
-| Cross-platform browser UI | Validated | Windows visual QA plus an immutable Linux host passed loopback security, byte-range media, worker lifecycle, and an exact protected HTTP job through ASR/diarization/analysis; packaged Linux launch and macOS remain open. |
-| Managed Linux Web launcher | Implemented | Wheel entry point generates an owner-only config and per-user systemd unit with loopback-only health/lifecycle commands; exact real-host service validation remains open. |
+| Cross-platform browser UI | Validated | Windows visual QA plus an immutable Linux host passed loopback security, byte-range media, worker lifecycle, an exact protected ASR/diarization/analysis job, and the managed service lifecycle; Linux full-model visual QA and macOS remain open. |
+| Managed Linux Web launcher | Validated | Exact `historical-validation` wheel/unit passed systemd verification, start/health/session/bootstrap, failure restart, 0600 owner logs, graceful stop, and data-preserving uninstall on TrueNAS/Linux. |
 | Explicit ASR runtime self-test | Validated | Native and Web Settings decode local synthetic audio using the selected model/device, with managed downloads only after a user starts the test. |
 | Explicit diarization runtime self-test | Validated | Native and Web Settings load Community-1 and execute generated waveform audio on CUDA/CPU; a complete cache now works offline without retaining a token. |
 | First-run readiness overview | Validated | Five concise account/storage/transcription/speaker/analysis steps share stage diagnostics and direct setup/test actions in native and Web UIs. |

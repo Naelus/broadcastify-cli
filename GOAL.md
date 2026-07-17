@@ -26,7 +26,7 @@ The tested Windows experience remains the reference behavior. A user should be a
 - Windows ML performs a real ONNX Whisper decode through the packaged helper and is integrated only after the model/runtime self-test passes.
 - Settings explain the selected stage backends, consolidate account/storage/transcription/speaker/analysis readiness, offer explicit real-execution ASR and diarization self-tests in both UIs, and prevent unsupported combinations or CPU fallbacks from looking like the requested accelerator succeeded.
 - The Local Library viewer makes unfinished diarization or analysis obvious and offers the exact next action.
-- Linux has a wheel-packaged, loopback-only per-user service lifecycle; its exact unit still needs real-host validation before portability is complete.
+- Linux has a wheel-packaged, loopback-only per-user service lifecycle validated from exact commit `historical-validation`; full-model visual/accessibility QA and real macOS validation still prevent calling portability complete.
 - The application receives another visual QA and accessibility pass after every material navigation/viewer change.
 
 This goal is intentionally not marked complete yet.
