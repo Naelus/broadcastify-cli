@@ -36,6 +36,16 @@ This is the dated verification and delivery log for `GOAL.md`. Keep forward-look
 - Local `ggml-org/gemma-3-1b-it-GGUF:Q4_K_M` loaded on the same AMD Vulkan device. The app correctly extracted **0** supported incidents from the short fixture, persisted **1 passage, 1 embedding, and 1 daily summary**, and finished at pipeline 100% / **Ready to review** instead of inventing an event.
 - The completed test container was removed. Exact source, model caches, transcript/database, and backend logs remain only under the user-owned isolated test paths for audit and future Web-launcher work.
 
+### Linux Web job boundary and offline cache repair
+
+- Added `scripts/web_job_smoke.py`, a dependency-free headless harness that starts the real loopback service on an ephemeral port, establishes its same-site cookie and action token, submits one supported `/api/jobs` request, polls it, and writes the final JSON snapshot. Its diagnostics integration test raised the local suite to **110 passed**.
+- Exact pushed commit `historical-validation` passed all **110 tests in 2.28 seconds** inside the same network-disabled, read-only Vulkan image. The first full HTTP job then exposed a real offline bug: normal diarization rejected a missing Hugging Face token before asking pyannote to reuse the complete local cache.
+- Normal processing and the explicit speaker self-test now try the cached Community-1 pipeline with `token=None`; only a cache miss asks for a read token for the first download. Regression coverage includes successful tokenless cache reuse and the first-download error. Exact pushed commit `historical-validation` passes **113 local tests** and all **113 tests in 2.31 seconds** inside the immutable image.
+- A fresh headless Web job from that exact commit completed through the protected HTTP boundary without a Hugging Face token. The harness established the real cookie/token session, posted `continue-local`, and the child worker completed 30 seconds of retained radio in **15.139 seconds** of container time.
+- Transcript evidence records whisper.cpp on `vulkan`, explicit `Vulkan0 / AMD Radeon 890M Graphics (RADV GFX1150)`, CPU diarization with **5 turns**, and no ASR fallback. Local Gemma loaded on the same AMD Vulkan device.
+- SQLite retained **1 feed-day, 1 transcript segment, 1 passage, 1 embedding, and 1 daily summary**. The short fixture correctly produced **0 incidents** and finished at pipeline 100% / **Ready to review**.
+- The completed container used image `sha256:2f8d2507ee587a8b94c514d27545089234810e6da3e6dd0f2e1327f2f96de861`, numeric user 950, read-only root, network `none`, `cap-drop=ALL`, `no-new-privileges`, render groups 44/107, and PID limit 1024. It was removed after inspection; exact source and result artifacts remain in the isolated user-owned `app-historical-validation` and `webjob-historical-validation-1` paths.
+
 ### Pipeline correctness
 
 - Added first-missing-stage discovery and local continuation.

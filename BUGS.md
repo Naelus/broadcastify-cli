@@ -26,11 +26,11 @@ Use this file for reproducible defects and concrete blockers, not the general ro
 - **Observed:** CPU components and profile exist. Bounded CPU diarization is now recorded, but the complete multi-hour all-CPU pipeline has not been benchmarked on the retained corpus.
 - **Next:** Run a longer representative slice and then a full day if practical; record CPU ASR, diarization, and CPU LLM time separately rather than extrapolating the 60-second result.
 
-### B-005 — Complete cross-platform workflow is not yet validated or packaged on Linux/macOS
+### B-005 — Cross-platform launch/package and real macOS validation remain incomplete
 
 - **Severity:** Medium for product portability; no impact on native Windows use.
-- **Observed:** The exact current commit passes 109 tests inside the immutable Vulkan container and completed one joined, network-disabled retained-radio workflow: whisper.cpp on AMD Vulkan, pyannote on CPU, local Gemma on AMD Vulkan, embeddings, summary persistence, and final Ready-to-review state. The run used the same worker contract as the Web UI, but it was started by the supervised container command rather than a packaged browser launcher. Apple Metal is an explicit native whisper.cpp/llama.cpp profile with CPU diarization and macOS auto-selection when both Metal backends are detected, but no real Mac run has occurred. Cross-platform credential persistence is `.env`/session-only rather than an OS keychain.
-- **Next:** Exercise the same joined workflow through the browser job endpoint/launcher on Linux, then run a macOS install/CPU-or-Metal workflow; add a supervised launcher/package and platform keychain adapter without weakening the loopback/session-token boundary.
+- **Observed:** Exact commit `historical-validation` passes 113 tests inside the immutable Vulkan image and completed a fresh network-disabled retained-radio workflow through the real loopback HTTP job boundary: same-site session cookie, action token, `continue-local` worker, whisper.cpp on AMD Vulkan, pyannote on CPU, local Gemma on AMD Vulkan, embeddings, summary persistence, and final Ready-to-review state. A reusable headless smoke harness now covers that boundary. There is still no packaged Linux desktop launcher or Linux browser visual/accessibility pass against a full model job. Apple Metal is implemented with CPU diarization and macOS auto-selection when both Metal backends are detected, but no real Mac run has occurred. Cross-platform credential persistence is `.env`/session-only rather than an OS keychain.
+- **Next:** Package/supervise the Linux launcher and visually exercise the complete browser workflow, then run a macOS install/CPU-or-Metal workflow; add a platform keychain adapter without weakening the loopback/session-token boundary.
 
 ### B-006 — Feed display names are missing for some retained legacy days
 
@@ -46,6 +46,10 @@ Use this file for reproducible defects and concrete blockers, not the general ro
 - **Next:** Ask Broadcastify support for authoritative details and prioritize future regional acquisition by user distance/importance rather than a guessed quota size.
 
 ## Recently fixed
+
+### F-011 — A cached diarization model still required a Hugging Face token offline
+
+The normal transcriber and explicit speaker self-test rejected an empty token before calling pyannote, even when the gated Community-1 snapshot was complete in the local Hugging Face cache. Both paths now attempt cached loading with `token=None`; a missing token is requested only when no usable cache can be loaded. Exact commit `historical-validation` completed the protected Linux Web job with networking disabled and no token supplied, while regression tests preserve the clear first-download error.
 
 ### F-010 — pyannote file decoding failed when TorchCodec could not load compatible FFmpeg DLLs
 
