@@ -169,7 +169,14 @@ def test_cached_pyannote_model_counts_as_configured_without_token(
 def test_profile_speaker_defaults_do_not_follow_the_selected_custom_engine(
     monkeypatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setattr("broadcastify_cli.accelerators.sys.platform", "win32")
+    monkeypatch.setattr(
+        accelerator_module,
+        "sys",
+        SimpleNamespace(
+            platform="win32",
+            version=accelerator_module.sys.version,
+        ),
+    )
     snapshot = (
         tmp_path
         / "models--pyannote--speaker-diarization-community-1"
