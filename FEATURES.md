@@ -25,7 +25,7 @@ Status labels: **Validated**, **Implemented**, **Foundation**, or **Planned**.
 | whisper.cpp Vulkan | Validated | Native and opt-in locked-down container adapters exist; exact app path completed a real AMD Radeon 890M decode and retains backend evidence. |
 | Windows ML Whisper | Validated | Batched streaming C# helper and real CPU decode/self-test pass; provider discovery/acquisition is explicit, while DML/TensorRT acceleration stays gated after measured incompatibilities. |
 | pyannote diarization CUDA/CPU | Validated | Existing transcripts can gain labels without rerunning ASR; FFmpeg-to-memory-mapped waveform input bypasses broken TorchCodec file loaders. |
-| Non-CUDA diarization acceleration | Planned | Current portable behavior is CPU fallback. sherpa-onnx's ONNX diarization is the strongest current portable-CPU benchmark candidate, but it must match Community-1 on retained noisy radio before integration. |
+| Non-CUDA diarization acceleration | Planned | Current portable behavior is CPU fallback. sherpa-onnx v1.12.39's ONNX diarization is the strongest current portable-CPU benchmark candidate, but it must match Community-1 on retained noisy radio before integration. |
 | SQLite transcript/incident/summary store | Validated | Includes FTS, embeddings, Q&A history, area profiles/queues, cached briefs, per-model-window incident-analysis checkpoints, and prompt-version invalidation so retained media survives an interruption or evidence-rule upgrade while older claims are withheld. |
 | Evidence/identity safety gates | Validated | Exact-citation claim/concept checks, bounded evidence gaps, deterministic category/priority correction, contained-evidence dedupe, outcome-language rejection, and public identifier/name redaction including location-adjacent dispatch forms; original ASR remains available for internal audit. |
 | Quantized llama.cpp analysis | Validated | Gemma GGUF selector or explicit local path; retained removed quants are reused from older Hub snapshots, clean installs use the current `Q4_0` default, real AMD Vulkan generation offloaded all tested model layers, and release-bundled loader libraries are scoped to the llama-server child so they cannot contaminate whisper.cpp. |
@@ -35,7 +35,7 @@ Status labels: **Validated**, **Implemented**, **Foundation**, or **Planned**.
 
 | Capability | Status | Notes |
 |---|---|---|
-| WinUI 3 navigation shell | Validated | Local Library, New Archive, Review & Ask, Area Watch, Settings. |
+| WinUI 3 navigation shell | Validated | Local Library, New Archive, Review & Ask, Area Watch, Settings; rebuilt and interactively verified on current stable Windows App SDK 2.3.1. |
 | Local Library master/detail viewer | Validated | Processing timeline, audio playback, transcript preview, resume/open actions, durable human-readable names from catalog/manifest identity, and a distinct local-only reanalysis state for summaries created under older evidence rules. |
 | Saved secure Broadcastify login | Implemented | Windows Credential Locker plus session refresh. |
 | Private `.env` build option | Implemented | Explicit opt-in only; normal builds remove stale copies. |
@@ -50,7 +50,7 @@ Status labels: **Validated**, **Implemented**, **Foundation**, or **Planned**.
 | Joined hardware-profile verifier | Validated | One native/Web action—also prominent in first-run Setup—runs generated-input transcription, diarization, and analysis sequentially, releases accelerator memory between stages, preserves successful earlier-stage evidence, bounds oversized native dumps, and stops with actionable recovery at the first failure without using archive quota. Exact `historical-validation` reran all three stages on AMD Vulkan/CPU/Vulkan in 9.960 seconds with warm caches. |
 | First-run readiness overview | Validated | Five concise account/storage/transcription/speaker/analysis steps share stage diagnostics and direct setup/test actions in native and Web UIs; detected, configured, and execution-verified are separate states. The joined verifier retains running and final state on Setup. Web Settings uses persistent/deep-linked Setup, Processing, Analysis & AI, and Account sections with keyboard navigation and exact action focus. |
 | Native crash/state recovery | Validated | Stable per-user atomic settings with legacy migration and debounced autosave, restored review/profile selection, append-only activity/crash logs, and a real startup probe of the formerly crashing XAML event path. |
-| Verified Windows publish | Validated | Runnable WinUI resources plus namespaced Windows ML runtime; normal/private credential isolation is verified. |
+| Verified Windows publish | Validated | Windows App SDK 2.3.1 WinUI resources plus a namespaced Windows ML 2.1.74 runtime; normal/private credential isolation and the visible three-stage model proof are verified. |
 | Installer/model manager/onboarding | Foundation | In-app readiness, verified Windows publish, and the managed Linux service are implemented; dependency/model acquisition and non-developer packaging remain. |
 
 ## Hardware profile matrix
@@ -61,7 +61,7 @@ Status labels: **Validated**, **Implemented**, **Foundation**, or **Planned**.
 | CPU only | faster-whisper INT8 CPU or whisper.cpp CPU | pyannote CPU | llama.cpp CPU | Exact `historical-validation` protected Web job completed all stages on CPU in 21.282 seconds for 30 seconds of retained audio; full-day timing remains |
 | Vulkan | whisper.cpp Vulkan | pyannote CPU | llama.cpp Vulkan | Exact `historical-validation` first joined verification completed in 27.886 seconds on AMD Radeon 890M; exact current `historical-validation` completed a warm-cache rerun in 9.960 seconds (3.677/2.783/2.559) and passed 172 hardened tests; exact `historical-validation` retains the protected offline Web-job proof; full-day CPU diarization timing remains |
 | OpenVINO | OpenVINO Whisper AUTO/CPU | pyannote CPU | llama.cpp SYCL/auto/CPU | The joined Web verifier completed in 13.8 seconds with a 1.0-second OpenVINO AUTO decode; exact `historical-validation` retains the protected 60-second Ready-to-review proof |
-| Windows ML | ONNX Runtime GenAI CPU | pyannote CPU | llama.cpp auto/CPU | The joined Web verifier completed in 13.3 seconds with a 0.4-second real Windows ML CPU decode; exact `historical-validation` retains the protected 60-second/resume proof, while provider-catalog presence and current DML/TensorRT paths remain gated |
+| Windows ML | ONNX Runtime GenAI CPU | pyannote CPU | llama.cpp auto/CPU | The current Windows App SDK 2.3.1 helper returned `decode_ready=true`; its joined profile completed in 13.546 seconds with a 0.437-second real CPU decode. Exact `historical-validation` retains the protected 60-second/resume proof, while catalog-only WebGPU/TensorRT and current DML paths remain gated |
 | Apple Metal | whisper.cpp Metal | pyannote CPU | llama.cpp Metal | Implemented with native-backend detection and explicit self-test; real Mac validation pending |
 
 Detailed outcomes and commands belong in `PROGRESS.md`; defects and blockers belong in `BUGS.md`.

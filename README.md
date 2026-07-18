@@ -8,7 +8,7 @@ This fork uses Broadcastify's website login and the same private web endpoints a
 
 ## What is implemented
 
-- Native WinUI 3 desktop UI on .NET 10 and Windows App SDK 1.8
+- Native WinUI 3 desktop UI on .NET 10 and current stable Windows App SDK 2.3.1
 - A responsive, loopback-only browser UI with the same Library, New Archive, Review & Ask, Area Watch, and Settings workflow for cross-platform use
 - A per-user Linux systemd launcher with install/start/stop/status/log commands, failure restart, private settings, and a fixed loopback-only service boundary
 - Feed search by agency, city, county, state, or ZIP, including the county-directory matches returned by the website
@@ -52,7 +52,7 @@ Broadcastify's published terms restrict commercial use and AI/ML use without a l
 
 ## Why WinUI 3 on Windows
 
-WinUI 3 is Microsoft's current native Windows UI framework and is the right default for this new Windows-only app. It supplies the current Fluent controls, Mica, modern DPI behavior, and Windows App SDK lifecycle while keeping the UI native. WinForms would be simpler for a disposable utility, but it is an older UI stack and was not the best long-term choice here.
+WinUI 3 remains the right native choice for this application. Microsoft's current [Windows application guidance](https://learn.microsoft.com/en-us/windows/apps/) recommends WinUI with the Windows App SDK for new native Windows apps, while WinForms remains supported for existing or simpler desktop applications. WinUI supplies the current Fluent controls, modern DPI behavior, and Windows App SDK lifecycle without turning the desktop shell into a browser wrapper. Both native projects now use current stable [Windows App SDK 2.3.1](https://github.com/microsoft/WindowsAppSDK/releases/tag/v2.3.1) and BuildTools 10.0.28000.2270.
 
 The Windows UI is an unpackaged x64 desktop app, so development does not require MSIX. A verified `dotnet publish` folder is available, including the namespaced Windows ML helper, but it still uses the repository Python environment and is not yet a standalone installer. The browser companion is the portability surface; WinUI remains the polished Windows reference instead of forcing Windows users into a generic wrapper.
 
@@ -70,7 +70,7 @@ Hardware profiles are stage-specific rather than an all-or-nothing GPU switch. T
 
 Both UIs provide a primary **Verify model stages** action on first-run Setup and a matching **Verify profile** action beside the advanced hardware controls, plus explicit **Test transcription**, **Test speakers**, and **Test analysis** actions. The joined action runs those generated-input proofs sequentially, releases accelerator memory between stages, preserves completed-stage evidence, bounds oversized native diagnostic dumps, and stops at the first actionable setup failure. The transcription stage loads the exact selected ASR engine/model/device and reports the actual backend and any fallback without returning hallucinated silence text. The speaker stage runs Community-1 on the selected CUDA/CPU path; the analysis stage requests a tiny structured result without sending archive evidence. A managed model may download only after the user starts a test or a real job; the ordinary hardware check does not start a model or provider download. A profile is **Verified** only after all three stages pass with the current settings in the current session.
 
-Whisper remains the practical portable ASR default for this radio workflow: the same model family has mature CUDA/CPU, Vulkan, Metal, OpenVINO, and ONNX deployment paths. NVIDIA Parakeet is a credible future high-throughput NVIDIA option, but it does not add diarization or cross-vendor parity. Diarization is deliberately separate. Community-1 remains the validated default; sherpa-onnx is worth benchmarking as a lighter cross-platform CPU pipeline, while NVIDIA Sortformer currently has speaker-count, long-recording, license, and noisy-domain constraints that make it a poor default for day-long public-safety radio. WhisperX would still add alignment around the same separate pyannote stage rather than replacing it.
+Whisper remains the practical portable ASR default for this radio workflow: the same model family has mature CUDA/CPU, Vulkan, Metal, OpenVINO, and ONNX deployment paths. NVIDIA Parakeet is a credible future high-throughput NVIDIA option, but it does not add diarization or cross-vendor parity. Diarization is deliberately separate. Community-1 remains the validated default; current sherpa-onnx v1.12.39 is worth A/B testing as a lighter cross-platform CPU pipeline, while NVIDIA Sortformer currently has speaker-count, long-recording, license, and noisy-domain constraints that make it a poor default for day-long public-safety radio. WhisperX would still add alignment around the same separate pyannote stage rather than replacing it.
 
 Embeddings do not replace the generative model. They cheaply retrieve and cluster likely-relevant transcript passages; Gemma turns cited evidence into structured incidents and natural-language answers. SQLite remains the source of truth, including timestamps and transcript evidence, so model output can be audited.
 
@@ -110,7 +110,7 @@ For OpenVINO ASR, add `.[openvino]`. For the Windows ML model builder and helper
 
 ### Windows ML functional profile
 
-The validated Windows ML path currently uses CPU execution. It proves functional parity and keeps GPU acceleration gated while current generated DML Whisper graphs fail and the available TensorRT RTX provider falls back on unsupported attention nodes. Build a small validation model and the helper with:
+The validated Windows ML path currently uses CPU execution. Windows App SDK 2.3.1 resolves the Windows ML 2.1.74 catalog/runtime components, while the inference helper retains its explicitly tested ONNX Runtime GenAI 0.14.1 contract. The current helper returns `decode_ready=true`, and its joined CPU-ASR/Community-1/Gemma profile completes in 13.546 seconds with a 0.437-second ASR decode. This proves functional parity and keeps GPU acceleration gated while current generated DML Whisper graphs fail and the available TensorRT RTX provider falls back on unsupported attention nodes. Build a small validation model and the helper with:
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install -e ".[transcription,windowsml]"
