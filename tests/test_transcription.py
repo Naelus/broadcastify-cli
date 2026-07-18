@@ -16,6 +16,8 @@ from broadcastify_cli.transcription import (
     SpeakerTurn,
     TranscriptionQualityError,
     TranscriptWord,
+    _combined_source_signature,
+    _unchanged_source_prefix_seconds,
     format_timestamp,
     group_words,
     speaker_for_interval,
@@ -154,6 +156,50 @@ def test_compatible_transcript_is_a_cache_hit(tmp_path: Path) -> None:
     transcriber.diarize = False
 
     assert transcriber._existing_transcript_is_current(audio, json_path, txt_path)
+
+
+def test_portable_transcript_cache_hit_migrates_diarization_cache(
+    tmp_path: Path,
+) -> None:
+    audio = tmp_path / "combined.mp3"
+    audio.write_bytes(b"audio")
+    transcript_dir = tmp_path / "transcripts"
+    transcript_dir.mkdir()
+    json_path = transcript_dir / "combined.json"
+    txt_path = transcript_dir / "combined.txt"
+    json_path.write_text(
+        json.dumps(
+            {
+                "model": "turbo",
+                "asr_engine": "faster-whisper",
+                "segments": [],
+                "diarization_requested": True,
+                "diarization_completed": True,
+                "diarization_engine": "sherpa-onnx",
+                "diarization_model": (
+                    "pyannote-segmentation-3.0-int8+nemo-titanet-small"
+                ),
+            }
+        ),
+        encoding="utf-8",
+    )
+    txt_path.write_text("", encoding="utf-8")
+    captured: list[Path] = []
+
+    transcriber = object.__new__(LocalTranscriber)
+    transcriber._asr = object()
+    transcriber._external_asr = None
+    transcriber.model_name = "turbo"
+    transcriber.asr_engine = "faster-whisper"
+    transcriber.diarize = True
+    transcriber.diarization_engine = "sherpa-onnx"
+    transcriber._load_diarization_cache = MethodType(
+        lambda _self, path: captured.append(path) or [],
+        transcriber,
+    )
+
+    assert transcriber.transcribe_file(audio) == json_path
+    assert captured == [audio]
 
 
 def test_existing_transcript_respects_diarization_quality_direction(
@@ -589,6 +635,160 @@ def test_diarization_turn_cache_is_parameter_and_audio_specific(tmp_path: Path) 
     assert transcriber._load_diarization_cache(audio) is None
 
 
+def test_combined_source_signature_finds_hashed_append_boundary(
+    tmp_path: Path,
+) -> None:
+    audio = tmp_path / "combined.mp3"
+    audio.write_bytes(b"combined")
+    first = tmp_path / "first.mp3"
+    second = tmp_path / "second.mp3"
+    third = tmp_path / "third.mp3"
+    first.write_bytes(b"first source")
+    second.write_bytes(b"second source")
+    third.write_bytes(b"third source")
+    manifest = audio.with_suffix(".manifest.json")
+
+    manifest.write_text(
+        json.dumps(
+            {
+                "timeline_version": 2,
+                "combined_file": audio.name,
+                "sources": [
+                    {
+                        "source_file": first.name,
+                        "archive_start": "2026-07-18T00:00:00",
+                        "combined_start_seconds": 0.0,
+                        "trimmed_duration_seconds": 60.0,
+                    },
+                    {
+                        "source_file": second.name,
+                        "archive_start": "2026-07-18T00:01:00",
+                        "combined_start_seconds": 60.0,
+                        "trimmed_duration_seconds": 65.0,
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    previous = _combined_source_signature(audio)
+
+    manifest.write_text(
+        json.dumps(
+            {
+                "timeline_version": 2,
+                "combined_file": audio.name,
+                "sources": [
+                    {
+                        "source_file": first.name,
+                        "archive_start": "2026-07-18T00:00:00",
+                        "combined_start_seconds": 0.0,
+                        "trimmed_duration_seconds": 60.0,
+                    },
+                    {
+                        "source_file": second.name,
+                        "archive_start": "2026-07-18T00:01:00",
+                        "combined_start_seconds": 60.0,
+                        "trimmed_duration_seconds": 60.0,
+                    },
+                    {
+                        "source_file": third.name,
+                        "archive_start": "2026-07-18T00:02:00",
+                        "combined_start_seconds": 120.0,
+                        "trimmed_duration_seconds": 60.0,
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    current = _combined_source_signature(audio)
+
+    assert _unchanged_source_prefix_seconds(previous, current) == 120.0
+
+    second.write_bytes(b"changed second source")
+    changed = _combined_source_signature(audio)
+    assert _unchanged_source_prefix_seconds(previous, changed) == 60.0
+
+
+def test_exact_portable_cache_migrates_append_resume_identity(
+    tmp_path: Path,
+) -> None:
+    audio = tmp_path / "combined.mp3"
+    audio.write_bytes(b"combined")
+    source = tmp_path / "source.mp3"
+    source.write_bytes(b"source")
+    audio.with_suffix(".manifest.json").write_text(
+        json.dumps(
+            {
+                "timeline_version": 2,
+                "combined_file": audio.name,
+                "sources": [
+                    {
+                        "source_file": source.name,
+                        "archive_start": "2026-07-18T00:00:00",
+                        "combined_start_seconds": 0.0,
+                        "trimmed_duration_seconds": 60.0,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class FakePortable:
+        def checkpoint_identity(
+            self, path: Path
+        ) -> tuple[dict[str, object], float, int]:
+            assert path == audio
+            return {"identity": "current"}, 60.0, 1
+
+    transcriber = object.__new__(LocalTranscriber)
+    transcriber._portable_diarizer = FakePortable()
+    transcriber.diarization_engine = "sherpa-onnx"
+    transcriber.diarization_model = (
+        "pyannote-segmentation-3.0-int8+nemo-titanet-small"
+    )
+    transcriber.diarization_quality = "preview"
+    transcriber.diarization_device = "cpu"
+    transcriber.min_speakers = None
+    transcriber.max_speakers = None
+    cache_path = transcriber._diarization_cache_path(audio)
+    cache_path.parent.mkdir(parents=True)
+    cache_path.write_text(
+        json.dumps(
+            {
+                "engine": transcriber.diarization_engine,
+                "model": transcriber.diarization_model,
+                "quality": transcriber.diarization_quality,
+                "audio_size": audio.stat().st_size,
+                "audio_mtime_ns": audio.stat().st_mtime_ns,
+                "min_speakers": None,
+                "max_speakers": None,
+                "device": "cpu",
+                "metadata": {"chunk_count": 1},
+                "turns": [
+                    {
+                        "start": 1.0,
+                        "end": 2.0,
+                        "speaker": "SPEAKER_00",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert transcriber._load_diarization_cache(audio) == [
+        SpeakerTurn(1.0, 2.0, "SPEAKER_00")
+    ]
+    migrated = json.loads(cache_path.read_text(encoding="utf-8"))
+    assert migrated["metadata"]["checkpoint_identity"] == {
+        "identity": "current"
+    }
+    assert migrated["source_signature"]["sources"][0]["source_sha256"]
+
+
 def test_portable_and_community_diarization_caches_are_isolated(
     tmp_path: Path,
 ) -> None:
@@ -688,6 +888,160 @@ def test_portable_diarization_uses_archive_specific_chunk_checkpoint(
     }
     assert transcriber._diarization_cache_path(audio).is_file()
     assert not expected.exists()
+
+
+def test_portable_diarization_seeds_unchanged_append_from_completed_cache(
+    tmp_path: Path,
+) -> None:
+    audio = tmp_path / "combined.mp3"
+    audio.write_bytes(b"old combined audio")
+    first = tmp_path / "first.mp3"
+    second = tmp_path / "second.mp3"
+    third = tmp_path / "third.mp3"
+    first.write_bytes(b"first")
+    second.write_bytes(b"second")
+    third.write_bytes(b"third")
+    manifest = audio.with_suffix(".manifest.json")
+    manifest.write_text(
+        json.dumps(
+            {
+                "timeline_version": 2,
+                "combined_file": audio.name,
+                "sources": [
+                    {
+                        "source_file": first.name,
+                        "archive_start": "2026-07-18T00:00:00",
+                        "combined_start_seconds": 0.0,
+                        "trimmed_duration_seconds": 60.0,
+                    },
+                    {
+                        "source_file": second.name,
+                        "archive_start": "2026-07-18T00:01:00",
+                        "combined_start_seconds": 60.0,
+                        "trimmed_duration_seconds": 65.0,
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    captured: dict[str, object] = {}
+
+    class FakePortable:
+        metadata = {
+            "engine": "sherpa-onnx",
+            "chunk_count": 3,
+            "checkpoint_identity": {"identity": "new"},
+        }
+
+        def seed_checkpoint_from_completed_turns(
+            self,
+            path: Path,
+            *,
+            checkpoint_path: Path,
+            previous_identity: dict[str, object],
+            previous_chunk_count: int,
+            turns: list[PortableSpeakerTurn],
+            unchanged_through_seconds: float,
+        ) -> int:
+            captured.update(
+                {
+                    "seed_path": path,
+                    "checkpoint_path": checkpoint_path,
+                    "previous_identity": previous_identity,
+                    "previous_chunk_count": previous_chunk_count,
+                    "turns": turns,
+                    "unchanged_through_seconds": unchanged_through_seconds,
+                }
+            )
+            return 2
+
+        def process(
+            self,
+            path: Path,
+            progress=None,
+            checkpoint_path: Path | None = None,
+            cleanup_checkpoint_on_success: bool = True,
+        ) -> list[PortableSpeakerTurn]:
+            captured["process_path"] = path
+            captured["cleanup_checkpoint_on_success"] = (
+                cleanup_checkpoint_on_success
+            )
+            assert checkpoint_path is not None
+            checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+            checkpoint_path.write_text("completed chunks", encoding="utf-8")
+            return [PortableSpeakerTurn(125.0, 127.0, "SPEAKER_C002_01")]
+
+    transcriber = object.__new__(LocalTranscriber)
+    transcriber._portable_diarizer = FakePortable()
+    transcriber._diarization_pipeline = None
+    transcriber.diarization_engine = "sherpa-onnx"
+    transcriber.diarization_model = (
+        "pyannote-segmentation-3.0-int8+nemo-titanet-small"
+    )
+    transcriber.diarization_quality = "preview"
+    transcriber.diarization_device = "cpu"
+    transcriber.min_speakers = None
+    transcriber.max_speakers = None
+    transcriber._diarization_details = {
+        "chunk_count": 2,
+        "checkpoint_identity": {"identity": "old"},
+    }
+    old_turns = [
+        SpeakerTurn(10.0, 12.0, "SPEAKER_C000_00"),
+        SpeakerTurn(65.0, 67.0, "SPEAKER_C001_00"),
+    ]
+    transcriber._save_diarization_cache(audio, old_turns)
+
+    manifest.write_text(
+        json.dumps(
+            {
+                "timeline_version": 2,
+                "combined_file": audio.name,
+                "sources": [
+                    {
+                        "source_file": first.name,
+                        "archive_start": "2026-07-18T00:00:00",
+                        "combined_start_seconds": 0.0,
+                        "trimmed_duration_seconds": 60.0,
+                    },
+                    {
+                        "source_file": second.name,
+                        "archive_start": "2026-07-18T00:01:00",
+                        "combined_start_seconds": 60.0,
+                        "trimmed_duration_seconds": 60.0,
+                    },
+                    {
+                        "source_file": third.name,
+                        "archive_start": "2026-07-18T00:02:00",
+                        "combined_start_seconds": 120.0,
+                        "trimmed_duration_seconds": 60.0,
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    audio.write_bytes(b"new appended combined audio")
+    messages: list[str] = []
+
+    assert transcriber._diarize(audio, progress=messages.append) == [
+        SpeakerTurn(125.0, 127.0, "SPEAKER_C002_01")
+    ]
+    assert captured["seed_path"] == audio
+    assert captured["previous_identity"] == {"identity": "old"}
+    assert captured["previous_chunk_count"] == 2
+    assert captured["unchanged_through_seconds"] == 120.0
+    assert captured["turns"] == [
+        PortableSpeakerTurn(10.0, 12.0, "SPEAKER_C000_00"),
+        PortableSpeakerTurn(65.0, 67.0, "SPEAKER_C001_00"),
+    ]
+    assert captured["process_path"] == audio
+    assert captured["cleanup_checkpoint_on_success"] is False
+    assert (
+        "Reusing 2 completed fast speaker preview chunks from "
+        "2.0 unchanged minutes."
+    ) in messages
 
 
 def test_portable_checkpoint_survives_failed_final_cache_write(

@@ -3,6 +3,7 @@ from __future__ import annotations
 import gc
 import hashlib
 import json
+import math
 import os
 import re
 import subprocess
@@ -13,7 +14,7 @@ from collections import Counter
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Callable, Iterable, Sequence
+from typing import Any, Callable, Iterable, Sequence
 
 from .asr import (
     OpenVinoWhisperAsr,
@@ -30,6 +31,7 @@ from .portable_diarization import (
     PORTABLE_DIARIZATION_ENGINE,
     PORTABLE_DIARIZATION_MODEL,
     PORTABLE_DIARIZATION_QUALITY,
+    PortableSpeakerTurn,
     SherpaOnnxDiarizer,
     diarization_engine_satisfies,
     normalize_diarization_engine,
@@ -336,6 +338,136 @@ def _repair_cached_localized_repetition(
         txt_temp.unlink(missing_ok=True)
         json_temp.unlink(missing_ok=True)
     return True
+
+
+_DIARIZATION_SOURCE_SIGNATURE_SCHEMA = 1
+
+
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for block in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _combined_source_signature(audio_path: Path) -> dict[str, Any] | None:
+    """Describe the retained source audio that built a combined timeline."""
+
+    manifest_path = audio_path.with_suffix(".manifest.json")
+    if not manifest_path.is_file():
+        return None
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if (
+        not isinstance(manifest, dict)
+        or str(manifest.get("combined_file") or "") != audio_path.name
+        or not isinstance(manifest.get("sources"), list)
+        or not manifest["sources"]
+    ):
+        return None
+
+    sources: list[dict[str, Any]] = []
+    previous_end = 0.0
+    for value in manifest["sources"]:
+        if not isinstance(value, dict):
+            return None
+        source_name = str(value.get("source_file") or "")
+        if not source_name or Path(source_name).name != source_name:
+            return None
+        source_path = audio_path.parent / source_name
+        if not source_path.is_file():
+            return None
+        try:
+            start = float(value.get("combined_start_seconds"))
+            duration = float(value.get("trimmed_duration_seconds"))
+        except (TypeError, ValueError):
+            return None
+        if (
+            not math.isfinite(start)
+            or not math.isfinite(duration)
+            or start < 0
+            or duration <= 0
+            or abs(start - previous_end) > 0.01
+        ):
+            return None
+        try:
+            source_stat = source_path.stat()
+            source_sha256 = _file_sha256(source_path)
+        except OSError:
+            return None
+        sources.append(
+            {
+                "source_file": source_name,
+                "archive_start": value.get("archive_start"),
+                "combined_start_seconds": start,
+                "trimmed_duration_seconds": duration,
+                "source_size": source_stat.st_size,
+                "source_sha256": source_sha256,
+            }
+        )
+        previous_end = start + duration
+    return {
+        "schema": _DIARIZATION_SOURCE_SIGNATURE_SCHEMA,
+        "timeline_version": manifest.get("timeline_version"),
+        "combined_file": audio_path.name,
+        "sources": sources,
+    }
+
+
+def _unchanged_source_prefix_seconds(
+    previous: object,
+    current: object,
+) -> float:
+    """Return the decoded prefix proven identical by retained source hashes."""
+
+    if not isinstance(previous, dict) or not isinstance(current, dict):
+        return 0.0
+    if (
+        previous.get("schema") != _DIARIZATION_SOURCE_SIGNATURE_SCHEMA
+        or current.get("schema") != _DIARIZATION_SOURCE_SIGNATURE_SCHEMA
+        or previous.get("combined_file") != current.get("combined_file")
+        or not isinstance(previous.get("sources"), list)
+        or not isinstance(current.get("sources"), list)
+    ):
+        return 0.0
+
+    unchanged_through = 0.0
+    for old, new in zip(previous["sources"], current["sources"]):
+        if not isinstance(old, dict) or not isinstance(new, dict):
+            break
+        identity_keys = (
+            "source_file",
+            "archive_start",
+            "source_size",
+            "source_sha256",
+        )
+        if any(old.get(key) != new.get(key) for key in identity_keys):
+            break
+        try:
+            old_start = float(old.get("combined_start_seconds"))
+            new_start = float(new.get("combined_start_seconds"))
+            old_duration = float(old.get("trimmed_duration_seconds"))
+            new_duration = float(new.get("trimmed_duration_seconds"))
+        except (TypeError, ValueError):
+            break
+        if (
+            not all(
+                math.isfinite(value)
+                for value in (old_start, new_start, old_duration, new_duration)
+            )
+            or abs(old_start - new_start) > 0.01
+            or abs(new_start - unchanged_through) > 0.01
+            or old_duration <= 0
+            or new_duration <= 0
+        ):
+            break
+        unchanged_through = new_start + min(old_duration, new_duration)
+        if abs(old_duration - new_duration) > 0.01:
+            break
+    return unchanged_through
 
 
 @contextmanager
@@ -680,6 +812,18 @@ class LocalTranscriber:
         json_path = transcript_dir / f"{audio_path.stem}.json"
         txt_path = transcript_dir / f"{audio_path.stem}.txt"
         if self._existing_transcript_is_current(audio_path, json_path, txt_path):
+            if (
+                self.diarize
+                and getattr(
+                    self,
+                    "diarization_engine",
+                    COMMUNITY_DIARIZATION_ENGINE,
+                )
+                == PORTABLE_DIARIZATION_ENGINE
+            ):
+                # Migrate completed legacy caches to the append-resume schema
+                # even when the final transcript itself needs no work.
+                self._load_diarization_cache(audio_path)
             return json_path
 
         if self.diarize and progress:
@@ -1116,6 +1260,64 @@ class LocalTranscriber:
         portable = getattr(self, "_portable_diarizer", None)
         if portable is not None:
             checkpoint_path = self._portable_diarization_checkpoint_path(audio_path)
+            stale_payload = getattr(self, "_stale_diarization_payload", None)
+            if isinstance(stale_payload, dict):
+                previous_signature = stale_payload.get("source_signature")
+                current_signature = _combined_source_signature(audio_path)
+                unchanged_through = _unchanged_source_prefix_seconds(
+                    previous_signature,
+                    current_signature,
+                )
+                metadata = stale_payload.get("metadata")
+                previous_identity = (
+                    metadata.get("checkpoint_identity")
+                    if isinstance(metadata, dict)
+                    else None
+                )
+                previous_chunk_count = (
+                    metadata.get("chunk_count")
+                    if isinstance(metadata, dict)
+                    else None
+                )
+                previous_turns: list[PortableSpeakerTurn] = []
+                previous_turns_valid = True
+                for value in stale_payload.get("turns", []):
+                    if not isinstance(value, dict):
+                        previous_turns_valid = False
+                        break
+                    try:
+                        previous_turns.append(
+                            PortableSpeakerTurn(
+                                start=float(value["start"]),
+                                end=float(value["end"]),
+                                speaker=str(value["speaker"]),
+                            )
+                        )
+                    except (KeyError, TypeError, ValueError):
+                        previous_turns_valid = False
+                        break
+                seeded = 0
+                if (
+                    isinstance(previous_identity, dict)
+                    and isinstance(previous_chunk_count, int)
+                    and not isinstance(previous_chunk_count, bool)
+                    and previous_turns_valid
+                    and unchanged_through > 0
+                ):
+                    seeded = portable.seed_checkpoint_from_completed_turns(
+                        audio_path,
+                        checkpoint_path=checkpoint_path,
+                        previous_identity=previous_identity,
+                        previous_chunk_count=previous_chunk_count,
+                        turns=previous_turns,
+                        unchanged_through_seconds=unchanged_through,
+                    )
+                if seeded and progress:
+                    progress(
+                        "Reusing "
+                        f"{seeded} completed fast speaker preview chunks from "
+                        f"{unchanged_through / 60:.1f} unchanged minutes."
+                    )
             portable_turns = portable.process(
                 audio_path,
                 progress=progress,
@@ -1299,6 +1501,7 @@ class LocalTranscriber:
 
     def _load_diarization_cache(self, audio_path: Path) -> list[SpeakerTurn] | None:
         cache_path = self._diarization_cache_path(audio_path)
+        self._stale_diarization_payload = None
         if not cache_path.is_file():
             return None
         try:
@@ -1316,54 +1519,101 @@ class LocalTranscriber:
             )
             if payload.get("model") != expected_model:
                 return None
-            if int(payload.get("audio_size", -1)) != audio_path.stat().st_size:
-                return None
-            if int(payload.get("audio_mtime_ns", -1)) != audio_path.stat().st_mtime_ns:
-                return None
             if payload.get("min_speakers") != self.min_speakers:
                 return None
             if payload.get("max_speakers") != self.max_speakers:
                 return None
-            self._diarization_details = dict(payload.get("metadata") or {})
-            return [SpeakerTurn(**value) for value in payload.get("turns", [])]
+            audio_stat = audio_path.stat()
+            if (
+                int(payload.get("audio_size", -1)) != audio_stat.st_size
+                or int(payload.get("audio_mtime_ns", -1))
+                != audio_stat.st_mtime_ns
+            ):
+                if expected_engine == PORTABLE_DIARIZATION_ENGINE:
+                    self._stale_diarization_payload = payload
+                return None
+            turns = [
+                SpeakerTurn(**value)
+                for value in payload.get("turns", [])
+            ]
+            metadata = dict(payload.get("metadata") or {})
+            portable = getattr(self, "_portable_diarizer", None)
+            changed = False
+            if expected_engine == PORTABLE_DIARIZATION_ENGINE and portable is not None:
+                try:
+                    if not isinstance(metadata.get("checkpoint_identity"), dict):
+                        identity, _, _ = portable.checkpoint_identity(audio_path)
+                        metadata["checkpoint_identity"] = identity
+                        payload["metadata"] = metadata
+                        changed = True
+                    if not isinstance(payload.get("source_signature"), dict):
+                        signature = _combined_source_signature(audio_path)
+                        if signature is not None:
+                            payload["source_signature"] = signature
+                            changed = True
+                except (OSError, RuntimeError, TypeError, ValueError):
+                    # An exact completed cache remains usable even if optional
+                    # append-resume metadata cannot be migrated on this host.
+                    pass
+            if changed:
+                try:
+                    self._write_diarization_cache_payload(cache_path, payload)
+                except OSError:
+                    # Append-resume enrichment is optional; the exact cache is
+                    # still authoritative when its migration cannot be saved.
+                    pass
+            self._diarization_details = metadata
+            return turns
         except (OSError, TypeError, ValueError, json.JSONDecodeError):
             return None
+
+    @staticmethod
+    def _write_diarization_cache_payload(
+        cache_path: Path,
+        payload: dict[str, Any],
+    ) -> None:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        partial = cache_path.with_suffix(cache_path.suffix + ".tmp")
+        try:
+            partial.write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            partial.replace(cache_path)
+        finally:
+            partial.unlink(missing_ok=True)
 
     def _save_diarization_cache(
         self, audio_path: Path, turns: Sequence[SpeakerTurn]
     ) -> None:
         cache_path = self._diarization_cache_path(audio_path)
-        cache_path.parent.mkdir(parents=True, exist_ok=True)
-        partial = cache_path.with_suffix(cache_path.suffix + ".tmp")
-        partial.write_text(
-            json.dumps(
-                {
-                    "engine": getattr(
-                        self,
-                        "diarization_engine",
-                        COMMUNITY_DIARIZATION_ENGINE,
-                    ),
-                    "model": getattr(
-                        self, "diarization_model", self.DIARIZATION_MODEL
-                    ),
-                    "quality": getattr(
-                        self,
-                        "diarization_quality",
-                        COMMUNITY_DIARIZATION_QUALITY,
-                    ),
-                    "audio_size": audio_path.stat().st_size,
-                    "audio_mtime_ns": audio_path.stat().st_mtime_ns,
-                    "min_speakers": self.min_speakers,
-                    "max_speakers": self.max_speakers,
-                    "device": self.diarization_device,
-                    "metadata": dict(
-                        getattr(self, "_diarization_details", {})
-                    ),
-                    "turns": [asdict(value) for value in turns],
-                },
-                ensure_ascii=False,
-                indent=2,
-            ),
-            encoding="utf-8",
+        engine = getattr(
+            self,
+            "diarization_engine",
+            COMMUNITY_DIARIZATION_ENGINE,
         )
-        partial.replace(cache_path)
+        payload: dict[str, Any] = {
+            "engine": engine,
+            "model": getattr(
+                self, "diarization_model", self.DIARIZATION_MODEL
+            ),
+            "quality": getattr(
+                self,
+                "diarization_quality",
+                COMMUNITY_DIARIZATION_QUALITY,
+            ),
+            "audio_size": audio_path.stat().st_size,
+            "audio_mtime_ns": audio_path.stat().st_mtime_ns,
+            "min_speakers": self.min_speakers,
+            "max_speakers": self.max_speakers,
+            "device": self.diarization_device,
+            "metadata": dict(
+                getattr(self, "_diarization_details", {})
+            ),
+            "turns": [asdict(value) for value in turns],
+        }
+        if engine == PORTABLE_DIARIZATION_ENGINE:
+            signature = _combined_source_signature(audio_path)
+            if signature is not None:
+                payload["source_signature"] = signature
+        self._write_diarization_cache_payload(cache_path, payload)

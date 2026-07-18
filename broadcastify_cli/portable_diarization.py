@@ -795,6 +795,147 @@ class SherpaOnnxDiarizer:
             "model_files": model_files,
         }
 
+    def checkpoint_identity(
+        self,
+        audio_file: str | Path,
+    ) -> tuple[dict[str, Any], float, int]:
+        """Return the exact resumable-chunk identity for an audio file."""
+
+        audio_path = Path(audio_file)
+        if not audio_path.is_file():
+            raise FileNotFoundError(f"Audio does not exist: {audio_path}")
+        ffmpeg = find_ffmpeg()
+        if not ffmpeg:
+            raise RuntimeError("FFmpeg is required for portable speaker labels.")
+        duration = _probe_audio_duration(audio_path, ffmpeg)
+        chunk_count = max(1, math.ceil(duration / self.chunk_seconds))
+        return (
+            self._checkpoint_identity(
+                audio_path,
+                duration=duration,
+                chunk_count=chunk_count,
+            ),
+            duration,
+            chunk_count,
+        )
+
+    def seed_checkpoint_from_completed_turns(
+        self,
+        audio_file: str | Path,
+        *,
+        checkpoint_path: str | Path,
+        previous_identity: dict[str, Any],
+        previous_chunk_count: int,
+        turns: Sequence[PortableSpeakerTurn],
+        unchanged_through_seconds: float,
+    ) -> int:
+        """Seed unchanged prefix chunks from a completed earlier result.
+
+        The caller must establish how much decoded audio is unchanged. This
+        method independently requires the exact model/runtime configuration,
+        validates every reused turn against its processing chunk, and keeps
+        any already-completed chunks from a compatible interrupted run.
+        """
+
+        audio_path = Path(audio_file)
+        checkpoint = Path(checkpoint_path)
+        identity, duration, chunk_count = self.checkpoint_identity(audio_path)
+        compatibility_keys = (
+            "schema",
+            "engine",
+            "model",
+            "provider",
+            "quality",
+            "runtime_version",
+            "chunk_seconds",
+            "overlap_seconds",
+            "cluster_threshold",
+            "min_speakers",
+            "max_speakers",
+            "model_files",
+        )
+        if any(
+            previous_identity.get(key) != identity.get(key)
+            for key in compatibility_keys
+        ):
+            return 0
+        if (
+            isinstance(previous_chunk_count, bool)
+            or not isinstance(previous_chunk_count, int)
+            or previous_chunk_count < 1
+            or previous_identity.get("chunk_count") != previous_chunk_count
+        ):
+            return 0
+        try:
+            unchanged_through = float(unchanged_through_seconds)
+        except (TypeError, ValueError):
+            return 0
+        if not math.isfinite(unchanged_through) or unchanged_through <= 0:
+            return 0
+
+        existing, checkpoint_ignored = self._load_checkpoint(
+            checkpoint,
+            identity=identity,
+            duration=duration,
+            chunk_count=chunk_count,
+        )
+        if checkpoint_ignored:
+            existing = {}
+
+        grouped: dict[int, list[PortableSpeakerTurn]] = {
+            index: []
+            for index in range(min(previous_chunk_count, chunk_count))
+        }
+        for turn in turns:
+            speaker = str(turn.speaker)
+            prefix_length = len("SPEAKER_C")
+            if (
+                not speaker.startswith("SPEAKER_C")
+                or len(speaker) <= prefix_length + 3
+                or speaker[prefix_length + 3] != "_"
+            ):
+                return 0
+            chunk_text = speaker[prefix_length : prefix_length + 3]
+            if not chunk_text.isdigit():
+                return 0
+            chunk_index = int(chunk_text)
+            if chunk_index in grouped:
+                grouped[chunk_index].append(turn)
+
+        additions = 0
+        for chunk_index in range(min(previous_chunk_count, chunk_count)):
+            core_end = min(duration, (chunk_index + 1) * self.chunk_seconds)
+            decode_end = min(duration, core_end + self.overlap_seconds)
+            if decode_end > unchanged_through + 0.001:
+                break
+            chunk_turns = self._checkpoint_turns(
+                [
+                    {
+                        "start": turn.start,
+                        "end": turn.end,
+                        "speaker": turn.speaker,
+                    }
+                    for turn in grouped[chunk_index]
+                ],
+                chunk_index=chunk_index,
+                chunk_count=chunk_count,
+                chunk_seconds=self.chunk_seconds,
+                duration=duration,
+            )
+            if chunk_turns is None:
+                return 0
+            if chunk_index not in existing:
+                existing[chunk_index] = chunk_turns
+                additions += 1
+
+        if additions:
+            self._write_checkpoint(
+                checkpoint,
+                identity=identity,
+                chunks=existing,
+            )
+        return additions
+
     @staticmethod
     def _checkpoint_turns(
         value: Any,
@@ -958,6 +1099,7 @@ class SherpaOnnxDiarizer:
             duration=duration,
             chunk_count=chunk_count,
         )
+        self.metadata["checkpoint_identity"] = checkpoint_identity
         checkpoint_chunks: dict[int, list[PortableSpeakerTurn]] = {}
         checkpoint_ignored = False
         if checkpoint is not None:
