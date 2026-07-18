@@ -433,9 +433,16 @@ def test_portable_diarization_uses_archive_specific_chunk_checkpoint(
             path: Path,
             progress=None,
             checkpoint_path: Path | None = None,
+            cleanup_checkpoint_on_success: bool = True,
         ) -> list[PortableSpeakerTurn]:
             captured["path"] = path
             captured["checkpoint_path"] = checkpoint_path
+            captured["cleanup_checkpoint_on_success"] = (
+                cleanup_checkpoint_on_success
+            )
+            assert checkpoint_path is not None
+            checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+            checkpoint_path.write_text("completed chunks", encoding="utf-8")
             return [PortableSpeakerTurn(1.0, 2.0, "SPEAKER_00")]
 
     transcriber = object.__new__(LocalTranscriber)
@@ -458,8 +465,64 @@ def test_portable_diarization_uses_archive_specific_chunk_checkpoint(
         / "combined.diarization.sherpa-onnx.chunks.json"
     )
     assert turns == [SpeakerTurn(1.0, 2.0, "SPEAKER_00")]
-    assert captured == {"path": audio, "checkpoint_path": expected}
+    assert captured == {
+        "path": audio,
+        "checkpoint_path": expected,
+        "cleanup_checkpoint_on_success": False,
+    }
     assert transcriber._diarization_cache_path(audio).is_file()
+    assert not expected.exists()
+
+
+def test_portable_checkpoint_survives_failed_final_cache_write(
+    monkeypatch, tmp_path: Path
+) -> None:
+    audio = tmp_path / "combined.mp3"
+    audio.write_bytes(b"audio")
+    checkpoint = (
+        tmp_path
+        / "transcripts"
+        / "combined.diarization.sherpa-onnx.chunks.json"
+    )
+
+    class FakePortable:
+        metadata = {"engine": "sherpa-onnx"}
+
+        def process(
+            self,
+            path: Path,
+            progress=None,
+            checkpoint_path: Path | None = None,
+            cleanup_checkpoint_on_success: bool = True,
+        ) -> list[PortableSpeakerTurn]:
+            assert path == audio
+            assert checkpoint_path == checkpoint
+            assert cleanup_checkpoint_on_success is False
+            checkpoint.parent.mkdir(parents=True, exist_ok=True)
+            checkpoint.write_text("all chunks complete", encoding="utf-8")
+            return [PortableSpeakerTurn(1.0, 2.0, "SPEAKER_00")]
+
+    transcriber = object.__new__(LocalTranscriber)
+    transcriber._portable_diarizer = FakePortable()
+    transcriber._diarization_pipeline = None
+    transcriber.diarization_engine = "sherpa-onnx"
+    transcriber.diarization_model = (
+        "pyannote-segmentation-3.0-int8+nemo-titanet-small"
+    )
+    transcriber.diarization_quality = "preview"
+    transcriber.diarization_device = "cpu"
+    transcriber.min_speakers = None
+    transcriber.max_speakers = None
+    monkeypatch.setattr(
+        transcriber,
+        "_save_diarization_cache",
+        lambda *_args: (_ for _ in ()).throw(OSError("disk unavailable")),
+    )
+
+    with pytest.raises(OSError, match="disk unavailable"):
+        transcriber._diarize(audio)
+
+    assert checkpoint.read_text(encoding="utf-8") == "all chunks complete"
 
 
 @pytest.mark.parametrize(

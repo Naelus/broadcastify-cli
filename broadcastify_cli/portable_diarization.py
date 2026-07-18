@@ -942,6 +942,7 @@ class SherpaOnnxDiarizer:
         audio_file: str | Path,
         progress: Callable[[str], None] | None = None,
         checkpoint_path: str | Path | None = None,
+        cleanup_checkpoint_on_success: bool = True,
     ) -> list[PortableSpeakerTurn]:
         audio_path = Path(audio_file)
         if not audio_path.is_file():
@@ -973,6 +974,9 @@ class SherpaOnnxDiarizer:
                 "checkpoint_enabled": checkpoint is not None,
                 "checkpoint_chunks_reused": len(checkpoint_chunks),
                 "checkpoint_ignored": checkpoint_ignored,
+                "checkpoint_retained_until_cache": (
+                    checkpoint is not None and not cleanup_checkpoint_on_success
+                ),
             }
         )
         if progress and checkpoint_ignored:
@@ -1084,7 +1088,7 @@ class SherpaOnnxDiarizer:
                 "speaker_identity_scope": "processing-chunk",
             }
         )
-        if checkpoint is not None:
+        if checkpoint is not None and cleanup_checkpoint_on_success:
             try:
                 checkpoint.unlink(missing_ok=True)
             except OSError as exc:

@@ -855,6 +855,7 @@ class LocalTranscriber:
                 audio_path,
                 progress=progress,
                 checkpoint_path=checkpoint_path,
+                cleanup_checkpoint_on_success=False,
             )
             turns = [
                 SpeakerTurn(value.start, value.end, value.speaker)
@@ -862,6 +863,13 @@ class LocalTranscriber:
             ]
             self._diarization_details = dict(portable.metadata)
             self._save_diarization_cache(audio_path, turns)
+            try:
+                checkpoint_path.unlink(missing_ok=True)
+            except OSError:
+                # The completed final cache is authoritative. A stale chunk
+                # checkpoint is harmless and will be removed when that cache
+                # is reused.
+                pass
             return turns
         if self._diarization_pipeline is None:
             return []
