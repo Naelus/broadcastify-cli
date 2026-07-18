@@ -3,8 +3,8 @@
 ARG LLAMA_IMAGE=ghcr.io/ggml-org/llama.cpp:server-vulkan
 ARG WHISPER_IMAGE=ghcr.io/ggml-org/whisper.cpp:main-vulkan
 
-FROM ${LLAMA_IMAGE} AS llama_runtime
-FROM ${WHISPER_IMAGE}
+FROM ${WHISPER_IMAGE} AS whisper_runtime
+FROM ${LLAMA_IMAGE}
 
 ARG SOURCE_COMMIT=unknown
 
@@ -18,12 +18,13 @@ USER root
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates \
+        ffmpeg \
         libgomp1 \
         python3-pip \
         python3-venv \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=llama_runtime /app /opt/llama
+COPY --from=whisper_runtime /app /opt/whisper
 
 WORKDIR /opt/radio-archive
 COPY pyproject.toml README.md LICENSE ./
@@ -34,12 +35,12 @@ RUN python3 -m venv /opt/radio-archive-venv \
     && /opt/radio-archive-venv/bin/python -m pip install --no-cache-dir \
         ".[analysis,portable-diarization]"
 
-ENV PATH="/opt/radio-archive-venv/bin:/app/build/bin:/opt/llama:${PATH}" \
+ENV PATH="/opt/radio-archive-venv/bin:/opt/whisper/build/bin:/app:${PATH}" \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     FFMPEG_PATH=/usr/bin/ffmpeg \
-    WHISPER_CPP_PATH=/app/build/bin/whisper-cli \
-    LLAMA_SERVER_PATH=/opt/llama/llama-server
+    WHISPER_CPP_PATH=/opt/whisper/build/bin/whisper-cli \
+    LLAMA_SERVER_PATH=/app/llama-server
 
 EXPOSE 8765
 
