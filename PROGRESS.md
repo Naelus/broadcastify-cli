@@ -4,6 +4,14 @@ This is the dated verification and delivery log for `GOAL.md`. Keep forward-look
 
 ## July 18, 2026
 
+### Task-focused cross-platform Settings navigation
+
+- Replaced the Web Settings long page with four task sections matching the native mental model: **Setup**, **Processing**, **Analysis & AI**, and **Account**. Only one panel is rendered visible at a time, while the top-bar subtitle gives section context.
+- Added persistent selection and direct URLs (`#settings/setup`, `#settings/processing`, `#settings/analysis`, and `#settings/account`), Back/Forward and hash-change synchronization, roving `tabindex`, Arrow Left/Right, Home, and End keyboard behavior. Setup cards now route to the correct section and focus the exact account or runtime control instead of merely scrolling near it.
+- Exercised the live service at 1280×720 and with a true 390×844 browser viewport. Every section had one visible panel, no duplicate IDs or unnamed buttons, exact **375/375** document/client width, and an empty warning/error console. The tightened phone tab strip fits all four labels in 343 pixels without horizontal scrolling. Reload persistence, direct hash navigation, keyboard section changes, and Setup → Account/Storage focus were verified interactively.
+- Updated static regressions and bumped the packaged cache to version 17. Windows passed **163 tests in 5.67 seconds**, focused Web tests, Python compilation, bundled-Node JavaScript syntax, structural ARIA/ID checks, Git whitespace checks, and a changed-file credential scan.
+- Archived exact pushed source `historical-validation` at SHA-256 `0001aea03307f373a3ac1a6f65ddbf63c04bbbe8e603012804eaa15dde2dabcc` and verified the same hash on TrueNAS. The first container invocation exposed a validation-harness trap: the whisper.cpp image's default entrypoint accepted Python arguments without running pytest and returned an empty success. With `python3.12` explicitly selected as the entrypoint and source/dependencies exposed through normal site-package discovery, the network-disabled, read-only, capability-dropped container passed **163 tests in 3.81 seconds** with empty stderr. No container remained, and no NAS package, service, storage, group, or host setting changed.
+
 ### Execution-verifiable hardware readiness and current runtime review
 
 - Replaced profile readiness inferred from executable/device/model discovery with three explicit states: **detected**, **configured**, and **verified in this session**. Cheap refresh remains network- and model-execution-free; only successful selected-engine ASR, diarization, and analysis tests make the active profile Verified. A complete cached Community-1 snapshot is now recognized without retaining a token, but cache presence alone is never execution proof.

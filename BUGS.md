@@ -50,6 +50,10 @@ Use this file for reproducible defects and concrete blockers, not the general ro
 
 ## Recently fixed
 
+### F-025 — Web Settings remained a long scrolling page
+
+The cross-platform Settings view exposed the right controls but rendered setup, processing, analysis, and account configuration as one long page, unlike the native task-oriented navigation. Setup cards also scrolled approximately rather than taking the user to and focusing the requested control. Exact commit `historical-validation` introduces an accessible four-tab Settings workspace with one visible panel, roving keyboard focus, URL deep links, Back/Forward synchronization, and remembered selection. Desktop and true 390×844 browser QA covered all four sections, action routing, reload persistence, and hash-only navigation; all tabs fit without horizontal overflow, duplicate IDs, unnamed buttons, or console warnings/errors. The first live pass exposed a hash-navigation synchronization defect, which was fixed before the final pass.
+
 ### F-024 — Hardware detection could masquerade as execution readiness
 
 Cheap diagnostics previously allowed installed runtimes, cached models, or listed accelerators to make a profile look ready even when no selected model had executed. The native worker also wrote a UTF-8 BOM to JSON stdin, which Python rejected before native self-tests while the Web path remained healthy. Exact commit `historical-validation` separates detected/configured capability from session-specific verification, recognizes a complete cached Community-1 snapshot without pretending it has run, adds a real structured analysis generation test, and marks a profile **Verified** only after ASR, diarization, and analysis all pass. The worker now writes BOM-free UTF-8. Native Windows CUDA completed the three stages in 3.5/5.3/7.80 seconds; Web completed them in 3.4/5.2/7.77 seconds; the locked-down AMD host completed Vulkan ASR, CPU diarization, and Vulkan analysis in 4.413/4.221/5.622 seconds. Both UIs hide stale setup guidance after verification.
