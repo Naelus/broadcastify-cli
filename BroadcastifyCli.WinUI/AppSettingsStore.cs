@@ -24,6 +24,7 @@ internal sealed record DesktopSettings
     public bool AnalyzeAfterJob { get; init; } = true;
     public string AnalysisProvider { get; init; } = "local";
     public string AnalysisModel { get; init; } = "ggml-org/gemma-4-12B-it-GGUF:Q4_0";
+    public string AnalysisDevice { get; init; } = "auto";
     public string AnalysisEndpoint { get; init; } = "";
     public string AnalysisApiKeyEnvironment { get; init; } = "OPENAI_API_KEY";
     public string CodexCliPath { get; init; } = "";

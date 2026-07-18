@@ -19,6 +19,7 @@ const DEFAULT_SETTINGS = {
   asrModelPath: "",
   analysisProvider: "local",
   analysisModel: "ggml-org/gemma-4-12B-it-GGUF:Q4_0",
+  analysisDevice: "auto",
   analysisEndpoint: "",
   apiKeyEnvironment: "OPENAI_API_KEY",
   codexPath: "",
@@ -76,6 +77,7 @@ function readSettingsForm() {
     asrModelPath: byId("settingAsrModelPath").value.trim(),
     analysisProvider: byId("settingAnalysisProvider").value,
     analysisModel: byId("settingAnalysisModel").value.trim(),
+    analysisDevice: byId("settingAnalysisDevice").value,
     analysisEndpoint: byId("settingAnalysisEndpoint").value.trim(),
     apiKeyEnvironment: byId("settingApiKeyEnvironment").value.trim() || "OPENAI_API_KEY",
     codexPath: byId("settingCodexPath").value.trim(),
@@ -95,6 +97,7 @@ function applySettingsForm() {
   byId("settingAsrModelPath").value = state.settings.asrModelPath;
   byId("settingAnalysisProvider").value = state.settings.analysisProvider;
   byId("settingAnalysisModel").value = state.settings.analysisModel;
+  byId("settingAnalysisDevice").value = state.settings.analysisDevice;
   byId("settingAnalysisEndpoint").value = state.settings.analysisEndpoint;
   byId("settingApiKeyEnvironment").value = state.settings.apiKeyEnvironment;
   byId("settingCodexPath").value = state.settings.codexPath;
@@ -105,13 +108,13 @@ function applySettingsForm() {
 
 function applyHardwareProfile(profile, notify = true) {
   const choices = {
-    auto: ["auto", "auto", "auto"],
-    cuda: ["faster-whisper", "cuda", "cuda"],
-    vulkan: ["whisper.cpp", "vulkan", "cpu"],
-    openvino: ["openvino", "openvino-auto", "cpu"],
-    metal: ["whisper.cpp", "metal", "cpu"],
-    windowsml: ["windows-ml", "windows-ml", "cpu"],
-    cpu: ["faster-whisper", "cpu", "cpu"],
+    auto: ["auto", "auto", "auto", "auto"],
+    cuda: ["faster-whisper", "cuda", "cuda", "auto"],
+    vulkan: ["whisper.cpp", "vulkan", "cpu", "auto"],
+    openvino: ["openvino", "openvino-auto", "cpu", "auto"],
+    metal: ["whisper.cpp", "metal", "cpu", "auto"],
+    windowsml: ["windows-ml", "windows-ml", "cpu", "auto"],
+    cpu: ["faster-whisper", "cpu", "cpu", "cpu"],
   };
   const choice = choices[profile];
   if (!choice) {
@@ -128,6 +131,7 @@ function applyHardwareProfile(profile, notify = true) {
   byId("settingAsrEngine").value = choice[0];
   byId("settingDevice").value = choice[1];
   byId("settingDiarizationDevice").value = choice[2];
+  byId("settingAnalysisDevice").value = choice[3];
   applyingHardwareProfile = false;
   readSettingsForm();
   renderSetupReadiness();
@@ -140,6 +144,7 @@ function providerPayload() {
   return {
     analysis_provider: state.settings.analysisProvider,
     analysis_model: state.settings.analysisModel,
+    analysis_device: state.settings.analysisDevice,
     analysis_endpoint: state.settings.analysisEndpoint,
     analysis_api_key: key || undefined,
     analysis_api_key_env: state.settings.apiKeyEnvironment,
@@ -1172,7 +1177,7 @@ byId("providerCheckButton").addEventListener("click", runProviderCheck);
 byId("runtimeCheckButton").addEventListener("click", runHardwareCheck);
 byId("setupCheckButton").addEventListener("click", runHardwareCheck);
 byId("settingHardwareProfile").addEventListener("change", (event) => applyHardwareProfile(event.target.value));
-["settingAsrEngine", "settingDevice", "settingDiarizationDevice"].forEach((id) => byId(id).addEventListener("change", () => {
+["settingAsrEngine", "settingDevice", "settingDiarizationDevice", "settingAnalysisDevice"].forEach((id) => byId(id).addEventListener("change", () => {
   if (!applyingHardwareProfile) {
     byId("settingHardwareProfile").value = "custom";
     state.asrSelfTest = null;

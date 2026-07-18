@@ -194,10 +194,15 @@ def test_diarization_turn_cache_is_parameter_and_audio_specific(tmp_path: Path) 
     transcriber = object.__new__(LocalTranscriber)
     transcriber.min_speakers = 2
     transcriber.max_speakers = 8
+    transcriber.diarization_device = "cpu"
     turns = [SpeakerTurn(1.0, 2.5, "SPEAKER_00")]
 
     transcriber._save_diarization_cache(audio, turns)
+    cache = json.loads(
+        transcriber._diarization_cache_path(audio).read_text(encoding="utf-8")
+    )
     assert transcriber._load_diarization_cache(audio) == turns
+    assert cache["device"] == "cpu"
 
     transcriber.max_speakers = 9
     assert transcriber._load_diarization_cache(audio) is None
@@ -237,6 +242,7 @@ def test_diarization_reports_inner_pipeline_progress_without_lowering_model_batc
     transcriber.batch_size = 8
     transcriber.min_speakers = None
     transcriber.max_speakers = None
+    transcriber.diarization_device = "cpu"
     monkeypatch.setattr(
         transcriber, "_prepare_diarization_input", lambda _path: (prepared, True)
     )

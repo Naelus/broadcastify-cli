@@ -196,7 +196,7 @@ def main() -> int:
             result_path = Path(arguments.result_file).expanduser().resolve()
             result_path.parent.mkdir(parents=True, exist_ok=True)
             result_path.write_text(rendered + "\n", encoding="utf-8")
-        print(rendered)
+        print(json.dumps(result, ensure_ascii=True, indent=2, sort_keys=True))
         return 0 if result.get("status") == "completed" else 1
     except Exception as exc:
         print(

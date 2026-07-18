@@ -100,7 +100,8 @@ def test_loopback_web_app_serves_library_transcript_and_media(tmp_path: Path) ->
         assert cookie.startswith("radio_archive_session=")
         assert token_match is not None
         assert b'id="areaPublicSafetyOnly"' in body
-        assert b'/static/app.js?v=13' in body
+        assert b'/static/app.js?v=14' in body
+        assert b'id="settingAnalysisDevice"' in body
         assert b'/static/favicon.svg' in body
         token = token_match.group(1).decode()
 
@@ -109,13 +110,14 @@ def test_loopback_web_app_serves_library_transcript_and_media(tmp_path: Path) ->
         assert response.getheader("Content-Type") == "image/svg+xml"
         assert b"<svg" in body
 
-        response, body = _request(connection, "GET", "/static/app.js?v=13")
+        response, body = _request(connection, "GET", "/static/app.js?v=14")
         assert response.status == 200
         assert b"areaSelectedStoryIndex" in body
         assert b"data-area-story-index" in body
         assert b"story-browser" in body
+        assert b"analysis_device: state.settings.analysisDevice" in body
 
-        response, body = _request(connection, "GET", "/static/app.css?v=13")
+        response, body = _request(connection, "GET", "/static/app.css?v=14")
         assert response.status == 200
         assert b".story-browser" in body
         assert b".story-index-item.active" in body

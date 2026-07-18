@@ -930,6 +930,7 @@ class LlamaServerProcess:
         port: int = 8088,
         context_size: int = 32_768,
         gpu_layers: int = 999,
+        device: str = "auto",
         log_path: str | Path = "archives/llama-server.log",
         startup_timeout: float = 1_800.0,
     ) -> None:
@@ -937,6 +938,12 @@ class LlamaServerProcess:
         self.port = port
         self.context_size = context_size
         self.gpu_layers = gpu_layers
+        normalized_device = str(device or "auto").strip()
+        self.device = (
+            "cpu"
+            if normalized_device.lower() in {"cpu", "none"}
+            else normalized_device or "auto"
+        )
         self.base_url = f"http://127.0.0.1:{port}/v1"
         self.health_url = f"http://127.0.0.1:{port}/health"
         self.log_path = Path(log_path)
@@ -946,6 +953,15 @@ class LlamaServerProcess:
         self.process: subprocess.Popen[str] | None = None
         self._log_handle: Any = None
         self._owns_process = False
+
+    def _offload_arguments(self) -> list[str]:
+        if self.device == "cpu":
+            return ["--device", "none", "--n-gpu-layers", "0"]
+        arguments: list[str] = []
+        if self.device.lower() != "auto":
+            arguments.extend(["--device", self.device])
+        arguments.extend(["--n-gpu-layers", str(self.gpu_layers)])
+        return arguments
 
     def __enter__(self) -> "LlamaServerProcess":
         self.start()
@@ -985,8 +1001,7 @@ class LlamaServerProcess:
             str(self.port),
             "--ctx-size",
             str(self.context_size),
-            "--n-gpu-layers",
-            str(self.gpu_layers),
+            *self._offload_arguments(),
             "--parallel",
             "1",
             "--jinja",

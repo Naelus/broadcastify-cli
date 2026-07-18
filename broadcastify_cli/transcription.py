@@ -620,6 +620,7 @@ class LocalTranscriber:
         payload["diarization_requested"] = True
         payload["diarization_completed"] = True
         payload["diarization_model"] = self.DIARIZATION_MODEL
+        payload["diarization_device"] = self.diarization_device
 
         json_temp = json_path.with_suffix(json_path.suffix + ".tmp")
         json_temp.write_text(
@@ -857,6 +858,7 @@ class LocalTranscriber:
                     "audio_mtime_ns": audio_path.stat().st_mtime_ns,
                     "min_speakers": self.min_speakers,
                     "max_speakers": self.max_speakers,
+                    "device": self.diarization_device,
                     "turns": [asdict(value) for value in turns],
                 },
                 ensure_ascii=False,

@@ -15,6 +15,7 @@ from broadcastify_cli.analysis_clients import (
 from broadcastify_cli.analysis_providers import (
     AnalysisProviderConfig,
     diagnose_analysis_provider,
+    open_analysis_client,
 )
 
 
@@ -65,6 +66,7 @@ def test_provider_config_has_distinct_persistence_identity() -> None:
 
 def test_explicit_ui_provider_values_override_environment(monkeypatch) -> None:
     monkeypatch.setenv("ANALYSIS_MODEL", "environment-model")
+    monkeypatch.setenv("ANALYSIS_DEVICE", "cpu")
     monkeypatch.setenv("ANALYSIS_ENDPOINT", "https://environment.invalid/v1")
     monkeypatch.setenv("ALLOW_EXTERNAL_ANALYSIS", "true")
 
@@ -72,12 +74,14 @@ def test_explicit_ui_provider_values_override_environment(monkeypatch) -> None:
         {
             "analysis_provider": "codex-cli",
             "analysis_model": "",
+            "analysis_device": "auto",
             "analysis_endpoint": "",
             "allow_external_analysis": False,
         }
     )
 
     assert config.model == ""
+    assert config.device == "auto"
     assert config.endpoint == ""
     assert config.allow_external is False
 
@@ -97,6 +101,41 @@ def test_removed_local_model_selector_migrates_when_not_cached(monkeypatch) -> N
 
     assert config.model == "ggml-org/gemma-4-12B-it-GGUF:Q4_0"
     assert config.cache_model == "ggml-org/gemma-4-12B-it-GGUF:Q4_0"
+
+
+def test_managed_local_provider_receives_selected_cpu_device(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeManagedServer:
+        base_url = "http://127.0.0.1:43210/v1"
+        effective_model = "local-test-model"
+
+        def __init__(self, **kwargs: object) -> None:
+            captured.update(kwargs)
+
+        def __enter__(self) -> "FakeManagedServer":
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+    monkeypatch.setattr(
+        "broadcastify_cli.analysis_providers.LlamaServerProcess",
+        FakeManagedServer,
+    )
+    config = AnalysisProviderConfig.from_mapping(
+        {
+            "analysis_provider": "local",
+            "analysis_model": "local-test-model",
+            "analysis_device": "cpu",
+        }
+    )
+
+    with open_analysis_client(config) as client:
+        assert client.base_url == "http://127.0.0.1:43210/v1"
+
+    assert config.device == "cpu"
+    assert captured == {"model": "local-test-model", "device": "cpu"}
 
 
 def test_openai_responses_uses_structured_output_without_storage(monkeypatch) -> None:

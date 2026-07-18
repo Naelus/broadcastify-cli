@@ -251,6 +251,7 @@ def test_diarize_existing_transcript_reuses_words_without_whisper(tmp_path: Path
 
     transcriber = object.__new__(LocalTranscriber)
     transcriber.diarize = True
+    transcriber.diarization_device = "cpu"
     transcriber._diarization_pipeline = object()
     transcriber._diarize = lambda *_args, **_kwargs: [
         SpeakerTurn(0.0, 1.0, "SPEAKER_00")
@@ -260,6 +261,7 @@ def test_diarize_existing_transcript_reuses_words_without_whisper(tmp_path: Path
     payload = json.loads(result.read_text(encoding="utf-8"))
 
     assert payload["diarization_requested"] is True
+    assert payload["diarization_device"] == "cpu"
     assert payload["segments"][0]["speaker"] == "SPEAKER_00"
     assert payload["words"][0]["speaker"] == "SPEAKER_00"
     assert "SPEAKER_00: Dispatch calling" in transcript.with_suffix(".txt").read_text(

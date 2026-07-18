@@ -693,6 +693,7 @@ def continue_local_day() -> int:
             for key in (
                 "analysis_provider",
                 "analysis_model",
+                "analysis_device",
                 "analysis_endpoint",
                 "analysis_api_key",
                 "analysis_api_key_env",

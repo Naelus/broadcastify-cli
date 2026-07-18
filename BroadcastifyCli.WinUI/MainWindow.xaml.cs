@@ -196,6 +196,7 @@ public sealed partial class MainWindow : Window
                 SelectComboTag(DiarizationDeviceComboBox, "auto");
                 break;
         }
+        SelectComboTag(AnalysisDeviceComboBox, profile == "cpu" ? "cpu" : "auto");
         _asrVerifiedThisSession = false;
         _diarizationVerifiedThisSession = false;
         ApplySelectedHardwareProfileDescription();
@@ -234,6 +235,7 @@ public sealed partial class MainWindow : Window
                 _ => "",
             }
             : settings.AnalysisModel;
+        SelectComboValue(AnalysisDeviceComboBox, settings.AnalysisDevice);
         AnalysisEndpointBox.Text = settings.AnalysisEndpoint;
         AnalysisApiKeyEnvironmentBox.Text = string.IsNullOrWhiteSpace(settings.AnalysisApiKeyEnvironment)
             ? "OPENAI_API_KEY"
@@ -277,6 +279,7 @@ public sealed partial class MainWindow : Window
             AnalyzeAfterJob = AnalyzeAfterJobCheckBox.IsChecked == true,
             AnalysisProvider = SelectedComboValue(AnalysisProviderComboBox, "local"),
             AnalysisModel = AnalysisModelBox.Text.Trim(),
+            AnalysisDevice = SelectedComboValue(AnalysisDeviceComboBox, "auto"),
             AnalysisEndpoint = AnalysisEndpointBox.Text.Trim(),
             AnalysisApiKeyEnvironment = string.IsNullOrWhiteSpace(AnalysisApiKeyEnvironmentBox.Text)
                 ? "OPENAI_API_KEY"
@@ -453,6 +456,7 @@ public sealed partial class MainWindow : Window
         var provider = SelectedComboValue(AnalysisProviderComboBox, "local");
         request.AnalysisProvider = provider;
         request.AnalysisModel = AnalysisModelBox.Text.Trim();
+        request.AnalysisDevice = SelectedComboValue(AnalysisDeviceComboBox, "auto");
         request.AnalysisEndpoint = AnalysisEndpointBox.Text.Trim();
         request.AnalysisApiKey = provider is "openai-responses" or "openai-compatible"
             && !string.IsNullOrWhiteSpace(AnalysisApiKeyBox.Password)

@@ -134,6 +134,9 @@ internal abstract record AnalysisProviderRequest
     [JsonPropertyName("analysis_model")]
     public string AnalysisModel { get; set; } = "";
 
+    [JsonPropertyName("analysis_device")]
+    public string AnalysisDevice { get; set; } = "auto";
+
     [JsonPropertyName("analysis_endpoint")]
     public string AnalysisEndpoint { get; set; } = "";
 
@@ -159,6 +162,9 @@ public sealed record AnalysisProviderStatus
 
     [JsonPropertyName("model")]
     public string Model { get; init; } = "";
+
+    [JsonPropertyName("device")]
+    public string Device { get; init; } = "";
 
     [JsonPropertyName("external")]
     public bool External { get; init; }

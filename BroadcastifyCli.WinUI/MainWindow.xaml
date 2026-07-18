@@ -884,6 +884,11 @@
                                                 <TextBox x:Name="AnalysisEndpointBox" Header="Optional endpoint"
                                                          PlaceholderText="Managed locally, or enter a provider URL ending in /v1"
                                                          TextChanged="AnalysisEndpoint_TextChanged" />
+                                                <ComboBox x:Name="AnalysisDeviceComboBox" Header="Managed local analysis device"
+                                                          SelectedIndex="0" HorizontalAlignment="Stretch">
+                                                    <ComboBoxItem Content="Automatic accelerator offload" Tag="auto" />
+                                                    <ComboBoxItem Content="CPU only — do not use a GPU" Tag="cpu" />
+                                                </ComboBox>
                                                 <ToggleSwitch x:Name="AllowExternalAnalysisToggle"
                                                               Header="Allow transcript excerpts to leave this computer"
                                                               Toggled="AllowExternalAnalysis_Toggled" />

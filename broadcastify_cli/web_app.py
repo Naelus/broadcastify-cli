@@ -267,6 +267,8 @@ class JobManager:
             job.started_at = utc_now()
         environment = os.environ.copy()
         environment["BROADCASTIFY_ANALYSIS_DB"] = str(self.database_path)
+        environment["PYTHONIOENCODING"] = "utf-8"
+        environment["PYTHONUTF8"] = "1"
         creation_flags = 0
         start_new_session = os.name != "nt"
         if os.name == "nt":

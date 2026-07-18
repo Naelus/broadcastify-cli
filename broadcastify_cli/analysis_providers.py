@@ -66,6 +66,7 @@ def _loopback_endpoint(value: str) -> bool:
 class AnalysisProviderConfig:
     provider: str = "local"
     model: str = DEFAULT_LLM_MODEL
+    device: str = "auto"
     endpoint: str = ""
     api_key: str = ""
     api_key_env: str = "OPENAI_API_KEY"
@@ -99,6 +100,16 @@ class AnalysisProviderConfig:
             else os.getenv("ANALYSIS_ENDPOINT")
         )
         endpoint = str(endpoint_value or "").strip()
+        device_value = (
+            value.get("analysis_device")
+            if "analysis_device" in value
+            else os.getenv("ANALYSIS_DEVICE")
+        )
+        device = str(device_value or "auto").strip()
+        if device.lower() in {"cpu", "none"}:
+            device = "cpu"
+        elif not device:
+            device = "auto"
         allow_external = (
             bool(value.get("allow_external_analysis"))
             if "allow_external_analysis" in value
@@ -107,6 +118,7 @@ class AnalysisProviderConfig:
         return cls(
             provider=provider,
             model=explicit_model,
+            device=device,
             endpoint=endpoint,
             api_key=str(value.get("analysis_api_key") or "").strip(),
             api_key_env=str(
@@ -164,6 +176,7 @@ def diagnose_analysis_provider(config: AnalysisProviderConfig) -> dict[str, Any]
     result: dict[str, Any] = {
         "provider": config.provider,
         "model": config.model or "account default",
+        "device": config.device,
         "external": config.is_external,
         "ready": False,
         "verified": False,
@@ -177,8 +190,16 @@ def diagnose_analysis_provider(config: AnalysisProviderConfig) -> dict[str, Any]
     if config.provider == "local" and not config.endpoint:
         executable = find_llama_server()
         result["ready"] = bool(executable)
+        managed_device = (
+            "CPU only"
+            if config.device == "cpu"
+            else "automatic offload"
+            if config.device.lower() == "auto"
+            else config.device
+        )
         result["message"] = (
-            f"llama.cpp is available at {executable}; the model loads on first use."
+            f"llama.cpp is available at {executable}; managed device: "
+            f"{managed_device}; the model loads on first use."
             if executable
             else "llama-server was not found. Install llama.cpp or configure LLAMA_SERVER_PATH."
         )
@@ -233,7 +254,7 @@ def open_analysis_client(
         if not launch_local_server:
             yield LlamaCppClient(model=config.model, timeout=config.timeout)
             return
-        with LlamaServerProcess(model=config.model) as server:
+        with LlamaServerProcess(model=config.model, device=config.device) as server:
             yield LlamaCppClient(
                 base_url=server.base_url,
                 model=server.effective_model,

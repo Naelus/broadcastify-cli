@@ -8,6 +8,7 @@ import pytest
 from broadcastify_cli.analysis import (
     IncidentAnalyzer,
     LlamaCppClient,
+    LlamaServerProcess,
     WeeklySummaryAnalyzer,
     archive_datetime_for_offset,
     build_transcript_windows,
@@ -22,6 +23,23 @@ from broadcastify_cli.analysis import (
     resolve_local_llama_model,
 )
 from broadcastify_cli.storage import AnalysisStore
+
+
+def test_managed_llama_cpu_device_disables_every_gpu_layer() -> None:
+    assert LlamaServerProcess(device="cpu")._offload_arguments() == [
+        "--device",
+        "none",
+        "--n-gpu-layers",
+        "0",
+    ]
+    assert LlamaServerProcess(
+        device="Vulkan1", gpu_layers=17
+    )._offload_arguments() == [
+        "--device",
+        "Vulkan1",
+        "--n-gpu-layers",
+        "17",
+    ]
 
 
 class FakeLlamaClient:

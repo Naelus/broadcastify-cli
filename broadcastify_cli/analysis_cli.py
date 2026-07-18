@@ -43,12 +43,15 @@ def provider_config(
     api_key_env: str,
     codex_path: Path | None,
     allow_external_analysis: bool,
+    analysis_device: str | None = None,
 ) -> AnalysisProviderConfig:
     value: dict[str, object] = {
         "analysis_provider": provider,
         "analysis_api_key_env": api_key_env,
         "allow_external_analysis": allow_external_analysis,
     }
+    if analysis_device:
+        value["analysis_device"] = analysis_device
     if model:
         value["analysis_model"] = model
     if server_url:
@@ -90,6 +93,7 @@ def import_day(feed_id: str, date_value: date, output_dir: Path, db: Path) -> No
 @click.option("--db", type=click.Path(path_type=Path), default=Path("archives/broadcastify-analysis.sqlite3"))
 @click.option("--provider", type=click.Choice(PROVIDER_CHOICES), default="local", show_default=True)
 @click.option("--model", help="Provider model; local defaults to quantized Gemma")
+@click.option("--analysis-device", type=click.Choice(["auto", "cpu"]), help="Managed local llama.cpp device; defaults to ANALYSIS_DEVICE or auto")
 @click.option("--server-url", help="Provider base URL ending in /v1, or an existing local llama.cpp endpoint")
 @click.option("--api-key-env", default="OPENAI_API_KEY", show_default=True, help="Environment variable containing the provider key")
 @click.option("--codex-path", type=click.Path(path_type=Path), help="Optional Codex CLI executable")
@@ -105,6 +109,7 @@ def analyze_day(
     db: Path,
     provider: str,
     model: str | None,
+    analysis_device: str | None,
     server_url: str | None,
     api_key_env: str,
     codex_path: Path | None,
@@ -122,6 +127,7 @@ def analyze_day(
         api_key_env,
         codex_path,
         allow_external_analysis,
+        analysis_device,
     )
     audio, transcript, manifest = discover_day_paths(output_dir, feed_id, date_value)
     with AnalysisStore(db) as store:
@@ -167,6 +173,7 @@ def analyze_day(
 @click.option("--db", type=click.Path(path_type=Path), default=Path("archives/broadcastify-analysis.sqlite3"))
 @click.option("--provider", type=click.Choice(PROVIDER_CHOICES), default="local", show_default=True)
 @click.option("--model", help="Provider model; local defaults to quantized Gemma")
+@click.option("--analysis-device", type=click.Choice(["auto", "cpu"]), help="Managed local llama.cpp device; defaults to ANALYSIS_DEVICE or auto")
 @click.option("--server-url", help="Provider base URL ending in /v1, or an existing local llama.cpp endpoint")
 @click.option("--api-key-env", default="OPENAI_API_KEY", show_default=True)
 @click.option("--codex-path", type=click.Path(path_type=Path))
@@ -181,6 +188,7 @@ def ask(
     db: Path,
     provider: str,
     model: str | None,
+    analysis_device: str | None,
     server_url: str | None,
     api_key_env: str,
     codex_path: Path | None,
@@ -198,6 +206,7 @@ def ask(
         api_key_env,
         codex_path,
         allow_external_analysis,
+        analysis_device,
     )
     with AnalysisStore(db) as store:
         indexer = None
@@ -223,6 +232,7 @@ def ask(
 @click.option("--db", type=click.Path(path_type=Path), default=Path("archives/broadcastify-analysis.sqlite3"))
 @click.option("--provider", type=click.Choice(PROVIDER_CHOICES), default="local", show_default=True)
 @click.option("--model", help="Provider model; local defaults to quantized Gemma")
+@click.option("--analysis-device", type=click.Choice(["auto", "cpu"]), help="Managed local llama.cpp device; defaults to ANALYSIS_DEVICE or auto")
 @click.option("--server-url", help="Provider base URL ending in /v1, or an existing local llama.cpp endpoint")
 @click.option("--api-key-env", default="OPENAI_API_KEY", show_default=True)
 @click.option("--codex-path", type=click.Path(path_type=Path))
@@ -235,6 +245,7 @@ def summarize_week(
     db: Path,
     provider: str,
     model: str | None,
+    analysis_device: str | None,
     server_url: str | None,
     api_key_env: str,
     codex_path: Path | None,
@@ -250,6 +261,7 @@ def summarize_week(
         api_key_env,
         codex_path,
         allow_external_analysis,
+        analysis_device,
     )
     with AnalysisStore(db) as store:
         with open_analysis_client(provider_settings) as client:

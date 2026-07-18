@@ -7,7 +7,7 @@
   <meta name="color-scheme" content="light dark">
   <title>Radio Archive Intelligence</title>
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/static/app.css?v=13">
+  <link rel="stylesheet" href="/static/app.css?v=14">
 </head>
 <body>
   <div class="app-shell">
@@ -242,6 +242,7 @@
             <div class="form-grid two">
               <label><span>Provider</span><select id="settingAnalysisProvider"><option value="local">Local Gemma / llama.cpp</option><option value="openai-responses">OpenAI Responses</option><option value="openai-compatible">OpenAI-compatible /v1</option><option value="codex-cli">Codex saved login</option></select></label>
               <label><span>Model</span><input id="settingAnalysisModel" value="ggml-org/gemma-4-12B-it-GGUF:Q4_0"></label>
+              <label><span>Managed local device</span><select id="settingAnalysisDevice"><option value="auto">Automatic accelerator offload</option><option value="cpu">CPU only — do not use a GPU</option></select></label>
               <label><span>Optional endpoint</span><input id="settingAnalysisEndpoint" placeholder="Managed locally or /v1 URL"></label>
               <label><span>API key environment variable</span><input id="settingApiKeyEnvironment" value="OPENAI_API_KEY"></label>
               <label><span>Optional Codex executable</span><input id="settingCodexPath" placeholder="Automatic discovery"></label>
@@ -278,6 +279,6 @@
   </aside>
 
   <div class="toast-region" id="toastRegion" aria-live="polite"></div>
-  <script src="/static/app.js?v=13" defer></script>
+  <script src="/static/app.js?v=14" defer></script>
 </body>
 </html>
