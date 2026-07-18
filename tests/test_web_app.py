@@ -127,7 +127,7 @@ def test_loopback_web_app_serves_library_transcript_and_media(tmp_path: Path) ->
         assert cookie.startswith("radio_archive_session=")
         assert token_match is not None
         assert b'id="areaPublicSafetyOnly"' in body
-        assert b'/static/app.js?v=27' in body
+        assert b'/static/app.js?v=28' in body
         assert b'id="accessScopeStatus"' in body
         assert b'value="qwen3-asr"' in body
         assert b'qwen3-asr-0.6b-int8' in body
@@ -165,6 +165,10 @@ def test_loopback_web_app_serves_library_transcript_and_media(tmp_path: Path) ->
         assert b"function applyRuntimeProcessingDefaults" in body
         assert b"hardwareProfile: defaults.hardware_profile" not in body
         assert b'state.settings.hardwareProfile = "auto"' in body
+        assert b'profile === "auto"' in body
+        assert b"deploymentDefaults.asr_engine" in body
+        assert b"deploymentDefaults.model" in body
+        assert b"installed ${words(deploymentDefaults.hardware_profile)} deployment preset" in body
         assert b"hardware_profile: state.settings.hardwareProfile" in body
         assert b'"Trusted LAN"' in body
         assert b"whisper.cpp has no managed distil-large-v3 mapping" in body

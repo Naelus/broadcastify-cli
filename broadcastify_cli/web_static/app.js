@@ -149,8 +149,20 @@ function applySettingsForm() {
 }
 
 function applyHardwareProfile(profile, notify = true) {
+  const deploymentDefaults = profile === "auto"
+    ? (state.bootstrap.runtime?.processing_defaults || {})
+    : {};
+  const hasDeploymentDefaults = Boolean(deploymentDefaults.hardware_profile);
   const choices = {
-    auto: ["auto", "auto", "auto", "auto", "community-1"],
+    auto: hasDeploymentDefaults
+      ? [
+          deploymentDefaults.asr_engine || "auto",
+          deploymentDefaults.device || "auto",
+          deploymentDefaults.diarization_device || "auto",
+          "auto",
+          deploymentDefaults.diarization_engine || "community-1",
+        ]
+      : ["auto", "auto", "auto", "auto", "community-1"],
     cuda: ["faster-whisper", "cuda", "cuda", "auto", "community-1"],
     vulkan: ["whisper.cpp", "vulkan", "cpu", "auto", "sherpa-onnx"],
     openvino: ["openvino", "openvino-auto", "cpu", "auto", "sherpa-onnx"],
@@ -192,6 +204,12 @@ function applyHardwareProfile(profile, notify = true) {
   byId("settingDiarizationDevice").value = choice[2];
   byId("settingAnalysisDevice").value = choice[3];
   byId("settingDiarizationEngine").value = choice[4];
+  if (hasDeploymentDefaults && deploymentDefaults.model) {
+    byId("settingWhisperModel").value = deploymentDefaults.model;
+  }
+  if (hasDeploymentDefaults && Number(deploymentDefaults.batch_size) > 0) {
+    byId("settingBatchSize").value = Number(deploymentDefaults.batch_size);
+  }
   if (resetWhisperModel) byId("settingWhisperModel").value = "turbo";
   if (useWindowsMlStarter) byId("settingWhisperModel").value = "base.en";
   if (useQwenStarter) byId("settingWhisperModel").value = "qwen3-asr-0.6b-int8";
@@ -209,7 +227,10 @@ function applyHardwareProfile(profile, notify = true) {
       : useQwenStarter
       ? " The optional Qwen3-ASR 0.6B INT8 fast-CPU model was selected; speech-region timestamps remain attached."
       : "";
-    toast(`${byId("settingHardwareProfile").selectedOptions[0].textContent} defaults applied.${modelMessage}`);
+    const deploymentMessage = hasDeploymentDefaults
+      ? ` The installed ${words(deploymentDefaults.hardware_profile)} deployment preset is active.`
+      : "";
+    toast(`${byId("settingHardwareProfile").selectedOptions[0].textContent} defaults applied.${deploymentMessage}${modelMessage}`);
     void runHardwareCheck();
   }
 }
