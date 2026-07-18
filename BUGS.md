@@ -64,6 +64,26 @@ Use this file for reproducible defects and concrete blockers, not the general ro
 
 ## Recently fixed
 
+### F-030 — The TrueNAS Automatic profile requested dependencies absent from its image
+
+The AMD TrueNAS image intentionally ships the validated lightweight path—whisper.cpp/Vulkan, sherpa-onnx/CPU, and llama.cpp/Vulkan—without the much larger Torch, faster-whisper, and Community-1 dependency set. A generic browser **Automatic** profile nevertheless retained Turbo, automatic ASR, and Community-1. Starting a real retained-day transcription therefore produced the development-oriented `pip install -e ".[transcription]"` error even though all runtimes required by the App's intended path were installed.
+
+Hosted deployments can now advertise a validated non-secret processing preset through `BROADCASTIFY_DEFAULT_*`. Bootstrap repairs Automatic in the browser, and the job boundary independently repairs both current and legacy pre-upgrade automatic payloads; explicit named and custom selections are preserved. A later browser correction keeps **Automatic** selected instead of persisting its resolved values as a custom profile, re-resolves it after an App upgrade, and immediately renders the hosted model/device choices when the user clicks it. The TrueNAS App publishes Vulkan/Base English Q5_1/whisper.cpp plus sherpa-onnx CPU, and its live sidebar derives **Trusted LAN** from bootstrap instead of claiming loopback. The final managed deployment runs exact `historical-validation` healthy on the trusted LAN, and the complete suite passes all **240 tests**.
+
+### F-031 — Sparse full-day whisper.cpp output collapsed into repeated hallucinations
+
+The earlier whole-file Tiny transcription of nearly silent scanner timelines was structurally invalid: July 17 contained 4,513 music-glyph segments with only two unique texts, while 1,881 of 1,909 July 18 segments repeated the same plausible sentence. Because those files predated quality metadata, the ordinary path treated them as reusable transcripts. That hid real dispatches from classification even though the underlying combined audio and cached diarization were intact.
+
+The TrueNAS pipeline now uses the fixed-hash Base English Q5_1 model with the fixed-hash Silero VAD model, limits each detected speech region to 25 seconds, disables previous-text conditioning, and rejects both newly generated and legacy cached transcripts that collapse into dominant repetition or music-only output. Transcript JSON/TXT files are replaced atomically, bind the rendered text by SHA-256, and retain backend, model, VAD, and quality metadata. A five-minute retained slice changed from 32 identical music tokens under whole-file Tiny to 18 mostly distinct dispatch segments under Base+VAD in about three seconds; the retained shooting context around the 17-hour mark preserved the suspects, gas-station, shooting, and roughly 65-casings traffic. Exact `historical-validation` introduced the boundary, exact `historical-validation` limits cleanup to provable localized decoder loops, and the final `historical-validation` App retains both changes.
+
+### F-032 — Current-day appends repeated completed diarization and analysis work
+
+A growing current-day combined file changes size and modification time whenever a new archive block arrives. The completed sherpa-onnx cache was therefore correctly rejected as an exact-file cache but had no safe way to prove which earlier chunks were unchanged, so it repeated the whole day. Importing the newly transcribed revision also deleted all saved LLM window checkpoints, even when most two-hour analysis windows had byte-for-byte identical input.
+
+Exact `historical-validation` binds completed portable diarization to the runtime/model identity and to a retained-source signature containing each manifest block's SHA-256 and timeline placement. An append may seed only chunks whose entire overlap window is within the verified unchanged prefix; a changed block, model/runtime mismatch, malformed legacy cache, or uncertain boundary reuses nothing. Exact legacy cache hits are enriched lazily, interrupted current checkpoints are merged, and publication remains atomic. Exact `historical-validation` keeps analysis checkpoints across transcript revisions, reuses only an exact model/prompt/window-index/window-fingerprint match, promotes that match to the current transcript hash, and prunes older revisions after a successful day.
+
+The live July 18 refresh added the 17:36 block to 35 retained blocks. The corrected App reused **69 of 72** speaker chunks, processed only the safe suffix, and produced 2,562 turns in **55.337 seconds** with `checkpoint_ignored=false`.
+
 ### F-029 — The native generated narrative crowded out source evidence
 
 The native Story Leads view always reserved up to 150 pixels for the model-written assignment narrative above the ranked leads and selected evidence package. At the 1228×894 reference window, that made a secondary synthesis more prominent than the quote, timestamp, provenance, and exact-clip controls an editor must verify. The Web viewer already treated the same narrative as optional disclosure.

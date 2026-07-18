@@ -105,7 +105,8 @@ Relevant TrueNAS guidance:
 
 ## Validated reference deployment
 
-On July 18, 2026, exact commit `historical-validation` was built from pinned official
+On July 18, 2026, exact commit
+`historical-validation` was built from pinned official
 whisper.cpp/llama.cpp Vulkan image digests and installed through the TrueNAS
 25.04 Apps API as `radio-archive-intelligence`. The App runs as numeric user
 950 with only render group 107/device `renderD128`, publishes
@@ -113,9 +114,16 @@ whisper.cpp/llama.cpp Vulkan image digests and installed through the TrueNAS
 
 A separate Windows client reached the LAN root, trusted-LAN health, protected
 bootstrap, diagnostics, and job API without an SSH tunnel. Diagnostics found
-the Radeon 890M as `Vulkan0`; the generated-input profile completed
-Whisper/Vulkan, sherpa CPU speaker labels, and Gemma/llama.cpp Vulkan in 4.920
-seconds. A TrueNAS-managed redeploy retained 367 feed-90001 files, 269
-feed-90003 files, the 8,253,440-byte SQLite store, 11 visible library days, 470
-incidents, and 2 weekly summaries. The Windows originals were copied, not
-moved or removed.
+the Radeon 890M as `Vulkan0`; the installed Automatic profile is Base English
+Q5_1 plus Silero VAD on whisper.cpp/Vulkan, sherpa-onnx speakers on CPU, and
+Gemma through llama.cpp/Vulkan. The final image ID is
+`sha256:2dc313fd54bab2a5abaa04c8dc2aa61ccbbc8dca529b742fec2c17ba6de55a64`
+and its OCI revision matches the source commit.
+
+The final TrueNAS-managed update retained all 460 existing feed-90001 files,
+all 11 saved July 17/18 analysis-window checkpoints, and the exact
+10,194,944-byte SQLite store at SHA-256
+`1543f6c51881e0890d11184d9cb0baaa81c0f1aefd98e8f1b34f73be88eaf9b5`.
+The first post-update current-day refresh then added one source block and
+reused 69 of 72 completed diarization chunks from the SHA-256-verified
+unchanged prefix. The Windows originals were copied, not moved or removed.
