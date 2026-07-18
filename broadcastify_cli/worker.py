@@ -47,6 +47,7 @@ from .asr import (
     normalize_asr_engine,
     prepare_asr_model,
 )
+from .qwen_asr import find_qwen3_asr_model
 from .area_watch import AREA_PROMPT_VERSION, AreaStoryAnalyzer, _public_quote
 from .area_acquisition import AreaAcquisitionRunner
 from .broadcastify import BroadcastifyClient
@@ -278,6 +279,7 @@ def diagnostics(settings: dict[str, Any] | None = None) -> int:
     llama_server = find_llama_server()
     selected_whisper_model: Path | None = None
     selected_windows_model: Path | None = None
+    selected_qwen_model: Path | None = None
     selected_asr_engine: str | None = None
     selected_asr_model: dict[str, Any] = {}
     if settings is not None:
@@ -311,6 +313,17 @@ def diagnostics(settings: dict[str, Any] | None = None) -> int:
                     str(selected_windows_model) if selected_windows_model else ""
                 )
                 selected_asr_model["configured"] = selected_windows_model is not None
+            elif engine == "qwen3-asr":
+                qwen_info = find_qwen3_asr_model(
+                    model, settings.get("asr_model_path") or None
+                )
+                selected_qwen_model = qwen_info.path if qwen_info else None
+                selected_asr_model["path"] = (
+                    str(selected_qwen_model) if selected_qwen_model else ""
+                )
+                selected_asr_model["configured"] = bool(
+                    qwen_info and qwen_info.vad_path
+                )
         except (OSError, RuntimeError, ValueError) as exc:
             selected_asr_model["error"] = str(exc)
     payload: dict[str, Any] = {
@@ -353,6 +366,7 @@ def diagnostics(settings: dict[str, Any] | None = None) -> int:
         selected_asr_engine=selected_asr_engine,
         selected_whisper_model=selected_whisper_model,
         selected_windows_model=selected_windows_model,
+        selected_qwen_model=selected_qwen_model,
     )
     if selected_asr_model:
         payload["selected_asr_model"] = selected_asr_model
@@ -380,9 +394,12 @@ def _asr_self_test_result(settings: dict[str, Any]) -> dict[str, Any]:
     model = str(settings.get("model") or "turbo")
     asr_engine = str(settings.get("asr_engine") or "auto")
     device = str(settings.get("device") or "auto")
-    progress(
-        f"Loading {model} with {asr_engine} on {device}; a missing managed model may download now"
-    )
+    effective_engine = normalize_asr_engine(asr_engine, device)
+    if effective_engine in {"whisper.cpp", "windows-ml", "qwen3-asr"}:
+        model_note = "the explicitly prepared managed model must already be present"
+    else:
+        model_note = "a runtime-managed model may download now"
+    progress(f"Loading {model} with {asr_engine} on {device}; {model_note}")
     transcriber = LocalTranscriber(
         model_name=model,
         asr_engine=asr_engine,

@@ -87,6 +87,7 @@ def test_non_cuda_transcription_profiles_are_valid() -> None:
         ("whisper.cpp", "metal"),
         ("openvino", "openvino-gpu"),
         ("windows-ml", "windows-ml"),
+        ("qwen3-asr", "cpu"),
         ("faster-whisper", "cpu"),
     ]:
         request = JobRequest(

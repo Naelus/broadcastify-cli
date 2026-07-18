@@ -53,6 +53,10 @@ windowsml = [
     "onnxruntime-genai>=0.14,<0.15; platform_system == 'Windows'",
     "transformers>=4.57,<5; platform_system == 'Windows'"
 ]
+qwen = [
+    "numpy>=1.26,<3",
+    "sherpa-onnx>=1.13.4,<2"
+]
 dev = [
     "pytest>=8,<10"
 ]

@@ -180,6 +180,16 @@ public sealed partial class MainWindow : Window
                 StringComparison.OrdinalIgnoreCase);
         var useWindowsMlStarter = profile == "windowsml"
             && !string.Equals(selectedModel, "base", StringComparison.OrdinalIgnoreCase);
+        var useQwenStarter = profile == "qwen"
+            && !string.Equals(
+                selectedModel,
+                "qwen3-asr-0.6b-int8",
+                StringComparison.OrdinalIgnoreCase);
+        var resetQwenModel = profile != "qwen"
+            && string.Equals(
+                selectedModel,
+                "qwen3-asr-0.6b-int8",
+                StringComparison.OrdinalIgnoreCase);
         switch (profile)
         {
             case "cuda":
@@ -200,6 +210,11 @@ public sealed partial class MainWindow : Window
             case "windowsml":
                 SelectComboTag(AsrEngineComboBox, "windows-ml");
                 SelectComboTag(DeviceComboBox, "auto");
+                SelectComboTag(DiarizationDeviceComboBox, "cpu");
+                break;
+            case "qwen":
+                SelectComboTag(AsrEngineComboBox, "qwen3-asr");
+                SelectComboTag(DeviceComboBox, "cpu");
                 SelectComboTag(DiarizationDeviceComboBox, "cpu");
                 break;
             case "cpu":
@@ -224,6 +239,16 @@ public sealed partial class MainWindow : Window
             SelectComboValue(ModelComboBox, "base");
             StatusText.Text =
                 "Windows ML defaults applied with the radio-tested Base CPU starter. Tiny is faster, but it missed important words in retained scanner audio.";
+        }
+        else if (useQwenStarter)
+        {
+            SelectComboValue(ModelComboBox, "qwen3-asr-0.6b-int8");
+            StatusText.Text =
+                "Qwen3-ASR fast CPU preview selected. It retains speech-region timestamps but remains optional while longer quality gates continue.";
+        }
+        else if (resetQwenModel)
+        {
+            SelectComboValue(ModelComboBox, profile == "windowsml" ? "base" : "turbo");
         }
         SelectComboTag(AnalysisDeviceComboBox, profile == "cpu" ? "cpu" : "auto");
         _asrVerifiedThisSession = false;
@@ -434,6 +459,7 @@ public sealed partial class MainWindow : Window
         };
         AsrEngineComboBox.SelectionChanged += (_, _) =>
         {
+            EnsureSelectedAsrModelCompatibility();
             ResetAsrVerification();
             UpdateAsrModelPreparationUi();
         };
@@ -1162,6 +1188,32 @@ public sealed partial class MainWindow : Window
         };
     }
 
+    private void EnsureSelectedAsrModelCompatibility()
+    {
+        if (_loadingSettings || AsrEngineComboBox is null || ModelComboBox is null)
+        {
+            return;
+        }
+        var engine = SelectedComboValue(AsrEngineComboBox, "auto");
+        var model = SelectedComboValue(ModelComboBox, "turbo");
+        if (engine == "qwen3-asr"
+            && !string.Equals(
+                model,
+                "qwen3-asr-0.6b-int8",
+                StringComparison.OrdinalIgnoreCase))
+        {
+            SelectComboValue(ModelComboBox, "qwen3-asr-0.6b-int8");
+        }
+        else if (engine != "qwen3-asr"
+                 && string.Equals(
+                     model,
+                     "qwen3-asr-0.6b-int8",
+                     StringComparison.OrdinalIgnoreCase))
+        {
+            SelectComboValue(ModelComboBox, "turbo");
+        }
+    }
+
     private void UpdateAsrModelPreparationUi()
     {
         if (AsrPrepareButton is null)
@@ -1170,7 +1222,7 @@ public sealed partial class MainWindow : Window
         }
         var engine = EffectiveAsrEngineForPreparation();
         AsrPrepareButton.Visibility =
-            engine is "windows-ml" or "whisper.cpp"
+            engine is "windows-ml" or "whisper.cpp" or "qwen3-asr"
                 ? Visibility.Visible
                 : Visibility.Collapsed;
         if (engine == "windows-ml")
@@ -1186,6 +1238,13 @@ public sealed partial class MainWindow : Window
             ToolTipService.SetToolTip(
                 AsrPrepareButton,
                 "Explicitly download the selected public GGML model, save its managed path, then prove the configured whisper.cpp runtime.");
+        }
+        else if (engine == "qwen3-asr")
+        {
+            AsrPrepareButton.Content = "Download & test model";
+            ToolTipService.SetToolTip(
+                AsrPrepareButton,
+                "Explicitly download and checksum-verify the Qwen3-ASR 0.6B INT8 model plus Silero VAD, save their managed path, then prove local CPU execution.");
         }
     }
 

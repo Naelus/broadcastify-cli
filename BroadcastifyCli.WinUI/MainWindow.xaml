@@ -749,6 +749,7 @@
                                                     <ComboBoxItem Content="Cross-vendor Vulkan" Tag="vulkan" />
                                                     <ComboBoxItem Content="OpenVINO runtime" Tag="openvino" />
                                                     <ComboBoxItem Content="Windows ML" Tag="windowsml" />
+                                                    <ComboBoxItem Content="Fast CPU preview (Qwen3-ASR)" Tag="qwen" />
                                                     <ComboBoxItem Content="CPU only" Tag="cpu" />
                                                 </ComboBox>
                                                 <TextBlock x:Name="HardwareProfileDescriptionText"
@@ -799,7 +800,7 @@
                                                     <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                                                     <StackPanel Spacing="3">
                                                         <TextBlock Text="Transcription &amp; speakers" Style="{StaticResource SubtitleTextBlockStyle}" />
-                                                        <TextBlock Text="The hardware profile supplies safe engine defaults. Most jobs only need a Whisper model and batch size."
+                                                        <TextBlock Text="The hardware profile supplies safe engine defaults. Most jobs only need a transcription model and batch size."
                                                                    TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                                     </StackPanel>
                                                     <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Top">
@@ -814,8 +815,8 @@
                                                 </Grid>
                                                 <Grid ColumnSpacing="12">
                                                     <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                                                    <ComboBox x:Name="ModelComboBox" Header="Whisper model" SelectedIndex="0" HorizontalAlignment="Stretch">
-                                                        <ComboBoxItem Content="turbo" /><ComboBoxItem Content="distil-large-v3" /><ComboBoxItem Content="large-v3" /><ComboBoxItem Content="medium" /><ComboBoxItem Content="small" /><ComboBoxItem Content="base" /><ComboBoxItem Content="tiny" />
+                                                    <ComboBox x:Name="ModelComboBox" Header="Transcription model" SelectedIndex="0" HorizontalAlignment="Stretch">
+                                                        <ComboBoxItem Content="turbo" /><ComboBoxItem Content="distil-large-v3" /><ComboBoxItem Content="large-v3" /><ComboBoxItem Content="medium" /><ComboBoxItem Content="small" /><ComboBoxItem Content="base" /><ComboBoxItem Content="tiny" /><ComboBoxItem Content="qwen3-asr-0.6b-int8" />
                                                     </ComboBox>
                                                     <NumberBox x:Name="BatchSizeBox" Grid.Column="1" Header="ASR / speaker batch" Value="8" Minimum="1" Maximum="64" SpinButtonPlacementMode="Compact" />
                                                 </Grid>
@@ -831,6 +832,7 @@
                                                                 <ComboBoxItem Content="whisper.cpp" Tag="whisper.cpp" />
                                                                 <ComboBoxItem Content="OpenVINO GenAI" Tag="openvino" />
                                                                 <ComboBoxItem Content="Windows ML" Tag="windows-ml" />
+                                                                <ComboBoxItem Content="Qwen3-ASR (fast CPU preview)" Tag="qwen3-asr" />
                                                             </ComboBox>
                                                             <ComboBox x:Name="DeviceComboBox" Grid.Column="1" Header="Transcription accelerator" SelectedIndex="0" HorizontalAlignment="Stretch">
                                                                 <ComboBoxItem Content="Automatic" Tag="auto" />

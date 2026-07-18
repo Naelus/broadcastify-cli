@@ -107,9 +107,11 @@ class JobRequest:
             "whisper.cpp",
             "openvino",
             "windows-ml",
+            "qwen3-asr",
         }:
             raise ValueError(
-                "ASR engine must be auto, faster-whisper, whisper.cpp, openvino, or windows-ml."
+                "ASR engine must be auto, faster-whisper, whisper.cpp, openvino, "
+                "windows-ml, or qwen3-asr."
             )
         if self.device not in {
             "auto",

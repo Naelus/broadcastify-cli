@@ -21,6 +21,7 @@ from .asr import (
 )
 from .accelerators import find_whisper_cpp, whisper_cpp_backends
 from .audio import configure_ffmpeg_runtime, find_ffmpeg
+from .qwen_asr import SherpaQwen3Asr, normalize_qwen3_asr_model_name
 
 
 @dataclass(frozen=True)
@@ -276,6 +277,13 @@ class LocalTranscriber:
         elif self.asr_engine == "windows-ml":
             self.device = "windows-ml"
             self.compute_type = "onnx"
+        elif self.asr_engine == "qwen3-asr":
+            if requested_device not in {"auto", "cpu"}:
+                raise RuntimeError(
+                    "Qwen3-ASR currently uses its portable sherpa-onnx CPU runtime."
+                )
+            self.device = "cpu"
+            self.compute_type = "int8"
         else:
             raise ValueError(f"Unsupported transcription engine: {self.asr_engine}")
 
@@ -317,6 +325,13 @@ class LocalTranscriber:
             self._external_asr = WindowsMlWhisperAsr(
                 model_name=self.model_name,
                 model_path=asr_model_path,
+            )
+        elif load_asr and self.asr_engine == "qwen3-asr":
+            self._external_asr = SherpaQwen3Asr(
+                model_name=self.model_name,
+                device=self.device,
+                model_path=asr_model_path,
+                batch_size=self.batch_size,
             )
 
         if self._external_asr is not None:
@@ -415,7 +430,7 @@ class LocalTranscriber:
         progress: Callable[[str], None] | None = None,
     ) -> Path:
         if self._asr is None and self._external_asr is None:
-            raise RuntimeError("Whisper was not loaded for this local audio operation.")
+            raise RuntimeError("The ASR model was not loaded for this local audio operation.")
         audio_path = Path(audio_file)
         transcript_dir = audio_path.parent / "transcripts"
         json_path = transcript_dir / f"{audio_path.stem}.json"
@@ -434,7 +449,17 @@ class LocalTranscriber:
         duration = None
         asr_metadata: dict[str, object] = {}
         if self._external_asr is not None:
-            result = self._external_asr.transcribe(audio_path, progress=progress)
+            if isinstance(self._external_asr, SherpaQwen3Asr):
+                result = self._external_asr.transcribe(
+                    audio_path,
+                    progress=progress,
+                    segment_hints=[
+                        (float(turn.start), float(turn.end)) for turn in turns
+                    ]
+                    or None,
+                )
+            else:
+                result = self._external_asr.transcribe(audio_path, progress=progress)
             if result.backend:
                 self.backend_description = result.backend
             language = result.language
@@ -658,12 +683,19 @@ class LocalTranscriber:
             payload = json.loads(json_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             return False
-        requested_model = str(payload.get("requested_model") or payload.get("model") or "")
-        if normalize_whisper_model_name(requested_model) != normalize_whisper_model_name(
-            self.model_name
-        ):
-            return False
         expected_engine = getattr(self, "asr_engine", "faster-whisper")
+        requested_model = str(payload.get("requested_model") or payload.get("model") or "")
+        if expected_engine == "qwen3-asr":
+            try:
+                saved_model = normalize_qwen3_asr_model_name(requested_model)
+                current_model = normalize_qwen3_asr_model_name(self.model_name)
+            except ValueError:
+                return False
+        else:
+            saved_model = normalize_whisper_model_name(requested_model)
+            current_model = normalize_whisper_model_name(self.model_name)
+        if saved_model != current_model:
+            return False
         actual_engine = str(payload.get("asr_engine") or "faster-whisper")
         if actual_engine != expected_engine:
             return False

@@ -94,6 +94,10 @@ def normalize_asr_engine(engine: str, device: str) -> str:
         "whisper-cpp": "whisper.cpp",
         "whispercpp": "whisper.cpp",
         "windowsml": "windows-ml",
+        "qwen": "qwen3-asr",
+        "qwen3": "qwen3-asr",
+        "qwen3asr": "qwen3-asr",
+        "sherpa-qwen3": "qwen3-asr",
     }
     return aliases.get(normalized, normalized)
 
@@ -1251,6 +1255,14 @@ def prepare_asr_model(
         return prepare_windows_ml_model(model, **options)
     if engine == "whisper.cpp":
         return prepare_whisper_cpp_model(model, **options)
+    if engine == "qwen3-asr":
+        from .qwen_asr import prepare_qwen3_asr_model
+
+        return prepare_qwen3_asr_model(
+            model,
+            explicit_path=options["explicit_path"],
+            progress=progress,
+        )
     raise ValueError(
         f"{engine} manages its selected model during Test engine; "
         "a separate Prepare model step is not required."

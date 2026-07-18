@@ -3,11 +3,13 @@ import sys
 from contextlib import nullcontext
 from pathlib import Path
 from types import ModuleType
+from types import MethodType
 from types import SimpleNamespace
 
 import pytest
 
 from broadcastify_cli.asr import AsrResult, AsrSegment
+from broadcastify_cli.qwen_asr import SherpaQwen3Asr
 from broadcastify_cli.transcription import (
     LocalTranscriber,
     SpeakerTurn,
@@ -194,6 +196,66 @@ def test_external_asr_records_actual_fallback_backend(tmp_path: Path) -> None:
         transcript_path,
         transcript_path.with_suffix(".txt"),
     )
+
+
+def test_qwen_reuses_diarization_turns_as_timestamped_asr_regions(
+    tmp_path: Path,
+) -> None:
+    audio = tmp_path / "radio.wav"
+    audio.write_bytes(b"audio")
+    captured: dict[str, object] = {}
+    turns = [SpeakerTurn(10.0, 12.0, "SPEAKER_01")]
+    qwen = object.__new__(SherpaQwen3Asr)
+    qwen.backend = "sherpa-onnx CPU / Qwen3-ASR test"
+
+    def fake_transcribe(
+        _self: SherpaQwen3Asr,
+        _path: Path,
+        progress=None,
+        *,
+        segment_hints=None,
+    ) -> AsrResult:
+        captured["hints"] = segment_hints
+        return AsrResult(
+            text="stolen squad car",
+            duration=20.0,
+            segments=[AsrSegment(10.0, 12.0, "stolen squad car")],
+            engine="qwen3-asr",
+            backend=qwen.backend,
+            metadata={
+                "model": "qwen3-asr-0.6b-int8",
+                "timestamp_source": "pyannote-exclusive-speaker-turns",
+            },
+        )
+
+    qwen.transcribe = MethodType(fake_transcribe, qwen)
+    transcriber = object.__new__(LocalTranscriber)
+    transcriber._asr = None
+    transcriber._external_asr = qwen
+    transcriber._diarize = lambda _path, progress=None: turns
+    transcriber.model_name = "qwen3-asr-0.6b-int8"
+    transcriber.asr_engine = "qwen3-asr"
+    transcriber.backend_description = qwen.backend
+    transcriber.device = "cpu"
+    transcriber.compute_type = "int8"
+    transcriber.diarize = True
+    transcriber.diarization_device = "cpu"
+
+    transcript_path = transcriber.transcribe_file(audio)
+    payload = json.loads(transcript_path.read_text(encoding="utf-8"))
+
+    assert captured["hints"] == [(10.0, 12.0)]
+    assert payload["segments"] == [
+        {
+            "start": 10.0,
+            "end": 12.0,
+            "text": "stolen squad car",
+            "speaker": "SPEAKER_01",
+        }
+    ]
+    assert payload["words"] == []
+    assert payload["speaker_turns"][0]["speaker"] == "SPEAKER_01"
+    assert payload["asr_metadata"]["timestamp_source"].startswith("pyannote")
 
 
 def test_diarization_turn_cache_is_parameter_and_audio_specific(tmp_path: Path) -> None:

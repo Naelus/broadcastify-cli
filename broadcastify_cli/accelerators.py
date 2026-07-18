@@ -518,7 +518,10 @@ def collect_accelerator_diagnostics(
     selected_asr_engine: str | None = None,
     selected_whisper_model: str | Path | None = None,
     selected_windows_model: str | Path | None = None,
+    selected_qwen_model: str | Path | None = None,
 ) -> dict[str, Any]:
+    from .qwen_asr import qwen3_asr_diagnostics
+
     torch = _torch_diagnostics()
     openvino = _openvino_diagnostics()
     onnx = _onnx_diagnostics()
@@ -526,6 +529,9 @@ def collect_accelerator_diagnostics(
         _windows_ml_diagnostics(selected_windows_model)
         if selected_asr_engine == "windows-ml"
         else _windows_ml_diagnostics()
+    )
+    qwen3_asr = qwen3_asr_diagnostics(
+        selected_qwen_model if selected_asr_engine == "qwen3-asr" else None
     )
     whisper_executable = find_whisper_cpp()
     if selected_asr_engine == "whisper.cpp":
@@ -768,6 +774,36 @@ def collect_accelerator_diagnostics(
         )
     profiles.append(
         _profile(
+            "qwen",
+            "Fast CPU preview (Qwen3-ASR)",
+            bool(qwen3_asr["ready"] and pyannote_ready and llama_ready),
+            (
+                "Qwen3-ASR 0.6B INT8 / sherpa-onnx CPU"
+                if qwen3_asr["ready"]
+                else "runtime detected; needs the verified Qwen3-ASR model and VAD"
+                if qwen3_asr["runtime_installed"]
+                else "needs the optional sherpa-onnx runtime and managed model"
+            ),
+            cpu_diarization,
+            "llama.cpp auto-offload or CPU" if llama_ready else "llama.cpp missing",
+            (
+                "Optional fast-CPU transcription candidate. Source-region timestamps "
+                "are retained, but the current export has no word timestamps and does "
+                "not replace the validated Whisper evidence default."
+            ),
+            transcription_ready=bool(qwen3_asr["ready"]),
+            diarization_ready=pyannote_ready,
+            analysis_ready=llama_ready,
+            transcription_setup=(
+                'Install `pip install -e ".[qwen]"`, then choose Download & test '
+                "model to acquire the pinned INT8 export and Silero VAD."
+            ),
+            diarization_setup=diarization_setup,
+            analysis_setup="Install llama-server or configure LLAMA_SERVER_PATH.",
+        )
+    )
+    profiles.append(
+        _profile(
             "cpu",
             "CPU only",
             cpu_ready and pyannote_ready and llama_ready,
@@ -792,6 +828,7 @@ def collect_accelerator_diagnostics(
         "openvino": openvino,
         "onnx": onnx,
         "windows_ml": windows_ml,
+        "qwen3_asr": qwen3_asr,
         "speaker_labels": {
             "package_installed": pyannote_package_installed,
             "token_configured": token_ready,

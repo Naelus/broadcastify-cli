@@ -25,6 +25,7 @@ def test_engine_auto_selection_follows_requested_accelerator() -> None:
     assert normalize_asr_engine("auto", "metal") == "whisper.cpp"
     assert normalize_asr_engine("auto", "openvino-gpu") == "openvino"
     assert normalize_asr_engine("auto", "windows-ml") == "windows-ml"
+    assert normalize_asr_engine("qwen3", "cpu") == "qwen3-asr"
 
 
 def test_macos_auto_selects_detected_native_metal(monkeypatch) -> None:

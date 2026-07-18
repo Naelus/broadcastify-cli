@@ -33,6 +33,18 @@ const SETTINGS_SECTIONS = {
   account: "Premium website session and private credentials",
 };
 
+const HARDWARE_PROFILE_DESCRIPTIONS = {
+  auto: "Automatic keeps the tested Windows behavior and chooses safe per-stage fallbacks elsewhere.",
+  cuda: "NVIDIA CUDA keeps transcription and speaker labels on the GPU for the fastest validated Windows path.",
+  vulkan: "Cross-vendor Vulkan uses whisper.cpp for transcription and the dependable CPU fallback for speaker labels.",
+  openvino: "OpenVINO uses Intel's runtime for Whisper transcription and keeps speaker labels on the CPU fallback.",
+  metal: "Apple Metal uses whisper.cpp for transcription and the dependable CPU fallback for speaker labels.",
+  windowsml: "Windows ML uses the validated managed Whisper graph and the dependable CPU fallback for speaker labels.",
+  qwen: "Fast CPU preview uses managed Qwen3-ASR 0.6B INT8. It retains speech-region timestamps, but not word timestamps, and remains optional while longer radio-quality gates continue.",
+  cpu: "CPU only avoids GPU dependencies for every stage; expect lower throughput on long archive ranges.",
+  custom: "Custom overrides are active. Test transcription, speaker labels, and analysis before an unattended run.",
+};
+
 const state = {
   bootstrap: { days: [], profiles: [], summary: {}, runtime: {} },
   selectedDay: null,
@@ -98,8 +110,18 @@ function readSettingsForm() {
     codexPath: byId("settingCodexPath").value.trim(),
     allowExternal: byId("settingAllowExternal").checked,
   };
+  updateHardwareProfileDescription();
   updateProviderNotice();
   renderSetupReadiness();
+}
+
+function updateHardwareProfileDescription() {
+  const description = byId("processingProfileDescription");
+  const profile = byId("settingHardwareProfile")?.value || state.settings.hardwareProfile;
+  if (description) {
+    description.textContent = HARDWARE_PROFILE_DESCRIPTIONS[profile]
+      || HARDWARE_PROFILE_DESCRIPTIONS.custom;
+  }
 }
 
 function applySettingsForm() {
@@ -117,6 +139,7 @@ function applySettingsForm() {
   byId("settingApiKeyEnvironment").value = state.settings.apiKeyEnvironment;
   byId("settingCodexPath").value = state.settings.codexPath;
   byId("settingAllowExternal").checked = Boolean(state.settings.allowExternal);
+  updateHardwareProfileDescription();
   updateProviderNotice();
   updateAsrModelPreparationUi();
   renderSetupReadiness();
@@ -130,6 +153,7 @@ function applyHardwareProfile(profile, notify = true) {
     openvino: ["openvino", "openvino-auto", "cpu", "auto"],
     metal: ["whisper.cpp", "metal", "cpu", "auto"],
     windowsml: ["windows-ml", "windows-ml", "cpu", "auto"],
+    qwen: ["qwen3-asr", "cpu", "cpu", "auto"],
     cpu: ["faster-whisper", "cpu", "cpu", "cpu"],
   };
   const choice = choices[profile];
@@ -149,6 +173,10 @@ function applyHardwareProfile(profile, notify = true) {
     && byId("settingWhisperModel").value === "distil-large-v3";
   const useWindowsMlStarter = profile === "windowsml"
     && !["base", "base.en"].includes(byId("settingWhisperModel").value);
+  const useQwenStarter = profile === "qwen"
+    && byId("settingWhisperModel").value !== "qwen3-asr-0.6b-int8";
+  const resetQwenModel = profile !== "qwen"
+    && byId("settingWhisperModel").value === "qwen3-asr-0.6b-int8";
   resetProfileVerification();
   resetAsrVerification();
   resetDiarizationVerification();
@@ -162,6 +190,8 @@ function applyHardwareProfile(profile, notify = true) {
   byId("settingAnalysisDevice").value = choice[3];
   if (resetWhisperModel) byId("settingWhisperModel").value = "turbo";
   if (useWindowsMlStarter) byId("settingWhisperModel").value = "base.en";
+  if (useQwenStarter) byId("settingWhisperModel").value = "qwen3-asr-0.6b-int8";
+  if (resetQwenModel && !useWindowsMlStarter) byId("settingWhisperModel").value = "turbo";
   applyingHardwareProfile = false;
   readSettingsForm();
   updateAsrModelPreparationUi();
@@ -172,6 +202,8 @@ function applyHardwareProfile(profile, notify = true) {
       ? " The Whisper model was reset to turbo because whisper.cpp has no managed distil-large-v3 mapping."
       : useWindowsMlStarter
       ? " The radio-tested Base CPU starter was selected. Tiny is faster, but it missed important words in retained scanner audio."
+      : useQwenStarter
+      ? " The optional Qwen3-ASR 0.6B INT8 fast-CPU model was selected; speech-region timestamps remain attached."
       : "";
     toast(`${byId("settingHardwareProfile").selectedOptions[0].textContent} defaults applied.${modelMessage}`);
   }
@@ -258,13 +290,26 @@ function updateAsrModelPreparationUi() {
   const button = byId("asrPrepareButton");
   if (!button) return;
   const engine = effectiveAsrEngine();
-  button.hidden = !["windows-ml", "whisper.cpp"].includes(engine);
+  button.hidden = !["windows-ml", "whisper.cpp", "qwen3-asr"].includes(engine);
   if (engine === "windows-ml") {
     button.textContent = "Build & test model";
     button.title = "Explicitly build the selected ONNX Runtime GenAI CPU model, retain its path, then prove a local decode.";
   } else if (engine === "whisper.cpp") {
     button.textContent = "Download & test model";
     button.title = "Explicitly download the selected public GGML model, retain its path, then prove the configured whisper.cpp runtime.";
+  } else if (engine === "qwen3-asr") {
+    button.textContent = "Download & test model";
+    button.title = "Explicitly download and checksum-verify Qwen3-ASR 0.6B INT8 plus Silero VAD, retain their path, then prove local CPU execution.";
+  }
+}
+
+function ensureAsrModelCompatibility() {
+  const engine = byId("settingAsrEngine").value;
+  const model = byId("settingWhisperModel").value;
+  if (engine === "qwen3-asr" && model !== "qwen3-asr-0.6b-int8") {
+    byId("settingWhisperModel").value = "qwen3-asr-0.6b-int8";
+  } else if (engine !== "qwen3-asr" && model === "qwen3-asr-0.6b-int8") {
+    byId("settingWhisperModel").value = "turbo";
   }
 }
 
@@ -1535,6 +1580,7 @@ byId("setupProfileSelfTestButton").addEventListener("click", runProfileSelfTest)
 byId("profileSelfTestButton").addEventListener("click", runProfileSelfTest);
 byId("settingHardwareProfile").addEventListener("change", (event) => applyHardwareProfile(event.target.value));
 ["settingAsrEngine", "settingDevice"].forEach((id) => byId(id).addEventListener("change", () => {
+  if (id === "settingAsrEngine") ensureAsrModelCompatibility();
   if (!applyingHardwareProfile) {
     byId("settingHardwareProfile").value = "custom";
   }

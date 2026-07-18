@@ -69,7 +69,16 @@ def search(query: str) -> None:
 @click.option("--diarize", is_flag=True, help="Assign local pyannote speaker labels")
 @click.option(
     "--asr-engine",
-    type=click.Choice(["auto", "faster-whisper", "whisper.cpp", "openvino", "windows-ml"]),
+    type=click.Choice(
+        [
+            "auto",
+            "faster-whisper",
+            "whisper.cpp",
+            "openvino",
+            "windows-ml",
+            "qwen3-asr",
+        ]
+    ),
     default="auto",
     show_default=True,
 )
@@ -105,6 +114,7 @@ def search(query: str) -> None:
             "large-v3",
             "turbo",
             "distil-large-v3",
+            "qwen3-asr-0.6b-int8",
         ]
     ),
     default="turbo",
@@ -184,7 +194,16 @@ def download(
 @click.option("--diarize", is_flag=True)
 @click.option(
     "--asr-engine",
-    type=click.Choice(["auto", "faster-whisper", "whisper.cpp", "openvino", "windows-ml"]),
+    type=click.Choice(
+        [
+            "auto",
+            "faster-whisper",
+            "whisper.cpp",
+            "openvino",
+            "windows-ml",
+            "qwen3-asr",
+        ]
+    ),
     default="auto",
 )
 @click.option(
