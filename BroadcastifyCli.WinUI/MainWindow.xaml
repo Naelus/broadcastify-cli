@@ -366,12 +366,21 @@
                                     <Grid Padding="4,8,4,4" RowSpacing="9">
                                         <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                                         <TextBlock x:Name="SummaryText" Text="Choose a saved day." TextWrapping="Wrap" MaxHeight="126" />
-                                        <ComboBox x:Name="PriorityFilterCombo" Grid.Row="1" Width="220" HorizontalAlignment="Left" SelectedIndex="2" SelectionChanged="PriorityFilter_SelectionChanged">
-                                            <ComboBoxItem Content="Priority 5 only" Tag="5" />
-                                            <ComboBoxItem Content="Priority 4–5" Tag="4" />
-                                            <ComboBoxItem Content="Priority 3–5" Tag="3" />
-                                            <ComboBoxItem Content="All incidents" Tag="1" />
-                                        </ComboBox>
+                                        <Grid Grid.Row="1" ColumnSpacing="10">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="220" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <ComboBox x:Name="PriorityFilterCombo" SelectedIndex="2" SelectionChanged="PriorityFilter_SelectionChanged">
+                                                <ComboBoxItem Content="Priority 5 only" Tag="5" />
+                                                <ComboBoxItem Content="Priority 4–5" Tag="4" />
+                                                <ComboBoxItem Content="Priority 3–5" Tag="3" />
+                                                <ComboBoxItem Content="All incidents" Tag="1" />
+                                            </ComboBox>
+                                            <TextBox x:Name="IncidentSearchBox" Grid.Column="1"
+                                                     PlaceholderText="Search every priority: Example Township, stolen car, street…"
+                                                     TextChanged="IncidentSearch_TextChanged" />
+                                        </Grid>
                                         <ListView x:Name="IncidentList" Grid.Row="2" SelectionMode="None">
                                             <ListView.ItemTemplate>
                                                 <DataTemplate x:DataType="local:IncidentRecord">
@@ -384,10 +393,14 @@
                                                             <TextBlock Text="{x:Bind Title}" Style="{StaticResource BodyStrongTextBlockStyle}" />
                                                             <TextBlock Text="{x:Bind TimeAndLocation}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                                             <TextBlock Text="{x:Bind Summary}" TextWrapping="Wrap" MaxLines="3" TextTrimming="CharacterEllipsis" />
+                                                            <TextBlock Text="{x:Bind EvidenceQuoteDisplay}" TextWrapping="Wrap" MaxLines="3"
+                                                                       FontStyle="Italic" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                                             <TextBlock Text="{x:Bind ConfidenceSummary}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                                             <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,4,0,0">
                                                                 <Button Content="Play exact clip" Click="PlayIncident_Click" />
-                                                                <Button Content="Export clip…" Click="ExportIncidentClip_Click" />
+                                                                <Button Content="Play surrounding context" Click="PlayIncidentContext_Click"
+                                                                        ToolTipService.ToolTip="Five minutes before through one minute after the cited segment; surrounding traffic is not itself cited evidence." />
+                                                                <Button Content="Export exact clip…" Click="ExportIncidentClip_Click" />
                                                             </StackPanel>
                                                         </StackPanel>
                                                     </Grid>

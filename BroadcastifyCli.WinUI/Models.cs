@@ -952,11 +952,17 @@ public sealed record IncidentRecord
     [JsonPropertyName("archive_time")]
     public string ArchiveTime { get; init; } = "";
 
+    [JsonPropertyName("evidence_quote")]
+    public string EvidenceQuote { get; init; } = "";
+
     public string TypeAndPriority => $"P{Priority} · {EventType.Replace('_', ' ')}";
     public string TimeAndLocation => string.IsNullOrWhiteSpace(Location)
         ? ArchiveTime
         : $"{ArchiveTime} · {Location}";
     public string ConfidenceSummary => $"{Confidence:P0} extraction confidence · I{Id}";
+    public string EvidenceQuoteDisplay => string.IsNullOrWhiteSpace(EvidenceQuote)
+        ? ""
+        : $"Cited radio: “{EvidenceQuote}”";
 }
 
 public sealed record IncidentClip
@@ -981,6 +987,9 @@ public sealed record IncidentClip
 
     [JsonPropertyName("duration_seconds")]
     public double DurationSeconds { get; init; }
+
+    [JsonPropertyName("clip_kind")]
+    public string ClipKind { get; init; } = "evidence";
 
     [JsonPropertyName("path")]
     public string Path { get; init; } = "";

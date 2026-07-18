@@ -179,6 +179,28 @@ def select_incident_evidence_window(
     return start, min(end, start + max(1.0, maximum_duration_seconds))
 
 
+def select_incident_context_window(
+    incident: Mapping[str, Any],
+    *,
+    preceding_seconds: float = 300.0,
+    following_seconds: float = 60.0,
+    maximum_duration_seconds: float = 480.0,
+) -> tuple[float, float]:
+    """Return optional surrounding radio traffic without calling it cited evidence.
+
+    The compact evidence clip remains the auditable citation. This wider window
+    is useful when an extraction cites a recovery or disposition several minutes
+    after the initial dispatch, as often happens in scanner traffic.
+    """
+
+    evidence_start, evidence_end = select_incident_evidence_window(incident)
+    start = max(0.0, evidence_start - max(0.0, preceding_seconds))
+    end = max(evidence_end, evidence_end + max(0.0, following_seconds))
+    if end - start > max(1.0, maximum_duration_seconds):
+        start = max(0.0, end - max(1.0, maximum_duration_seconds))
+    return start, end
+
+
 def list_source_mp3s(directory: str | Path) -> list[Path]:
     root = Path(directory)
     return sorted(

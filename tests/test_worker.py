@@ -258,8 +258,10 @@ def test_day_report_exposes_playback_metadata_without_raw_evidence(tmp_path: Pat
         "confidence",
         "start_seconds",
         "end_seconds",
+        "evidence_quote",
         "archive_time",
     }
+    assert incident["evidence_quote"] == ""
     assert "evidence" not in incident
     assert "attributes" not in incident
 
@@ -341,9 +343,10 @@ def test_incident_clip_uses_a_timestamped_cache_key(
         encoding="utf-8",
     )
 
+    extracted_windows: list[tuple[float, float]] = []
+
     def fake_extract(_source: Path, output: Path, start: float, end: float) -> Path:
-        assert start == 92.0
-        assert end == 120.0
+        extracted_windows.append((start, end))
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_bytes(b"exact evidence clip")
         return output
@@ -380,8 +383,18 @@ def test_incident_clip_uses_a_timestamped_cache_key(
         )[0]
 
         result = _incident_clip(store, incident_id)
+        context = _incident_clip(
+            store,
+            incident_id,
+            include_surrounding_context=True,
+        )
 
     assert result["incident_id"] == incident_id
     assert result["duration_seconds"] == 28.0
+    assert result["clip_kind"] == "evidence"
     assert result["path"].endswith(f"I{incident_id}_92000-120000.mp3")
     assert len(result["sha256"]) == 64
+    assert context["clip_kind"] == "context"
+    assert context["duration_seconds"] == 180.0
+    assert context["path"].endswith(f"I{incident_id}_context_0-180000.mp3")
+    assert extracted_windows == [(92.0, 120.0), (0.0, 180.0)]

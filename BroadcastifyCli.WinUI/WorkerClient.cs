@@ -316,14 +316,21 @@ internal sealed class WorkerClient
 
     public async Task<IncidentClip?> GetIncidentClipAsync(
         long incidentId,
+        bool includeSurroundingContext,
         CancellationToken cancellationToken)
     {
         IncidentClip? clip = null;
+        var arguments = new List<string>
+        {
+            "-m", "broadcastify_cli.worker", "incident-clip",
+            "--incident-id", incidentId.ToString(),
+        };
+        if (includeSurroundingContext)
+        {
+            arguments.Add("--context");
+        }
         await RunWorkerAsync(
-            [
-                "-m", "broadcastify_cli.worker", "incident-clip",
-                "--incident-id", incidentId.ToString(),
-            ],
+            arguments,
             null,
             message =>
             {

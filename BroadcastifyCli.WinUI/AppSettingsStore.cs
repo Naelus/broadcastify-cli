@@ -4,7 +4,7 @@ namespace BroadcastifyCli.WinUI;
 
 internal sealed record DesktopSettings
 {
-    public int Version { get; init; } = 1;
+    public int Version { get; init; } = 2;
     public string HardwareProfile { get; init; } = "auto";
     public string WhisperModel { get; init; } = "turbo";
     public string AsrEngine { get; init; } = "auto";
@@ -30,6 +30,9 @@ internal sealed record DesktopSettings
     public string CodexCliPath { get; init; } = "";
     public bool AllowExternalAnalysis { get; init; }
     public bool RememberAnalysisApiKey { get; init; }
+    public string LastAreaProfileName { get; init; } = "";
+    public string LastReviewFeedId { get; init; } = "";
+    public string LastReviewDate { get; init; } = "";
 }
 
 internal static class AppSettingsStore
@@ -40,19 +43,43 @@ internal static class AppSettingsStore
         WriteIndented = true,
     };
 
-    private static string SettingsPath => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "Broadcastify Desktop",
-        "settings.json");
+    internal static string LocalDataDirectory
+    {
+        get
+        {
+            var userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            return Path.Combine(userProfile, "AppData", "Local", "Broadcastify Desktop");
+        }
+    }
+
+    internal static string SettingsPath => Path.Combine(LocalDataDirectory, "settings.json");
 
     public static DesktopSettings Load()
     {
+        var legacyPath = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "Broadcastify Desktop",
+            "settings.json");
         try
         {
-            return File.Exists(SettingsPath)
-                ? JsonSerializer.Deserialize<DesktopSettings>(
-                    File.ReadAllText(SettingsPath), SerializerOptions) ?? new DesktopSettings()
-                : new DesktopSettings();
+            var sourcePath = File.Exists(SettingsPath)
+                ? SettingsPath
+                : !Path.GetFullPath(legacyPath).Equals(
+                    Path.GetFullPath(SettingsPath), StringComparison.OrdinalIgnoreCase)
+                  && File.Exists(legacyPath)
+                    ? legacyPath
+                    : null;
+            if (sourcePath is null)
+            {
+                return new DesktopSettings();
+            }
+            var settings = JsonSerializer.Deserialize<DesktopSettings>(
+                File.ReadAllText(sourcePath), SerializerOptions) ?? new DesktopSettings();
+            if (!sourcePath.Equals(SettingsPath, StringComparison.OrdinalIgnoreCase))
+            {
+                TrySave(settings);
+            }
+            return settings;
         }
         catch (IOException)
         {
@@ -75,9 +102,20 @@ internal static class AppSettingsStore
             var directory = Path.GetDirectoryName(SettingsPath)!;
             Directory.CreateDirectory(directory);
             var temporaryPath = SettingsPath + ".tmp";
-            File.WriteAllText(
-                temporaryPath,
-                JsonSerializer.Serialize(settings, SerializerOptions));
+            var content = JsonSerializer.Serialize(settings, SerializerOptions);
+            using (var stream = new FileStream(
+                       temporaryPath,
+                       FileMode.Create,
+                       FileAccess.Write,
+                       FileShare.None,
+                       bufferSize: 4_096,
+                       FileOptions.WriteThrough))
+            using (var writer = new StreamWriter(stream))
+            {
+                writer.Write(content);
+                writer.Flush();
+                stream.Flush(flushToDisk: true);
+            }
             File.Move(temporaryPath, SettingsPath, overwrite: true);
             return true;
         }

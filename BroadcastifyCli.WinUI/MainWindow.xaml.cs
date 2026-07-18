@@ -43,7 +43,11 @@ public sealed partial class MainWindow : Window
     private LibraryDay? _selectedLibraryDay;
     private int _librarySelectionVersion;
     private bool _broadcastifyRateLimitObserved;
-    private bool _loadingSettings;
+    private bool _loadingSettings = true;
+    private Microsoft.UI.Dispatching.DispatcherQueueTimer? _settingsSaveTimer;
+    private string _lastAreaProfileName = "";
+    private string _lastReviewFeedId = "";
+    private string _lastReviewDate = "";
     private bool _refreshingAreaFeedSelection;
     private AreaCoverage _currentAreaCoverage = new();
     private bool _diagnosticsLoaded;
@@ -87,6 +91,7 @@ public sealed partial class MainWindow : Window
         CombineToggle.IsEnabled = false;
         KeepOriginalsToggle.IsEnabled = true;
         LoadUserSettings();
+        WireSettingsAutoSave();
         var today = DateTimeOffset.Now;
         StartDatePicker.Date = today;
         EndDatePicker.Date = today;
@@ -158,7 +163,8 @@ public sealed partial class MainWindow : Window
 
     private void HardwareProfile_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (HardwareProfileComboBox?.SelectedItem is not ComboBoxItem item)
+        if (_loadingSettings
+            || HardwareProfileComboBox?.SelectedItem is not ComboBoxItem item)
         {
             return;
         }
@@ -249,6 +255,10 @@ public sealed partial class MainWindow : Window
         }
         RememberAnalysisApiKeyCheckBox.IsChecked =
             settings.RememberAnalysisApiKey && savedAnalysisKey is not null;
+        _lastAreaProfileName = settings.LastAreaProfileName;
+        _lastReviewFeedId = settings.LastReviewFeedId;
+        _lastReviewDate = settings.LastReviewDate;
+        AnalysisFeedBox.Text = _lastReviewFeedId;
         _loadingSettings = false;
         UpdateAnalysisProviderUi();
         UpdateSetupSummary();
@@ -256,7 +266,13 @@ public sealed partial class MainWindow : Window
 
     private void MainWindow_Closed(object sender, WindowEventArgs args)
     {
-        var settings = new DesktopSettings
+        _settingsSaveTimer?.Stop();
+        PersistUserSettings(logFailure: true);
+        PersistAnalysisCredentialPreference();
+    }
+
+    private DesktopSettings CaptureUserSettings() =>
+        new()
         {
             HardwareProfile = SelectedComboValue(HardwareProfileComboBox, "auto"),
             WhisperModel = SelectedComboValue(ModelComboBox, "turbo"),
@@ -287,11 +303,25 @@ public sealed partial class MainWindow : Window
             CodexCliPath = CodexCliPathBox.Text.Trim(),
             AllowExternalAnalysis = AllowExternalAnalysisToggle.IsOn,
             RememberAnalysisApiKey = RememberAnalysisApiKeyCheckBox.IsChecked == true,
+            LastAreaProfileName = _lastAreaProfileName,
+            LastReviewFeedId = _lastReviewFeedId,
+            LastReviewDate = _lastReviewDate,
         };
-        if (!AppSettingsStore.TrySave(settings))
+
+    private void PersistUserSettings(bool logFailure = false)
+    {
+        if (_loadingSettings)
+        {
+            return;
+        }
+        if (!AppSettingsStore.TrySave(CaptureUserSettings()) && logFailure)
         {
             AppendLog("Settings could not be saved to this Windows account.");
         }
+    }
+
+    private void PersistAnalysisCredentialPreference()
+    {
         if (RememberAnalysisApiKeyCheckBox.IsChecked == true
             && !string.IsNullOrWhiteSpace(AnalysisApiKeyBox.Password))
         {
@@ -301,6 +331,82 @@ public sealed partial class MainWindow : Window
         {
             CredentialStore.ClearAnalysisKey();
         }
+    }
+
+    private void WireSettingsAutoSave()
+    {
+        _settingsSaveTimer = DispatcherQueue.CreateTimer();
+        _settingsSaveTimer.Interval = TimeSpan.FromMilliseconds(750);
+        _settingsSaveTimer.IsRepeating = false;
+        _settingsSaveTimer.Tick += (_, _) => PersistUserSettings();
+
+        foreach (var comboBox in new[]
+                 {
+                     HardwareProfileComboBox,
+                     ModelComboBox,
+                     AsrEngineComboBox,
+                     DeviceComboBox,
+                     DiarizationDeviceComboBox,
+                     AnalysisProviderComboBox,
+                     AnalysisDeviceComboBox,
+                 })
+        {
+            comboBox.SelectionChanged += (_, _) => ScheduleSettingsSave();
+        }
+        foreach (var textBox in new[]
+                 {
+                     AsrModelPathBox,
+                     OutputFolderBox,
+                     AnalysisModelBox,
+                     AnalysisEndpointBox,
+                     AnalysisApiKeyEnvironmentBox,
+                     CodexCliPathBox,
+                     AnalysisFeedBox,
+                 })
+        {
+            textBox.TextChanged += (_, _) => ScheduleSettingsSave();
+        }
+        foreach (var numberBox in new[]
+                 {
+                     GpuIndexBox,
+                     BatchSizeBox,
+                     MinimumSpeakersBox,
+                     MaximumSpeakersBox,
+                     DownloadJobsBox,
+                 })
+        {
+            numberBox.ValueChanged += (_, _) => ScheduleSettingsSave();
+        }
+        foreach (var toggle in new[]
+                 {
+                     CombineToggle,
+                     KeepOriginalsToggle,
+                     AllowExternalAnalysisToggle,
+                 })
+        {
+            toggle.Toggled += (_, _) => ScheduleSettingsSave();
+        }
+        foreach (var checkBox in new[]
+                 {
+                     TranscribeCheckBox,
+                     DiarizeCheckBox,
+                     AnalyzeAfterJobCheckBox,
+                     RememberAnalysisApiKeyCheckBox,
+                 })
+        {
+            checkBox.Checked += (_, _) => ScheduleSettingsSave();
+            checkBox.Unchecked += (_, _) => ScheduleSettingsSave();
+        }
+    }
+
+    private void ScheduleSettingsSave()
+    {
+        if (_loadingSettings || _settingsSaveTimer is null)
+        {
+            return;
+        }
+        _settingsSaveTimer.Stop();
+        _settingsSaveTimer.Start();
     }
 
     private void AnalysisProvider_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -1868,7 +1974,10 @@ public sealed partial class MainWindow : Window
         }
         if (_analysisDays.Count > 0)
         {
-            AnalysisDaysList.SelectedIndex = 0;
+            var preferred = _analysisDays.FirstOrDefault(value =>
+                string.Equals(value.FeedId, _lastReviewFeedId, StringComparison.Ordinal)
+                && string.Equals(value.ArchiveDate, _lastReviewDate, StringComparison.Ordinal));
+            AnalysisDaysList.SelectedItem = preferred ?? _analysisDays[0];
         }
         else
         {
@@ -1883,6 +1992,9 @@ public sealed partial class MainWindow : Window
     {
         if (AnalysisDaysList.SelectedItem is AnalysisDay day)
         {
+            _lastReviewFeedId = day.FeedId;
+            _lastReviewDate = day.ArchiveDate;
+            ScheduleSettingsSave();
             if (DateTimeOffset.TryParse(day.ArchiveDate, out var selectedDate))
             {
                 QuestionStartDatePicker.Date = selectedDate;
@@ -1943,6 +2055,9 @@ public sealed partial class MainWindow : Window
     private void PriorityFilter_SelectionChanged(object sender, SelectionChangedEventArgs e) =>
         ApplyIncidentFilter();
 
+    private void IncidentSearch_TextChanged(object sender, TextChangedEventArgs e) =>
+        ApplyIncidentFilter();
+
     private void ApplyIncidentFilter()
     {
         _visibleIncidents.Clear();
@@ -1956,8 +2071,23 @@ public sealed partial class MainWindow : Window
         {
             minimumPriority = parsed;
         }
+        var search = IncidentSearchBox?.Text.Trim() ?? "";
+        if (!string.IsNullOrWhiteSpace(search))
+        {
+            minimumPriority = 1;
+        }
         foreach (var incident in _currentReport.Incidents
                      .Where(value => value.Priority >= minimumPriority)
+                     .Where(value =>
+                         string.IsNullOrWhiteSpace(search)
+                         || string.Join(
+                                 " ",
+                                 value.EventType,
+                                 value.Title,
+                                 value.Summary,
+                                 value.Location ?? "",
+                                 value.ArchiveTime)
+                             .Contains(search, StringComparison.OrdinalIgnoreCase))
                      .OrderByDescending(value => value.Priority)
                      .ThenBy(value => value.ArchiveTime))
         {
@@ -1965,7 +2095,13 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private async void PlayIncident_Click(object sender, RoutedEventArgs e)
+    private async void PlayIncident_Click(object sender, RoutedEventArgs e) =>
+        await PlayIncidentAsync(sender, includeSurroundingContext: false);
+
+    private async void PlayIncidentContext_Click(object sender, RoutedEventArgs e) =>
+        await PlayIncidentAsync(sender, includeSurroundingContext: true);
+
+    private async Task PlayIncidentAsync(object sender, bool includeSurroundingContext)
     {
         if (sender is not FrameworkElement { DataContext: IncidentRecord incident }
             || _worker is null)
@@ -1980,7 +2116,9 @@ public sealed partial class MainWindow : Window
         }
         try
         {
-            var clip = await PrepareIncidentClipAsync(incident);
+            var clip = await PrepareIncidentClipAsync(
+                incident,
+                includeSurroundingContext);
             if (clip is null)
             {
                 return;
@@ -2010,20 +2148,30 @@ public sealed partial class MainWindow : Window
             sender.Play();
             PlaybackStatusText.Text = _pendingIncidentClip is null
                 ? "Playing the exact local evidence clip."
-                : $"Playing I{_pendingIncidentClip.IncidentId} evidence from {_pendingIncidentClip.ArchiveTime} "
-                  + $"({_pendingIncidentClip.DurationSeconds:0} seconds with context).";
+                : _pendingIncidentClip.ClipKind == "context"
+                    ? $"Playing {_pendingIncidentClip.DurationSeconds / 60:0.0} minutes of surrounding radio traffic "
+                      + $"for I{_pendingIncidentClip.IncidentId}; only the incident's exact clip is cited evidence."
+                    : $"Playing I{_pendingIncidentClip.IncidentId} evidence from {_pendingIncidentClip.ArchiveTime} "
+                      + $"({_pendingIncidentClip.DurationSeconds:0} seconds with compact context).";
         });
     }
 
-    private async Task<IncidentClip?> PrepareIncidentClipAsync(IncidentRecord incident)
+    private async Task<IncidentClip?> PrepareIncidentClipAsync(
+        IncidentRecord incident,
+        bool includeSurroundingContext = false)
     {
         if (_worker is null)
         {
             return null;
         }
-        PlaybackStatusText.Text = $"Preparing the exact cited radio segment for I{incident.Id}…";
+        PlaybackStatusText.Text = includeSurroundingContext
+            ? $"Preparing surrounding radio traffic for I{incident.Id}…"
+            : $"Preparing the exact cited radio segment for I{incident.Id}…";
         using var cancellation = new CancellationTokenSource(TimeSpan.FromMinutes(2));
-        var clip = await _worker.GetIncidentClipAsync(incident.Id, cancellation.Token);
+        var clip = await _worker.GetIncidentClipAsync(
+            incident.Id,
+            includeSurroundingContext,
+            cancellation.Token);
         if (clip is null || string.IsNullOrWhiteSpace(clip.Path) || !File.Exists(clip.Path))
         {
             throw new FileNotFoundException(
@@ -2543,6 +2691,7 @@ public sealed partial class MainWindow : Window
             return;
         }
         selectName ??= (AreaProfileCombo.SelectedItem as AreaProfile)?.Name;
+        selectName ??= _lastAreaProfileName;
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         var profiles = await _worker.ListAreaProfilesAsync(cancellation.Token);
         _areaProfiles.Clear();
@@ -2567,6 +2716,8 @@ public sealed partial class MainWindow : Window
         {
             return;
         }
+        _lastAreaProfileName = profile.Name;
+        ScheduleSettingsSave();
         AreaProfileNameBox.Text = profile.Name;
         _currentAreaCoverage = profile.Coverage with
         {
@@ -2973,6 +3124,12 @@ public sealed partial class MainWindow : Window
 
     private void SetBusy(bool busy, string? status = null, bool jobRunning = false)
     {
+        if (busy)
+        {
+            _settingsSaveTimer?.Stop();
+            PersistUserSettings();
+            PersistAnalysisCredentialPreference();
+        }
         SearchButton.IsEnabled = !busy && _worker is not null;
         StartButton.IsEnabled = !busy && _worker is not null;
         RefreshAnalysisButton.IsEnabled = !busy && _worker is not null;
@@ -3016,6 +3173,7 @@ public sealed partial class MainWindow : Window
     {
         LogBox.Text += $"[{DateTime.Now:HH:mm:ss}] {message}{Environment.NewLine}";
         LogBox.Select(LogBox.Text.Length, 0);
+        AppDiagnostics.AppendActivity(message);
     }
 
     private async Task ShowErrorAsync(Exception exception)
@@ -3037,9 +3195,9 @@ public sealed partial class MainWindow : Window
         await dialog.ShowAsync();
     }
 
-    private static string SelectedComboValue(ComboBox comboBox, string fallback)
+    private static string SelectedComboValue(ComboBox? comboBox, string fallback)
     {
-        if (comboBox.SelectedItem is not ComboBoxItem item)
+        if (comboBox?.SelectedItem is not ComboBoxItem item)
         {
             return fallback;
         }

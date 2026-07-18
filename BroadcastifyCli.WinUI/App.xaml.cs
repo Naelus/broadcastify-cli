@@ -9,7 +9,17 @@ public partial class App : Application
     public App()
     {
         InitializeComponent();
-        UnhandledException += (_, eventArgs) => WriteStartupError(eventArgs.Exception);
+        UnhandledException += (_, eventArgs) =>
+            AppDiagnostics.AppendCrash(eventArgs.Exception, "WinUI unhandled exception");
+        AppDomain.CurrentDomain.UnhandledException += (_, eventArgs) =>
+        {
+            if (eventArgs.ExceptionObject is Exception exception)
+            {
+                AppDiagnostics.AppendCrash(exception, "AppDomain unhandled exception");
+            }
+        };
+        TaskScheduler.UnobservedTaskException += (_, eventArgs) =>
+            AppDiagnostics.AppendCrash(eventArgs.Exception, "Unobserved task exception");
     }
 
     protected override void OnLaunched(LaunchActivatedEventArgs args)
@@ -21,22 +31,8 @@ public partial class App : Application
         }
         catch (Exception exception)
         {
-            WriteStartupError(exception);
+            AppDiagnostics.AppendCrash(exception, "Window startup");
             throw;
-        }
-    }
-
-    private static void WriteStartupError(Exception exception)
-    {
-        try
-        {
-            File.WriteAllText(
-                Path.Combine(Path.GetTempPath(), "BroadcastifyDesktop-startup.log"),
-                exception.ToString());
-        }
-        catch
-        {
-            // Never hide the original startup failure with a diagnostic failure.
         }
     }
 }

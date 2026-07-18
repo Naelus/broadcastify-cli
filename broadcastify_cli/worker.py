@@ -21,6 +21,7 @@ from .accelerators import collect_accelerator_diagnostics
 from .audio import (
     extract_audio_clip,
     find_ffmpeg,
+    select_incident_context_window,
     select_incident_evidence_window,
 )
 from .analysis import (
@@ -39,7 +40,7 @@ from .analysis_providers import (
     diagnose_analysis_provider,
     open_analysis_client,
 )
-from .area_watch import AREA_PROMPT_VERSION, AreaStoryAnalyzer
+from .area_watch import AREA_PROMPT_VERSION, AreaStoryAnalyzer, _public_quote
 from .area_acquisition import AreaAcquisitionRunner
 from .broadcastify import BroadcastifyClient
 from .geography import CENSUS_ZCTA_YEAR, ZipCentroidCatalog
@@ -498,8 +499,31 @@ def _day_report(store: AnalysisStore, feed_id: str, archive_date: date) -> dict[
         archive_date,
         prompt_version=PROMPT_VERSION,
     ):
+        evidence_start, evidence_end = select_incident_evidence_window(stored)
+        quote_parts = []
+        for raw in stored.get("evidence", []):
+            if not isinstance(raw, dict):
+                continue
+            try:
+                segment_start = float(raw.get("start_seconds", 0.0))
+                segment_end = float(raw.get("end_seconds", segment_start))
+            except (TypeError, ValueError):
+                continue
+            text = str(raw.get("text") or "").strip()
+            if (
+                text
+                and segment_end >= evidence_start
+                and segment_start <= evidence_end
+                and text not in quote_parts
+            ):
+                quote_parts.append(text)
+        evidence_quote, _ = _public_quote(
+            " ".join(quote_parts),
+            location=str(stored.get("location") or ""),
+        )
         # Keep the routine list/report response compact. Raw transcript evidence
-        # stays in the local database for retrieval and question answering.
+        # stays in the local database; only the redacted exact-clip quote crosses
+        # the viewer boundary.
         incidents.append(
             {
                 "id": stored["id"],
@@ -511,6 +535,7 @@ def _day_report(store: AnalysisStore, feed_id: str, archive_date: date) -> dict[
                 "confidence": stored["confidence"],
                 "start_seconds": stored["start_seconds"],
                 "end_seconds": stored["end_seconds"],
+                "evidence_quote": evidence_quote,
                 "archive_time": format_archive_time(
                     stored, float(stored["start_seconds"])
                 ),
@@ -538,7 +563,12 @@ def report_day(feed_id: str, date_value: str) -> int:
     return 0
 
 
-def _incident_clip(store: AnalysisStore, incident_id: int) -> dict[str, Any]:
+def _incident_clip(
+    store: AnalysisStore,
+    incident_id: int,
+    *,
+    include_surrounding_context: bool = False,
+) -> dict[str, Any]:
     incident = store.get_incident(incident_id)
     if incident is None:
         raise ValueError(f"Incident I{incident_id} was not found in the local analysis database.")
@@ -549,7 +579,11 @@ def _incident_clip(store: AnalysisStore, incident_id: int) -> dict[str, Any]:
             f"The retained combined audio for incident I{incident_id} could not be found."
         )
 
-    start_seconds, end_seconds = select_incident_evidence_window(incident)
+    start_seconds, end_seconds = (
+        select_incident_context_window(incident)
+        if include_surrounding_context
+        else select_incident_evidence_window(incident)
+    )
     start_milliseconds = round(start_seconds * 1_000)
     end_milliseconds = round(end_seconds * 1_000)
     output = (
@@ -557,6 +591,7 @@ def _incident_clip(store: AnalysisStore, incident_id: int) -> dict[str, Any]:
         / "evidence-clips"
         / (
             f"{incident['feed_id']}_{incident['archive_date']}_I{incident_id}_"
+            f"{'context_' if include_surrounding_context else ''}"
             f"{start_milliseconds}-{end_milliseconds}.mp3"
         )
     )
@@ -569,18 +604,27 @@ def _incident_clip(store: AnalysisStore, incident_id: int) -> dict[str, Any]:
         "start_seconds": start_seconds,
         "end_seconds": end_seconds,
         "duration_seconds": end_seconds - start_seconds,
+        "clip_kind": "context" if include_surrounding_context else "evidence",
         "path": str(clip),
         "sha256": sha256_file(clip),
     }
 
 
-def incident_clip(incident_id: int) -> int:
+def incident_clip(incident_id: int, *, include_surrounding_context: bool = False) -> int:
     with AnalysisStore(DEFAULT_DATABASE) as store:
-        result = _incident_clip(store, incident_id)
+        result = _incident_clip(
+            store,
+            incident_id,
+            include_surrounding_context=include_surrounding_context,
+        )
     emit(
         {
             "type": "incident_clip",
-            "message": f"Exact local evidence clip ready for incident I{incident_id}.",
+            "message": (
+                f"Surrounding local radio context ready for incident I{incident_id}."
+                if include_surrounding_context
+                else f"Exact local evidence clip ready for incident I{incident_id}."
+            ),
             "clip": result,
         }
     )
@@ -904,6 +948,7 @@ def build_parser() -> argparse.ArgumentParser:
     report.add_argument("--date", required=True)
     clip = subparsers.add_parser("incident-clip")
     clip.add_argument("--incident-id", required=True, type=int)
+    clip.add_argument("--context", action="store_true")
     subparsers.add_parser("analyze-day")
     subparsers.add_parser("summarize-week")
     subparsers.add_parser("ask")
@@ -980,7 +1025,10 @@ def main() -> int:
         if arguments.command == "report-day":
             return report_day(arguments.feed_id, arguments.date)
         if arguments.command == "incident-clip":
-            return incident_clip(arguments.incident_id)
+            return incident_clip(
+                arguments.incident_id,
+                include_surrounding_context=arguments.context,
+            )
         if arguments.command == "analyze-day":
             return analyze_day()
         if arguments.command == "summarize-week":

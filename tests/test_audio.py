@@ -7,6 +7,7 @@ from broadcastify_cli.audio import (
     _winget_ffmpeg_bin_directories,
     combine_mp3_files,
     extract_audio_clip,
+    select_incident_context_window,
     select_incident_evidence_window,
 )
 
@@ -197,3 +198,20 @@ def test_incident_window_falls_back_to_a_bounded_incident_start() -> None:
     assert select_incident_evidence_window(
         {"start_seconds": 500.0, "end_seconds": 900.0, "evidence": []}
     ) == (492.0, 612.0)
+
+
+def test_incident_context_window_reaches_the_initial_dispatch_before_a_disposition() -> None:
+    incident = {
+        "start_seconds": 64709.45,
+        "end_seconds": 64714.65,
+        "evidence": [
+            {
+                "start_seconds": 64709.45,
+                "end_seconds": 64714.65,
+                "text": "The stolen squad car was located unoccupied.",
+            }
+        ],
+    }
+
+    assert select_incident_evidence_window(incident) == (64701.45, 64726.65)
+    assert select_incident_context_window(incident) == (64401.45, 64786.65)
