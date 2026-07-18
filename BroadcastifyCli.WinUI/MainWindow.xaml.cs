@@ -172,11 +172,14 @@ public sealed partial class MainWindow : Window
             return;
         }
         var profile = item.Tag?.ToString() ?? "auto";
-        var resetWhisperModel = profile == "vulkan"
+        var selectedModel = SelectedComboValue(ModelComboBox, "turbo");
+        var resetUnsupportedPortableModel = profile == "vulkan"
             && string.Equals(
-                SelectedComboValue(ModelComboBox, "turbo"),
+                selectedModel,
                 "distil-large-v3",
                 StringComparison.OrdinalIgnoreCase);
+        var useWindowsMlStarter = profile == "windowsml"
+            && !string.Equals(selectedModel, "base", StringComparison.OrdinalIgnoreCase);
         switch (profile)
         {
             case "cuda":
@@ -210,15 +213,22 @@ public sealed partial class MainWindow : Window
                 SelectComboTag(DiarizationDeviceComboBox, "auto");
                 break;
         }
-        if (resetWhisperModel)
+        if (resetUnsupportedPortableModel)
         {
             SelectComboValue(ModelComboBox, "turbo");
             StatusText.Text =
                 "Vulkan defaults applied. Whisper was reset to turbo because whisper.cpp has no managed distil-large-v3 mapping.";
         }
+        else if (useWindowsMlStarter)
+        {
+            SelectComboValue(ModelComboBox, "base");
+            StatusText.Text =
+                "Windows ML defaults applied with the radio-tested Base CPU starter. Tiny is faster, but it missed important words in retained scanner audio.";
+        }
         SelectComboTag(AnalysisDeviceComboBox, profile == "cpu" ? "cpu" : "auto");
         _asrVerifiedThisSession = false;
         _diarizationVerifiedThisSession = false;
+        UpdateAsrModelPreparationUi();
         ApplySelectedHardwareProfileDescription();
         UpdateSetupSummary();
     }
@@ -275,6 +285,7 @@ public sealed partial class MainWindow : Window
         AnalysisFeedBox.Text = _lastReviewFeedId;
         _loadingSettings = false;
         UpdateAnalysisProviderUi();
+        UpdateAsrModelPreparationUi();
         UpdateSetupSummary();
     }
 
@@ -416,9 +427,21 @@ public sealed partial class MainWindow : Window
         AnalysisApiKeyBox.PasswordChanged += (_, _) => ResetAnalysisModelVerification();
         AnalysisApiKeyEnvironmentBox.TextChanged += (_, _) => ResetAnalysisModelVerification();
         CodexCliPathBox.TextChanged += (_, _) => ResetAnalysisModelVerification();
-        ModelComboBox.SelectionChanged += (_, _) => ResetAsrVerification();
-        AsrEngineComboBox.SelectionChanged += (_, _) => ResetAsrVerification();
-        DeviceComboBox.SelectionChanged += (_, _) => ResetAsrVerification();
+        ModelComboBox.SelectionChanged += (_, _) =>
+        {
+            ResetAsrVerification();
+            UpdateAsrModelPreparationUi();
+        };
+        AsrEngineComboBox.SelectionChanged += (_, _) =>
+        {
+            ResetAsrVerification();
+            UpdateAsrModelPreparationUi();
+        };
+        DeviceComboBox.SelectionChanged += (_, _) =>
+        {
+            ResetAsrVerification();
+            UpdateAsrModelPreparationUi();
+        };
         AsrModelPathBox.TextChanged += (_, _) => ResetAsrVerification();
         DiarizationDeviceComboBox.SelectionChanged += (_, _) => ResetDiarizationVerification();
         GpuIndexBox.ValueChanged += (_, _) =>
@@ -474,7 +497,7 @@ public sealed partial class MainWindow : Window
             AsrSelfTestInfoBar.Severity = InfoBarSeverity.Informational;
             AsrSelfTestInfoBar.Title = "Transcription not tested for these settings";
             AsrSelfTestInfoBar.Message =
-                "Run Test transcription after changing its engine, model, device, path, or batch.";
+                "Run Test engine after changing its engine, model, device, path, or batch.";
         }
         UpdateSetupSummary();
     }
@@ -1124,6 +1147,76 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    private string EffectiveAsrEngineForPreparation()
+    {
+        var engine = SelectedComboValue(AsrEngineComboBox, "auto");
+        if (engine != "auto")
+        {
+            return engine;
+        }
+        return SelectedComboValue(DeviceComboBox, "auto") switch
+        {
+            "vulkan" => "whisper.cpp",
+            "windows-ml" => "windows-ml",
+            _ => "faster-whisper",
+        };
+    }
+
+    private void UpdateAsrModelPreparationUi()
+    {
+        if (AsrPrepareButton is null)
+        {
+            return;
+        }
+        var engine = EffectiveAsrEngineForPreparation();
+        AsrPrepareButton.Visibility =
+            engine is "windows-ml" or "whisper.cpp"
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+        if (engine == "windows-ml")
+        {
+            AsrPrepareButton.Content = "Build & test model";
+            ToolTipService.SetToolTip(
+                AsrPrepareButton,
+                "Explicitly build the selected ONNX Runtime GenAI CPU model, save its managed path, then prove a local decode.");
+        }
+        else if (engine == "whisper.cpp")
+        {
+            AsrPrepareButton.Content = "Download & test model";
+            ToolTipService.SetToolTip(
+                AsrPrepareButton,
+                "Explicitly download the selected public GGML model, save its managed path, then prove the configured whisper.cpp runtime.");
+        }
+    }
+
+    private AsrSelfTestRequest CreateAsrSelfTestRequest() =>
+        new()
+        {
+            Model = SelectedComboValue(ModelComboBox, "turbo"),
+            AsrEngine = SelectedComboValue(AsrEngineComboBox, "auto"),
+            Device = SelectedComboValue(DeviceComboBox, "auto"),
+            DeviceIndex = RequiredInteger(GpuIndexBox.Value, 0),
+            AsrModelPath = string.IsNullOrWhiteSpace(AsrModelPathBox.Text)
+                ? null
+                : AsrModelPathBox.Text.Trim(),
+            BatchSize = RequiredInteger(BatchSizeBox.Value, 8),
+            HuggingFaceToken = string.IsNullOrWhiteSpace(HuggingFaceTokenBox.Password)
+                ? null
+                : HuggingFaceTokenBox.Password,
+        };
+
+    private void ApplyAsrSelfTestResult(AsrSelfTestStatus result)
+    {
+        AsrSelfTestInfoBar.Severity = InfoBarSeverity.Success;
+        AsrSelfTestInfoBar.Title = "Selected transcription engine executed locally";
+        AsrSelfTestInfoBar.Message = string.IsNullOrWhiteSpace(result.FallbackReason)
+            ? result.Message
+            : $"{result.Message} Fallback during {result.FallbackStage}: {result.FallbackReason}";
+        _asrVerifiedThisSession = true;
+        _asrVerificationMessage = AsrSelfTestInfoBar.Message;
+        UpdateSetupSummary();
+    }
+
     private async void AsrSelfTest_Click(object sender, RoutedEventArgs e)
     {
         if (_worker is null || _operationCancellation is not null)
@@ -1140,20 +1233,7 @@ public sealed partial class MainWindow : Window
         try
         {
             var result = await _worker.RunAsrSelfTestAsync(
-                new AsrSelfTestRequest
-                {
-                    Model = SelectedComboValue(ModelComboBox, "turbo"),
-                    AsrEngine = SelectedComboValue(AsrEngineComboBox, "auto"),
-                    Device = SelectedComboValue(DeviceComboBox, "auto"),
-                    DeviceIndex = RequiredInteger(GpuIndexBox.Value, 0),
-                    AsrModelPath = string.IsNullOrWhiteSpace(AsrModelPathBox.Text)
-                        ? null
-                        : AsrModelPathBox.Text.Trim(),
-                    BatchSize = RequiredInteger(BatchSizeBox.Value, 8),
-                    HuggingFaceToken = string.IsNullOrWhiteSpace(HuggingFaceTokenBox.Password)
-                        ? null
-                        : HuggingFaceTokenBox.Password,
-                },
+                CreateAsrSelfTestRequest(),
                 HandleWorkerMessage,
                 _operationCancellation.Token);
             if (result is null || !result.Ready)
@@ -1161,14 +1241,7 @@ public sealed partial class MainWindow : Window
                 throw new InvalidOperationException(
                     "The transcription worker ended without a successful self-test result.");
             }
-            AsrSelfTestInfoBar.Severity = InfoBarSeverity.Success;
-            AsrSelfTestInfoBar.Title = "Selected transcription engine is ready";
-            AsrSelfTestInfoBar.Message = string.IsNullOrWhiteSpace(result.FallbackReason)
-                ? result.Message
-                : $"{result.Message} Fallback during {result.FallbackStage}: {result.FallbackReason}";
-            _asrVerifiedThisSession = true;
-            _asrVerificationMessage = AsrSelfTestInfoBar.Message;
-            UpdateSetupSummary();
+            ApplyAsrSelfTestResult(result);
         }
         catch (OperationCanceledException)
         {
@@ -1182,6 +1255,75 @@ public sealed partial class MainWindow : Window
         {
             AsrSelfTestInfoBar.Severity = InfoBarSeverity.Error;
             AsrSelfTestInfoBar.Title = "Selected transcription engine needs setup";
+            AsrSelfTestInfoBar.Message = exception.Message;
+            _asrVerifiedThisSession = false;
+            _asrVerificationMessage = exception.Message;
+            UpdateSetupSummary();
+            AppendLog(exception.Message);
+        }
+        finally
+        {
+            _operationCancellation.Dispose();
+            _operationCancellation = null;
+            JobProgress.IsIndeterminate = false;
+            SetBusy(false);
+        }
+    }
+
+    private async void AsrPrepare_Click(object sender, RoutedEventArgs e)
+    {
+        if (_worker is null || _operationCancellation is not null)
+        {
+            return;
+        }
+        _operationCancellation = new CancellationTokenSource();
+        SetBusy(true, "Preparing the selected transcription model…", jobRunning: true);
+        JobProgress.IsIndeterminate = true;
+        AsrSelfTestInfoBar.Severity = InfoBarSeverity.Informational;
+        AsrSelfTestInfoBar.Title = "Preparing the selected model";
+        AsrSelfTestInfoBar.Message =
+            "This explicit action may download model files. It does not use archive audio or Broadcastify quota.";
+        try
+        {
+            var prepared = await _worker.PrepareAsrModelAsync(
+                CreateAsrSelfTestRequest(),
+                HandleWorkerMessage,
+                _operationCancellation.Token);
+            if (prepared is null || !prepared.Ready || string.IsNullOrWhiteSpace(prepared.Path))
+            {
+                throw new InvalidOperationException(
+                    "The model worker ended without returning a usable managed path.");
+            }
+            AsrModelPathBox.Text = prepared.Path;
+            PersistUserSettings();
+            AsrSelfTestInfoBar.Title = prepared.Reused
+                ? "Matching model found; proving a decode"
+                : "Model prepared; proving a decode";
+            AsrSelfTestInfoBar.Message = prepared.Message;
+            var verified = await _worker.RunAsrSelfTestAsync(
+                CreateAsrSelfTestRequest(),
+                HandleWorkerMessage,
+                _operationCancellation.Token);
+            if (verified is null || !verified.Ready)
+            {
+                throw new InvalidOperationException(
+                    "The model was prepared, but its local decode did not return a successful result.");
+            }
+            ApplyAsrSelfTestResult(verified);
+        }
+        catch (OperationCanceledException)
+        {
+            AsrSelfTestInfoBar.Severity = InfoBarSeverity.Warning;
+            AsrSelfTestInfoBar.Title = "Model preparation cancelled";
+            AsrSelfTestInfoBar.Message =
+                "No archive work was changed. Completed model-cache downloads remain reusable.";
+            _asrVerifiedThisSession = false;
+            UpdateSetupSummary();
+        }
+        catch (Exception exception)
+        {
+            AsrSelfTestInfoBar.Severity = InfoBarSeverity.Error;
+            AsrSelfTestInfoBar.Title = "Selected model needs setup";
             AsrSelfTestInfoBar.Message = exception.Message;
             _asrVerifiedThisSession = false;
             _asrVerificationMessage = exception.Message;
@@ -1287,7 +1429,7 @@ public sealed partial class MainWindow : Window
             _asrVerifiedThisSession = true;
             _asrVerificationMessage = transcription.Message;
             AsrSelfTestInfoBar.Severity = InfoBarSeverity.Success;
-            AsrSelfTestInfoBar.Title = "Selected transcription engine is ready";
+            AsrSelfTestInfoBar.Title = "Selected transcription engine executed locally";
             AsrSelfTestInfoBar.Message = string.IsNullOrWhiteSpace(transcription.FallbackReason)
                 ? transcription.Message
                 : $"{transcription.Message} Fallback during {transcription.FallbackStage}: "
@@ -2279,10 +2421,7 @@ public sealed partial class MainWindow : Window
             using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(30));
             var diagnostics = await _worker.GetDiagnosticsAsync(
                 cancellation.Token,
-                SelectedComboValue(AsrEngineComboBox, "auto"),
-                string.IsNullOrWhiteSpace(AsrModelPathBox.Text)
-                    ? null
-                    : AsrModelPathBox.Text.Trim());
+                CreateAsrSelfTestRequest());
             if (diagnostics is JsonElement value)
             {
                 var cuda = value.TryGetProperty("cuda_available", out var cudaValue)
@@ -3565,6 +3704,7 @@ public sealed partial class MainWindow : Window
         AnalysisModelTestButton.IsEnabled = !busy && _worker is not null;
         SetupProfileSelfTestButton.IsEnabled = !busy && _worker is not null;
         ProfileSelfTestButton.IsEnabled = !busy && _worker is not null;
+        AsrPrepareButton.IsEnabled = !busy && _worker is not null;
         AsrSelfTestButton.IsEnabled = !busy && _worker is not null;
         DiarizationSelfTestButton.IsEnabled = !busy && _worker is not null;
         SetupAccountActionButton.IsEnabled = !busy && _worker is not null;

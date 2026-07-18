@@ -17,6 +17,7 @@ from .asr import (
     WhisperCppAsr,
     WindowsMlWhisperAsr,
     normalize_asr_engine,
+    normalize_whisper_model_name,
 )
 from .accelerators import find_whisper_cpp, whisper_cpp_backends
 from .audio import configure_ffmpeg_runtime, find_ffmpeg
@@ -523,9 +524,11 @@ class LocalTranscriber:
         ]
         transcript_dir.mkdir(parents=True, exist_ok=True)
 
+        actual_model = str(asr_metadata.get("model") or self.model_name)
         payload = {
             "audio_file": audio_path.name,
-            "model": self.model_name,
+            "model": actual_model,
+            "requested_model": self.model_name,
             "asr_engine": self.asr_engine,
             "asr_backend": self.backend_description,
             "device": self.device,
@@ -655,7 +658,10 @@ class LocalTranscriber:
             payload = json.loads(json_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             return False
-        if payload.get("model") != self.model_name:
+        requested_model = str(payload.get("requested_model") or payload.get("model") or "")
+        if normalize_whisper_model_name(requested_model) != normalize_whisper_model_name(
+            self.model_name
+        ):
             return False
         expected_engine = getattr(self, "asr_engine", "faster-whisper")
         actual_engine = str(payload.get("asr_engine") or "faster-whisper")

@@ -13,6 +13,7 @@ from broadcastify_cli.worker import (
     asr_self_test,
     diarization_self_test,
     load_worker_environment,
+    prepare_asr_model_command,
     profile_self_test,
 )
 
@@ -124,6 +125,52 @@ def test_diarization_self_test_executes_generated_audio_without_returning_token(
     assert loaded["token"] == "private-test-token"
     assert result["ready"] is True
     assert result["turn_count"] == 1
+    assert "private-test-token" not in json.dumps(emitted)
+
+
+def test_prepare_asr_model_emits_managed_path_without_returning_token(
+    monkeypatch, tmp_path: Path
+) -> None:
+    emitted: list[dict[str, object]] = []
+    received: dict[str, object] = {}
+    model_path = tmp_path / "whisper-tiny-fp32-cpu"
+
+    def fake_prepare(settings, progress=None):
+        received.update(settings)
+        assert progress is not None
+        progress("Prepared local model")
+        return {
+            "ready": True,
+            "engine": "windows-ml",
+            "model": "tiny",
+            "source_model": "openai/whisper-tiny",
+            "provider": "cpu",
+            "precision": "fp32",
+            "path": str(model_path),
+            "reused": False,
+            "bytes": 123,
+            "message": "Prepared Windows ML tiny.",
+        }
+
+    monkeypatch.setattr("broadcastify_cli.worker.prepare_asr_model", fake_prepare)
+    monkeypatch.setattr("broadcastify_cli.worker.emit", emitted.append)
+
+    exit_code = prepare_asr_model_command(
+        {
+            "model": "tiny",
+            "asr_engine": "windows-ml",
+            "huggingface_token": "private-test-token",
+        }
+    )
+
+    result = next(
+        value["result"]
+        for value in emitted
+        if value["type"] == "asr_model_prepared"
+    )
+    assert exit_code == 0
+    assert received["model"] == "tiny"
+    assert result["path"] == str(model_path)
     assert "private-test-token" not in json.dumps(emitted)
 
 

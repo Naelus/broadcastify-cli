@@ -118,6 +118,7 @@ function applySettingsForm() {
   byId("settingCodexPath").value = state.settings.codexPath;
   byId("settingAllowExternal").checked = Boolean(state.settings.allowExternal);
   updateProviderNotice();
+  updateAsrModelPreparationUi();
   renderSetupReadiness();
 }
 
@@ -139,12 +140,15 @@ function applyHardwareProfile(profile, notify = true) {
     resetAnalysisVerification();
     state.analysisProviderStatus = null;
     readSettingsForm();
+    updateAsrModelPreparationUi();
     renderHardwareProfiles();
     renderSetupReadiness();
     return;
   }
   const resetWhisperModel = ["vulkan", "metal"].includes(profile)
     && byId("settingWhisperModel").value === "distil-large-v3";
+  const useWindowsMlStarter = profile === "windowsml"
+    && !["base", "base.en"].includes(byId("settingWhisperModel").value);
   resetProfileVerification();
   resetAsrVerification();
   resetDiarizationVerification();
@@ -157,13 +161,17 @@ function applyHardwareProfile(profile, notify = true) {
   byId("settingDiarizationDevice").value = choice[2];
   byId("settingAnalysisDevice").value = choice[3];
   if (resetWhisperModel) byId("settingWhisperModel").value = "turbo";
+  if (useWindowsMlStarter) byId("settingWhisperModel").value = "base.en";
   applyingHardwareProfile = false;
   readSettingsForm();
+  updateAsrModelPreparationUi();
   renderHardwareProfiles();
   renderSetupReadiness();
   if (notify) {
     const modelMessage = resetWhisperModel
       ? " The Whisper model was reset to turbo because whisper.cpp has no managed distil-large-v3 mapping."
+      : useWindowsMlStarter
+      ? " The radio-tested Base CPU starter was selected. Tiny is faster, but it missed important words in retained scanner audio."
       : "";
     toast(`${byId("settingHardwareProfile").selectedOptions[0].textContent} defaults applied.${modelMessage}`);
   }
@@ -234,6 +242,30 @@ function processingPayload() {
     batch_size: state.settings.batchSize,
     huggingface_token: huggingFaceToken || undefined,
   };
+}
+
+function effectiveAsrEngine() {
+  const engine = byId("settingAsrEngine")?.value || state.settings.asrEngine || "auto";
+  if (engine !== "auto") return engine;
+  const device = byId("settingDevice")?.value || state.settings.device || "auto";
+  if (["vulkan", "metal"].includes(device)) return "whisper.cpp";
+  if (["windows-ml", "directml"].includes(device)) return "windows-ml";
+  if (device.startsWith("openvino") || ["gpu", "npu"].includes(device)) return "openvino";
+  return "faster-whisper";
+}
+
+function updateAsrModelPreparationUi() {
+  const button = byId("asrPrepareButton");
+  if (!button) return;
+  const engine = effectiveAsrEngine();
+  button.hidden = !["windows-ml", "whisper.cpp"].includes(engine);
+  if (engine === "windows-ml") {
+    button.textContent = "Build & test model";
+    button.title = "Explicitly build the selected ONNX Runtime GenAI CPU model, retain its path, then prove a local decode.";
+  } else if (engine === "whisper.cpp") {
+    button.textContent = "Download & test model";
+    button.title = "Explicitly download the selected public GGML model, retain its path, then prove the configured whisper.cpp runtime.";
+  }
 }
 
 async function api(path, options = {}) {
@@ -1138,6 +1170,7 @@ byId("settingHuggingFaceToken").addEventListener("input", () => {
 byId("settingWhisperModel").addEventListener("change", () => {
   resetProfileVerification();
   resetAsrVerification();
+  updateAsrModelPreparationUi();
   renderHardwareProfiles();
   renderSetupReadiness();
 });
@@ -1316,7 +1349,7 @@ async function runProviderCheck() {
 }
 
 async function runHardwareCheck() {
-  await startJob("diagnostics", {}, { label: "Checking local hardware", onComplete: (job) => {
+  await startJob("diagnostics-selected", processingPayload(), { label: "Checking local hardware", onComplete: (job) => {
     const result = eventOf(job, "diagnostics");
     if (!result) return;
     state.hardwareDiagnostics = result;
@@ -1337,11 +1370,39 @@ async function runAsrSelfTest() {
   } });
 }
 
+async function runAsrModelPreparation() {
+  const notice = byId("asrSelfTestNotice");
+  notice.className = "notice";
+  notice.querySelector("strong").textContent = "Preparing the selected model";
+  notice.querySelector("span").textContent = "This explicit action may download model files. It does not use archive audio or Broadcastify quota.";
+  await startJob("prepare-asr-model", processingPayload(), {
+    label: "Preparing the selected transcription model",
+    onComplete: async (job) => {
+      const result = eventOf(job, "asr_model_prepared")?.result;
+      if (!result?.ready || !result.path) {
+        notice.className = "notice warning";
+        notice.querySelector("strong").textContent = "Model preparation needs attention";
+        notice.querySelector("span").textContent = "The worker did not return a usable managed model path.";
+        return false;
+      }
+      byId("settingAsrModelPath").value = result.path;
+      readSettingsForm();
+      localStorage.setItem("radioArchiveSettings", JSON.stringify(state.settings));
+      notice.querySelector("strong").textContent = result.reused
+        ? "Matching model found; proving a decode"
+        : "Model prepared; proving a decode";
+      notice.querySelector("span").textContent = result.message;
+      await runAsrSelfTest();
+      return false;
+    },
+  });
+}
+
 function applyAsrSelfTestResult(result) {
   state.asrSelfTest = result;
   const notice = byId("asrSelfTestNotice");
   notice.className = "notice success";
-  notice.querySelector("strong").textContent = "Transcription ready";
+  notice.querySelector("strong").textContent = "Transcription engine executed locally";
   const fallback = result.fallback_reason ? ` Fallback: ${result.fallback_reason}` : "";
   notice.querySelector("span").textContent = `${result.message}${fallback}`;
   renderHardwareProfiles();
@@ -1479,6 +1540,7 @@ byId("settingHardwareProfile").addEventListener("change", (event) => applyHardwa
   }
   resetProfileVerification();
   resetAsrVerification();
+  updateAsrModelPreparationUi();
   renderHardwareProfiles();
   renderSetupReadiness();
 }));
@@ -1560,6 +1622,7 @@ byId("setupReadinessGrid").addEventListener("click", async (event) => {
   }
 });
 byId("asrSelfTestButton").addEventListener("click", runAsrSelfTest);
+byId("asrPrepareButton").addEventListener("click", runAsrModelPreparation);
 byId("diarizationSelfTestButton").addEventListener("click", runDiarizationSelfTest);
 byId("loginForm").addEventListener("submit", async (event) => {
   event.preventDefault();

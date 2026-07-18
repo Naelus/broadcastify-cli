@@ -100,7 +100,7 @@ def test_loopback_web_app_serves_library_transcript_and_media(tmp_path: Path) ->
         assert cookie.startswith("radio_archive_session=")
         assert token_match is not None
         assert b'id="areaPublicSafetyOnly"' in body
-        assert b'/static/app.js?v=20' in body
+        assert b'/static/app.js?v=21' in body
         assert b'id="settingAnalysisDevice"' in body
         assert b'id="analysisSelfTestButton"' in body
         assert b'id="profileSelfTestButton"' in body
@@ -379,6 +379,43 @@ def test_web_jobs_forward_explicit_asr_self_test_settings(tmp_path: Path) -> Non
     assert payload["model"] == "tiny.en"
     assert payload["device"] == "openvino-npu"
     assert payload["huggingface_token"] == "session-only-test-token"
+
+
+def test_web_jobs_forward_explicit_asr_model_preparation_settings(
+    tmp_path: Path,
+) -> None:
+    manager = JobManager(tmp_path, tmp_path / "analysis.sqlite3", tmp_path)
+    arguments, payload = manager._worker_request(  # noqa: SLF001
+        "prepare-asr-model",
+        {
+            "model": "tiny.en",
+            "asr_engine": "windows-ml",
+            "device": "windows-ml",
+            "huggingface_token": "session-only-test-token",
+        },
+    )
+
+    assert arguments == ["prepare-asr-model"]
+    assert payload is not None
+    assert payload["model"] == "tiny.en"
+    assert payload["asr_engine"] == "windows-ml"
+    assert payload["huggingface_token"] == "session-only-test-token"
+
+
+def test_web_jobs_forward_selected_diagnostics_settings(tmp_path: Path) -> None:
+    manager = JobManager(tmp_path, tmp_path / "analysis.sqlite3", tmp_path)
+    arguments, payload = manager._worker_request(  # noqa: SLF001
+        "diagnostics-selected",
+        {
+            "model": "tiny.en",
+            "asr_engine": "whisper.cpp",
+            "device": "vulkan",
+        },
+    )
+
+    assert arguments == ["diagnostics-selected"]
+    assert payload is not None
+    assert payload["model"] == "tiny.en"
 
 
 def test_web_jobs_forward_explicit_diarization_self_test_settings(

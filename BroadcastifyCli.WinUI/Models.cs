@@ -509,6 +509,18 @@ public sealed record AsrSelfTestStatus
     [JsonPropertyName("model")]
     public string Model { get; init; } = "";
 
+    [JsonPropertyName("requested_model")]
+    public string RequestedModel { get; init; } = "";
+
+    [JsonPropertyName("model_path")]
+    public string ModelPath { get; init; } = "";
+
+    [JsonPropertyName("provider")]
+    public string Provider { get; init; } = "";
+
+    [JsonPropertyName("precision")]
+    public string Precision { get; init; } = "";
+
     [JsonPropertyName("device")]
     public string Device { get; init; } = "";
 
@@ -520,6 +532,39 @@ public sealed record AsrSelfTestStatus
 
     [JsonPropertyName("fallback_stage")]
     public string FallbackStage { get; init; } = "";
+
+    [JsonPropertyName("message")]
+    public string Message { get; init; } = "";
+}
+
+public sealed record AsrModelPreparationStatus
+{
+    [JsonPropertyName("ready")]
+    public bool Ready { get; init; }
+
+    [JsonPropertyName("engine")]
+    public string Engine { get; init; } = "";
+
+    [JsonPropertyName("model")]
+    public string Model { get; init; } = "";
+
+    [JsonPropertyName("source_model")]
+    public string SourceModel { get; init; } = "";
+
+    [JsonPropertyName("provider")]
+    public string Provider { get; init; } = "";
+
+    [JsonPropertyName("precision")]
+    public string Precision { get; init; } = "";
+
+    [JsonPropertyName("path")]
+    public string Path { get; init; } = "";
+
+    [JsonPropertyName("reused")]
+    public bool Reused { get; init; }
+
+    [JsonPropertyName("bytes")]
+    public long Bytes { get; init; }
 
     [JsonPropertyName("message")]
     public string Message { get; init; } = "";

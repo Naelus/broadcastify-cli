@@ -41,6 +41,12 @@ from .analysis_providers import (
     diagnose_analysis_provider,
     open_analysis_client,
 )
+from .asr import (
+    find_whisper_cpp_model,
+    find_windows_ml_model,
+    normalize_asr_engine,
+    prepare_asr_model,
+)
 from .area_watch import AREA_PROMPT_VERSION, AreaStoryAnalyzer, _public_quote
 from .area_acquisition import AreaAcquisitionRunner
 from .broadcastify import BroadcastifyClient
@@ -268,8 +274,45 @@ def authenticate() -> int:
     return 0
 
 
-def diagnostics() -> int:
+def diagnostics(settings: dict[str, Any] | None = None) -> int:
     llama_server = find_llama_server()
+    selected_whisper_model: Path | None = None
+    selected_windows_model: Path | None = None
+    selected_asr_engine: str | None = None
+    selected_asr_model: dict[str, Any] = {}
+    if settings is not None:
+        model = str(settings.get("model") or "turbo")
+        engine = normalize_asr_engine(
+            str(settings.get("asr_engine") or "auto"),
+            str(settings.get("device") or "auto"),
+        )
+        selected_asr_engine = engine
+        selected_asr_model = {
+            "engine": engine,
+            "model": model,
+            "path": "",
+            "configured": False,
+            "error": "",
+        }
+        try:
+            if engine == "whisper.cpp":
+                selected_whisper_model = find_whisper_cpp_model(
+                    model, settings.get("asr_model_path") or None
+                )
+                selected_asr_model["path"] = (
+                    str(selected_whisper_model) if selected_whisper_model else ""
+                )
+                selected_asr_model["configured"] = selected_whisper_model is not None
+            elif engine == "windows-ml":
+                selected_windows_model = find_windows_ml_model(
+                    model, settings.get("asr_model_path") or None
+                )
+                selected_asr_model["path"] = (
+                    str(selected_windows_model) if selected_windows_model else ""
+                )
+                selected_asr_model["configured"] = selected_windows_model is not None
+        except (OSError, RuntimeError, ValueError) as exc:
+            selected_asr_model["error"] = str(exc)
     payload: dict[str, Any] = {
         "type": "diagnostics",
         "python": sys.version.split()[0],
@@ -305,7 +348,14 @@ def diagnostics() -> int:
         ]
     except ModuleNotFoundError:
         payload["transcription_dependencies"] = "not installed"
-    payload["accelerators"] = collect_accelerator_diagnostics(llama_server)
+    payload["accelerators"] = collect_accelerator_diagnostics(
+        llama_server,
+        selected_asr_engine=selected_asr_engine,
+        selected_whisper_model=selected_whisper_model,
+        selected_windows_model=selected_windows_model,
+    )
+    if selected_asr_model:
+        payload["selected_asr_model"] = selected_asr_model
     if DEFAULT_DATABASE.exists():
         with AnalysisStore(DEFAULT_DATABASE) as store:
             payload["analysis_stats"] = store.stats()
@@ -355,11 +405,20 @@ def _asr_self_test_result(settings: dict[str, Any]) -> dict[str, Any]:
         transcript_path = transcriber.transcribe_file(audio_path, progress=progress)
         transcript = json.loads(transcript_path.read_text(encoding="utf-8"))
     metadata = dict(transcript.get("asr_metadata") or {})
+    actual_model = str(
+        metadata.get("model")
+        or transcript.get("model")
+        or model
+    )
     result = {
         "ready": True,
         "engine": str(transcript.get("asr_engine") or transcriber.asr_engine),
         "backend": str(transcript.get("asr_backend") or transcriber.backend_description),
-        "model": model,
+        "model": actual_model,
+        "requested_model": model,
+        "model_path": str(metadata.get("model_path") or ""),
+        "provider": str(metadata.get("provider") or ""),
+        "precision": str(metadata.get("precision") or ""),
         "device": str(transcript.get("device") or transcriber.device),
         "elapsed_seconds": round(time.monotonic() - started, 3),
         "segment_count": len(transcript.get("segments") or []),
@@ -368,8 +427,10 @@ def _asr_self_test_result(settings: dict[str, Any]) -> dict[str, Any]:
         "fallback_stage": str(metadata.get("fallback_stage") or ""),
     }
     result["message"] = (
-        f"Transcription self-test passed with {result['backend']} in "
-        f"{result['elapsed_seconds']:.1f} seconds."
+        f"Local execution check passed with {actual_model} on "
+        f"{result['backend']} in "
+        f"{result['elapsed_seconds']:.1f} seconds. This generated-silence check "
+        "does not measure radio accuracy."
     )
     return result
 
@@ -378,6 +439,31 @@ def asr_self_test(payload: dict[str, Any] | None = None) -> int:
     settings = payload if payload is not None else json.load(sys.stdin)
     result = _asr_self_test_result(settings)
     emit({"type": "asr_self_test", "result": result, "message": result["message"]})
+    return 0
+
+
+def prepare_asr_model_command(payload: dict[str, Any] | None = None) -> int:
+    settings = payload if payload is not None else json.load(sys.stdin)
+
+    def progress(message: str) -> None:
+        emit(
+            {
+                "type": "progress",
+                "phase": "asr_model_preparation",
+                "current": 0,
+                "total": 0,
+                "message": str(message),
+            }
+        )
+
+    result = prepare_asr_model(settings, progress=progress)
+    emit(
+        {
+            "type": "asr_model_prepared",
+            "result": result,
+            "message": result["message"],
+        }
+    )
     return 0
 
 
@@ -1166,6 +1252,8 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("run")
     subparsers.add_parser("authenticate")
     subparsers.add_parser("diagnostics")
+    subparsers.add_parser("diagnostics-selected")
+    subparsers.add_parser("prepare-asr-model")
     subparsers.add_parser("asr-self-test")
     subparsers.add_parser("diarization-self-test")
     subparsers.add_parser("analysis-provider-diagnostics")
@@ -1243,6 +1331,10 @@ def main() -> int:
             return authenticate()
         if arguments.command == "diagnostics":
             return diagnostics()
+        if arguments.command == "diagnostics-selected":
+            return diagnostics(json.load(sys.stdin))
+        if arguments.command == "prepare-asr-model":
+            return prepare_asr_model_command()
         if arguments.command == "asr-self-test":
             return asr_self_test()
         if arguments.command == "diarization-self-test":

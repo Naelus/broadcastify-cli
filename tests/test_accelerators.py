@@ -1,6 +1,7 @@
 from pathlib import Path
 from types import SimpleNamespace
 
+import broadcastify_cli.accelerators as accelerator_module
 from broadcastify_cli.accelerators import (
     collect_accelerator_diagnostics,
     find_whisper_cpp,
@@ -161,6 +162,10 @@ def test_vulkan_profile_requires_vulkan_llama_backend(monkeypatch) -> None:
     )
     monkeypatch.setattr("broadcastify_cli.accelerators.find_whisper_cpp", lambda: "/bin/whisper-cli")
     monkeypatch.setattr(
+        "broadcastify_cli.accelerators.find_whisper_cpp_model_file",
+        lambda: "/models/ggml-tiny.en-q5_1.bin",
+    )
+    monkeypatch.setattr(
         "broadcastify_cli.accelerators.whisper_cpp_backends",
         lambda _path: ["cpu", "vulkan"],
     )
@@ -226,6 +231,77 @@ def test_explicit_missing_container_does_not_fall_back_to_native_profile(
     assert vulkan["transcription"] == "needs a Vulkan whisper.cpp build"
 
 
+def test_selected_whisper_cpp_diagnostics_do_not_use_an_unrelated_cached_model(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("HUGGINGFACE_TOKEN", "test-token")
+    monkeypatch.delenv("WHISPER_CPP_CONTAINER_IMAGE", raising=False)
+    monkeypatch.setattr(
+        "broadcastify_cli.accelerators._torch_diagnostics",
+        lambda: {"installed": True, "cuda_available": False, "cuda_devices": []},
+    )
+    monkeypatch.setattr(
+        "broadcastify_cli.accelerators._openvino_diagnostics",
+        lambda: {"runtime_installed": False, "genai_installed": False, "devices": []},
+    )
+    monkeypatch.setattr(
+        "broadcastify_cli.accelerators._onnx_diagnostics",
+        lambda: {"installed": False},
+    )
+    monkeypatch.setattr(
+        "broadcastify_cli.accelerators._windows_ml_diagnostics",
+        lambda: {"runtime_ready": False, "decode_ready": False},
+    )
+    monkeypatch.setattr(
+        "broadcastify_cli.accelerators.find_whisper_cpp",
+        lambda: "/bin/whisper-cli",
+    )
+    monkeypatch.setattr(
+        "broadcastify_cli.accelerators.find_whisper_cpp_model_file",
+        lambda: "/models/ggml-base.en-q5_1.bin",
+    )
+    monkeypatch.setattr(
+        "broadcastify_cli.accelerators.whisper_cpp_backends",
+        lambda _path: ["cpu", "vulkan"],
+    )
+    monkeypatch.setattr(
+        "broadcastify_cli.accelerators.inspect_llama_devices",
+        lambda _path: [{"id": "Vulkan0", "backend": "vulkan", "name": "GPU"}],
+    )
+    monkeypatch.setattr(
+        "broadcastify_cli.accelerators.module_available",
+        lambda _name: True,
+    )
+
+    diagnostics = collect_accelerator_diagnostics(
+        "/bin/llama-server",
+        selected_asr_engine="whisper.cpp",
+        selected_whisper_model=None,
+    )
+    vulkan = next(value for value in diagnostics["profiles"] if value["id"] == "vulkan")
+
+    assert diagnostics["whisper_cpp"]["model"] is None
+    assert vulkan["transcription_ready"] is False
+    assert vulkan["transcription"] == "Vulkan runtime detected; needs a matching GGML model"
+
+
+def test_selected_windows_ml_diagnostics_do_not_fall_back_to_any_managed_model(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        accelerator_module,
+        "find_windows_ml_model",
+        lambda: (_ for _ in ()).throw(AssertionError("unexpected global fallback")),
+    )
+    monkeypatch.setattr(accelerator_module, "find_windows_ml_helper", lambda: None)
+
+    diagnostics = accelerator_module._windows_ml_diagnostics(None)
+
+    assert diagnostics["model"] is None
+    assert diagnostics["runtime_ready"] is False
+    assert diagnostics["decode_ready"] is False
+
+
 def test_macos_profile_requires_and_reports_both_metal_engines(monkeypatch) -> None:
     monkeypatch.setattr("broadcastify_cli.accelerators.sys.platform", "darwin")
     monkeypatch.setenv("HUGGINGFACE_TOKEN", "test-token")
@@ -247,6 +323,10 @@ def test_macos_profile_requires_and_reports_both_metal_engines(monkeypatch) -> N
     )
     monkeypatch.setattr(
         "broadcastify_cli.accelerators.find_whisper_cpp", lambda: "/opt/whisper-cli"
+    )
+    monkeypatch.setattr(
+        "broadcastify_cli.accelerators.find_whisper_cpp_model_file",
+        lambda: "/models/ggml-tiny.en-q5_1.bin",
     )
     monkeypatch.setattr(
         "broadcastify_cli.accelerators.whisper_cpp_backends",

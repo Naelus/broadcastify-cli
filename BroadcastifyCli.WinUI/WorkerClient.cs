@@ -464,31 +464,16 @@ internal sealed class WorkerClient
 
     public async Task<JsonElement?> GetDiagnosticsAsync(
         CancellationToken cancellationToken,
-        string? asrEngine = null,
-        string? asrModelPath = null)
+        AsrSelfTestRequest? asrRequest = null)
     {
         JsonElement? diagnostics = null;
-        Dictionary<string, string>? environment = null;
-        if (!string.IsNullOrWhiteSpace(asrModelPath))
-        {
-            var variable = asrEngine switch
-            {
-                "windows-ml" => "WINDOWS_ML_WHISPER_MODEL_PATH",
-                "openvino" => "OPENVINO_WHISPER_MODEL_PATH",
-                "whisper.cpp" => "WHISPER_CPP_MODEL_PATH",
-                _ => null,
-            };
-            if (variable is not null)
-            {
-                environment = new Dictionary<string, string>
-                {
-                    [variable] = asrModelPath,
-                };
-            }
-        }
         await RunWorkerAsync(
-            ["-m", "broadcastify_cli.worker", "diagnostics"],
-            null,
+            [
+                "-m",
+                "broadcastify_cli.worker",
+                asrRequest is null ? "diagnostics" : "diagnostics-selected",
+            ],
+            asrRequest is null ? null : JsonSerializer.Serialize(asrRequest, JsonOptions),
             message =>
             {
                 if (message.TryGetProperty("type", out var type) && type.GetString() == "diagnostics")
@@ -496,8 +481,7 @@ internal sealed class WorkerClient
                     diagnostics = message.Clone();
                 }
             },
-            cancellationToken,
-            environment);
+            cancellationToken);
         return diagnostics;
     }
 
@@ -517,6 +501,29 @@ internal sealed class WorkerClient
                     && message.TryGetProperty("result", out var value))
                 {
                     result = value.Deserialize<AsrSelfTestStatus>(JsonOptions);
+                }
+                onMessage(message);
+            },
+            cancellationToken);
+        return result;
+    }
+
+    public async Task<AsrModelPreparationStatus?> PrepareAsrModelAsync(
+        AsrSelfTestRequest request,
+        Action<JsonElement> onMessage,
+        CancellationToken cancellationToken)
+    {
+        AsrModelPreparationStatus? result = null;
+        await RunWorkerAsync(
+            ["-m", "broadcastify_cli.worker", "prepare-asr-model"],
+            JsonSerializer.Serialize(request, JsonOptions),
+            message =>
+            {
+                if (message.TryGetProperty("type", out var type)
+                    && type.GetString() == "asr_model_prepared"
+                    && message.TryGetProperty("result", out var value))
+                {
+                    result = value.Deserialize<AsrModelPreparationStatus>(JsonOptions);
                 }
                 onMessage(message);
             },

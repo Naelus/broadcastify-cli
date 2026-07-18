@@ -3,11 +3,13 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
 import wave
 from dataclasses import dataclass, field
+from importlib import metadata as importlib_metadata
 from pathlib import Path
 from typing import Any, Callable, Iterator, Sequence
 
@@ -52,6 +54,20 @@ class AsrDependencyError(RuntimeError):
     pass
 
 
+WHISPER_MODEL_ALIASES = {
+    "large-v3-turbo": "turbo",
+}
+
+
+def normalize_whisper_model_name(model_name: str) -> str:
+    """Return one stable identity across the supported Whisper runtimes."""
+
+    normalized = str(model_name or "").strip().lower().replace("_", "-")
+    if normalized.endswith(".en"):
+        normalized = normalized[:-3]
+    return WHISPER_MODEL_ALIASES.get(normalized, normalized)
+
+
 def normalize_asr_engine(engine: str, device: str) -> str:
     normalized = (engine or "auto").strip().lower().replace("_", "-")
     if normalized == "auto":
@@ -94,7 +110,7 @@ WHISPER_CPP_MODELS = {
 
 
 def whisper_cpp_model_filename(model_name: str) -> str:
-    normalized = model_name.strip().lower().removesuffix(".en")
+    normalized = normalize_whisper_model_name(model_name)
     try:
         return WHISPER_CPP_MODELS[normalized]
     except KeyError as exc:
@@ -116,12 +132,18 @@ def _default_model_root() -> Path:
 def find_whisper_cpp_model(
     model_name: str, explicit_path: str | Path | None = None
 ) -> Path | None:
+    filename = whisper_cpp_model_filename(model_name)
     configured = explicit_path or os.getenv("WHISPER_CPP_MODEL_PATH")
     if configured:
         candidate = Path(configured).expanduser()
         if candidate.is_file():
+            if candidate.name.lower() != filename.lower():
+                raise AsrDependencyError(
+                    f"The selected Whisper model expects {filename}, but the configured "
+                    f"path points to {candidate.name}. Select the matching model or clear "
+                    "the custom path."
+                )
             return candidate.resolve()
-    filename = whisper_cpp_model_filename(model_name)
     roots = [
         _default_model_root() / "whisper.cpp",
         Path.cwd() / "models",
@@ -507,6 +529,8 @@ class WhisperCppAsr:
             engine="whisper.cpp",
             backend=self.backend,
             metadata={
+                "model": normalize_whisper_model_name(self.model_name),
+                "requested_model": self.model_name,
                 "system_info": system_info,
                 "model_path": str(self.model_path),
                 "available_backends": self.backends,
@@ -519,26 +543,213 @@ class WhisperCppAsr:
         )
 
 
-def find_windows_ml_model(
-    model_name: str, explicit_path: str | Path | None = None
-) -> Path | None:
-    configured = explicit_path or os.getenv("WINDOWS_ML_WHISPER_MODEL_PATH")
-    if configured:
-        candidate = Path(configured).expanduser()
-        if (candidate / "genai_config.json").is_file():
-            return candidate.resolve()
-    normalized = model_name.strip().lower()
-    roots = [
+WINDOWS_ML_MODEL_MANIFEST = "broadcastify-model.json"
+WINDOWS_ML_MODEL_SOURCES = {
+    "tiny": "openai/whisper-tiny",
+    "base": "openai/whisper-base",
+    "small": "openai/whisper-small",
+    "medium": "openai/whisper-medium",
+    "large-v3": "openai/whisper-large-v3",
+    "turbo": "openai/whisper-large-v3-turbo",
+    "distil-large-v3": "distil-whisper/distil-large-v3",
+}
+WINDOWS_ML_ARCHITECTURES = {
+    (384, 4, 4): "tiny",
+    (512, 6, 6): "base",
+    (768, 12, 12): "small",
+    (1024, 24, 24): "medium",
+    (1280, 32, 32): "large-v3",
+    (1280, 32, 4): "turbo",
+    (1280, 32, 2): "distil-large-v3",
+}
+
+
+@dataclass(frozen=True)
+class WindowsMlModelInfo:
+    path: Path
+    model: str
+    source_model: str
+    provider: str
+    precision: str
+    managed: bool
+
+
+def _read_json_object(path: Path) -> dict[str, Any]:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _windows_ml_identity_from_directory(path: Path) -> str:
+    names = (
+        "distil-large-v3",
+        "large-v3-turbo",
+        "large-v3",
+        "turbo",
+        "medium",
+        "small",
+        "base",
+        "tiny",
+    )
+    lowered = path.name.lower().replace("_", "-")
+    for name in names:
+        if re.search(rf"(?:^|-)({re.escape(name)})(?:-|$)", lowered):
+            return normalize_whisper_model_name(name)
+    return ""
+
+
+def _windows_ml_identity_from_config(config: dict[str, Any]) -> str:
+    model = config.get("model")
+    if not isinstance(model, dict):
+        return ""
+    encoder = model.get("encoder")
+    decoder = model.get("decoder")
+    if not isinstance(encoder, dict) or not isinstance(decoder, dict):
+        return ""
+    try:
+        signature = (
+            int(encoder["hidden_size"]),
+            int(encoder["num_hidden_layers"]),
+            int(decoder["num_hidden_layers"]),
+        )
+    except (KeyError, TypeError, ValueError):
+        return ""
+    return WINDOWS_ML_ARCHITECTURES.get(signature, "")
+
+
+def _windows_ml_provider(config: dict[str, Any]) -> str:
+    model = config.get("model")
+    if not isinstance(model, dict):
+        return "unknown"
+    providers: set[str] = set()
+    for component_name in ("encoder", "decoder"):
+        component = model.get(component_name)
+        if not isinstance(component, dict):
+            continue
+        session = component.get("session_options")
+        if not isinstance(session, dict):
+            continue
+        options = session.get("provider_options")
+        if not isinstance(options, list):
+            continue
+        for value in options:
+            if isinstance(value, dict):
+                providers.update(str(key).lower() for key in value)
+    if not providers:
+        return "cpu"
+    aliases = {"dml": "directml", "webgpu": "webgpu"}
+    return "+".join(sorted(aliases.get(value, value) for value in providers))
+
+
+def windows_ml_model_info(path: str | Path) -> WindowsMlModelInfo | None:
+    candidate = Path(path).expanduser()
+    config_path = candidate / "genai_config.json"
+    if not config_path.is_file():
+        return None
+    config = _read_json_object(config_path)
+    manifest = _read_json_object(candidate / WINDOWS_ML_MODEL_MANIFEST)
+    manifest_identity = normalize_whisper_model_name(str(manifest.get("model") or ""))
+    config_identity = _windows_ml_identity_from_config(config)
+    directory_identity = _windows_ml_identity_from_directory(candidate)
+    if manifest_identity and config_identity and manifest_identity != config_identity:
+        raise AsrDependencyError(
+            f"Windows ML model metadata in {candidate} says {manifest_identity}, "
+            f"but the ONNX graph dimensions identify {config_identity}. Rebuild this "
+            "managed model before using it."
+        )
+    identity = config_identity or manifest_identity or directory_identity
+    precision = str(manifest.get("precision") or "").strip().lower()
+    if not precision:
+        match = re.search(r"(?:^|-)(int4|bf16|fp16|fp32)(?:-|$)", candidate.name.lower())
+        precision = match.group(1) if match else "unknown"
+    source_model = str(manifest.get("source_model") or "").strip()
+    return WindowsMlModelInfo(
+        path=candidate.resolve(),
+        model=identity,
+        source_model=source_model,
+        provider=str(manifest.get("provider") or "").strip().lower()
+        or _windows_ml_provider(config),
+        precision=precision,
+        managed=bool(manifest),
+    )
+
+
+def _windows_ml_model_roots() -> list[Path]:
+    return [
         _default_model_root() / "windowsml",
         Path.cwd() / "models" / "windowsml",
         Path.cwd() / ".models" / "windowsml",
     ]
-    names = [normalized, f"whisper-{normalized}", f"whisper-{normalized}-int4"]
-    for root in roots:
-        for name in names:
-            candidate = root / name
-            if (candidate / "genai_config.json").is_file():
-                return candidate.resolve()
+
+
+def _windows_ml_model_candidates() -> Iterator[WindowsMlModelInfo]:
+    seen: set[Path] = set()
+    for root in _windows_ml_model_roots():
+        paths = [root]
+        try:
+            paths.extend(
+                path.parent
+                for path in root.glob("*/genai_config.json")
+                if path.is_file()
+            )
+        except OSError:
+            continue
+        for path in paths:
+            try:
+                resolved = path.resolve()
+            except OSError:
+                continue
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            info = windows_ml_model_info(resolved)
+            if info is not None:
+                yield info
+
+
+def _windows_ml_model_score(info: WindowsMlModelInfo) -> tuple[int, int, int, str]:
+    # CPU FP32 is the currently timed, dependable Windows ML path. Prefer it
+    # over an unverified provider graph while preserving deterministic choice.
+    return (
+        1 if info.provider == "cpu" else 0,
+        1 if info.precision == "fp32" else 0,
+        1 if info.managed else 0,
+        str(info.path).lower(),
+    )
+
+
+def find_windows_ml_model(
+    model_name: str, explicit_path: str | Path | None = None
+) -> Path | None:
+    configured = explicit_path or os.getenv("WINDOWS_ML_WHISPER_MODEL_PATH")
+    requested = normalize_whisper_model_name(model_name)
+    if configured:
+        candidate = Path(configured).expanduser()
+        info = windows_ml_model_info(candidate)
+        if info is None:
+            raise AsrDependencyError(
+                f"The configured Windows ML model path {candidate} does not contain "
+                "genai_config.json."
+            )
+        if not info.model:
+            raise AsrDependencyError(
+                f"The Windows ML model at {candidate} has no verifiable Whisper model "
+                f"identity. Rebuild it with this app or add {WINDOWS_ML_MODEL_MANIFEST}."
+            )
+        if info.model != requested:
+            raise AsrDependencyError(
+                f"The selected Whisper model is {requested}, but {candidate} contains "
+                f"{info.model}. Select {info.model}, clear the custom model path, or "
+                "prepare the selected model."
+            )
+        return info.path
+    compatible = [
+        info for info in _windows_ml_model_candidates() if info.model == requested
+    ]
+    if compatible:
+        return max(compatible, key=_windows_ml_model_score).path
     return None
 
 
@@ -556,7 +767,8 @@ class WindowsMlWhisperAsr:
     ) -> None:
         if os.name != "nt":
             raise AsrDependencyError("Windows ML transcription is available only on Windows.")
-        self.model_name = model_name
+        self.requested_model_name = model_name
+        self.model_name = normalize_whisper_model_name(model_name)
         self.helper = str(helper_path or find_windows_ml_helper() or "")
         if not self.helper or not Path(self.helper).is_file():
             raise AsrDependencyError(
@@ -566,12 +778,20 @@ class WindowsMlWhisperAsr:
         resolved_model = find_windows_ml_model(model_name, model_path)
         if resolved_model is None:
             raise AsrDependencyError(
-                "A compatible ONNX Runtime GenAI Whisper model was not found. Set "
-                "WINDOWS_ML_WHISPER_MODEL_PATH to a directory containing genai_config.json."
+                f"A compatible ONNX Runtime GenAI Whisper {self.model_name} model was "
+                "not found. Use Prepare model or set WINDOWS_ML_WHISPER_MODEL_PATH to "
+                "a matching directory containing genai_config.json."
             )
         self.model_path = resolved_model
+        model_info = windows_ml_model_info(resolved_model)
+        assert model_info is not None
+        self.model_name = model_info.model
+        self.model_source = model_info.source_model
+        self.model_provider = model_info.provider
+        self.model_precision = model_info.precision
         self.chunk_seconds = min(29, max(5, int(chunk_seconds)))
-        self.backend = "Windows ML (ONNX Runtime GenAI)"
+        provider = self.model_provider.upper() if self.model_provider == "cpu" else self.model_provider
+        self.backend = f"Windows ML (ONNX Runtime GenAI · {provider})"
 
     def transcribe(
         self,
@@ -659,6 +879,13 @@ class WindowsMlWhisperAsr:
             engine="windows-ml",
             backend=self.backend,
             metadata={
+                "model": self.model_name,
+                "requested_model": getattr(
+                    self, "requested_model_name", self.model_name
+                ),
+                "source_model": getattr(self, "model_source", ""),
+                "provider": getattr(self, "model_provider", ""),
+                "precision": getattr(self, "model_precision", ""),
                 "model_path": str(self.model_path),
                 "helper_path": self.helper,
                 "chunk_seconds": self.chunk_seconds,
@@ -713,6 +940,321 @@ class WindowsMlWhisperAsr:
             output.setsampwidth(2)
             output.setframerate(cls.SAMPLE_RATE)
             output.writeframes(block)
+
+
+def _model_directory_size(path: Path) -> int:
+    total = 0
+    try:
+        for candidate in path.rglob("*"):
+            if candidate.is_file():
+                total += candidate.stat().st_size
+    except OSError:
+        return total
+    return total
+
+
+def _onnxruntime_genai_version() -> str:
+    try:
+        return importlib_metadata.version("onnxruntime-genai")
+    except importlib_metadata.PackageNotFoundError:
+        return ""
+
+
+def prepare_windows_ml_model(
+    model_name: str,
+    *,
+    explicit_path: str | Path | None = None,
+    huggingface_token: str | None = None,
+    progress: Callable[[str], None] | None = None,
+) -> dict[str, Any]:
+    """Build a selected CPU Whisper graph after an explicit user action."""
+
+    requested = normalize_whisper_model_name(model_name)
+    try:
+        source_model = WINDOWS_ML_MODEL_SOURCES[requested]
+    except KeyError as exc:
+        raise ValueError(
+            f"Windows ML model preparation does not support {model_name!r}."
+        ) from exc
+
+    if explicit_path:
+        explicit = Path(explicit_path).expanduser()
+        if explicit.exists():
+            resolved = find_windows_ml_model(requested, explicit)
+            assert resolved is not None
+            info = windows_ml_model_info(resolved)
+            assert info is not None
+            return {
+                "ready": True,
+                "engine": "windows-ml",
+                "model": info.model,
+                "source_model": info.source_model or source_model,
+                "provider": info.provider,
+                "precision": info.precision,
+                "path": str(info.path),
+                "reused": True,
+                "bytes": _model_directory_size(info.path),
+                "message": (
+                    f"Reusing the matching Windows ML {info.model} model at {info.path}."
+                ),
+            }
+
+    compatible = [
+        info for info in _windows_ml_model_candidates() if info.model == requested
+    ]
+    if compatible:
+        info = max(compatible, key=_windows_ml_model_score)
+        return {
+            "ready": True,
+            "engine": "windows-ml",
+            "model": info.model,
+            "source_model": info.source_model or source_model,
+            "provider": info.provider,
+            "precision": info.precision,
+            "path": str(info.path),
+            "reused": True,
+            "bytes": _model_directory_size(info.path),
+            "message": (
+                f"Reusing the matching Windows ML {info.model} model at {info.path}."
+            ),
+        }
+
+    try:
+        import onnxruntime_genai.models.builder  # noqa: F401
+    except ModuleNotFoundError as exc:
+        raise AsrDependencyError(
+            'Windows ML model preparation needs the optional builder. Install it with '
+            '`pip install -e ".[windowsml]"` and try again.'
+        ) from exc
+
+    target_root = _default_model_root() / "windowsml"
+    target = target_root / f"whisper-{requested}-fp32-cpu"
+    if target.exists():
+        raise AsrDependencyError(
+            f"The managed target {target} already exists but is not a compatible, "
+            "complete model. Move it aside and run Prepare model again."
+        )
+    target_root.mkdir(parents=True, exist_ok=True)
+    staging_root = Path(
+        tempfile.mkdtemp(prefix=f".whisper-{requested}-build-", dir=target_root)
+    )
+    staging = staging_root / "model"
+    cache = _default_model_root() / "downloads"
+    cache.mkdir(parents=True, exist_ok=True)
+    if progress:
+        progress(
+            f"Building {source_model} as a Windows ML CPU FP32 graph. "
+            "This explicit first-time step may download several files."
+        )
+    environment = os.environ.copy()
+    if huggingface_token:
+        environment["HF_TOKEN"] = huggingface_token
+    arguments = [
+        sys.executable,
+        "-m",
+        "onnxruntime_genai.models.builder",
+        "-m",
+        source_model,
+        "-o",
+        str(staging),
+        "-p",
+        "fp32",
+        "-e",
+        "cpu",
+        "-c",
+        str(cache),
+    ]
+    if not huggingface_token:
+        # ORT GenAI's builder currently defaults its hf_token option to True,
+        # which rejects even public models when no saved login exists.
+        arguments.extend(["--extra_options", "hf_token=false"])
+    lines: list[str] = []
+    last_percent = -10
+    last_phase = ""
+    try:
+        process = subprocess.Popen(
+            arguments,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            env=environment,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        )
+        assert process.stdout is not None
+        for raw_line in process.stdout:
+            line = re.sub(r"\x1b\[[0-9;?]*[ -/]*[@-~]", "", raw_line).strip()
+            if not line:
+                continue
+            if huggingface_token:
+                line = line.replace(huggingface_token, "[redacted]")
+            lines.append(line)
+            if progress:
+                percentage = re.search(r"\b(\d{1,3})%", line)
+                if percentage:
+                    value = min(100, int(percentage.group(1)))
+                    if value >= last_percent + 10 or (
+                        value == 100 and last_percent < 100
+                    ):
+                        last_percent = value
+                        progress(f"Windows ML model export: {value}%")
+                else:
+                    phase = next(
+                        (
+                            marker
+                            for marker in (
+                                "Downloading",
+                                "Loading",
+                                "Saving ONNX model",
+                                "Saving processing files",
+                            )
+                            if marker.lower() in line.lower()
+                        ),
+                        "",
+                    )
+                    if phase and phase != last_phase:
+                        last_phase = phase
+                        progress(line[:500])
+        return_code = process.wait()
+        info = windows_ml_model_info(staging)
+        if return_code != 0 or info is None:
+            detail = "\n".join(lines[-12:])
+            raise RuntimeError(
+                detail
+                or f"Windows ML model builder exited with code {return_code}."
+            )
+        if info.model and info.model != requested:
+            raise RuntimeError(
+                f"The builder returned {info.model}, not the requested {requested} graph."
+            )
+        manifest = {
+            "schema_version": 1,
+            "engine": "windows-ml",
+            "model": requested,
+            "source_model": source_model,
+            "provider": "cpu",
+            "precision": "fp32",
+            "builder": "onnxruntime-genai",
+            "builder_version": _onnxruntime_genai_version(),
+        }
+        (staging / WINDOWS_ML_MODEL_MANIFEST).write_text(
+            json.dumps(manifest, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        staging.replace(target)
+    except Exception:
+        shutil.rmtree(staging_root, ignore_errors=True)
+        raise
+    shutil.rmtree(staging_root, ignore_errors=True)
+    info = windows_ml_model_info(target)
+    if info is None or info.model != requested:
+        raise RuntimeError("The prepared Windows ML model failed final identity validation.")
+    return {
+        "ready": True,
+        "engine": "windows-ml",
+        "model": info.model,
+        "source_model": info.source_model,
+        "provider": info.provider,
+        "precision": info.precision,
+        "path": str(info.path),
+        "reused": False,
+        "bytes": _model_directory_size(info.path),
+        "message": (
+            f"Prepared Windows ML {info.model} as {info.precision.upper()} on "
+            f"{info.provider.upper()} at {info.path}."
+        ),
+    }
+
+
+def prepare_whisper_cpp_model(
+    model_name: str,
+    *,
+    explicit_path: str | Path | None = None,
+    huggingface_token: str | None = None,
+    progress: Callable[[str], None] | None = None,
+) -> dict[str, Any]:
+    """Download one official public GGML file after an explicit user action."""
+
+    requested = normalize_whisper_model_name(model_name)
+    filename = whisper_cpp_model_filename(requested)
+    existing = find_whisper_cpp_model(requested, explicit_path)
+    if existing:
+        return {
+            "ready": True,
+            "engine": "whisper.cpp",
+            "model": requested,
+            "source_model": "ggerganov/whisper.cpp",
+            "provider": "local",
+            "precision": "ggml-quantized",
+            "path": str(existing),
+            "reused": True,
+            "bytes": existing.stat().st_size,
+            "message": f"Reusing the matching whisper.cpp model at {existing}.",
+        }
+    try:
+        from huggingface_hub import hf_hub_download
+    except ModuleNotFoundError as exc:
+        raise AsrDependencyError(
+            'Managed whisper.cpp downloads need huggingface-hub. Install `.[openvino]` '
+            "or `.[windowsml]`, then try again."
+        ) from exc
+    target_root = _default_model_root() / "whisper.cpp"
+    target_root.mkdir(parents=True, exist_ok=True)
+    if progress:
+        progress(
+            f"Downloading public whisper.cpp model {filename} from "
+            "ggerganov/whisper.cpp. The runtime binary is kept separate."
+        )
+    downloaded = Path(
+        hf_hub_download(
+            repo_id="ggerganov/whisper.cpp",
+            filename=filename,
+            local_dir=target_root,
+            token=huggingface_token or None,
+        )
+    )
+    target = target_root / filename
+    if not target.is_file() and downloaded.is_file():
+        target = downloaded
+    if not target.is_file() or target.stat().st_size <= 0:
+        raise RuntimeError("The whisper.cpp model download did not produce a usable file.")
+    return {
+        "ready": True,
+        "engine": "whisper.cpp",
+        "model": requested,
+        "source_model": "ggerganov/whisper.cpp",
+        "provider": "local",
+        "precision": "ggml-quantized",
+        "path": str(target.resolve()),
+        "reused": False,
+        "bytes": target.stat().st_size,
+        "message": f"Downloaded whisper.cpp {requested} model to {target.resolve()}.",
+    }
+
+
+def prepare_asr_model(
+    settings: dict[str, Any],
+    progress: Callable[[str], None] | None = None,
+) -> dict[str, Any]:
+    model = str(settings.get("model") or "turbo")
+    engine = normalize_asr_engine(
+        str(settings.get("asr_engine") or "auto"),
+        str(settings.get("device") or "auto"),
+    )
+    options = {
+        "explicit_path": settings.get("asr_model_path") or None,
+        "huggingface_token": str(settings.get("huggingface_token") or "") or None,
+        "progress": progress,
+    }
+    if engine == "windows-ml":
+        return prepare_windows_ml_model(model, **options)
+    if engine == "whisper.cpp":
+        return prepare_whisper_cpp_model(model, **options)
+    raise ValueError(
+        f"{engine} manages its selected model during Test engine; "
+        "a separate Prepare model step is not required."
+    )
 
 
 OPENVINO_MODELS = {
@@ -887,6 +1429,10 @@ class OpenVinoWhisperAsr:
             engine="openvino",
             backend=getattr(self, "backend", f"OpenVINO {self.device}"),
             metadata={
+                "model": normalize_whisper_model_name(
+                    getattr(self, "model_name", self.model_id)
+                ),
+                "requested_model": getattr(self, "model_name", self.model_id),
                 "model_id": self.model_id,
                 "model_path": str(self.model_path),
                 "requested_device": getattr(self, "requested_device", self.device),

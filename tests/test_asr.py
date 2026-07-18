@@ -1,15 +1,21 @@
 import io
 import json
+import sys
 from pathlib import Path
+from types import ModuleType
 from types import SimpleNamespace
 
 import pytest
 
 from broadcastify_cli.asr import (
+    AsrDependencyError,
     OpenVinoWhisperAsr,
     WhisperCppAsr,
     WindowsMlWhisperAsr,
+    find_windows_ml_model,
     normalize_asr_engine,
+    prepare_windows_ml_model,
+    windows_ml_model_info,
 )
 
 
@@ -51,6 +57,145 @@ def test_portable_model_aliases_accept_web_ui_english_suffix(tmp_path: Path) -> 
 
     assert whisper_cpp_model_filename("tiny.en") == "ggml-tiny.en-q5_1.bin"
     assert whisper_cpp_model_filename("medium.en") == "ggml-medium.en-q5_0.bin"
+
+
+def _write_windows_ml_model(
+    path: Path,
+    *,
+    hidden_size: int = 384,
+    encoder_layers: int = 4,
+    decoder_layers: int = 4,
+    provider: str = "cpu",
+) -> None:
+    path.mkdir(parents=True)
+    provider_options = [] if provider == "cpu" else [{provider: {}}]
+    component = {
+        "session_options": {"provider_options": provider_options},
+        "hidden_size": hidden_size,
+        "num_hidden_layers": encoder_layers,
+    }
+    (path / "genai_config.json").write_text(
+        json.dumps(
+            {
+                "model": {
+                    "encoder": component,
+                    "decoder": {
+                        **component,
+                        "num_hidden_layers": decoder_layers,
+                    },
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_windows_ml_discovers_suffixed_managed_model_and_infers_identity(
+    monkeypatch, tmp_path: Path
+) -> None:
+    model_root = tmp_path / "managed"
+    model = model_root / "windowsml" / "whisper-tiny-fp32-cpu"
+    _write_windows_ml_model(model)
+    monkeypatch.setenv("BROADCASTIFY_MODEL_DIR", str(model_root))
+    monkeypatch.delenv("WINDOWS_ML_WHISPER_MODEL_PATH", raising=False)
+    monkeypatch.chdir(tmp_path)
+
+    resolved = find_windows_ml_model("tiny.en")
+    info = windows_ml_model_info(model)
+
+    assert resolved == model.resolve()
+    assert info is not None
+    assert info.model == "tiny"
+    assert info.provider == "cpu"
+    assert info.precision == "fp32"
+
+
+def test_windows_ml_rejects_explicit_model_identity_mismatch(tmp_path: Path) -> None:
+    model = tmp_path / "whisper-tiny-fp32-cpu"
+    _write_windows_ml_model(model)
+
+    with pytest.raises(AsrDependencyError, match="contains tiny"):
+        find_windows_ml_model("turbo", model)
+
+
+def test_windows_ml_preparation_reuses_matching_managed_model(
+    monkeypatch, tmp_path: Path
+) -> None:
+    model_root = tmp_path / "managed"
+    model = model_root / "windowsml" / "whisper-tiny-fp32-cpu"
+    _write_windows_ml_model(model)
+    monkeypatch.setenv("BROADCASTIFY_MODEL_DIR", str(model_root))
+    monkeypatch.delenv("WINDOWS_ML_WHISPER_MODEL_PATH", raising=False)
+    monkeypatch.chdir(tmp_path)
+
+    result = prepare_windows_ml_model("tiny")
+
+    assert result["ready"] is True
+    assert result["reused"] is True
+    assert result["model"] == "tiny"
+    assert result["path"] == str(model.resolve())
+
+
+def test_windows_ml_fresh_public_build_disables_missing_token_requirement(
+    monkeypatch, tmp_path: Path
+) -> None:
+    model_root = tmp_path / "managed"
+    monkeypatch.setenv("BROADCASTIFY_MODEL_DIR", str(model_root))
+    monkeypatch.delenv("WINDOWS_ML_WHISPER_MODEL_PATH", raising=False)
+    monkeypatch.chdir(tmp_path)
+    package = ModuleType("onnxruntime_genai")
+    package.__path__ = []  # type: ignore[attr-defined]
+    models = ModuleType("onnxruntime_genai.models")
+    models.__path__ = []  # type: ignore[attr-defined]
+    builder = ModuleType("onnxruntime_genai.models.builder")
+    monkeypatch.setitem(sys.modules, "onnxruntime_genai", package)
+    monkeypatch.setitem(sys.modules, "onnxruntime_genai.models", models)
+    monkeypatch.setitem(sys.modules, "onnxruntime_genai.models.builder", builder)
+    invoked: list[str] = []
+
+    class FakeProcess:
+        def __init__(self, arguments, **_kwargs) -> None:
+            invoked.extend(arguments)
+            output = Path(arguments[arguments.index("-o") + 1])
+            _write_windows_ml_model(output)
+            self.stdout = io.StringIO("builder complete\n")
+
+        @staticmethod
+        def wait() -> int:
+            return 0
+
+    monkeypatch.setattr("broadcastify_cli.asr.subprocess.Popen", FakeProcess)
+
+    result = prepare_windows_ml_model("tiny")
+
+    assert result["ready"] is True
+    assert result["reused"] is False
+    assert invoked[invoked.index("--extra_options") + 1] == "hf_token=false"
+    manifest = json.loads(
+        (
+            Path(result["path"])
+            / "broadcastify-model.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert manifest["model"] == "tiny"
+    assert manifest["provider"] == "cpu"
+
+
+def test_whisper_cpp_rejects_renamed_or_mismatched_explicit_model(
+    tmp_path: Path,
+) -> None:
+    executable = tmp_path / "whisper-cli"
+    executable.write_bytes(b"binary")
+    model = tmp_path / "ggml-base.en-q5_1.bin"
+    model.write_bytes(b"model")
+
+    with pytest.raises(AsrDependencyError, match="expects ggml-tiny"):
+        WhisperCppAsr(
+            "tiny",
+            device="cpu",
+            executable=executable,
+            model_path=model,
+        )
 
 
 @pytest.mark.parametrize(

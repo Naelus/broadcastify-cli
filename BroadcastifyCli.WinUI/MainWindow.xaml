@@ -803,8 +803,11 @@
                                                                    TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                                     </StackPanel>
                                                     <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Top">
-                                                        <Button x:Name="AsrSelfTestButton" Content="Test transcription"
-                                                                Click="AsrSelfTest_Click" ToolTipService.ToolTip="Decode local synthetic audio. A missing managed model may download." />
+                                                        <Button x:Name="AsrPrepareButton" Content="Prepare &amp; test model"
+                                                                Visibility="Collapsed" Click="AsrPrepare_Click"
+                                                                ToolTipService.ToolTip="Explicitly acquire the selected portable model, save its managed path, then prove a local decode." />
+                                                        <Button x:Name="AsrSelfTestButton" Content="Test engine"
+                                                                Click="AsrSelfTest_Click" ToolTipService.ToolTip="Run a local execution check on generated silence. This proves the runtime path, not radio accuracy." />
                                                         <Button x:Name="DiarizationSelfTestButton" Content="Test speakers"
                                                                 Click="DiarizationSelfTest_Click" ToolTipService.ToolTip="Run pyannote on generated local audio. The first explicit test may download its model." />
                                                     </StackPanel>
@@ -859,7 +862,7 @@
                                                              PasswordChanged="HuggingFaceToken_Changed" />
                                                 <InfoBar x:Name="AsrSelfTestInfoBar" IsOpen="True" IsClosable="False" Severity="Informational"
                                                          Title="Selected transcription engine not tested this session"
-                                                         Message="Test engine decodes local synthetic audio and may download the selected managed model." />
+                                                         Message="The engine check decodes generated silence and may download a managed model. It proves local execution, not radio-word accuracy." />
                                                 <InfoBar x:Name="DiarizationSelfTestInfoBar" IsOpen="True" IsClosable="False" Severity="Informational"
                                                          Title="Speaker-label engine not tested this session"
                                                          Message="The explicit test runs pyannote on generated audio and may download its model once." />

@@ -194,12 +194,41 @@ def find_windows_ml_model() -> str | None:
     configured = os.getenv("WINDOWS_ML_WHISPER_MODEL_PATH")
     if configured and (Path(configured) / "genai_config.json").is_file():
         return str(Path(configured).resolve())
+    local_app_data = os.getenv("LOCALAPPDATA")
+    managed_root = (
+        Path(local_app_data) / "Broadcastify Desktop" / "models"
+        if local_app_data
+        else Path.home() / ".cache" / "broadcastify-desktop" / "models"
+    )
+    roots = [
+        managed_root / "windowsml",
+        Path.cwd() / "models" / "windowsml",
+        Path.cwd() / ".models" / "windowsml",
+    ]
+    for root in roots:
+        try:
+            candidates = sorted(root.glob("*/genai_config.json"))
+        except OSError:
+            continue
+        if candidates:
+            return str(candidates[0].parent.resolve())
     return None
 
 
-def _windows_ml_diagnostics() -> dict[str, Any]:
+_MODEL_PATH_UNSET = object()
+
+
+def _windows_ml_diagnostics(
+    model_path: str | Path | None | object = _MODEL_PATH_UNSET,
+) -> dict[str, Any]:
     helper = find_windows_ml_helper()
-    model = find_windows_ml_model()
+    model = (
+        find_windows_ml_model()
+        if model_path is _MODEL_PATH_UNSET
+        else str(model_path)
+        if model_path
+        else None
+    )
     value: dict[str, Any] = {
         "helper": helper,
         "model": model,
@@ -230,6 +259,33 @@ def _windows_ml_diagnostics() -> dict[str, Any]:
     except (OSError, subprocess.SubprocessError, json.JSONDecodeError) as exc:
         value["error"] = str(exc)
     return value
+
+
+def find_whisper_cpp_model_file() -> str | None:
+    configured = os.getenv("WHISPER_CPP_MODEL_PATH")
+    if configured and Path(configured).is_file():
+        return str(Path(configured).resolve())
+    local_app_data = os.getenv("LOCALAPPDATA")
+    managed_root = (
+        Path(local_app_data) / "Broadcastify Desktop" / "models"
+        if local_app_data
+        else Path.home() / ".cache" / "broadcastify-desktop" / "models"
+    )
+    roots = [
+        managed_root / "whisper.cpp",
+        Path.cwd() / "models",
+        Path.cwd() / "whisper.cpp" / "models",
+    ]
+    for root in roots:
+        try:
+            candidates = sorted(
+                path for path in root.glob("ggml-*.bin") if path.is_file()
+            )
+        except OSError:
+            continue
+        if candidates:
+            return str(candidates[0].resolve())
+    return None
 
 
 def whisper_cpp_backends(executable: str | Path | None) -> list[str]:
@@ -409,7 +465,7 @@ def _profile(
     transcription_ready: bool | None = None,
     diarization_ready: bool | None = None,
     analysis_ready: bool | None = None,
-    transcription_setup: str = "Configure a supported transcription engine, then run Test transcription.",
+    transcription_setup: str = "Configure a supported transcription engine, then run Test engine.",
     diarization_setup: str = "Configure pyannote Community-1, then run Test speakers.",
     analysis_setup: str = "Configure llama.cpp or another analysis provider, then run Test analysis.",
 ) -> dict[str, Any]:
@@ -422,7 +478,7 @@ def _profile(
     analysis_configured = configured if analysis_ready is None else analysis_ready
     next_steps = [
         (
-            "Run Verify profile (or Test transcription) to prove this exact engine, model, and device."
+            "Run Verify profile (or Test engine) to prove this exact engine, model, and device."
             if transcription_configured
             else transcription_setup
         ),
@@ -456,12 +512,28 @@ def _profile(
     }
 
 
-def collect_accelerator_diagnostics(llama_server: str | Path | None) -> dict[str, Any]:
+def collect_accelerator_diagnostics(
+    llama_server: str | Path | None,
+    *,
+    selected_asr_engine: str | None = None,
+    selected_whisper_model: str | Path | None = None,
+    selected_windows_model: str | Path | None = None,
+) -> dict[str, Any]:
     torch = _torch_diagnostics()
     openvino = _openvino_diagnostics()
     onnx = _onnx_diagnostics()
-    windows_ml = _windows_ml_diagnostics()
+    windows_ml = (
+        _windows_ml_diagnostics(selected_windows_model)
+        if selected_asr_engine == "windows-ml"
+        else _windows_ml_diagnostics()
+    )
     whisper_executable = find_whisper_cpp()
+    if selected_asr_engine == "whisper.cpp":
+        whisper_model = (
+            str(selected_whisper_model) if selected_whisper_model else None
+        )
+    else:
+        whisper_model = find_whisper_cpp_model_file()
     whisper_backends = whisper_cpp_backends(whisper_executable)
     whisper_container = whisper_cpp_container_diagnostics()
     llama_devices = inspect_llama_devices(llama_server)
@@ -475,14 +547,23 @@ def collect_accelerator_diagnostics(llama_server: str | Path | None) -> dict[str
 
     cuda_ready = bool(torch["cuda_available"] and faster_whisper_ready)
     if whisper_container["configured"]:
-        vulkan_asr = bool(
+        vulkan_runtime = bool(
             whisper_container["ready"]
             and whisper_container["backend"] == "vulkan"
         )
+        vulkan_asr = bool(
+            vulkan_runtime and whisper_model
+        )
     else:
-        vulkan_asr = bool(whisper_executable and "vulkan" in whisper_backends)
+        vulkan_runtime = bool(
+            whisper_executable and "vulkan" in whisper_backends
+        )
+        vulkan_asr = bool(
+            vulkan_runtime and whisper_model
+        )
     vulkan_llm = "vulkan" in llama_backends
-    metal_asr = bool(whisper_executable and "metal" in whisper_backends)
+    metal_runtime = bool(whisper_executable and "metal" in whisper_backends)
+    metal_asr = bool(metal_runtime and whisper_model)
     metal_llm = "metal" in llama_backends
     openvino_devices = [str(value).upper() for value in openvino.get("devices", [])]
     openvino_device_names = [
@@ -573,7 +654,13 @@ def collect_accelerator_diagnostics(llama_server: str | Path | None) -> dict[str
             "vulkan",
             "Cross-vendor Vulkan",
             vulkan_asr and pyannote_ready and vulkan_llm,
-            "whisper.cpp / Vulkan" if vulkan_asr else "needs a Vulkan whisper.cpp build",
+            (
+                "whisper.cpp / Vulkan"
+                if vulkan_asr
+                else "Vulkan runtime detected; needs a matching GGML model"
+                if vulkan_runtime
+                else "needs a Vulkan whisper.cpp build"
+            ),
             cpu_diarization,
             "llama.cpp / Vulkan" if vulkan_llm else "needs a Vulkan llama.cpp build",
             "Diarization intentionally falls back to CPU because pyannote has no Vulkan backend.",
@@ -581,8 +668,8 @@ def collect_accelerator_diagnostics(llama_server: str | Path | None) -> dict[str
             diarization_ready=pyannote_ready,
             analysis_ready=vulkan_llm,
             transcription_setup=(
-                "Configure a Vulkan-enabled whisper-cli and a local GGML Whisper model "
-                "with WHISPER_CPP_PATH and WHISPER_CPP_MODEL_PATH."
+                "Configure a Vulkan-enabled whisper-cli, then use Download & test model "
+                "or set WHISPER_CPP_MODEL_PATH to a matching local GGML file."
             ),
             diarization_setup=diarization_setup,
             analysis_setup=(
@@ -613,7 +700,7 @@ def collect_accelerator_diagnostics(llama_server: str | Path | None) -> dict[str
             analysis_ready=llama_ready,
             transcription_setup=(
                 'Install this app\'s OpenVINO optional dependencies (`pip install -e ".[openvino]"`), '
-                "then rerun the check and Test transcription."
+                "then rerun the check and Test engine."
             ),
             diarization_setup=diarization_setup,
             analysis_setup="Install llama-server or configure LLAMA_SERVER_PATH.",
@@ -644,8 +731,8 @@ def collect_accelerator_diagnostics(llama_server: str | Path | None) -> dict[str
                 diarization_ready=pyannote_ready,
                 analysis_ready=llama_ready,
                 transcription_setup=(
-                    "Use a build containing the Windows ML helper and set a compatible ONNX "
-                    "Whisper model path; the profile unlocks only after its decode probe passes."
+                    "Use a build containing the Windows ML helper, then choose Build & test "
+                    "model or set a compatible ONNX Whisper model path."
                 ),
                 diarization_setup=diarization_setup,
                 analysis_setup="Install llama-server or configure LLAMA_SERVER_PATH.",
@@ -657,7 +744,13 @@ def collect_accelerator_diagnostics(llama_server: str | Path | None) -> dict[str
                 "metal",
                 "Apple Metal",
                 metal_asr and pyannote_ready and metal_llm,
-                "whisper.cpp / Metal" if metal_asr else "needs a native ggml-metal whisper.cpp build",
+                (
+                    "whisper.cpp / Metal"
+                    if metal_asr
+                    else "Metal runtime detected; needs a matching GGML model"
+                    if metal_runtime
+                    else "needs a native ggml-metal whisper.cpp build"
+                ),
                 cpu_diarization,
                 "llama.cpp / Metal" if metal_llm else "needs a Metal llama.cpp build",
                 "Apple GPU acceleration is native-only; pyannote diarization intentionally uses CPU.",
@@ -709,6 +802,7 @@ def collect_accelerator_diagnostics(llama_server: str | Path | None) -> dict[str
         },
         "whisper_cpp": {
             "executable": whisper_executable,
+            "model": whisper_model,
             "backends": whisper_backends,
             "container": whisper_container,
         },

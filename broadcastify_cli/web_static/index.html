@@ -236,7 +236,7 @@
                 <div class="notice" id="profileSelfTestNotice"><strong>Profile not verified this session</strong><span>One explicit check runs transcription, speaker labels, and analysis in sequence using generated input. Missing managed models may download; archive quota is never used.</span></div>
               </div>
               <div class="card padded">
-                <div class="section-heading"><div><h2>Transcription &amp; speakers</h2><p>Automatic keeps the tested Windows behavior and chooses safe fallbacks elsewhere.</p></div><div class="button-row"><button class="button secondary small" id="asrSelfTestButton">Test transcription</button><button class="button secondary small" id="diarizationSelfTestButton">Test speakers</button></div></div>
+                <div class="section-heading"><div><h2>Transcription &amp; speakers</h2><p>Automatic keeps the tested Windows behavior and chooses safe fallbacks elsewhere.</p></div><div class="button-row"><button class="button secondary small" id="asrPrepareButton" hidden>Prepare &amp; test model</button><button class="button secondary small" id="asrSelfTestButton" title="Runs a generated-silence execution check; it does not measure radio accuracy.">Test engine</button><button class="button secondary small" id="diarizationSelfTestButton">Test speakers</button></div></div>
                 <div class="form-grid two">
                   <label class="full-row"><span>Hardware profile</span><select id="settingHardwareProfile"><option value="auto">Automatic (recommended)</option><option value="cuda">NVIDIA CUDA</option><option value="vulkan">Cross-vendor Vulkan</option><option value="openvino">OpenVINO</option><option value="metal">Apple Metal</option><option value="windowsml">Windows ML</option><option value="cpu">CPU only</option><option value="custom">Custom overrides</option></select><small>Applies a compatible transcription, diarization, and analysis-device starting point.</small></label>
                   <label><span>Whisper model</span><select id="settingWhisperModel"><option>turbo</option><option>distil-large-v3</option><option>large-v3</option><option>medium.en</option><option>small.en</option><option>base.en</option><option>tiny.en</option></select></label>
@@ -247,7 +247,7 @@
                   <label><span>Optional ASR model path</span><input id="settingAsrModelPath" placeholder="Use automatic model discovery"></label>
                 </div>
                 <label class="secret-field"><span>Hugging Face token for this tab</span><input id="settingHuggingFaceToken" type="password" autocomplete="off" placeholder="Or set HUGGINGFACE_TOKEN in .env"></label>
-                <div class="notice" id="asrSelfTestNotice"><strong>Not tested this session</strong><span>Testing decodes local synthetic audio and may download the selected managed model.</span></div>
+                <div class="notice" id="asrSelfTestNotice"><strong>Not tested this session</strong><span>The engine check decodes generated silence and may download a managed model. It proves local execution, not radio-word accuracy.</span></div>
                 <div class="notice" id="diarizationSelfTestNotice"><strong>Speakers not tested this session</strong><span>The explicit test runs pyannote on generated audio and may download its model once.</span></div>
               </div>
             </div>
@@ -303,6 +303,6 @@
   </aside>
 
   <div class="toast-region" id="toastRegion" aria-live="polite"></div>
-  <script src="/static/app.js?v=20" defer></script>
+  <script src="/static/app.js?v=21" defer></script>
 </body>
 </html>

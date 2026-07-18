@@ -165,6 +165,7 @@ def test_external_asr_records_actual_fallback_backend(tmp_path: Path) -> None:
                 engine="openvino",
                 backend="OpenVINO CPU (fallback from GPU)",
                 metadata={
+                    "model": "tiny",
                     "fallback_reason": "GPU execution failed",
                     "fallback_stage": "generation",
                 },
@@ -173,7 +174,7 @@ def test_external_asr_records_actual_fallback_backend(tmp_path: Path) -> None:
     transcriber = object.__new__(LocalTranscriber)
     transcriber._asr = None
     transcriber._external_asr = FakeExternalAsr()
-    transcriber.model_name = "tiny"
+    transcriber.model_name = "tiny.en"
     transcriber.asr_engine = "openvino"
     transcriber.backend_description = "OpenVINO GPU"
     transcriber.device = "openvino-gpu"
@@ -185,7 +186,14 @@ def test_external_asr_records_actual_fallback_backend(tmp_path: Path) -> None:
     payload = json.loads(transcript_path.read_text(encoding="utf-8"))
 
     assert payload["asr_backend"] == "OpenVINO CPU (fallback from GPU)"
+    assert payload["model"] == "tiny"
+    assert payload["requested_model"] == "tiny.en"
     assert payload["asr_metadata"]["fallback_stage"] == "generation"
+    assert transcriber._existing_transcript_is_current(
+        audio,
+        transcript_path,
+        transcript_path.with_suffix(".txt"),
+    )
 
 
 def test_diarization_turn_cache_is_parameter_and_audio_specific(tmp_path: Path) -> None:
