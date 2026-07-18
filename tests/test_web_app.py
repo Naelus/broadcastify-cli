@@ -100,12 +100,13 @@ def test_loopback_web_app_serves_library_transcript_and_media(tmp_path: Path) ->
         assert cookie.startswith("radio_archive_session=")
         assert token_match is not None
         assert b'id="areaPublicSafetyOnly"' in body
-        assert b'/static/app.js?v=23' in body
+        assert b'/static/app.js?v=24' in body
         assert b'value="qwen3-asr"' in body
         assert b'qwen3-asr-0.6b-int8' in body
         assert b'id="settingAnalysisDevice"' in body
         assert b'id="analysisSelfTestButton"' in body
         assert b'id="profileSelfTestButton"' in body
+        assert b'id="profileNextActionButton"' in body
         assert b'id="setupProfileSelfTestButton"' in body
         assert b'id="profileSelfTestNotice"' in body
         assert b'id="settingsSectionTabs"' in body
@@ -119,7 +120,7 @@ def test_loopback_web_app_serves_library_transcript_and_media(tmp_path: Path) ->
         assert response.getheader("Content-Type") == "image/svg+xml"
         assert b"<svg" in body
 
-        response, body = _request(connection, "GET", "/static/app.js?v=23")
+        response, body = _request(connection, "GET", "/static/app.js?v=24")
         assert response.status == 200
         assert b"areaSelectedStoryIndex" in body
         assert b"data-area-story-index" in body
@@ -129,6 +130,8 @@ def test_loopback_web_app_serves_library_transcript_and_media(tmp_path: Path) ->
         assert b'profile-self-test' in body
         assert b"analysisSelfTest" in body
         assert b"function runProfileSelfTest" in body
+        assert b"function runProfileNextAction" in body
+        assert b"function currentProfileAction" in body
         assert b'setupProfileSelfTestButton").addEventListener' in body
         assert b"function syncPlatformProfileOptions" in body
         assert b"whisper.cpp has no managed distil-large-v3 mapping" in body

@@ -468,6 +468,9 @@ def _profile(
     transcription_setup: str = "Configure a supported transcription engine, then run Test engine.",
     diarization_setup: str = "Configure pyannote Community-1, then run Test speakers.",
     analysis_setup: str = "Configure llama.cpp or another analysis provider, then run Test analysis.",
+    transcription_action: dict[str, str] | None = None,
+    diarization_action: dict[str, str] | None = None,
+    analysis_action: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     transcription_configured = (
         configured if transcription_ready is None else transcription_ready
@@ -493,6 +496,37 @@ def _profile(
             else analysis_setup
         ),
     ]
+    if not transcription_configured:
+        next_action = transcription_action or {
+            "stage": "transcription",
+            "kind": "configure-transcription",
+            "label": "Set up transcription",
+            "message": transcription_setup,
+        }
+    elif not diarization_configured:
+        next_action = diarization_action or {
+            "stage": "diarization",
+            "kind": "configure-speakers",
+            "label": "Set up speaker labels",
+            "message": diarization_setup,
+        }
+    elif not analysis_configured:
+        next_action = analysis_action or {
+            "stage": "analysis",
+            "kind": "configure-analysis",
+            "label": "Set up analysis",
+            "message": analysis_setup,
+        }
+    else:
+        next_action = {
+            "stage": "profile",
+            "kind": "verify-profile",
+            "label": "Verify profile",
+            "message": (
+                "All three stages are configured. Run Verify profile to execute "
+                "the selected models with generated local input."
+            ),
+        }
     return {
         "id": identifier,
         "name": name,
@@ -509,6 +543,7 @@ def _profile(
         "analysis": analysis,
         "note": note,
         "next_steps": next_steps,
+        "next_action": next_action,
     }
 
 
@@ -677,6 +712,28 @@ def collect_accelerator_diagnostics(
                 "Configure a Vulkan-enabled whisper-cli, then use Download & test model "
                 "or set WHISPER_CPP_MODEL_PATH to a matching local GGML file."
             ),
+            transcription_action=(
+                {
+                    "stage": "transcription",
+                    "kind": "prepare-asr-model",
+                    "label": "Download Vulkan model",
+                    "message": (
+                        "The Vulkan whisper.cpp runtime is detected. Download and "
+                        "verify the selected GGML model, then run its local decode."
+                    ),
+                }
+                if vulkan_runtime and not whisper_model
+                else {
+                    "stage": "transcription",
+                    "kind": "configure-transcription",
+                    "label": "Show Vulkan setup",
+                    "message": (
+                        "A Vulkan-enabled whisper-cli is not configured. Install or "
+                        "build whisper.cpp with GGML_VULKAN=1, set WHISPER_CPP_PATH, "
+                        "then refresh this check before downloading a model."
+                    ),
+                }
+            ),
             diarization_setup=diarization_setup,
             analysis_setup=(
                 "Configure a Vulkan-enabled llama-server with LLAMA_SERVER_PATH; "
@@ -685,7 +742,7 @@ def collect_accelerator_diagnostics(
         ),
         _profile(
             "openvino",
-            "OpenVINO runtime",
+            "Intel OpenVINO",
             openvino_asr and pyannote_ready and llama_ready,
             (
                 "OpenVINO Whisper / "
@@ -708,6 +765,16 @@ def collect_accelerator_diagnostics(
                 'Install this app\'s OpenVINO optional dependencies (`pip install -e ".[openvino]"`), '
                 "then rerun the check and Test engine."
             ),
+            transcription_action={
+                "stage": "transcription",
+                "kind": "configure-transcription",
+                "label": "Show OpenVINO setup",
+                "message": (
+                    'Install the OpenVINO optional dependencies with `python -m pip '
+                    'install -e ".[openvino]"`, then refresh the hardware check. '
+                    "The first explicit engine test may acquire the selected model."
+                ),
+            },
             diarization_setup=diarization_setup,
             analysis_setup="Install llama-server or configure LLAMA_SERVER_PATH.",
         ),
@@ -740,6 +807,29 @@ def collect_accelerator_diagnostics(
                     "Use a build containing the Windows ML helper, then choose Build & test "
                     "model or set a compatible ONNX Whisper model path."
                 ),
+                transcription_action=(
+                    {
+                        "stage": "transcription",
+                        "kind": "prepare-asr-model",
+                        "label": "Build Windows ML model",
+                        "message": (
+                            "The Windows ML helper is ready, but the selected Whisper "
+                            "graph has not passed its decode probe. Build and verify "
+                            "the managed CPU graph now."
+                        ),
+                    }
+                    if windows_ml_runtime and not windows_ml_decode
+                    else {
+                        "stage": "transcription",
+                        "kind": "configure-transcription",
+                        "label": "Show Windows ML setup",
+                        "message": (
+                            "Use the verified Windows publish that contains the Windows "
+                            "ML helper, or configure WINDOWS_ML_HELPER_PATH, then refresh "
+                            "this check before building a model."
+                        ),
+                    }
+                ),
                 diarization_setup=diarization_setup,
                 analysis_setup="Install llama-server or configure LLAMA_SERVER_PATH.",
             )
@@ -765,6 +855,27 @@ def collect_accelerator_diagnostics(
                 analysis_ready=metal_llm,
                 transcription_setup=(
                     "Configure a native ggml-metal whisper-cli and local GGML model."
+                ),
+                transcription_action=(
+                    {
+                        "stage": "transcription",
+                        "kind": "prepare-asr-model",
+                        "label": "Download Metal model",
+                        "message": (
+                            "The native Metal whisper.cpp runtime is detected. Download "
+                            "and verify the selected GGML model, then run its local decode."
+                        ),
+                    }
+                    if metal_runtime and not whisper_model
+                    else {
+                        "stage": "transcription",
+                        "kind": "configure-transcription",
+                        "label": "Show Metal setup",
+                        "message": (
+                            "Configure a native whisper.cpp build with GGML_METAL=ON "
+                            "and set WHISPER_CPP_PATH, then refresh this check."
+                        ),
+                    }
                 ),
                 diarization_setup=diarization_setup,
                 analysis_setup=(
@@ -797,6 +908,27 @@ def collect_accelerator_diagnostics(
             transcription_setup=(
                 'Install `pip install -e ".[qwen]"`, then choose Download & test '
                 "model to acquire the pinned INT8 export and Silero VAD."
+            ),
+            transcription_action=(
+                {
+                    "stage": "transcription",
+                    "kind": "prepare-asr-model",
+                    "label": "Download Qwen model",
+                    "message": (
+                        "sherpa-onnx is installed. Download and checksum-verify the "
+                        "pinned Qwen3-ASR graph and Silero VAD, then run its CPU decode."
+                    ),
+                }
+                if qwen3_asr["runtime_installed"] and not qwen3_asr["ready"]
+                else {
+                    "stage": "transcription",
+                    "kind": "configure-transcription",
+                    "label": "Show Qwen setup",
+                    "message": (
+                        'Install the fast-CPU runtime with `python -m pip install -e '
+                        '".[qwen]"`, then refresh this check before downloading its model.'
+                    ),
+                }
             ),
             diarization_setup=diarization_setup,
             analysis_setup="Install llama-server or configure LLAMA_SERVER_PATH.",

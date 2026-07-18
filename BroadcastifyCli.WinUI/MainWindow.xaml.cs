@@ -68,6 +68,7 @@ public sealed partial class MainWindow : Window
     private bool _pyannoteAccessConfigured;
     private bool _huggingFaceTokenConfigured;
     private bool _cudaAvailable;
+    private ProfileSetupAction? _profileRecoveryAction;
 
     public MainWindow()
     {
@@ -500,6 +501,7 @@ public sealed partial class MainWindow : Window
         }
         _analysisModelVerifiedThisSession = false;
         _analysisModelVerificationMessage = "";
+        _profileRecoveryAction = null;
         if (AnalysisSelfTestInfoBar is not null)
         {
             AnalysisSelfTestInfoBar.Severity = InfoBarSeverity.Informational;
@@ -518,6 +520,7 @@ public sealed partial class MainWindow : Window
         }
         _asrVerifiedThisSession = false;
         _asrVerificationMessage = "";
+        _profileRecoveryAction = null;
         if (AsrSelfTestInfoBar is not null)
         {
             AsrSelfTestInfoBar.Severity = InfoBarSeverity.Informational;
@@ -536,6 +539,7 @@ public sealed partial class MainWindow : Window
         }
         _diarizationVerifiedThisSession = false;
         _diarizationVerificationMessage = "";
+        _profileRecoveryAction = null;
         if (DiarizationSelfTestInfoBar is not null)
         {
             DiarizationSelfTestInfoBar.Severity = InfoBarSeverity.Informational;
@@ -910,6 +914,34 @@ public sealed partial class MainWindow : Window
             : profile.NextSteps.Count > 0
                 ? string.Join(" ", profile.NextSteps.Select((step, index) => $"{index + 1}. {step}"))
                 : "Run the stage tests before a long unattended job.";
+        UpdateProfileNextAction(profile.NextAction);
+    }
+
+    private void UpdateProfileNextAction(ProfileSetupAction? detectedAction)
+    {
+        if (ProfileNextActionButton is null)
+        {
+            return;
+        }
+        var action = _profileRecoveryAction ?? detectedAction;
+        var show = action is not null
+            && !string.IsNullOrWhiteSpace(action.Kind)
+            && action.Kind != "verify-profile";
+        ProfileNextActionButton.Visibility = show
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        if (!show || action is null)
+        {
+            ProfileNextActionButton.Tag = null;
+            UpdateAsrModelPreparationUi();
+            return;
+        }
+        ProfileNextActionButton.Content = string.IsNullOrWhiteSpace(action.Label)
+            ? "Complete setup"
+            : action.Label;
+        ProfileNextActionButton.Tag = action;
+        ToolTipService.SetToolTip(ProfileNextActionButton, action.Message);
+        UpdateAsrModelPreparationUi();
     }
 
     private void UpdateHardwareProfileVerification(
@@ -932,6 +964,48 @@ public sealed partial class MainWindow : Window
         var id = (HardwareProfileComboBox?.SelectedItem as ComboBoxItem)?.Tag?.ToString()
             ?? "auto";
         return _hardwareProfiles.FirstOrDefault(value => value.Id == id);
+    }
+
+    private void ProfileNextAction_Click(object sender, RoutedEventArgs e)
+    {
+        var action = _profileRecoveryAction
+            ?? SelectedHardwareProfile()?.NextAction
+            ?? ProfileNextActionButton.Tag as ProfileSetupAction;
+        if (action is null)
+        {
+            return;
+        }
+        StatusText.Text = action.Message;
+        ProfileNextStepsInfoBar.Severity = InfoBarSeverity.Warning;
+        ProfileNextStepsInfoBar.Title = action.Label;
+        ProfileNextStepsInfoBar.Message = action.Message;
+        switch (action.Kind)
+        {
+            case "verify-profile":
+                ProfileSelfTest_Click(sender, e);
+                break;
+            case "prepare-asr-model":
+                SettingsTabView.SelectedItem = ProcessingSettingsTab;
+                AsrPrepare_Click(sender, e);
+                break;
+            case "test-transcription":
+                SettingsTabView.SelectedItem = ProcessingSettingsTab;
+                AsrSelfTest_Click(sender, e);
+                break;
+            case "configure-speakers":
+                SettingsTabView.SelectedItem = ProcessingSettingsTab;
+                HuggingFaceTokenBox.Focus(FocusState.Programmatic);
+                break;
+            case "configure-analysis":
+                SettingsTabView.SelectedItem = AnalysisSettingsTab;
+                AnalysisProviderComboBox.Focus(FocusState.Programmatic);
+                break;
+            default:
+                SettingsTabView.SelectedItem = ProcessingSettingsTab;
+                AdvancedProcessingExpander.IsExpanded = true;
+                AsrEngineComboBox.Focus(FocusState.Programmatic);
+                break;
+        }
     }
 
     private void RefreshStorageReadiness()
@@ -984,6 +1058,7 @@ public sealed partial class MainWindow : Window
         }
 
         var profile = SelectedHardwareProfile();
+        var profileAction = _profileRecoveryAction ?? profile?.NextAction;
         var tokenAvailable = _huggingFaceTokenConfigured
             || !string.IsNullOrWhiteSpace(HuggingFaceTokenBox?.Password);
         var selectedDiarizationDevice = SelectedComboValue(DiarizationDeviceComboBox, "auto");
@@ -1023,9 +1098,17 @@ public sealed partial class MainWindow : Window
                     : "Checking";
         SetupTranscriptionDetailText.Text = _asrVerifiedThisSession
             ? _asrVerificationMessage
+            : !transcriptionAvailable && profileAction?.Stage == "transcription"
+                ? profileAction.Message
             : profile?.Transcription
               ?? "Run the local hardware check to choose a transcription path.";
-        SetupTranscriptionActionButton.Content = _asrVerifiedThisSession ? "Retest" : "Test";
+        SetupTranscriptionActionButton.Content = _asrVerifiedThisSession
+            ? "Retest"
+            : transcriptionAvailable
+                ? "Test"
+                : profileAction?.Stage == "transcription"
+                    ? profileAction.Label
+                    : "Review";
 
         SetupDiarizationStateText.Text = _diarizationVerifiedThisSession
             ? "Verified"
@@ -1036,9 +1119,17 @@ public sealed partial class MainWindow : Window
                     : "Checking";
         SetupDiarizationDetailText.Text = _diarizationVerifiedThisSession
             ? _diarizationVerificationMessage
+            : !diarizationAvailable && profileAction?.Stage == "diarization"
+                ? profileAction.Message
             : profile?.Diarization
               ?? "Run the local hardware check to inspect pyannote and its model token.";
-        SetupDiarizationActionButton.Content = _diarizationVerifiedThisSession ? "Retest" : "Test";
+        SetupDiarizationActionButton.Content = _diarizationVerifiedThisSession
+            ? "Retest"
+            : diarizationAvailable
+                ? "Test"
+                : profileAction?.Stage == "diarization"
+                    ? profileAction.Label
+                    : "Configure";
 
         SetupAnalysisStateText.Text = _analysisModelVerifiedThisSession
             ? "Verified"
@@ -1051,6 +1142,8 @@ public sealed partial class MainWindow : Window
             ? _analysisModelVerificationMessage
             : !string.IsNullOrWhiteSpace(_analysisProviderReadinessMessage)
                 ? _analysisProviderReadinessMessage
+            : !analysisAvailable && profileAction?.Stage == "analysis"
+                ? profileAction.Message
             : detectedLocalAnalysis
                 ? profile?.Analysis ?? "Local llama.cpp is detected."
                 : $"Check {SelectedAnalysisProviderDisplayName()} without sending transcript text.";
@@ -1058,7 +1151,9 @@ public sealed partial class MainWindow : Window
             ? "Retest"
             : analysisAvailable
                 ? "Test"
-                : "Check";
+                : profileAction?.Stage == "analysis"
+                    ? profileAction.Label
+                    : "Check";
 
         var available = new[]
         {
@@ -1121,6 +1216,12 @@ public sealed partial class MainWindow : Window
             AsrSelfTest_Click(sender, e);
             return;
         }
+        var action = _profileRecoveryAction ?? SelectedHardwareProfile()?.NextAction;
+        if (action?.Stage == "transcription")
+        {
+            ProfileNextAction_Click(sender, e);
+            return;
+        }
         SettingsTabView.SelectedItem = ProcessingSettingsTab;
         AsrEngineComboBox.Focus(FocusState.Programmatic);
     }
@@ -1132,6 +1233,12 @@ public sealed partial class MainWindow : Window
         if (_pyannotePackageInstalled && (_pyannoteAccessConfigured || tokenAvailable))
         {
             DiarizationSelfTest_Click(sender, e);
+            return;
+        }
+        var action = _profileRecoveryAction ?? SelectedHardwareProfile()?.NextAction;
+        if (action?.Stage == "diarization")
+        {
+            ProfileNextAction_Click(sender, e);
             return;
         }
         SettingsTabView.SelectedItem = ProcessingSettingsTab;
@@ -1146,6 +1253,12 @@ public sealed partial class MainWindow : Window
         if (_analysisModelVerifiedThisSession || _analysisProviderReady == true || localDetected)
         {
             AnalysisSelfTest_Click(sender, e);
+            return;
+        }
+        var action = _profileRecoveryAction ?? SelectedHardwareProfile()?.NextAction;
+        if (action?.Stage == "analysis")
+        {
+            ProfileNextAction_Click(sender, e);
             return;
         }
         CheckAnalysisProvider_Click(sender, e);
@@ -1221,10 +1334,15 @@ public sealed partial class MainWindow : Window
             return;
         }
         var engine = EffectiveAsrEngineForPreparation();
+        var nextAction = _profileRecoveryAction ?? SelectedHardwareProfile()?.NextAction;
+        var runtimeBlocked = nextAction?.Stage == "transcription"
+            && nextAction.Kind == "configure-transcription";
         AsrPrepareButton.Visibility =
-            engine is "windows-ml" or "whisper.cpp" or "qwen3-asr"
+            !runtimeBlocked
+            && engine is "windows-ml" or "whisper.cpp" or "qwen3-asr"
                 ? Visibility.Visible
                 : Visibility.Collapsed;
+        AsrPrepareButton.IsEnabled = true;
         if (engine == "windows-ml")
         {
             AsrPrepareButton.Content = "Build & test model";
@@ -1245,6 +1363,10 @@ public sealed partial class MainWindow : Window
             ToolTipService.SetToolTip(
                 AsrPrepareButton,
                 "Explicitly download and checksum-verify the Qwen3-ASR 0.6B INT8 model plus Silero VAD, save their managed path, then prove local CPU execution.");
+        }
+        if (runtimeBlocked && nextAction is not null)
+        {
+            ToolTipService.SetToolTip(AsrPrepareButton, nextAction.Message);
         }
     }
 
@@ -1273,6 +1395,7 @@ public sealed partial class MainWindow : Window
             : $"{result.Message} Fallback during {result.FallbackStage}: {result.FallbackReason}";
         _asrVerifiedThisSession = true;
         _asrVerificationMessage = AsrSelfTestInfoBar.Message;
+        _profileRecoveryAction = null;
         UpdateSetupSummary();
     }
 
@@ -1435,6 +1558,7 @@ public sealed partial class MainWindow : Window
             DiarizationSelfTestInfoBar.Message = result.Message;
             _diarizationVerifiedThisSession = true;
             _diarizationVerificationMessage = result.Message;
+            _profileRecoveryAction = null;
             UpdateSetupSummary();
         }
         catch (OperationCanceledException)
@@ -1517,6 +1641,7 @@ public sealed partial class MainWindow : Window
 
     private void ApplyProfileSelfTestFailure(ProfileSelfTestStatus status)
     {
+        _profileRecoveryAction = status.Recovery;
         switch (status.FailedStage)
         {
             case "transcription":
@@ -1589,6 +1714,7 @@ public sealed partial class MainWindow : Window
                 SetupReadinessInfoBar.Message = status.Message;
                 return;
             }
+            _profileRecoveryAction = null;
             ProfileNextStepsInfoBar.Severity = InfoBarSeverity.Success;
             ProfileNextStepsInfoBar.Title = "Selected profile verified";
             ProfileNextStepsInfoBar.Message = status.Message;

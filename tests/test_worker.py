@@ -355,7 +355,124 @@ def test_profile_self_test_stops_at_first_failed_stage(monkeypatch) -> None:
     assert result["failed_stage"] == "diarization"
     assert "Community-1 cache is incomplete" in result["message"]
     assert set(result["results"]) == {"transcription"}
+    assert result["recovery"]["kind"] == "configure-speakers"
+    assert result["recovery"]["stage"] == "diarization"
     assert analysis_called is False
+
+
+def test_profile_self_test_does_not_reuse_asr_model_for_analysis(
+    monkeypatch,
+) -> None:
+    emitted: list[dict[str, object]] = []
+    analysis_settings: dict[str, object] = {}
+    monkeypatch.setattr(
+        "broadcastify_cli.worker._asr_self_test_result",
+        lambda _settings: {"ready": True, "message": "asr passed"},
+    )
+    monkeypatch.setattr(
+        "broadcastify_cli.worker._diarization_self_test_result",
+        lambda _settings: {"ready": True, "message": "speakers passed"},
+    )
+
+    def analysis(settings: dict[str, object]) -> dict[str, object]:
+        analysis_settings.update(settings)
+        return {
+            "ready": True,
+            "verified": True,
+            "message": "analysis passed",
+        }
+
+    monkeypatch.setattr(
+        "broadcastify_cli.worker._analysis_self_test_result",
+        analysis,
+    )
+    monkeypatch.setattr("broadcastify_cli.worker.emit", emitted.append)
+
+    assert profile_self_test({"model": "turbo", "analysis_model": ""}) == 0
+
+    assert "model" not in analysis_settings
+    assert analysis_settings["analysis_model"] == ""
+    result = next(
+        value["result"]
+        for value in emitted
+        if value["type"] == "profile_self_test"
+    )
+    assert result["ready"] is True
+
+
+def test_profile_self_test_recovery_distinguishes_missing_whisper_runtime(
+    monkeypatch,
+) -> None:
+    emitted: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        "broadcastify_cli.worker._asr_self_test_result",
+        lambda _settings: (_ for _ in ()).throw(
+            RuntimeError("whisper-cli was not found")
+        ),
+    )
+    monkeypatch.setattr("broadcastify_cli.worker.find_whisper_cpp", lambda: None)
+    monkeypatch.setattr(
+        "broadcastify_cli.worker.whisper_cpp_container_diagnostics",
+        lambda: {"configured": False, "ready": False, "backend": "vulkan"},
+    )
+    monkeypatch.setattr(
+        "broadcastify_cli.worker.whisper_cpp_backends",
+        lambda _path: [],
+    )
+    monkeypatch.setattr("broadcastify_cli.worker.emit", emitted.append)
+
+    assert profile_self_test(
+        {"model": "turbo", "asr_engine": "whisper.cpp", "device": "vulkan"}
+    ) == 0
+
+    result = next(
+        value["result"]
+        for value in emitted
+        if value["type"] == "profile_self_test"
+    )
+    assert result["recovery"]["kind"] == "configure-transcription"
+    assert result["recovery"]["label"] == "Show Vulkan setup"
+
+
+def test_profile_self_test_recovery_prepares_model_after_runtime_is_ready(
+    monkeypatch,
+) -> None:
+    emitted: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        "broadcastify_cli.worker._asr_self_test_result",
+        lambda _settings: (_ for _ in ()).throw(
+            RuntimeError("selected GGML model was not found")
+        ),
+    )
+    monkeypatch.setattr(
+        "broadcastify_cli.worker.find_whisper_cpp",
+        lambda: "/opt/whisper-cli",
+    )
+    monkeypatch.setattr(
+        "broadcastify_cli.worker.whisper_cpp_container_diagnostics",
+        lambda: {"configured": False, "ready": False, "backend": "vulkan"},
+    )
+    monkeypatch.setattr(
+        "broadcastify_cli.worker.whisper_cpp_backends",
+        lambda _path: ["cpu", "vulkan"],
+    )
+    monkeypatch.setattr(
+        "broadcastify_cli.worker.find_whisper_cpp_model",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr("broadcastify_cli.worker.emit", emitted.append)
+
+    assert profile_self_test(
+        {"model": "turbo", "asr_engine": "whisper.cpp", "device": "vulkan"}
+    ) == 0
+
+    result = next(
+        value["result"]
+        for value in emitted
+        if value["type"] == "profile_self_test"
+    )
+    assert result["recovery"]["kind"] == "prepare-asr-model"
+    assert result["recovery"]["label"] == "Download selected model"
 
 
 def test_profile_self_test_bounds_native_runtime_dump(monkeypatch) -> None:

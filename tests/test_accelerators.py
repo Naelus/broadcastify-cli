@@ -140,6 +140,7 @@ def test_cached_pyannote_model_counts_as_configured_without_token(
     assert cpu["ready"] is False
     assert cpu["diarization_ready"] is True
     assert "cached model" in cpu["diarization"]
+    assert cpu["next_action"]["kind"] == "verify-profile"
 
 
 def test_vulkan_profile_requires_vulkan_llama_backend(monkeypatch) -> None:
@@ -229,6 +230,8 @@ def test_explicit_missing_container_does_not_fall_back_to_native_profile(
 
     assert vulkan["ready"] is False
     assert vulkan["transcription"] == "needs a Vulkan whisper.cpp build"
+    assert vulkan["next_action"]["kind"] == "configure-transcription"
+    assert vulkan["next_action"]["label"] == "Show Vulkan setup"
 
 
 def test_selected_whisper_cpp_diagnostics_do_not_use_an_unrelated_cached_model(
@@ -283,6 +286,8 @@ def test_selected_whisper_cpp_diagnostics_do_not_use_an_unrelated_cached_model(
     assert diagnostics["whisper_cpp"]["model"] is None
     assert vulkan["transcription_ready"] is False
     assert vulkan["transcription"] == "Vulkan runtime detected; needs a matching GGML model"
+    assert vulkan["next_action"]["kind"] == "prepare-asr-model"
+    assert vulkan["next_action"]["label"] == "Download Vulkan model"
 
 
 def test_selected_windows_ml_diagnostics_do_not_fall_back_to_any_managed_model(
@@ -356,3 +361,4 @@ def test_macos_profile_requires_and_reports_both_metal_engines(monkeypatch) -> N
     assert metal["ready"] is False
     assert metal["analysis"] == "llama.cpp / Metal"
     assert len(metal["next_steps"]) == 3
+    assert metal["next_action"]["kind"] == "verify-profile"

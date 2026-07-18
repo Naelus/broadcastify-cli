@@ -290,7 +290,12 @@ function updateAsrModelPreparationUi() {
   const button = byId("asrPrepareButton");
   if (!button) return;
   const engine = effectiveAsrEngine();
-  button.hidden = !["windows-ml", "whisper.cpp", "qwen3-asr"].includes(engine);
+  const nextAction = currentProfileAction();
+  const runtimeBlocked = nextAction?.stage === "transcription"
+    && nextAction.kind === "configure-transcription";
+  button.hidden = runtimeBlocked
+    || !["windows-ml", "whisper.cpp", "qwen3-asr"].includes(engine);
+  button.disabled = runtimeBlocked;
   if (engine === "windows-ml") {
     button.textContent = "Build & test model";
     button.title = "Explicitly build the selected ONNX Runtime GenAI CPU model, retain its path, then prove a local decode.";
@@ -300,6 +305,9 @@ function updateAsrModelPreparationUi() {
   } else if (engine === "qwen3-asr") {
     button.textContent = "Download & test model";
     button.title = "Explicitly download and checksum-verify Qwen3-ASR 0.6B INT8 plus Silero VAD, retain their path, then prove local CPU execution.";
+  }
+  if (runtimeBlocked) {
+    button.title = nextAction.message;
   }
 }
 
@@ -632,12 +640,36 @@ function selectedHardwareProfile() {
   return profiles.find((profile) => profile.id === selected) || null;
 }
 
+function currentProfileAction() {
+  if (state.profileSelfTest && !state.profileSelfTest.ready) {
+    return state.profileSelfTest.recovery || null;
+  }
+  return selectedHardwareProfile()?.next_action || null;
+}
+
+function renderProfileNextAction() {
+  const button = byId("profileNextActionButton");
+  if (!button) return;
+  const action = currentProfileAction();
+  const show = Boolean(action?.kind && action.kind !== "verify-profile");
+  button.hidden = !show;
+  button.textContent = show ? (action.label || "Complete setup") : "Complete setup";
+  button.title = show ? (action.message || "") : "";
+  if (show && !state.profileSelfTest) {
+    const notice = byId("profileSelfTestNotice");
+    notice.className = "notice warning";
+    notice.querySelector("strong").textContent = action.label || "Profile setup is incomplete";
+    notice.querySelector("span").textContent = action.message || "Complete the next setup step, then verify this profile.";
+  }
+}
+
 function renderSetupReadiness() {
   const region = byId("setupReadinessGrid");
   if (!region) return;
   const runtime = state.bootstrap.runtime || {};
   const account = runtime.account || {};
   const profile = selectedHardwareProfile();
+  const profileAction = currentProfileAction();
   const speakerLabels = state.hardwareDiagnostics?.accelerators?.speaker_labels || {};
   const tokenInTab = Boolean(byId("settingHuggingFaceToken")?.value);
   const selectedDiarization = byId("settingDiarizationDevice")?.value || state.settings.diarizationDevice;
@@ -683,20 +715,20 @@ function renderSetupReadiness() {
     {
       id: "transcription", icon: "≋", title: "Transcription", available: transcriptionReady,
       state: state.asrSelfTest?.ready ? "Verified" : transcriptionReady ? "Detected" : state.hardwareDiagnostics ? "Setup needed" : "Check",
-      detail: state.asrSelfTest?.message || profile?.transcription || "Check this computer to choose a Whisper path.",
-      action: state.asrSelfTest?.ready ? "Retest" : transcriptionReady ? "Test" : "Check",
+      detail: state.asrSelfTest?.message || (!transcriptionReady && profileAction?.stage === "transcription" ? profileAction.message : profile?.transcription) || "Check this computer to choose a Whisper path.",
+      action: state.asrSelfTest?.ready ? "Retest" : transcriptionReady ? "Test" : profileAction?.stage === "transcription" ? profileAction.label : "Check",
     },
     {
       id: "diarization", icon: "◎", title: "Speaker labels", available: diarizationReady,
       state: state.diarizationSelfTest?.ready ? "Verified" : diarizationReady ? "Configured" : state.hardwareDiagnostics ? "Setup needed" : "Check",
-      detail: state.diarizationSelfTest?.message || profile?.diarization || "Check pyannote, model access, and its CUDA or CPU path.",
-      action: state.diarizationSelfTest?.ready ? "Retest" : diarizationReady ? "Test" : "Configure",
+      detail: state.diarizationSelfTest?.message || (!diarizationReady && profileAction?.stage === "diarization" ? profileAction.message : profile?.diarization) || "Check pyannote, model access, and its CUDA or CPU path.",
+      action: state.diarizationSelfTest?.ready ? "Retest" : diarizationReady ? "Test" : profileAction?.stage === "diarization" ? profileAction.label : "Configure",
     },
     {
       id: "analysis", icon: "✦", title: "Event analysis", available: analysisConfigured,
       state: analysisVerified ? "Verified" : analysisConfigured ? "Configured" : state.hardwareDiagnostics ? "Check provider" : "Check",
-      detail: state.analysisSelfTest?.message || state.analysisProviderStatus?.message || (localAnalysisDetected ? profile.analysis : "Check the selected local, API, endpoint, or Codex provider."),
-      action: analysisVerified ? "Retest" : analysisConfigured ? "Test" : "Check",
+      detail: state.analysisSelfTest?.message || state.analysisProviderStatus?.message || (!analysisConfigured && profileAction?.stage === "analysis" ? profileAction.message : localAnalysisDetected ? profile.analysis : "Check the selected local, API, endpoint, or Codex provider."),
+      action: analysisVerified ? "Retest" : analysisConfigured ? "Test" : profileAction?.stage === "analysis" ? profileAction.label : "Check",
     },
   ];
   const available = items.filter((item) => item.available).length;
@@ -729,6 +761,7 @@ function renderHardwareProfiles() {
   const region = byId("runtimeProfiles");
   if (!profiles.length) {
     region.innerHTML = '<div class="runtime-profile-empty">Run the hardware check to compare stage-by-stage profiles.</div>';
+    renderProfileNextAction();
     return;
   }
   const selectedId = byId("settingHardwareProfile")?.value || state.settings.hardwareProfile;
@@ -764,6 +797,8 @@ function renderHardwareProfiles() {
       <button class="button secondary small" data-use-hardware-profile="${html(profile.id)}">Use this profile</button>
     </article>`;
   }).join("")}</div></details>`;
+  renderProfileNextAction();
+  updateAsrModelPreparationUi();
 }
 
 function updateProviderNotice(message = "") {
@@ -1408,6 +1443,7 @@ async function runHardwareCheck() {
 }
 
 async function runAsrSelfTest() {
+  resetProfileVerification();
   await startJob("asr-self-test", processingPayload(), { label: "Testing selected transcription engine", onComplete: (job) => {
     const result = eventOf(job, "asr_self_test")?.result;
     if (!result) return;
@@ -1455,6 +1491,7 @@ function applyAsrSelfTestResult(result) {
 }
 
 async function runDiarizationSelfTest() {
+  resetProfileVerification();
   await startJob("diarization-self-test", processingPayload(), { label: "Testing selected speaker-label engine", onComplete: (job) => {
     const result = eventOf(job, "diarization_self_test")?.result;
     if (!result) return;
@@ -1473,6 +1510,7 @@ function applyDiarizationSelfTestResult(result) {
 }
 
 async function runAnalysisSelfTest() {
+  resetProfileVerification();
   resetAnalysisVerification();
   const notice = byId("analysisSelfTestNotice");
   notice.querySelector("strong").textContent = "Loading and generating synthetic output";
@@ -1482,6 +1520,33 @@ async function runAnalysisSelfTest() {
     if (!result) return;
     applyAnalysisSelfTestResult(result);
   } });
+}
+
+async function runProfileNextAction() {
+  const action = currentProfileAction();
+  if (!action) return;
+  const notice = byId("profileSelfTestNotice");
+  notice.className = "notice warning";
+  notice.querySelector("strong").textContent = action.label || "Complete profile setup";
+  notice.querySelector("span").textContent = action.message || "Complete this setup step, then verify the profile.";
+  if (action.kind === "verify-profile") {
+    await runProfileSelfTest();
+  } else if (action.kind === "prepare-asr-model") {
+    setSettingsSection("processing");
+    await runAsrModelPreparation();
+  } else if (action.kind === "test-transcription") {
+    setSettingsSection("processing");
+    await runAsrSelfTest();
+  } else if (action.kind === "configure-speakers") {
+    setSettingsSection("processing");
+    requestAnimationFrame(() => byId("settingHuggingFaceToken").focus());
+  } else if (action.kind === "configure-analysis") {
+    setSettingsSection("analysis");
+    requestAnimationFrame(() => byId("settingAnalysisProvider").focus());
+  } else {
+    setSettingsSection("processing");
+    requestAnimationFrame(() => byId("settingAsrEngine").focus());
+  }
 }
 
 function applyAnalysisSelfTestResult(result) {
@@ -1578,6 +1643,7 @@ byId("runtimeCheckButton").addEventListener("click", runHardwareCheck);
 byId("setupCheckButton").addEventListener("click", runHardwareCheck);
 byId("setupProfileSelfTestButton").addEventListener("click", runProfileSelfTest);
 byId("profileSelfTestButton").addEventListener("click", runProfileSelfTest);
+byId("profileNextActionButton").addEventListener("click", runProfileNextAction);
 byId("settingHardwareProfile").addEventListener("change", (event) => applyHardwareProfile(event.target.value));
 ["settingAsrEngine", "settingDevice"].forEach((id) => byId(id).addEventListener("change", () => {
   if (id === "settingAsrEngine") ensureAsrModelCompatibility();
@@ -1639,14 +1705,20 @@ byId("setupReadinessGrid").addEventListener("click", async (event) => {
     requestAnimationFrame(() => byId("runtimeCheckButton").focus());
   } else if (action === "transcription") {
     setSettingsSection("processing");
-    if (!state.hardwareDiagnostics) await runHardwareCheck(); else await runAsrSelfTest();
+    const next = currentProfileAction();
+    if (!state.hardwareDiagnostics) await runHardwareCheck();
+    else if (!selectedHardwareProfile()?.transcription_ready && next?.stage === "transcription") await runProfileNextAction();
+    else await runAsrSelfTest();
   } else if (action === "diarization") {
     setSettingsSection("processing");
+    const next = currentProfileAction();
     const speaker = state.hardwareDiagnostics?.accelerators?.speaker_labels || {};
     const accessReady = speaker.access_configured || speaker.token_configured || byId("settingHuggingFaceToken").value;
     const selectedDevice = byId("settingDiarizationDevice").value;
     if (speaker.package_installed && accessReady && (selectedDevice !== "cuda" || speaker.cuda_available)) {
       await runDiarizationSelfTest();
+    } else if (next?.stage === "diarization") {
+      await runProfileNextAction();
     } else if (!state.hardwareDiagnostics) {
       await runHardwareCheck();
     } else {
@@ -1655,6 +1727,7 @@ byId("setupReadinessGrid").addEventListener("click", async (event) => {
   } else if (action === "analysis") {
     setSettingsSection("analysis");
     const profile = selectedHardwareProfile();
+    const next = currentProfileAction();
     const provider = byId("settingAnalysisProvider").value;
     const configured = Boolean(
       state.analysisProviderStatus?.ready
@@ -1662,6 +1735,8 @@ byId("setupReadinessGrid").addEventListener("click", async (event) => {
     );
     if (configured || state.analysisSelfTest?.ready) {
       await runAnalysisSelfTest();
+    } else if (next?.stage === "analysis") {
+      await runProfileNextAction();
     } else {
       await runProviderCheck();
     }

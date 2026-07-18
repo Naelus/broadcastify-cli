@@ -18,7 +18,14 @@ from typing import Any
 
 from dotenv import load_dotenv
 
-from .accelerators import collect_accelerator_diagnostics
+from .accelerators import (
+    collect_accelerator_diagnostics,
+    find_whisper_cpp,
+    find_windows_ml_helper,
+    module_available,
+    whisper_cpp_backends,
+    whisper_cpp_container_diagnostics,
+)
 from .audio import (
     extract_audio_clip,
     find_ffmpeg,
@@ -47,7 +54,7 @@ from .asr import (
     normalize_asr_engine,
     prepare_asr_model,
 )
-from .qwen_asr import find_qwen3_asr_model
+from .qwen_asr import find_qwen3_asr_model, qwen3_asr_diagnostics
 from .area_watch import AREA_PROMPT_VERSION, AreaStoryAnalyzer, _public_quote
 from .area_acquisition import AreaAcquisitionRunner
 from .broadcastify import BroadcastifyClient
@@ -689,6 +696,163 @@ def _profile_failure_summary(exc: Exception, stage: str) -> str:
     )
 
 
+def _profile_recovery_action(
+    stage: str,
+    settings: dict[str, Any],
+    message: str,
+) -> dict[str, str]:
+    """Return the first UI action that can materially advance a failed proof."""
+
+    if stage == "diarization":
+        return {
+            "stage": stage,
+            "kind": "configure-speakers",
+            "label": "Review speaker setup",
+            "message": (
+                f"{message} Check the pyannote installation, Community-1 access or "
+                "complete cache, and the selected CUDA/CPU device."
+            ),
+        }
+    if stage == "analysis":
+        return {
+            "stage": stage,
+            "kind": "configure-analysis",
+            "label": "Review analysis setup",
+            "message": (
+                f"{message} Open Analysis & AI to check the selected provider, model, "
+                "endpoint, credential, and device."
+            ),
+        }
+
+    engine = normalize_asr_engine(
+        str(settings.get("asr_engine") or "auto"),
+        str(settings.get("device") or "auto"),
+    )
+    device = str(settings.get("device") or "auto").strip().lower()
+    if engine == "whisper.cpp":
+        executable = find_whisper_cpp()
+        container = whisper_cpp_container_diagnostics()
+        native_backends = set(whisper_cpp_backends(executable))
+        requested_backend = "metal" if device == "metal" else "vulkan" if device == "vulkan" else "cpu"
+        runtime_ready = bool(
+            (
+                container.get("configured")
+                and container.get("ready")
+                and container.get("backend") == requested_backend
+            )
+            or (executable and requested_backend in native_backends)
+        )
+        if not runtime_ready:
+            backend_label = "Metal" if requested_backend == "metal" else "Vulkan" if requested_backend == "vulkan" else "native"
+            return {
+                "stage": stage,
+                "kind": "configure-transcription",
+                "label": f"Show {backend_label} setup",
+                "message": (
+                    f"{message} Configure a whisper.cpp runtime built for "
+                    f"{backend_label}, set WHISPER_CPP_PATH, then refresh the check."
+                ),
+            }
+        try:
+            model = find_whisper_cpp_model(
+                str(settings.get("model") or "turbo"),
+                settings.get("asr_model_path") or None,
+            )
+        except (OSError, RuntimeError, ValueError):
+            model = None
+        if model is None:
+            return {
+                "stage": stage,
+                "kind": "prepare-asr-model",
+                "label": "Download selected model",
+                "message": (
+                    f"{message} The runtime is present; download and verify the "
+                    "matching GGML model before retrying."
+                ),
+            }
+    elif engine == "windows-ml":
+        if not find_windows_ml_helper():
+            return {
+                "stage": stage,
+                "kind": "configure-transcription",
+                "label": "Show Windows ML setup",
+                "message": (
+                    f"{message} Use the verified Windows publish or configure "
+                    "WINDOWS_ML_HELPER_PATH, then refresh the check."
+                ),
+            }
+        try:
+            model = find_windows_ml_model(
+                str(settings.get("model") or "base"),
+                settings.get("asr_model_path") or None,
+            )
+        except (OSError, RuntimeError, ValueError):
+            model = None
+        if model is None:
+            return {
+                "stage": stage,
+                "kind": "prepare-asr-model",
+                "label": "Build selected model",
+                "message": (
+                    f"{message} The helper is present; build and validate the "
+                    "matching managed Whisper graph before retrying."
+                ),
+            }
+    elif engine == "qwen3-asr":
+        qwen = qwen3_asr_diagnostics(settings.get("asr_model_path") or None)
+        if not qwen["runtime_installed"]:
+            return {
+                "stage": stage,
+                "kind": "configure-transcription",
+                "label": "Show Qwen setup",
+                "message": (
+                    f'{message} Install the optional runtime with `python -m pip '
+                    'install -e ".[qwen]"`, then refresh the check.'
+                ),
+            }
+        if not qwen["ready"]:
+            return {
+                "stage": stage,
+                "kind": "prepare-asr-model",
+                "label": "Download Qwen model",
+                "message": (
+                    f"{message} Download and checksum-verify the pinned Qwen graph "
+                    "and Silero VAD before retrying."
+                ),
+            }
+    elif engine == "openvino":
+        if not module_available("openvino_genai"):
+            return {
+                "stage": stage,
+                "kind": "configure-transcription",
+                "label": "Show OpenVINO setup",
+                "message": (
+                    f'{message} Install the optional runtime with `python -m pip '
+                    'install -e ".[openvino]"`, then refresh the check.'
+                ),
+            }
+    elif not module_available("faster_whisper") or not module_available("torch"):
+        return {
+            "stage": stage,
+            "kind": "configure-transcription",
+            "label": "Show transcription setup",
+            "message": (
+                f'{message} Install the optional runtime with `python -m pip '
+                'install -e ".[transcription]"`, then refresh the check.'
+            ),
+        }
+
+    return {
+        "stage": stage,
+        "kind": "test-transcription",
+        "label": "Run engine details",
+        "message": (
+            f"{message} The required runtime and selected model appear present; "
+            "run Test engine to retain the focused backend error."
+        ),
+    }
+
+
 def profile_self_test(payload: dict[str, Any] | None = None) -> int:
     """Execute ASR, diarization, and analysis proofs as one guided action."""
 
@@ -710,9 +874,17 @@ def profile_self_test(payload: dict[str, Any] | None = None) -> int:
             }
         )
         try:
-            result = runner(settings)
+            stage_settings = settings
+            if stage == "analysis":
+                # ``model`` is the ASR model in this joined contract. The analysis
+                # provider retains a legacy ``model`` fallback, so never let a blank
+                # analysis-model field turn Whisper "turbo" into a llama.cpp repo.
+                stage_settings = dict(settings)
+                stage_settings.pop("model", None)
+            result = runner(stage_settings)
         except Exception as exc:
             message = _profile_failure_summary(exc, stage)
+            recovery = _profile_recovery_action(stage, settings, message)
             _release_profile_stage_memory()
             profile_result = {
                 "ready": False,
@@ -720,6 +892,7 @@ def profile_self_test(payload: dict[str, Any] | None = None) -> int:
                 "failed_stage": stage,
                 "elapsed_seconds": round(time.monotonic() - started, 3),
                 "results": results,
+                "recovery": recovery,
                 "message": f"Profile verification stopped at {stage}: {message}",
             }
             emit(

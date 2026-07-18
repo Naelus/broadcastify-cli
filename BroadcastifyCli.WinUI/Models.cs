@@ -635,6 +635,9 @@ public sealed record ProfileSelfTestStatus
     [JsonPropertyName("results")]
     public ProfileSelfTestResults Results { get; init; } = new();
 
+    [JsonPropertyName("recovery")]
+    public ProfileSetupAction? Recovery { get; init; }
+
     [JsonPropertyName("message")]
     public string Message { get; init; } = "";
 }
@@ -876,6 +879,21 @@ internal sealed record LibraryResponse
     public LibrarySummary Summary { get; init; } = new();
 }
 
+public sealed record ProfileSetupAction
+{
+    [JsonPropertyName("stage")]
+    public string Stage { get; init; } = "";
+
+    [JsonPropertyName("kind")]
+    public string Kind { get; init; } = "";
+
+    [JsonPropertyName("label")]
+    public string Label { get; init; } = "";
+
+    [JsonPropertyName("message")]
+    public string Message { get; init; } = "";
+}
+
 public sealed record HardwareProfileStatus
 {
     [JsonPropertyName("id")]
@@ -916,6 +934,9 @@ public sealed record HardwareProfileStatus
 
     [JsonPropertyName("next_steps")]
     public List<string> NextSteps { get; init; } = [];
+
+    [JsonPropertyName("next_action")]
+    public ProfileSetupAction? NextAction { get; init; }
 
     public string StateText => Verified || Ready
         ? "Verified"

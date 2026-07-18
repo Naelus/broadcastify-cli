@@ -747,7 +747,7 @@
                                                     <ComboBoxItem Content="Automatic (recommended)" Tag="auto" />
                                                     <ComboBoxItem Content="NVIDIA CUDA" Tag="cuda" />
                                                     <ComboBoxItem Content="Cross-vendor Vulkan" Tag="vulkan" />
-                                                    <ComboBoxItem Content="OpenVINO runtime" Tag="openvino" />
+                                                    <ComboBoxItem Content="Intel OpenVINO" Tag="openvino" />
                                                     <ComboBoxItem Content="Windows ML" Tag="windowsml" />
                                                     <ComboBoxItem Content="Fast CPU preview (Qwen3-ASR)" Tag="qwen" />
                                                     <ComboBoxItem Content="CPU only" Tag="cpu" />
@@ -759,7 +759,7 @@
                                                          Severity="Informational" Title="Execution proof still needed"
                                                          Message="Run the three generated-input tests before a long unattended job." />
                                                 <Grid ColumnSpacing="8">
-                                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                                                     <Expander Header="Compare detected profiles" HorizontalAlignment="Stretch">
                                                         <ListView x:Name="HardwareProfileList" SelectionMode="None" IsItemClickEnabled="False"
                                                                   HorizontalContentAlignment="Stretch">
@@ -785,10 +785,12 @@
                                                             </ListView.ItemTemplate>
                                                         </ListView>
                                                     </Expander>
-                                                    <Button x:Name="ProfileSelfTestButton" Grid.Column="1" Content="Verify profile"
+                                                    <Button x:Name="ProfileNextActionButton" Grid.Column="1" Content="Complete setup"
+                                                            Visibility="Collapsed" Click="ProfileNextAction_Click" />
+                                                    <Button x:Name="ProfileSelfTestButton" Grid.Column="2" Content="Verify profile"
                                                             Style="{StaticResource AccentButtonStyle}" Click="ProfileSelfTest_Click"
                                                             ToolTipService.ToolTip="Run transcription, speaker labels, and analysis in sequence using generated input." />
-                                                    <Button x:Name="DiagnosticsRefreshButton" Grid.Column="2" Content="Refresh check"
+                                                    <Button x:Name="DiagnosticsRefreshButton" Grid.Column="3" Content="Refresh check"
                                                             Click="RefreshDiagnostics_Click" />
                                                 </Grid>
                                             </StackPanel>
@@ -820,7 +822,7 @@
                                                     </ComboBox>
                                                     <NumberBox x:Name="BatchSizeBox" Grid.Column="1" Header="ASR / speaker batch" Value="8" Minimum="1" Maximum="64" SpinButtonPlacementMode="Compact" />
                                                 </Grid>
-                                                <Expander Header="Advanced engine overrides and speaker tuning" HorizontalAlignment="Stretch">
+                                                <Expander x:Name="AdvancedProcessingExpander" Header="Advanced engine overrides and speaker tuning" HorizontalAlignment="Stretch">
                                                     <StackPanel Spacing="12" Padding="0,8,0,4">
                                                         <TextBlock Text="Changing the hardware profile resets these overrides to a compatible combination."
                                                                    TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorTertiaryBrush}" />

@@ -61,6 +61,14 @@ Use this file for reproducible defects and concrete blockers, not the general ro
 
 ## Recently fixed
 
+### F-027 — Portable setup recovery confused a missing runtime with a missing model
+
+Hardware profiles described their three missing stages, but the first actionable repair was still flattened into prose. In particular, a Windows machine without a Vulkan-enabled `whisper-cli` could show **Download & test model**, even though acquiring a GGML file could not make the selected runtime execute. A failed joined proof similarly returned only a stage/message pair, forcing both clients to guess where the user should go next. The joined payload also carried both the ASR and analysis choices; if the analysis model was explicitly blank, the legacy local-provider fallback could mistake the ASR `model` value (`turbo`) for a llama.cpp repository.
+
+Native and Web diagnostics now carry one structured `stage`/`kind`/`label`/`message` action. Vulkan and Metal distinguish a missing native runtime from a missing GGML model; Windows ML distinguishes a missing helper from a graph that needs building; Qwen distinguishes its optional sherpa runtime from its pinned model/VAD; OpenVINO points to its exact optional dependency group; speaker and analysis failures route to their own setup surfaces. Joined verification returns the same recovery contract after a real failure. Its analysis stage receives a stage-specific copy with the ASR `model` field removed, so a blank analysis selector resolves to the local default instead of crossing pipeline namespaces. The first-run cards and Processing page consume that shared action, and managed-model preparation is hidden until the selected runtime exists.
+
+The complete local suite passed **194 tests**. Python compilation, browser JavaScript parsing, Git whitespace checks, and the WinUI Release build passed with **0 warnings and 0 errors**. Live Web and rebuilt native QA selected the intentionally incomplete Vulkan profile: each showed **Show Vulkan setup**, the first-run overview reported 4/5, no contradictory model button was visible, the guidance opened the advanced runtime controls, and Automatic was restored before both clients closed.
+
 ### F-026 — Profile verification was fragmented and portable GPU libraries could collide
 
 Users had to run three separate tests before a selected profile became Verified, the Web selector exposed impossible Apple Metal choices on Windows, and switching a managed `distil-large-v3` OpenVINO setup to whisper.cpp could retain a model with no portable GGML mapping. Missing whisper.cpp guidance also suggested the Linux container route for Metal, even though containers cannot expose Apple Metal.

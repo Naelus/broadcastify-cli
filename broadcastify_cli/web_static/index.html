@@ -230,7 +230,7 @@
           <section class="settings-panel" id="settingsPanelProcessing" role="tabpanel" aria-labelledby="settingsTabProcessing" data-settings-panel="processing" hidden>
             <div class="settings-grid">
               <div class="card padded">
-                <div class="section-heading"><div><h2>Runtime</h2><p id="runtimeDescription">Loading local runtime…</p></div><div class="button-row"><button class="button secondary small" id="runtimeCheckButton">Check hardware</button><button class="button primary small" id="profileSelfTestButton">Verify profile</button></div></div>
+                <div class="section-heading"><div><h2>Runtime</h2><p id="runtimeDescription">Loading local runtime…</p></div><div class="button-row"><button class="button secondary small" id="runtimeCheckButton">Check hardware</button><button class="button secondary small" id="profileNextActionButton" hidden>Complete setup</button><button class="button primary small" id="profileSelfTestButton">Verify profile</button></div></div>
                 <div class="runtime-facts" id="runtimeFacts"></div>
                 <div id="runtimeProfiles" class="runtime-profiles"><div class="runtime-profile-empty">Run the hardware check to compare stage-by-stage profiles.</div></div>
                 <div class="notice" id="profileSelfTestNotice"><strong>Profile not verified this session</strong><span>One explicit check runs transcription, speaker labels, and analysis in sequence using generated input. Missing managed models may download; archive quota is never used.</span></div>
@@ -238,7 +238,7 @@
               <div class="card padded">
                 <div class="section-heading"><div><h2>Transcription &amp; speakers</h2><p id="processingProfileDescription">Automatic keeps the tested Windows behavior and chooses safe fallbacks elsewhere.</p></div><div class="button-row"><button class="button secondary small" id="asrPrepareButton" hidden>Prepare &amp; test model</button><button class="button secondary small" id="asrSelfTestButton" title="Runs a generated-silence execution check; it does not measure radio accuracy.">Test engine</button><button class="button secondary small" id="diarizationSelfTestButton">Test speakers</button></div></div>
                 <div class="form-grid two">
-                  <label class="full-row"><span>Hardware profile</span><select id="settingHardwareProfile"><option value="auto">Automatic (recommended)</option><option value="cuda">NVIDIA CUDA</option><option value="vulkan">Cross-vendor Vulkan</option><option value="openvino">OpenVINO</option><option value="metal">Apple Metal</option><option value="windowsml">Windows ML</option><option value="qwen">Fast CPU preview (Qwen3-ASR)</option><option value="cpu">CPU only</option><option value="custom">Custom overrides</option></select><small>Applies a compatible transcription, diarization, and analysis-device starting point.</small></label>
+                  <label class="full-row"><span>Hardware profile</span><select id="settingHardwareProfile"><option value="auto">Automatic (recommended)</option><option value="cuda">NVIDIA CUDA</option><option value="vulkan">Cross-vendor Vulkan</option><option value="openvino">Intel OpenVINO</option><option value="metal">Apple Metal</option><option value="windowsml">Windows ML</option><option value="qwen">Fast CPU preview (Qwen3-ASR)</option><option value="cpu">CPU only</option><option value="custom">Custom overrides</option></select><small>Applies a compatible transcription, diarization, and analysis-device starting point.</small></label>
                   <label><span>Transcription model</span><select id="settingWhisperModel"><option>turbo</option><option>distil-large-v3</option><option>large-v3</option><option>medium.en</option><option>small.en</option><option>base.en</option><option>tiny.en</option><option>qwen3-asr-0.6b-int8</option></select></label>
                   <label><span>ASR engine</span><select id="settingAsrEngine"><option value="auto">Automatic</option><option value="faster-whisper">faster-whisper</option><option value="whisper.cpp">whisper.cpp</option><option value="openvino">OpenVINO</option><option value="windows-ml">Windows ML</option><option value="qwen3-asr">Qwen3-ASR (fast CPU preview)</option></select></label>
                   <label><span>Transcription device</span><select id="settingDevice"><option value="auto">Automatic</option><option value="cuda">CUDA</option><option value="cpu">CPU</option><option value="vulkan">Vulkan</option><option value="metal">Apple Metal</option><option value="openvino-auto">OpenVINO Auto</option><option value="openvino-gpu">OpenVINO GPU</option><option value="openvino-npu">OpenVINO NPU</option><option value="windows-ml">Windows ML</option></select></label>
@@ -303,6 +303,6 @@
   </aside>
 
   <div class="toast-region" id="toastRegion" aria-live="polite"></div>
-  <script src="/static/app.js?v=23" defer></script>
+  <script src="/static/app.js?v=24" defer></script>
 </body>
 </html>
