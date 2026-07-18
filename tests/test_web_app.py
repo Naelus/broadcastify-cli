@@ -100,9 +100,11 @@ def test_loopback_web_app_serves_library_transcript_and_media(tmp_path: Path) ->
         assert cookie.startswith("radio_archive_session=")
         assert token_match is not None
         assert b'id="areaPublicSafetyOnly"' in body
-        assert b'/static/app.js?v=17' in body
+        assert b'/static/app.js?v=19' in body
         assert b'id="settingAnalysisDevice"' in body
         assert b'id="analysisSelfTestButton"' in body
+        assert b'id="profileSelfTestButton"' in body
+        assert b'id="profileSelfTestNotice"' in body
         assert b'id="settingsSectionTabs"' in body
         assert b'data-settings-panel="processing"' in body
         assert b'role="tabpanel"' in body
@@ -114,14 +116,18 @@ def test_loopback_web_app_serves_library_transcript_and_media(tmp_path: Path) ->
         assert response.getheader("Content-Type") == "image/svg+xml"
         assert b"<svg" in body
 
-        response, body = _request(connection, "GET", "/static/app.js?v=17")
+        response, body = _request(connection, "GET", "/static/app.js?v=19")
         assert response.status == 200
         assert b"areaSelectedStoryIndex" in body
         assert b"data-area-story-index" in body
         assert b"story-browser" in body
         assert b"analysis_device: state.settings.analysisDevice" in body
         assert b'analysis-self-test' in body
+        assert b'profile-self-test' in body
         assert b"analysisSelfTest" in body
+        assert b"function runProfileSelfTest" in body
+        assert b"function syncPlatformProfileOptions" in body
+        assert b"whisper.cpp has no managed distil-large-v3 mapping" in body
         assert b"profile.configured" in body
         assert b"const nextSteps = isVerified" in body
         assert b"function setSettingsSection" in body
@@ -130,7 +136,7 @@ def test_loopback_web_app_serves_library_transcript_and_media(tmp_path: Path) ->
         assert b'radioArchiveSettingsSection' in body
         assert b'setSettingsSection("processing")' in body
 
-        response, body = _request(connection, "GET", "/static/app.css?v=17")
+        response, body = _request(connection, "GET", "/static/app.css?v=19")
         assert response.status == 200
         assert b".story-browser" in body
         assert b".story-index-item.active" in body
@@ -410,3 +416,30 @@ def test_web_jobs_forward_explicit_analysis_self_test_settings(
     assert payload["analysis_provider"] == "local"
     assert payload["analysis_model"] == "local-model.gguf"
     assert payload["analysis_device"] == "cpu"
+
+
+def test_web_jobs_forward_combined_profile_self_test_settings(
+    tmp_path: Path,
+) -> None:
+    manager = JobManager(tmp_path, tmp_path / "analysis.sqlite3", tmp_path)
+    arguments, payload = manager._worker_request(  # noqa: SLF001
+        "profile-self-test",
+        {
+            "model": "tiny.en",
+            "asr_engine": "openvino",
+            "device": "openvino-npu",
+            "diarization_device": "cpu",
+            "analysis_provider": "local",
+            "analysis_model": "local-model.gguf",
+            "analysis_device": "cpu",
+            "huggingface_token": "session-only-test-token",
+        },
+    )
+
+    assert arguments == ["profile-self-test"]
+    assert payload is not None
+    assert payload["asr_engine"] == "openvino"
+    assert payload["device"] == "openvino-npu"
+    assert payload["diarization_device"] == "cpu"
+    assert payload["analysis_model"] == "local-model.gguf"
+    assert payload["huggingface_token"] == "session-only-test-token"

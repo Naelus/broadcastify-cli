@@ -547,6 +547,29 @@ internal sealed class WorkerClient
         return result;
     }
 
+    public async Task<ProfileSelfTestStatus?> RunProfileSelfTestAsync(
+        LocalProcessingRequest request,
+        Action<JsonElement> onMessage,
+        CancellationToken cancellationToken)
+    {
+        ProfileSelfTestStatus? result = null;
+        await RunWorkerAsync(
+            ["-m", "broadcastify_cli.worker", "profile-self-test"],
+            JsonSerializer.Serialize(request, JsonOptions),
+            message =>
+            {
+                if (message.TryGetProperty("type", out var type)
+                    && type.GetString() == "profile_self_test"
+                    && message.TryGetProperty("result", out var value))
+                {
+                    result = value.Deserialize<ProfileSelfTestStatus>(JsonOptions);
+                }
+                onMessage(message);
+            },
+            cancellationToken);
+        return result;
+    }
+
     public async Task<AnalysisProviderStatus?> GetAnalysisProviderDiagnosticsAsync(
         AnalysisProviderDiagnosticsRequest request,
         CancellationToken cancellationToken)

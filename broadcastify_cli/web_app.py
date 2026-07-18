@@ -409,6 +409,7 @@ class JobManager:
             "analyze-day",
             "asr-self-test",
             "diarization-self-test",
+            "profile-self-test",
             "ask",
             "authenticate",
             "continue-local",

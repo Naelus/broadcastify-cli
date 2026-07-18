@@ -7,7 +7,7 @@
   <meta name="color-scheme" content="light dark">
   <title>Radio Archive Intelligence</title>
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/static/app.css?v=17">
+  <link rel="stylesheet" href="/static/app.css?v=19">
 </head>
 <body>
   <div class="app-shell">
@@ -230,9 +230,10 @@
           <section class="settings-panel" id="settingsPanelProcessing" role="tabpanel" aria-labelledby="settingsTabProcessing" data-settings-panel="processing" hidden>
             <div class="settings-grid">
               <div class="card padded">
-                <div class="section-heading"><div><h2>Runtime</h2><p id="runtimeDescription">Loading local runtime…</p></div><button class="button secondary small" id="runtimeCheckButton">Check hardware</button></div>
+                <div class="section-heading"><div><h2>Runtime</h2><p id="runtimeDescription">Loading local runtime…</p></div><div class="button-row"><button class="button secondary small" id="runtimeCheckButton">Check hardware</button><button class="button primary small" id="profileSelfTestButton">Verify profile</button></div></div>
                 <div class="runtime-facts" id="runtimeFacts"></div>
                 <div id="runtimeProfiles" class="runtime-profiles"><div class="runtime-profile-empty">Run the hardware check to compare stage-by-stage profiles.</div></div>
+                <div class="notice" id="profileSelfTestNotice"><strong>Profile not verified this session</strong><span>One explicit check runs transcription, speaker labels, and analysis in sequence using generated input. Missing managed models may download; archive quota is never used.</span></div>
               </div>
               <div class="card padded">
                 <div class="section-heading"><div><h2>Transcription &amp; speakers</h2><p>Automatic keeps the tested Windows behavior and chooses safe fallbacks elsewhere.</p></div><div class="button-row"><button class="button secondary small" id="asrSelfTestButton">Test transcription</button><button class="button secondary small" id="diarizationSelfTestButton">Test speakers</button></div></div>
@@ -302,6 +303,6 @@
   </aside>
 
   <div class="toast-region" id="toastRegion" aria-live="polite"></div>
-  <script src="/static/app.js?v=17" defer></script>
+  <script src="/static/app.js?v=19" defer></script>
 </body>
 </html>

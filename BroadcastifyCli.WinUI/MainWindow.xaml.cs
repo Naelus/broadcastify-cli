@@ -172,6 +172,11 @@ public sealed partial class MainWindow : Window
             return;
         }
         var profile = item.Tag?.ToString() ?? "auto";
+        var resetWhisperModel = profile == "vulkan"
+            && string.Equals(
+                SelectedComboValue(ModelComboBox, "turbo"),
+                "distil-large-v3",
+                StringComparison.OrdinalIgnoreCase);
         switch (profile)
         {
             case "cuda":
@@ -204,6 +209,12 @@ public sealed partial class MainWindow : Window
                 SelectComboTag(DeviceComboBox, "auto");
                 SelectComboTag(DiarizationDeviceComboBox, "auto");
                 break;
+        }
+        if (resetWhisperModel)
+        {
+            SelectComboValue(ModelComboBox, "turbo");
+            StatusText.Text =
+                "Vulkan defaults applied. Whisper was reset to turbo because whisper.cpp has no managed distil-large-v3 mapping.";
         }
         SelectComboTag(AnalysisDeviceComboBox, profile == "cpu" ? "cpu" : "auto");
         _asrVerifiedThisSession = false;
@@ -1242,6 +1253,155 @@ public sealed partial class MainWindow : Window
             _diarizationVerificationMessage = exception.Message;
             UpdateSetupSummary();
             AppendLog(exception.Message);
+        }
+        finally
+        {
+            _operationCancellation.Dispose();
+            _operationCancellation = null;
+            JobProgress.IsIndeterminate = false;
+            SetBusy(false);
+        }
+    }
+
+    private LocalProcessingRequest CreateProfileSelfTestRequest() =>
+        ApplyAnalysisProvider(new LocalProcessingRequest
+        {
+            Model = SelectedComboValue(ModelComboBox, "turbo"),
+            AsrEngine = SelectedComboValue(AsrEngineComboBox, "auto"),
+            Device = SelectedComboValue(DeviceComboBox, "auto"),
+            DeviceIndex = RequiredInteger(GpuIndexBox.Value, 0),
+            AsrModelPath = string.IsNullOrWhiteSpace(AsrModelPathBox.Text)
+                ? null
+                : AsrModelPathBox.Text.Trim(),
+            DiarizationDevice = SelectedComboValue(DiarizationDeviceComboBox, "auto"),
+            BatchSize = RequiredInteger(BatchSizeBox.Value, 8),
+            HuggingFaceToken = string.IsNullOrWhiteSpace(HuggingFaceTokenBox.Password)
+                ? null
+                : HuggingFaceTokenBox.Password,
+        });
+
+    private void ApplyProfileSelfTestResults(ProfileSelfTestStatus status)
+    {
+        if (status.Results.Transcription is { Ready: true } transcription)
+        {
+            _asrVerifiedThisSession = true;
+            _asrVerificationMessage = transcription.Message;
+            AsrSelfTestInfoBar.Severity = InfoBarSeverity.Success;
+            AsrSelfTestInfoBar.Title = "Selected transcription engine is ready";
+            AsrSelfTestInfoBar.Message = string.IsNullOrWhiteSpace(transcription.FallbackReason)
+                ? transcription.Message
+                : $"{transcription.Message} Fallback during {transcription.FallbackStage}: "
+                  + transcription.FallbackReason;
+        }
+        if (status.Results.Diarization is { Ready: true } diarization)
+        {
+            _diarizationVerifiedThisSession = true;
+            _diarizationVerificationMessage = diarization.Message;
+            DiarizationSelfTestInfoBar.Severity = InfoBarSeverity.Success;
+            DiarizationSelfTestInfoBar.Title = "Selected speaker-label engine is ready";
+            DiarizationSelfTestInfoBar.Message = diarization.Message;
+        }
+        if (status.Results.Analysis is { Ready: true, Verified: true } analysis)
+        {
+            _analysisProviderReady = true;
+            _analysisProviderVerified = true;
+            _analysisModelVerifiedThisSession = true;
+            _analysisModelVerificationMessage = analysis.Message;
+            AnalysisProviderStatusText.Text = $"Verified: {analysis.Message}";
+            AnalysisSelfTestInfoBar.Severity = InfoBarSeverity.Success;
+            AnalysisSelfTestInfoBar.Title = "Selected analysis model is ready";
+            AnalysisSelfTestInfoBar.Message = analysis.Message;
+        }
+    }
+
+    private void ApplyProfileSelfTestFailure(ProfileSelfTestStatus status)
+    {
+        switch (status.FailedStage)
+        {
+            case "transcription":
+                AsrSelfTestInfoBar.Severity = InfoBarSeverity.Error;
+                AsrSelfTestInfoBar.Title = "Selected transcription engine needs setup";
+                AsrSelfTestInfoBar.Message = status.Message;
+                break;
+            case "diarization":
+                DiarizationSelfTestInfoBar.Severity = InfoBarSeverity.Error;
+                DiarizationSelfTestInfoBar.Title = "Selected speaker-label engine needs setup";
+                DiarizationSelfTestInfoBar.Message = status.Message;
+                break;
+            case "analysis":
+                AnalysisSelfTestInfoBar.Severity = InfoBarSeverity.Error;
+                AnalysisSelfTestInfoBar.Title = "Selected analysis model needs setup";
+                AnalysisSelfTestInfoBar.Message = status.Message;
+                SettingsTabView.SelectedItem = AnalysisSettingsTab;
+                break;
+        }
+    }
+
+    private async void ProfileSelfTest_Click(object sender, RoutedEventArgs e)
+    {
+        if (_worker is null || _operationCancellation is not null)
+        {
+            return;
+        }
+        ResetAsrVerification();
+        ResetDiarizationVerification();
+        ResetAnalysisModelVerification();
+        _operationCancellation = new CancellationTokenSource();
+        SetBusy(true, "Verifying transcription, speaker labels, and analysis…", jobRunning: true);
+        JobProgress.IsIndeterminate = true;
+        ProfileNextStepsInfoBar.Severity = InfoBarSeverity.Informational;
+        ProfileNextStepsInfoBar.Title = "Running all three execution checks";
+        ProfileNextStepsInfoBar.Message =
+            "The sequence uses generated input and stops at the first stage that needs setup. "
+            + "Archive audio and quota are not used.";
+        try
+        {
+            var status = await _worker.RunProfileSelfTestAsync(
+                CreateProfileSelfTestRequest(),
+                HandleWorkerMessage,
+                _operationCancellation.Token);
+            if (status is null)
+            {
+                throw new InvalidOperationException(
+                    "The profile worker ended without a verification summary.");
+            }
+            ApplyProfileSelfTestResults(status);
+            if (!status.Ready || !status.Verified)
+            {
+                ApplyProfileSelfTestFailure(status);
+                ProfileNextStepsInfoBar.Severity = InfoBarSeverity.Warning;
+                ProfileNextStepsInfoBar.Title = string.IsNullOrWhiteSpace(status.FailedStage)
+                    ? "Selected profile needs setup"
+                    : $"{status.FailedStage.Replace('_', ' ')} needs setup";
+                ProfileNextStepsInfoBar.Message = status.Message;
+                StatusText.Text = status.Message;
+                AppendLog(status.Message);
+                UpdateSetupSummary();
+                return;
+            }
+            ProfileNextStepsInfoBar.Severity = InfoBarSeverity.Success;
+            ProfileNextStepsInfoBar.Title = "Selected profile verified";
+            ProfileNextStepsInfoBar.Message = status.Message;
+            StatusText.Text = status.Message;
+            AppendLog(status.Message);
+            UpdateSetupSummary();
+        }
+        catch (OperationCanceledException)
+        {
+            ProfileNextStepsInfoBar.Severity = InfoBarSeverity.Warning;
+            ProfileNextStepsInfoBar.Title = "Profile verification cancelled";
+            ProfileNextStepsInfoBar.Message = "No archive work was changed.";
+            StatusText.Text = "Profile verification cancelled";
+            UpdateSetupSummary();
+        }
+        catch (Exception exception)
+        {
+            ProfileNextStepsInfoBar.Severity = InfoBarSeverity.Error;
+            ProfileNextStepsInfoBar.Title = "Profile verification could not finish";
+            ProfileNextStepsInfoBar.Message = exception.Message;
+            StatusText.Text = exception.Message;
+            AppendLog(exception.Message);
+            UpdateSetupSummary();
         }
         finally
         {
@@ -3388,6 +3548,7 @@ public sealed partial class MainWindow : Window
         GenerateAreaDigestButton.IsEnabled = !busy && _worker is not null;
         AnalysisProviderCheckButton.IsEnabled = !busy && _worker is not null;
         AnalysisModelTestButton.IsEnabled = !busy && _worker is not null;
+        ProfileSelfTestButton.IsEnabled = !busy && _worker is not null;
         AsrSelfTestButton.IsEnabled = !busy && _worker is not null;
         DiarizationSelfTestButton.IsEnabled = !busy && _worker is not null;
         SetupAccountActionButton.IsEnabled = !busy && _worker is not null;

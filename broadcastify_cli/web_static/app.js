@@ -56,6 +56,7 @@ const state = {
   diarizationSelfTest: null,
   analysisProviderStatus: null,
   analysisSelfTest: null,
+  profileSelfTest: null,
   accountVerified: false,
 };
 
@@ -132,6 +133,7 @@ function applyHardwareProfile(profile, notify = true) {
   };
   const choice = choices[profile];
   if (!choice) {
+    resetProfileVerification();
     resetAsrVerification();
     resetDiarizationVerification();
     resetAnalysisVerification();
@@ -141,6 +143,9 @@ function applyHardwareProfile(profile, notify = true) {
     renderSetupReadiness();
     return;
   }
+  const resetWhisperModel = ["vulkan", "metal"].includes(profile)
+    && byId("settingWhisperModel").value === "distil-large-v3";
+  resetProfileVerification();
   resetAsrVerification();
   resetDiarizationVerification();
   resetAnalysisVerification();
@@ -151,11 +156,17 @@ function applyHardwareProfile(profile, notify = true) {
   byId("settingDevice").value = choice[1];
   byId("settingDiarizationDevice").value = choice[2];
   byId("settingAnalysisDevice").value = choice[3];
+  if (resetWhisperModel) byId("settingWhisperModel").value = "turbo";
   applyingHardwareProfile = false;
   readSettingsForm();
   renderHardwareProfiles();
   renderSetupReadiness();
-  if (notify) toast(`${byId("settingHardwareProfile").selectedOptions[0].textContent} defaults applied.`);
+  if (notify) {
+    const modelMessage = resetWhisperModel
+      ? " The Whisper model was reset to turbo because whisper.cpp has no managed distil-large-v3 mapping."
+      : "";
+    toast(`${byId("settingHardwareProfile").selectedOptions[0].textContent} defaults applied.${modelMessage}`);
+  }
 }
 
 function resetAsrVerification() {
@@ -183,6 +194,15 @@ function resetAnalysisVerification() {
   notice.className = "notice";
   notice.querySelector("strong").textContent = "Analysis not tested for these settings";
   notice.querySelector("span").textContent = "Run Test model after changing the provider, model, endpoint, credential, or device.";
+}
+
+function resetProfileVerification() {
+  state.profileSelfTest = null;
+  const notice = byId("profileSelfTestNotice");
+  if (!notice) return;
+  notice.className = "notice";
+  notice.querySelector("strong").textContent = "Profile not verified for these settings";
+  notice.querySelector("span").textContent = "Verify profile runs transcription, speaker labels, and analysis in sequence with generated input.";
 }
 
 function providerPayload() {
@@ -496,8 +516,28 @@ function renderAreaQueue() {
   byId("areaQueuePanel").innerHTML = `<div class="notice ${warning ? "warning" : "success"}"><strong>Queue ${Number(run.id)} · ${html(words(run.status))}</strong><span>${complete}/${items.length} feeds complete · ${html(run.start_date)} through ${html(run.end_date)}${run.stop_reason ? ` · ${html(run.stop_reason)}` : ""}</span></div><div class="queue-items">${items.map((item) => `<span><b>${Number(item.priority_rank)}. ${html(item.feed_name)}</b> · ${html(words(item.status))} · ${Number(item.completed_days)}/${Number(item.requested_days)} days</span>`).join("")}</div>`;
 }
 
+function syncPlatformProfileOptions(platform) {
+  const select = byId("settingHardwareProfile");
+  if (!select || !platform) return;
+  const isWindows = platform === "Windows";
+  const isMac = platform === "Darwin" || platform === "macOS";
+  const availability = {
+    windowsml: isWindows,
+    metal: isMac,
+  };
+  Object.entries(availability).forEach(([value, available]) => {
+    const option = [...select.options].find((candidate) => candidate.value === value);
+    if (!option) return;
+    option.hidden = !available;
+    option.disabled = !available;
+  });
+  const selected = select.selectedOptions[0];
+  if (selected?.disabled) applyHardwareProfile("auto", false);
+}
+
 function renderRuntime() {
   const runtime = state.bootstrap.runtime || {};
+  syncPlatformProfileOptions(runtime.platform);
   byId("runtimeDescription").textContent = `${runtime.platform || "Unknown"} ${runtime.platform_release || ""} · Python ${runtime.python || ""}`;
   byId("runtimeFacts").innerHTML = [
     ["Access", runtime.loopback_only ? "This computer only" : "Network"],
@@ -705,8 +745,8 @@ async function pollJob() {
       byId("jobDrawer").classList.remove("open");
       byId("jobDrawerToggle").setAttribute("aria-expanded", "false");
       if (job.status === "completed") {
-        toast(`${job.command.replaceAll("-", " ")} completed.`);
-        if (callback) await callback(job);
+        const handled = callback ? await callback(job) : undefined;
+        if (handled !== false) toast(`${job.command.replaceAll("-", " ")} completed.`);
       } else {
         toast(job.error || `${job.command} ${job.status}.`, true);
       }
@@ -1066,6 +1106,7 @@ byId("settingAnalysisProvider").addEventListener("change", () => {
   const defaults = { local: "ggml-org/gemma-4-12B-it-GGUF:Q4_0", "openai-responses": "gpt-5.6-luna", "openai-compatible": "", "codex-cli": "" };
   byId("settingAnalysisModel").value = defaults[byId("settingAnalysisProvider").value] || "";
   state.analysisProviderStatus = null;
+  resetProfileVerification();
   resetAnalysisVerification();
   updateProviderNotice();
   renderHardwareProfiles();
@@ -1073,6 +1114,7 @@ byId("settingAnalysisProvider").addEventListener("change", () => {
 });
 ["settingAnalysisModel", "settingAnalysisEndpoint", "settingApiKeyEnvironment", "settingCodexPath", "settingAnalysisApiKey"].forEach((id) => byId(id).addEventListener("input", () => {
   state.analysisProviderStatus = null;
+  resetProfileVerification();
   resetAnalysisVerification();
   updateProviderNotice();
   renderHardwareProfiles();
@@ -1080,28 +1122,33 @@ byId("settingAnalysisProvider").addEventListener("change", () => {
 }));
 byId("settingAllowExternal").addEventListener("change", () => {
   state.analysisProviderStatus = null;
+  resetProfileVerification();
   resetAnalysisVerification();
   updateProviderNotice();
   renderHardwareProfiles();
   renderSetupReadiness();
 });
 byId("settingHuggingFaceToken").addEventListener("input", () => {
+  resetProfileVerification();
   resetAsrVerification();
   resetDiarizationVerification();
   renderHardwareProfiles();
   renderSetupReadiness();
 });
 byId("settingWhisperModel").addEventListener("change", () => {
+  resetProfileVerification();
   resetAsrVerification();
   renderHardwareProfiles();
   renderSetupReadiness();
 });
 byId("settingAsrModelPath").addEventListener("input", () => {
+  resetProfileVerification();
   resetAsrVerification();
   renderHardwareProfiles();
   renderSetupReadiness();
 });
 byId("settingBatchSize").addEventListener("input", () => {
+  resetProfileVerification();
   resetAsrVerification();
   resetDiarizationVerification();
   renderHardwareProfiles();
@@ -1286,29 +1333,37 @@ async function runAsrSelfTest() {
   await startJob("asr-self-test", processingPayload(), { label: "Testing selected transcription engine", onComplete: (job) => {
     const result = eventOf(job, "asr_self_test")?.result;
     if (!result) return;
-    state.asrSelfTest = result;
-    const notice = byId("asrSelfTestNotice");
-    notice.className = "notice success";
-    notice.querySelector("strong").textContent = "Transcription ready";
-    const fallback = result.fallback_reason ? ` Fallback: ${result.fallback_reason}` : "";
-    notice.querySelector("span").textContent = `${result.message}${fallback}`;
-    renderHardwareProfiles();
-    renderSetupReadiness();
+    applyAsrSelfTestResult(result);
   } });
+}
+
+function applyAsrSelfTestResult(result) {
+  state.asrSelfTest = result;
+  const notice = byId("asrSelfTestNotice");
+  notice.className = "notice success";
+  notice.querySelector("strong").textContent = "Transcription ready";
+  const fallback = result.fallback_reason ? ` Fallback: ${result.fallback_reason}` : "";
+  notice.querySelector("span").textContent = `${result.message}${fallback}`;
+  renderHardwareProfiles();
+  renderSetupReadiness();
 }
 
 async function runDiarizationSelfTest() {
   await startJob("diarization-self-test", processingPayload(), { label: "Testing selected speaker-label engine", onComplete: (job) => {
     const result = eventOf(job, "diarization_self_test")?.result;
     if (!result) return;
-    state.diarizationSelfTest = result;
-    const notice = byId("diarizationSelfTestNotice");
-    notice.className = "notice success";
-    notice.querySelector("strong").textContent = "Speaker labels ready";
-    notice.querySelector("span").textContent = result.message;
-    renderHardwareProfiles();
-    renderSetupReadiness();
+    applyDiarizationSelfTestResult(result);
   } });
+}
+
+function applyDiarizationSelfTestResult(result) {
+  state.diarizationSelfTest = result;
+  const notice = byId("diarizationSelfTestNotice");
+  notice.className = "notice success";
+  notice.querySelector("strong").textContent = "Speaker labels ready";
+  notice.querySelector("span").textContent = result.message;
+  renderHardwareProfiles();
+  renderSetupReadiness();
 }
 
 async function runAnalysisSelfTest() {
@@ -1319,40 +1374,116 @@ async function runAnalysisSelfTest() {
   await startJob("analysis-self-test", providerPayload(), { label: "Testing selected analysis model", onComplete: (job) => {
     const result = eventOf(job, "analysis_self_test")?.result;
     if (!result) return;
-    state.analysisSelfTest = result;
-    state.analysisProviderStatus = {
-      ...(state.analysisProviderStatus || {}),
-      provider: result.provider,
-      model: result.model,
-      device: result.device,
-      external: result.external,
-      ready: true,
-      message: result.message,
-    };
-    notice.className = "notice success";
-    notice.querySelector("strong").textContent = "Analysis model ready";
-    notice.querySelector("span").textContent = result.message;
-    updateProviderNotice();
-    renderHardwareProfiles();
-    renderSetupReadiness();
+    applyAnalysisSelfTestResult(result);
   } });
+}
+
+function applyAnalysisSelfTestResult(result) {
+  state.analysisSelfTest = result;
+  state.analysisProviderStatus = {
+    ...(state.analysisProviderStatus || {}),
+    provider: result.provider,
+    model: result.model,
+    device: result.device,
+    external: result.external,
+    ready: true,
+    message: result.message,
+  };
+  const notice = byId("analysisSelfTestNotice");
+  notice.className = "notice success";
+  notice.querySelector("strong").textContent = "Analysis model ready";
+  notice.querySelector("span").textContent = result.message;
+  updateProviderNotice();
+  renderHardwareProfiles();
+  renderSetupReadiness();
+}
+
+async function runProfileSelfTest() {
+  resetProfileVerification();
+  resetAsrVerification();
+  resetDiarizationVerification();
+  resetAnalysisVerification();
+  const notice = byId("profileSelfTestNotice");
+  notice.className = "notice";
+  notice.querySelector("strong").textContent = "Verifying all three model stages";
+  notice.querySelector("span").textContent = "The check stops at the first stage that needs setup. Archive audio and quota are not used.";
+  await startJob(
+    "profile-self-test",
+    { ...processingPayload(), ...providerPayload() },
+    {
+      label: "Verifying selected hardware profile",
+      onComplete: (job) => {
+        const transcription = eventOf(job, "asr_self_test")?.result;
+        const diarization = eventOf(job, "diarization_self_test")?.result;
+        const analysis = eventOf(job, "analysis_self_test")?.result;
+        if (transcription) applyAsrSelfTestResult(transcription);
+        if (diarization) applyDiarizationSelfTestResult(diarization);
+        if (analysis) applyAnalysisSelfTestResult(analysis);
+        const result = eventOf(job, "profile_self_test")?.result;
+        if (!result) {
+          notice.className = "notice warning";
+          notice.querySelector("strong").textContent = "Profile verification returned no summary";
+          notice.querySelector("span").textContent = "Review the job log and rerun the individual stage tests.";
+          toast("Profile verification returned no summary.", true);
+          return false;
+        }
+        if (!result.ready || !result.verified) {
+          const failedNoticeId = {
+            transcription: "asrSelfTestNotice",
+            diarization: "diarizationSelfTestNotice",
+            analysis: "analysisSelfTestNotice",
+          }[result.failed_stage];
+          const failedTitle = {
+            transcription: "Transcription needs setup",
+            diarization: "Speaker labels need setup",
+            analysis: "Analysis model needs setup",
+          }[result.failed_stage] || "Profile needs setup";
+          const failedNotice = failedNoticeId ? byId(failedNoticeId) : null;
+          if (failedNotice) {
+            failedNotice.className = "notice warning";
+            failedNotice.querySelector("strong").textContent = failedTitle;
+            failedNotice.querySelector("span").textContent = result.message;
+          }
+        }
+        state.profileSelfTest = result;
+        notice.className = `notice ${result.ready && result.verified ? "success" : "warning"}`;
+        notice.querySelector("strong").textContent = result.ready && result.verified
+          ? "Selected profile verified"
+          : `${words(result.failed_stage || "profile")} needs setup`;
+        notice.querySelector("span").textContent = result.message;
+        renderHardwareProfiles();
+        renderSetupReadiness();
+        if (result.ready && result.verified) {
+          toast("Selected profile passed all three execution checks.");
+        } else {
+          toast(result.message, true);
+          if (result.failed_stage === "analysis") setSettingsSection("analysis");
+          else setSettingsSection("processing");
+        }
+        return false;
+      },
+    },
+  );
 }
 
 byId("providerCheckButton").addEventListener("click", runProviderCheck);
 byId("analysisSelfTestButton").addEventListener("click", runAnalysisSelfTest);
 byId("runtimeCheckButton").addEventListener("click", runHardwareCheck);
 byId("setupCheckButton").addEventListener("click", runHardwareCheck);
+byId("profileSelfTestButton").addEventListener("click", runProfileSelfTest);
 byId("settingHardwareProfile").addEventListener("change", (event) => applyHardwareProfile(event.target.value));
 ["settingAsrEngine", "settingDevice"].forEach((id) => byId(id).addEventListener("change", () => {
   if (!applyingHardwareProfile) {
     byId("settingHardwareProfile").value = "custom";
   }
+  resetProfileVerification();
   resetAsrVerification();
   renderHardwareProfiles();
   renderSetupReadiness();
 }));
 byId("settingDiarizationDevice").addEventListener("change", () => {
   if (!applyingHardwareProfile) byId("settingHardwareProfile").value = "custom";
+  resetProfileVerification();
   resetDiarizationVerification();
   renderHardwareProfiles();
   renderSetupReadiness();
@@ -1360,6 +1491,7 @@ byId("settingDiarizationDevice").addEventListener("change", () => {
 byId("settingAnalysisDevice").addEventListener("change", () => {
   if (!applyingHardwareProfile) byId("settingHardwareProfile").value = "custom";
   state.analysisProviderStatus = null;
+  resetProfileVerification();
   resetAnalysisVerification();
   renderHardwareProfiles();
   renderSetupReadiness();

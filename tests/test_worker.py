@@ -13,6 +13,7 @@ from broadcastify_cli.worker import (
     asr_self_test,
     diarization_self_test,
     load_worker_environment,
+    profile_self_test,
 )
 
 
@@ -217,6 +218,97 @@ def test_analysis_self_test_executes_structured_synthetic_generation(
     assert result["device"] == "cpu"
     assert result["model"] == "local-test-model.gguf"
     assert "private-test-key" not in json.dumps(emitted)
+
+
+def test_profile_self_test_runs_all_stages_and_returns_one_verification(
+    monkeypatch,
+) -> None:
+    emitted: list[dict[str, object]] = []
+    calls: list[str] = []
+
+    def stage(name: str, **values: object):
+        def run(_settings: dict[str, object]) -> dict[str, object]:
+            calls.append(name)
+            return {"ready": True, "message": f"{name} passed", **values}
+
+        return run
+
+    monkeypatch.setattr(
+        "broadcastify_cli.worker._asr_self_test_result",
+        stage("transcription", backend="whisper.cpp / Vulkan"),
+    )
+    monkeypatch.setattr(
+        "broadcastify_cli.worker._diarization_self_test_result",
+        stage("diarization", device="cpu"),
+    )
+    monkeypatch.setattr(
+        "broadcastify_cli.worker._analysis_self_test_result",
+        stage("analysis", verified=True, device="auto"),
+    )
+    monkeypatch.setattr("broadcastify_cli.worker.emit", emitted.append)
+
+    assert profile_self_test({"analysis_api_key": "private-test-key"}) == 0
+
+    result = next(
+        value["result"]
+        for value in emitted
+        if value["type"] == "profile_self_test"
+    )
+    assert calls == ["transcription", "diarization", "analysis"]
+    assert result["ready"] is True
+    assert result["verified"] is True
+    assert set(result["results"]) == {"transcription", "diarization", "analysis"}
+    assert [value["status"] for value in emitted if value["type"] == "profile_self_test_stage"] == [
+        "running",
+        "passed",
+        "running",
+        "passed",
+        "running",
+        "passed",
+    ]
+    assert "private-test-key" not in json.dumps(emitted)
+
+
+def test_profile_self_test_stops_at_first_failed_stage(monkeypatch) -> None:
+    emitted: list[dict[str, object]] = []
+    analysis_called = False
+
+    monkeypatch.setattr(
+        "broadcastify_cli.worker._asr_self_test_result",
+        lambda _settings: {"ready": True, "message": "transcription passed"},
+    )
+
+    def fail_diarization(_settings: dict[str, object]) -> dict[str, object]:
+        raise RuntimeError("Community-1 cache is incomplete")
+
+    def analysis(_settings: dict[str, object]) -> dict[str, object]:
+        nonlocal analysis_called
+        analysis_called = True
+        return {"ready": True}
+
+    monkeypatch.setattr(
+        "broadcastify_cli.worker._diarization_self_test_result",
+        fail_diarization,
+    )
+    monkeypatch.setattr(
+        "broadcastify_cli.worker._analysis_self_test_result",
+        analysis,
+    )
+    monkeypatch.setattr("broadcastify_cli.worker.emit", emitted.append)
+
+    assert profile_self_test({}) == 0
+
+    result = next(
+        value["result"]
+        for value in emitted
+        if value["type"] == "profile_self_test"
+    )
+    assert result["ready"] is False
+    assert result["verified"] is False
+    assert result["failed_stage"] == "diarization"
+    assert "Community-1 cache is incomplete" in result["message"]
+    assert set(result["results"]) == {"transcription"}
+    assert analysis_called is False
 
 
 def test_explicit_private_environment_overrides_repository_defaults(

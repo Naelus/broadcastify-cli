@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import gc
 import json
 import math
 import os
@@ -78,10 +79,9 @@ def analysis_provider_diagnostics() -> int:
     return 0
 
 
-def analysis_self_test(payload: dict[str, Any] | None = None) -> int:
-    """Load the selected analysis model and prove one structured generation."""
+def _analysis_self_test_result(settings: dict[str, Any]) -> dict[str, Any]:
+    """Load the selected analysis model and return one structured proof."""
 
-    settings = payload if payload is not None else json.load(sys.stdin)
     config = AnalysisProviderConfig.from_mapping(settings)
     provider_name = {
         "local": "Local llama.cpp",
@@ -122,7 +122,7 @@ def analysis_self_test(payload: dict[str, Any] | None = None) -> int:
             "The analysis model responded, but did not pass the structured readiness check."
         )
     elapsed = time.monotonic() - started
-    result = {
+    return {
         "provider": config.provider,
         "model": effective_model or "provider default",
         "device": config.device,
@@ -135,6 +135,13 @@ def analysis_self_test(payload: dict[str, Any] | None = None) -> int:
             f"{effective_model or 'the selected model'} in {elapsed:.2f} seconds."
         ),
     }
+
+
+def analysis_self_test(payload: dict[str, Any] | None = None) -> int:
+    """Load the selected analysis model and prove one structured generation."""
+
+    settings = payload if payload is not None else json.load(sys.stdin)
+    result = _analysis_self_test_result(settings)
     emit({"type": "analysis_self_test", "result": result})
     return 0
 
@@ -306,8 +313,7 @@ def diagnostics() -> int:
     return 0
 
 
-def asr_self_test(payload: dict[str, Any] | None = None) -> int:
-    settings = payload if payload is not None else json.load(sys.stdin)
+def _asr_self_test_result(settings: dict[str, Any]) -> dict[str, Any]:
     started = time.monotonic()
 
     def progress(message: str) -> None:
@@ -365,6 +371,12 @@ def asr_self_test(payload: dict[str, Any] | None = None) -> int:
         f"Transcription self-test passed with {result['backend']} in "
         f"{result['elapsed_seconds']:.1f} seconds."
     )
+    return result
+
+
+def asr_self_test(payload: dict[str, Any] | None = None) -> int:
+    settings = payload if payload is not None else json.load(sys.stdin)
+    result = _asr_self_test_result(settings)
     emit({"type": "asr_self_test", "result": result, "message": result["message"]})
     return 0
 
@@ -460,8 +472,7 @@ def _speaker_turn_count(output: Any) -> int:
         return 0
 
 
-def diarization_self_test(payload: dict[str, Any] | None = None) -> int:
-    settings = payload if payload is not None else json.load(sys.stdin)
+def _diarization_self_test_result(settings: dict[str, Any]) -> dict[str, Any]:
     started = time.monotonic()
     token = str(settings.get("huggingface_token") or "").strip()
     token = token or os.getenv("HUGGINGFACE_TOKEN", "") or os.getenv("HF_TOKEN", "")
@@ -505,11 +516,132 @@ def diarization_self_test(payload: dict[str, Any] | None = None) -> int:
         f"Speaker-label self-test passed on {selected_device} in "
         f"{result['elapsed_seconds']:.1f} seconds. Synthetic-audio turn count: {turn_count}."
     )
+    return result
+
+
+def diarization_self_test(payload: dict[str, Any] | None = None) -> int:
+    settings = payload if payload is not None else json.load(sys.stdin)
+    result = _diarization_self_test_result(settings)
     emit(
         {
             "type": "diarization_self_test",
             "result": result,
             "message": result["message"],
+        }
+    )
+    return 0
+
+
+def _release_profile_stage_memory() -> None:
+    """Release model objects and accelerator caches between profile stages."""
+
+    gc.collect()
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    # Cleanup is deliberately best-effort. Some optional torch/runtime builds
+    # can raise loader-specific exceptions while probing CUDA; that must not
+    # replace the actual stage result with a cleanup failure.
+    except Exception:
+        pass
+
+
+def profile_self_test(payload: dict[str, Any] | None = None) -> int:
+    """Execute ASR, diarization, and analysis proofs as one guided action."""
+
+    settings = payload if payload is not None else json.load(sys.stdin)
+    started = time.monotonic()
+    results: dict[str, dict[str, Any]] = {}
+    stages = [
+        ("transcription", "asr_self_test", _asr_self_test_result),
+        ("diarization", "diarization_self_test", _diarization_self_test_result),
+        ("analysis", "analysis_self_test", _analysis_self_test_result),
+    ]
+    for stage, event_type, runner in stages:
+        emit(
+            {
+                "type": "profile_self_test_stage",
+                "stage": stage,
+                "status": "running",
+                "message": f"Verifying {stage} with generated local input.",
+            }
+        )
+        try:
+            result = runner(settings)
+        except Exception as exc:
+            message = str(exc).strip() or f"The {stage} self-test failed."
+            _release_profile_stage_memory()
+            profile_result = {
+                "ready": False,
+                "verified": False,
+                "failed_stage": stage,
+                "elapsed_seconds": round(time.monotonic() - started, 3),
+                "results": results,
+                "message": f"Profile verification stopped at {stage}: {message}",
+            }
+            emit(
+                {
+                    "type": "profile_self_test_stage",
+                    "stage": stage,
+                    "status": "failed",
+                    "message": message,
+                }
+            )
+            emit(
+                {
+                    "type": "profile_self_test",
+                    "result": profile_result,
+                    "message": profile_result["message"],
+                }
+            )
+            return 0
+        results[stage] = result
+        emit(
+            {
+                "type": event_type,
+                "result": result,
+                "message": result.get("message", ""),
+            }
+        )
+        emit(
+            {
+                "type": "profile_self_test_stage",
+                "stage": stage,
+                "status": "passed",
+                "message": (
+                    f"{stage.title()} verified; "
+                    + (
+                        "releasing its model before the next stage."
+                        if stage != "analysis"
+                        else "all requested stages have executed."
+                    )
+                ),
+            }
+        )
+        # Do not retain one model stage while loading the next one. This keeps
+        # the guided check viable on machines where all three models fit only
+        # one at a time.
+        _release_profile_stage_memory()
+
+    elapsed = round(time.monotonic() - started, 3)
+    profile_result = {
+        "ready": True,
+        "verified": True,
+        "failed_stage": "",
+        "elapsed_seconds": elapsed,
+        "results": results,
+        "message": (
+            "Transcription, speaker labels, and analysis all executed "
+            f"successfully in {elapsed:.1f} seconds."
+        ),
+    }
+    emit(
+        {
+            "type": "profile_self_test",
+            "result": profile_result,
+            "message": profile_result["message"],
         }
     )
     return 0
@@ -1000,6 +1132,7 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("diarization-self-test")
     subparsers.add_parser("analysis-provider-diagnostics")
     subparsers.add_parser("analysis-self-test")
+    subparsers.add_parser("profile-self-test")
     library = subparsers.add_parser("library")
     library.add_argument("--output-dir", default="archives")
     subparsers.add_parser("continue-local")
@@ -1080,6 +1213,8 @@ def main() -> int:
             return analysis_provider_diagnostics()
         if arguments.command == "analysis-self-test":
             return analysis_self_test()
+        if arguments.command == "profile-self-test":
+            return profile_self_test()
         if arguments.command == "library":
             return library_days(arguments.output_dir)
         if arguments.command == "continue-local":

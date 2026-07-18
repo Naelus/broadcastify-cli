@@ -207,10 +207,22 @@ class WhisperCppAsr:
                     "container runtime."
                 )
         elif not self.executable or not Path(self.executable).is_file():
+            if self.device == "metal":
+                raise AsrDependencyError(
+                    "whisper-cli was not found. Apple Metal requires a native macOS "
+                    "whisper.cpp build compiled with GGML_METAL=ON; Docker and Podman "
+                    "cannot expose Metal to this adapter. Set WHISPER_CPP_PATH after "
+                    "building the native executable."
+                )
+            if self.device == "vulkan":
+                raise AsrDependencyError(
+                    "whisper-cli was not found. Install or build whisper.cpp with "
+                    "GGML_VULKAN=1 and set WHISPER_CPP_PATH, or explicitly configure "
+                    "a pre-pulled WHISPER_CPP_CONTAINER_IMAGE on Linux."
+                )
             raise AsrDependencyError(
-                "whisper-cli was not found. Install or build whisper.cpp and set "
-                "WHISPER_CPP_PATH to whisper-cli, or explicitly configure a pre-pulled "
-                "WHISPER_CPP_CONTAINER_IMAGE. A Vulkan build must use GGML_VULKAN=1."
+                "whisper-cli was not found. Install or build native whisper.cpp and "
+                "set WHISPER_CPP_PATH to whisper-cli."
             )
         resolved_model = find_whisper_cpp_model(model_name, model_path)
         if resolved_model is None and self.executable:

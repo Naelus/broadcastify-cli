@@ -263,7 +263,9 @@ def test_macos_profile_requires_and_reports_both_metal_engines(monkeypatch) -> N
     diagnostics = collect_accelerator_diagnostics("/opt/llama-server")
     automatic = next(value for value in diagnostics["profiles"] if value["id"] == "auto")
     metal = next(value for value in diagnostics["profiles"] if value["id"] == "metal")
+    profile_ids = {value["id"] for value in diagnostics["profiles"]}
 
+    assert "windowsml" not in profile_ids
     assert automatic["configured"] is True
     assert automatic["ready"] is False
     assert automatic["transcription_ready"] is True

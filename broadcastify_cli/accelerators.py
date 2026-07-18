@@ -422,17 +422,17 @@ def _profile(
     analysis_configured = configured if analysis_ready is None else analysis_ready
     next_steps = [
         (
-            "Run Test transcription to prove this exact engine, model, and device."
+            "Run Verify profile (or Test transcription) to prove this exact engine, model, and device."
             if transcription_configured
             else transcription_setup
         ),
         (
-            "Run Test speakers to prove Community-1 on the selected fallback or accelerator."
+            "Run Verify profile (or Test speakers) to prove Community-1 on the selected fallback or accelerator."
             if diarization_configured
             else diarization_setup
         ),
         (
-            "Run Test analysis to load the selected model and generate a local synthetic result."
+            "Run Verify profile (or Test analysis) to load the selected model and generate a local synthetic result."
             if analysis_configured
             else analysis_setup
         ),
@@ -618,36 +618,39 @@ def collect_accelerator_diagnostics(llama_server: str | Path | None) -> dict[str
             diarization_setup=diarization_setup,
             analysis_setup="Install llama-server or configure LLAMA_SERVER_PATH.",
         ),
-        _profile(
-            "windowsml",
-            "Windows ML",
-            windows_ml_decode and pyannote_ready and llama_ready,
-            (
-                f"{windows_ml.get('backend') or 'Windows ML ONNX Whisper'} (validated model)"
-                if windows_ml_decode
-                else "runtime detected; configure and validate an ONNX Whisper model"
-                if windows_ml_runtime
-                else "needs the Windows ML helper and a compatible ONNX Whisper model"
-            ),
-            cpu_diarization,
-            "llama.cpp auto-offload or CPU" if llama_ready else "llama.cpp missing",
-            (
-                "The configured model passed an actual silent-audio decode self-test. "
-                "Diarization uses the dependable CPU fallback."
-                if windows_ml_decode
-                else "A runtime-only probe is not enough; this profile remains unavailable until a model decode passes."
-            ),
-            transcription_ready=windows_ml_decode,
-            diarization_ready=pyannote_ready,
-            analysis_ready=llama_ready,
-            transcription_setup=(
-                "Use a build containing the Windows ML helper and set a compatible ONNX "
-                "Whisper model path; the profile unlocks only after its decode probe passes."
-            ),
-            diarization_setup=diarization_setup,
-            analysis_setup="Install llama-server or configure LLAMA_SERVER_PATH.",
-        ),
     ]
+    if sys.platform == "win32":
+        profiles.append(
+            _profile(
+                "windowsml",
+                "Windows ML",
+                windows_ml_decode and pyannote_ready and llama_ready,
+                (
+                    f"{windows_ml.get('backend') or 'Windows ML ONNX Whisper'} (validated model)"
+                    if windows_ml_decode
+                    else "runtime detected; configure and validate an ONNX Whisper model"
+                    if windows_ml_runtime
+                    else "needs the Windows ML helper and a compatible ONNX Whisper model"
+                ),
+                cpu_diarization,
+                "llama.cpp auto-offload or CPU" if llama_ready else "llama.cpp missing",
+                (
+                    "The configured model passed an actual silent-audio decode self-test. "
+                    "Diarization uses the dependable CPU fallback."
+                    if windows_ml_decode
+                    else "A runtime-only probe is not enough; this profile remains unavailable until a model decode passes."
+                ),
+                transcription_ready=windows_ml_decode,
+                diarization_ready=pyannote_ready,
+                analysis_ready=llama_ready,
+                transcription_setup=(
+                    "Use a build containing the Windows ML helper and set a compatible ONNX "
+                    "Whisper model path; the profile unlocks only after its decode probe passes."
+                ),
+                diarization_setup=diarization_setup,
+                analysis_setup="Install llama-server or configure LLAMA_SERVER_PATH.",
+            )
+        )
     if sys.platform == "darwin":
         profiles.append(
             _profile(

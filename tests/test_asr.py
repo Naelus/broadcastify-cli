@@ -3,6 +3,8 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from broadcastify_cli.asr import (
     OpenVinoWhisperAsr,
     WhisperCppAsr,
@@ -49,6 +51,27 @@ def test_portable_model_aliases_accept_web_ui_english_suffix(tmp_path: Path) -> 
 
     assert whisper_cpp_model_filename("tiny.en") == "ggml-tiny.en-q5_1.bin"
     assert whisper_cpp_model_filename("medium.en") == "ggml-medium.en-q5_0.bin"
+
+
+@pytest.mark.parametrize(
+    ("device", "expected"),
+    [
+        ("metal", "native macOS whisper.cpp build compiled with GGML_METAL=ON"),
+        ("vulkan", "GGML_VULKAN=1"),
+        ("cpu", "native whisper.cpp"),
+    ],
+)
+def test_missing_whisper_cpp_gives_device_specific_setup_help(
+    monkeypatch, tmp_path: Path, device: str, expected: str
+) -> None:
+    monkeypatch.delenv("WHISPER_CPP_CONTAINER_IMAGE", raising=False)
+
+    with pytest.raises(RuntimeError, match=expected):
+        WhisperCppAsr(
+            "tiny",
+            device=device,
+            executable=tmp_path / "missing-whisper-cli",
+        )
 
 
 def test_whisper_cpp_json_is_normalized(monkeypatch, tmp_path: Path) -> None:

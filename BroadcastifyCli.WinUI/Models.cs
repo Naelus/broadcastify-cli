@@ -561,6 +561,39 @@ public sealed record DiarizationSelfTestStatus
     public string Message { get; init; } = "";
 }
 
+public sealed record ProfileSelfTestResults
+{
+    [JsonPropertyName("transcription")]
+    public AsrSelfTestStatus? Transcription { get; init; }
+
+    [JsonPropertyName("diarization")]
+    public DiarizationSelfTestStatus? Diarization { get; init; }
+
+    [JsonPropertyName("analysis")]
+    public AnalysisProviderStatus? Analysis { get; init; }
+}
+
+public sealed record ProfileSelfTestStatus
+{
+    [JsonPropertyName("ready")]
+    public bool Ready { get; init; }
+
+    [JsonPropertyName("verified")]
+    public bool Verified { get; init; }
+
+    [JsonPropertyName("failed_stage")]
+    public string FailedStage { get; init; } = "";
+
+    [JsonPropertyName("elapsed_seconds")]
+    public double ElapsedSeconds { get; init; }
+
+    [JsonPropertyName("results")]
+    public ProfileSelfTestResults Results { get; init; } = new();
+
+    [JsonPropertyName("message")]
+    public string Message { get; init; } = "";
+}
+
 internal sealed record JobRunResult
 {
     [JsonPropertyName("feed_id")]

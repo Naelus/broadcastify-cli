@@ -755,7 +755,7 @@
                                                          Severity="Informational" Title="Execution proof still needed"
                                                          Message="Run the three generated-input tests before a long unattended job." />
                                                 <Grid ColumnSpacing="8">
-                                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                                                     <Expander Header="Compare detected profiles" HorizontalAlignment="Stretch">
                                                         <ListView x:Name="HardwareProfileList" SelectionMode="None" IsItemClickEnabled="False"
                                                                   HorizontalContentAlignment="Stretch">
@@ -781,7 +781,10 @@
                                                             </ListView.ItemTemplate>
                                                         </ListView>
                                                     </Expander>
-                                                    <Button x:Name="DiagnosticsRefreshButton" Grid.Column="1" Content="Refresh check"
+                                                    <Button x:Name="ProfileSelfTestButton" Grid.Column="1" Content="Verify profile"
+                                                            Style="{StaticResource AccentButtonStyle}" Click="ProfileSelfTest_Click"
+                                                            ToolTipService.ToolTip="Run transcription, speaker labels, and analysis in sequence using generated input." />
+                                                    <Button x:Name="DiagnosticsRefreshButton" Grid.Column="2" Content="Refresh check"
                                                             Click="RefreshDiagnostics_Click" />
                                                 </Grid>
                                             </StackPanel>
