@@ -26,6 +26,13 @@ const DEFAULT_SETTINGS = {
   allowExternal: false,
 };
 
+const SETTINGS_SECTIONS = {
+  setup: "First-run readiness and execution checks",
+  processing: "Transcription, speaker labels, and hardware profiles",
+  analysis: "Local or explicitly consented analysis providers",
+  account: "Premium website session and private credentials",
+};
+
 const state = {
   bootstrap: { days: [], profiles: [], summary: {}, runtime: {} },
   selectedDay: null,
@@ -39,6 +46,7 @@ const state = {
   areaBriefResult: null,
   areaSelectedStoryIndex: -1,
   settings: loadSettings(),
+  settingsSection: loadSettingsSection(),
   activeJob: null,
   jobTimer: null,
   jobCallback: null,
@@ -59,6 +67,11 @@ function loadSettings() {
   } catch {
     return { ...DEFAULT_SETTINGS };
   }
+}
+
+function loadSettingsSection() {
+  const saved = localStorage.getItem("radioArchiveSettingsSection") || "setup";
+  return Object.hasOwn(SETTINGS_SECTIONS, saved) ? saved : "setup";
 }
 
 function saveSettings() {
@@ -235,6 +248,28 @@ function closeNavigation() {
   byId("menuButton").setAttribute("aria-expanded", "false");
 }
 
+function setSettingsSection(name, { focusTab = false, updateHistory = true } = {}) {
+  const section = Object.hasOwn(SETTINGS_SECTIONS, name) ? name : "setup";
+  state.settingsSection = section;
+  localStorage.setItem("radioArchiveSettingsSection", section);
+  document.querySelectorAll("[data-settings-section]").forEach((tab) => {
+    const active = tab.dataset.settingsSection === section;
+    tab.classList.toggle("active", active);
+    tab.setAttribute("aria-selected", String(active));
+    tab.tabIndex = active ? 0 : -1;
+    if (active && focusTab) tab.focus();
+  });
+  document.querySelectorAll("[data-settings-panel]").forEach((panel) => {
+    const active = panel.dataset.settingsPanel === section;
+    panel.hidden = !active;
+    panel.classList.toggle("active", active);
+  });
+  if (byId("view-settings").classList.contains("active")) {
+    byId("topbarSubtitle").textContent = SETTINGS_SECTIONS[section];
+    if (updateHistory) history.replaceState(null, "", `#settings/${section}`);
+  }
+}
+
 function setView(name) {
   document.querySelectorAll(".view").forEach((value) => value.classList.toggle("active", value.id === `view-${name}`));
   document.querySelectorAll(".nav-item[data-view]").forEach((value) => {
@@ -252,8 +287,24 @@ function setView(name) {
   byId("topbarTitle").textContent = labels[name][0];
   byId("topbarSubtitle").textContent = labels[name][1];
   closeNavigation();
-  history.replaceState(null, "", `#${name}`);
-  if (name === "settings") renderSetupReadiness();
+  if (name === "settings") {
+    setSettingsSection(state.settingsSection, { updateHistory: false });
+    history.replaceState(null, "", `#settings/${state.settingsSection}`);
+    renderSetupReadiness();
+  } else {
+    history.replaceState(null, "", `#${name}`);
+  }
+}
+
+function setViewFromLocation() {
+  const [requestedView, requestedSettingsSection] = location.hash.replace("#", "").split("/", 2);
+  if (Object.hasOwn(SETTINGS_SECTIONS, requestedSettingsSection)) {
+    state.settingsSection = requestedSettingsSection;
+  }
+  const view = requestedView in { library: 1, archive: 1, review: 1, area: 1, settings: 1 }
+    ? requestedView
+    : "library";
+  setView(view);
 }
 
 function bytes(value) {
@@ -1318,18 +1369,38 @@ byId("runtimeProfiles").addEventListener("click", (event) => {
   if (!button) return;
   applyHardwareProfile(button.dataset.useHardwareProfile);
 });
+byId("settingsSectionTabs").addEventListener("click", (event) => {
+  const tab = event.target.closest("[data-settings-section]");
+  if (!tab) return;
+  setSettingsSection(tab.dataset.settingsSection);
+});
+byId("settingsSectionTabs").addEventListener("keydown", (event) => {
+  if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+  const tabs = [...byId("settingsSectionTabs").querySelectorAll("[data-settings-section]")];
+  const current = Math.max(0, tabs.indexOf(document.activeElement));
+  let next = current;
+  if (event.key === "ArrowLeft") next = (current - 1 + tabs.length) % tabs.length;
+  if (event.key === "ArrowRight") next = (current + 1) % tabs.length;
+  if (event.key === "Home") next = 0;
+  if (event.key === "End") next = tabs.length - 1;
+  event.preventDefault();
+  setSettingsSection(tabs[next].dataset.settingsSection, { focusTab: true });
+});
 byId("setupReadinessGrid").addEventListener("click", async (event) => {
   const button = event.target.closest("[data-setup-action]");
   if (!button) return;
   const action = button.dataset.setupAction;
   if (action === "account") {
-    byId("loginForm").scrollIntoView({ behavior: "smooth", block: "center" });
-    byId("loginUsername").focus();
+    setSettingsSection("account");
+    requestAnimationFrame(() => byId("loginUsername").focus());
   } else if (action === "storage") {
-    byId("runtimeFacts").scrollIntoView({ behavior: "smooth", block: "center" });
+    setSettingsSection("processing");
+    requestAnimationFrame(() => byId("runtimeCheckButton").focus());
   } else if (action === "transcription") {
+    setSettingsSection("processing");
     if (!state.hardwareDiagnostics) await runHardwareCheck(); else await runAsrSelfTest();
   } else if (action === "diarization") {
+    setSettingsSection("processing");
     const speaker = state.hardwareDiagnostics?.accelerators?.speaker_labels || {};
     const accessReady = speaker.access_configured || speaker.token_configured || byId("settingHuggingFaceToken").value;
     const selectedDevice = byId("settingDiarizationDevice").value;
@@ -1338,10 +1409,10 @@ byId("setupReadinessGrid").addEventListener("click", async (event) => {
     } else if (!state.hardwareDiagnostics) {
       await runHardwareCheck();
     } else {
-      byId("settingHuggingFaceToken").scrollIntoView({ behavior: "smooth", block: "center" });
       byId("settingHuggingFaceToken").focus();
     }
   } else if (action === "analysis") {
+    setSettingsSection("analysis");
     const profile = selectedHardwareProfile();
     const provider = byId("settingAnalysisProvider").value;
     const configured = Boolean(
@@ -1380,7 +1451,8 @@ byId("areaEndDate").value = localToday;
 byId("weekEnding").value = localToday;
 applySettingsForm();
 updateAreaCoverageControls();
-setView(location.hash.replace("#", "") in { library: 1, archive: 1, review: 1, area: 1, settings: 1 } ? location.hash.replace("#", "") : "library");
+window.addEventListener("hashchange", setViewFromLocation);
+setViewFromLocation();
 refreshBootstrap({ preserveSelection: false }).then(async () => {
   if (state.bootstrap.days.length) await selectDay(state.bootstrap.days[0]);
 });

@@ -7,7 +7,7 @@
   <meta name="color-scheme" content="light dark">
   <title>Radio Archive Intelligence</title>
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/static/app.css?v=16">
+  <link rel="stylesheet" href="/static/app.css?v=17">
 </head>
 <body>
   <div class="app-shell">
@@ -207,60 +207,82 @@
           </div>
           <button class="button primary" id="saveSettingsButton">Save non-secret settings</button>
         </div>
-        <div class="settings-grid">
-          <div class="card padded setup-overview">
-            <div class="section-heading">
-              <div><p class="eyebrow">First-run readiness</p><h2>Pipeline readiness</h2><p id="setupReadinessSummary">Checking account, storage, and local engines…</p></div>
-              <button class="button primary small" id="setupCheckButton">Check this computer</button>
+        <div class="settings-section-tabs" id="settingsSectionTabs" role="tablist" aria-label="Settings sections">
+          <button class="settings-section-tab active" id="settingsTabSetup" role="tab" aria-selected="true" aria-controls="settingsPanelSetup" tabindex="0" data-settings-section="setup">Setup</button>
+          <button class="settings-section-tab" id="settingsTabProcessing" role="tab" aria-selected="false" aria-controls="settingsPanelProcessing" tabindex="-1" data-settings-section="processing">Processing</button>
+          <button class="settings-section-tab" id="settingsTabAnalysis" role="tab" aria-selected="false" aria-controls="settingsPanelAnalysis" tabindex="-1" data-settings-section="analysis">Analysis &amp; AI</button>
+          <button class="settings-section-tab" id="settingsTabAccount" role="tab" aria-selected="false" aria-controls="settingsPanelAccount" tabindex="-1" data-settings-section="account">Account</button>
+        </div>
+        <div class="settings-panels">
+          <section class="settings-panel active" id="settingsPanelSetup" role="tabpanel" aria-labelledby="settingsTabSetup" data-settings-panel="setup">
+            <div class="settings-grid">
+              <div class="card padded setup-overview">
+                <div class="section-heading">
+                  <div><p class="eyebrow">First-run readiness</p><h2>Pipeline readiness</h2><p id="setupReadinessSummary">Checking account, storage, and local engines…</p></div>
+                  <button class="button primary small" id="setupCheckButton">Check this computer</button>
+                </div>
+                <div class="setup-progress" aria-hidden="true"><div id="setupProgressBar"></div></div>
+                <div class="setup-grid" id="setupReadinessGrid" aria-live="polite"></div>
+                <p class="setup-footnote">Detection does not download models or use Broadcastify quota. Execution tests use generated audio or synthetic text; hosted analysis tests may create minimal provider usage.</p>
+              </div>
             </div>
-            <div class="setup-progress" aria-hidden="true"><div id="setupProgressBar"></div></div>
-            <div class="setup-grid" id="setupReadinessGrid" aria-live="polite"></div>
-            <p class="setup-footnote">Detection does not download models or use Broadcastify quota. Execution tests use generated audio or synthetic text; hosted analysis tests may create minimal provider usage.</p>
-          </div>
-          <div class="card padded">
-            <div class="section-heading"><div><h2>Runtime</h2><p id="runtimeDescription">Loading local runtime…</p></div><button class="button secondary small" id="runtimeCheckButton">Check hardware</button></div>
-            <div class="runtime-facts" id="runtimeFacts"></div>
-            <div id="runtimeProfiles" class="runtime-profiles"><div class="runtime-profile-empty">Run the hardware check to compare stage-by-stage profiles.</div></div>
-          </div>
-          <div class="card padded">
-            <div class="section-heading"><div><h2>Transcription &amp; speakers</h2><p>Automatic keeps the tested Windows behavior and chooses safe fallbacks elsewhere.</p></div><div class="button-row"><button class="button secondary small" id="asrSelfTestButton">Test transcription</button><button class="button secondary small" id="diarizationSelfTestButton">Test speakers</button></div></div>
-            <div class="form-grid two">
-              <label class="full-row"><span>Hardware profile</span><select id="settingHardwareProfile"><option value="auto">Automatic (recommended)</option><option value="cuda">NVIDIA CUDA</option><option value="vulkan">Cross-vendor Vulkan</option><option value="openvino">OpenVINO</option><option value="metal">Apple Metal</option><option value="windowsml">Windows ML</option><option value="cpu">CPU only</option><option value="custom">Custom overrides</option></select><small>Applies a compatible transcription, diarization, and analysis-device starting point.</small></label>
-              <label><span>Whisper model</span><select id="settingWhisperModel"><option>turbo</option><option>distil-large-v3</option><option>large-v3</option><option>medium.en</option><option>small.en</option><option>base.en</option><option>tiny.en</option></select></label>
-              <label><span>ASR engine</span><select id="settingAsrEngine"><option value="auto">Automatic</option><option value="faster-whisper">faster-whisper</option><option value="whisper.cpp">whisper.cpp</option><option value="openvino">OpenVINO</option><option value="windows-ml">Windows ML</option></select></label>
-              <label><span>Transcription device</span><select id="settingDevice"><option value="auto">Automatic</option><option value="cuda">CUDA</option><option value="cpu">CPU</option><option value="vulkan">Vulkan</option><option value="metal">Apple Metal</option><option value="openvino-auto">OpenVINO Auto</option><option value="openvino-gpu">OpenVINO GPU</option><option value="openvino-npu">OpenVINO NPU</option><option value="windows-ml">Windows ML</option></select></label>
-              <label><span>Diarization device</span><select id="settingDiarizationDevice"><option value="auto">Automatic</option><option value="cuda">CUDA</option><option value="cpu">CPU fallback</option></select></label>
-              <label><span>Batch size</span><input id="settingBatchSize" type="number" min="1" max="64" value="8"></label>
-              <label><span>Optional ASR model path</span><input id="settingAsrModelPath" placeholder="Use automatic model discovery"></label>
+          </section>
+          <section class="settings-panel" id="settingsPanelProcessing" role="tabpanel" aria-labelledby="settingsTabProcessing" data-settings-panel="processing" hidden>
+            <div class="settings-grid">
+              <div class="card padded">
+                <div class="section-heading"><div><h2>Runtime</h2><p id="runtimeDescription">Loading local runtime…</p></div><button class="button secondary small" id="runtimeCheckButton">Check hardware</button></div>
+                <div class="runtime-facts" id="runtimeFacts"></div>
+                <div id="runtimeProfiles" class="runtime-profiles"><div class="runtime-profile-empty">Run the hardware check to compare stage-by-stage profiles.</div></div>
+              </div>
+              <div class="card padded">
+                <div class="section-heading"><div><h2>Transcription &amp; speakers</h2><p>Automatic keeps the tested Windows behavior and chooses safe fallbacks elsewhere.</p></div><div class="button-row"><button class="button secondary small" id="asrSelfTestButton">Test transcription</button><button class="button secondary small" id="diarizationSelfTestButton">Test speakers</button></div></div>
+                <div class="form-grid two">
+                  <label class="full-row"><span>Hardware profile</span><select id="settingHardwareProfile"><option value="auto">Automatic (recommended)</option><option value="cuda">NVIDIA CUDA</option><option value="vulkan">Cross-vendor Vulkan</option><option value="openvino">OpenVINO</option><option value="metal">Apple Metal</option><option value="windowsml">Windows ML</option><option value="cpu">CPU only</option><option value="custom">Custom overrides</option></select><small>Applies a compatible transcription, diarization, and analysis-device starting point.</small></label>
+                  <label><span>Whisper model</span><select id="settingWhisperModel"><option>turbo</option><option>distil-large-v3</option><option>large-v3</option><option>medium.en</option><option>small.en</option><option>base.en</option><option>tiny.en</option></select></label>
+                  <label><span>ASR engine</span><select id="settingAsrEngine"><option value="auto">Automatic</option><option value="faster-whisper">faster-whisper</option><option value="whisper.cpp">whisper.cpp</option><option value="openvino">OpenVINO</option><option value="windows-ml">Windows ML</option></select></label>
+                  <label><span>Transcription device</span><select id="settingDevice"><option value="auto">Automatic</option><option value="cuda">CUDA</option><option value="cpu">CPU</option><option value="vulkan">Vulkan</option><option value="metal">Apple Metal</option><option value="openvino-auto">OpenVINO Auto</option><option value="openvino-gpu">OpenVINO GPU</option><option value="openvino-npu">OpenVINO NPU</option><option value="windows-ml">Windows ML</option></select></label>
+                  <label><span>Diarization device</span><select id="settingDiarizationDevice"><option value="auto">Automatic</option><option value="cuda">CUDA</option><option value="cpu">CPU fallback</option></select></label>
+                  <label><span>Batch size</span><input id="settingBatchSize" type="number" min="1" max="64" value="8"></label>
+                  <label><span>Optional ASR model path</span><input id="settingAsrModelPath" placeholder="Use automatic model discovery"></label>
+                </div>
+                <label class="secret-field"><span>Hugging Face token for this tab</span><input id="settingHuggingFaceToken" type="password" autocomplete="off" placeholder="Or set HUGGINGFACE_TOKEN in .env"></label>
+                <div class="notice" id="asrSelfTestNotice"><strong>Not tested this session</strong><span>Testing decodes local synthetic audio and may download the selected managed model.</span></div>
+                <div class="notice" id="diarizationSelfTestNotice"><strong>Speakers not tested this session</strong><span>The explicit test runs pyannote on generated audio and may download its model once.</span></div>
+              </div>
             </div>
-            <label class="secret-field"><span>Hugging Face token for this tab</span><input id="settingHuggingFaceToken" type="password" autocomplete="off" placeholder="Or set HUGGINGFACE_TOKEN in .env"></label>
-            <div class="notice" id="asrSelfTestNotice"><strong>Not tested this session</strong><span>Testing decodes local synthetic audio and may download the selected managed model.</span></div>
-            <div class="notice" id="diarizationSelfTestNotice"><strong>Speakers not tested this session</strong><span>The explicit test runs pyannote on generated audio and may download its model once.</span></div>
-          </div>
-          <div class="card padded">
-            <div class="section-heading"><div><h2>Analysis &amp; AI</h2><p>Local Gemma is private by default. Hosted text transmission is always opt-in.</p></div><div class="button-row"><button class="button secondary small" id="providerCheckButton">Check provider</button><button class="button secondary small" id="analysisSelfTestButton">Test model</button></div></div>
-            <div class="form-grid two">
-              <label><span>Provider</span><select id="settingAnalysisProvider"><option value="local">Local Gemma / llama.cpp</option><option value="openai-responses">OpenAI Responses</option><option value="openai-compatible">OpenAI-compatible /v1</option><option value="codex-cli">Codex saved login</option></select></label>
-              <label><span>Model</span><input id="settingAnalysisModel" value="ggml-org/gemma-4-12B-it-GGUF:Q4_0"></label>
-              <label><span>Managed local device</span><select id="settingAnalysisDevice"><option value="auto">Automatic accelerator offload</option><option value="cpu">CPU only — do not use a GPU</option></select></label>
-              <label><span>Optional endpoint</span><input id="settingAnalysisEndpoint" placeholder="Managed locally or /v1 URL"></label>
-              <label><span>API key environment variable</span><input id="settingApiKeyEnvironment" value="OPENAI_API_KEY"></label>
-              <label><span>Optional Codex executable</span><input id="settingCodexPath" placeholder="Automatic discovery"></label>
-              <label class="secret-field"><span>API key for this tab</span><input id="settingAnalysisApiKey" type="password" autocomplete="off" placeholder="Never saved in browser settings"></label>
+          </section>
+          <section class="settings-panel" id="settingsPanelAnalysis" role="tabpanel" aria-labelledby="settingsTabAnalysis" data-settings-panel="analysis" hidden>
+            <div class="settings-grid settings-grid-focused">
+              <div class="card padded">
+                <div class="section-heading"><div><h2>Analysis &amp; AI</h2><p>Local Gemma is private by default. Hosted text transmission is always opt-in.</p></div><div class="button-row"><button class="button secondary small" id="providerCheckButton">Check provider</button><button class="button secondary small" id="analysisSelfTestButton">Test model</button></div></div>
+                <div class="form-grid two">
+                  <label><span>Provider</span><select id="settingAnalysisProvider"><option value="local">Local Gemma / llama.cpp</option><option value="openai-responses">OpenAI Responses</option><option value="openai-compatible">OpenAI-compatible /v1</option><option value="codex-cli">Codex saved login</option></select></label>
+                  <label><span>Model</span><input id="settingAnalysisModel" value="ggml-org/gemma-4-12B-it-GGUF:Q4_0"></label>
+                  <label><span>Managed local device</span><select id="settingAnalysisDevice"><option value="auto">Automatic accelerator offload</option><option value="cpu">CPU only — do not use a GPU</option></select></label>
+                  <label><span>Optional endpoint</span><input id="settingAnalysisEndpoint" placeholder="Managed locally or /v1 URL"></label>
+                  <label><span>API key environment variable</span><input id="settingApiKeyEnvironment" value="OPENAI_API_KEY"></label>
+                  <label><span>Optional Codex executable</span><input id="settingCodexPath" placeholder="Automatic discovery"></label>
+                  <label class="secret-field"><span>API key for this tab</span><input id="settingAnalysisApiKey" type="password" autocomplete="off" placeholder="Never saved in browser settings"></label>
+                </div>
+                <label class="check-row external-consent"><input id="settingAllowExternal" type="checkbox"><span><strong>Allow transcript excerpts to leave this computer</strong><small>Only analysis prompts are sent, not raw audio. Radio text may still contain sensitive or unverified details.</small></span></label>
+                <div class="notice success" id="providerNotice"><strong>Private local analysis</strong><span>Transcript text stays on this computer.</span></div>
+                <div class="notice" id="analysisSelfTestNotice"><strong>Analysis not tested this session</strong><span>The explicit test loads the selected model and generates a tiny structured response from synthetic text.</span></div>
+              </div>
             </div>
-            <label class="check-row external-consent"><input id="settingAllowExternal" type="checkbox"><span><strong>Allow transcript excerpts to leave this computer</strong><small>Only analysis prompts are sent, not raw audio. Radio text may still contain sensitive or unverified details.</small></span></label>
-            <div class="notice success" id="providerNotice"><strong>Private local analysis</strong><span>Transcript text stays on this computer.</span></div>
-            <div class="notice" id="analysisSelfTestNotice"><strong>Analysis not tested this session</strong><span>The explicit test loads the selected model and generates a tiny structured response from synthetic text.</span></div>
-          </div>
-          <div class="card padded">
-            <div class="section-heading"><div><h2>Broadcastify website login</h2><p>Uses the premium website session, not the official API. Prefer an ignored .env for repeat launches on Linux/macOS.</p></div></div>
-            <form id="loginForm" class="form-stack">
-              <label><span>Username</span><input id="loginUsername" autocomplete="username"></label>
-              <label><span>Password</span><input id="loginPassword" type="password" autocomplete="current-password"></label>
-              <button class="button secondary" type="submit">Sign in for this local session</button>
-            </form>
-            <div class="notice" id="loginNotice"><strong>Checking access</strong><span>Looking for an ignored environment login or saved website session.</span></div>
-          </div>
+          </section>
+          <section class="settings-panel" id="settingsPanelAccount" role="tabpanel" aria-labelledby="settingsTabAccount" data-settings-panel="account" hidden>
+            <div class="settings-grid settings-grid-focused">
+              <div class="card padded">
+                <div class="section-heading"><div><h2>Broadcastify website login</h2><p>Uses the premium website session, not the official API. Prefer an ignored .env for repeat launches on Linux/macOS.</p></div></div>
+                <form id="loginForm" class="form-stack">
+                  <label><span>Username</span><input id="loginUsername" autocomplete="username"></label>
+                  <label><span>Password</span><input id="loginPassword" type="password" autocomplete="current-password"></label>
+                  <button class="button secondary" type="submit">Sign in for this local session</button>
+                </form>
+                <div class="notice" id="loginNotice"><strong>Checking access</strong><span>Looking for an ignored environment login or saved website session.</span></div>
+              </div>
+            </div>
+          </section>
         </div>
       </section>
     </main>
@@ -280,6 +302,6 @@
   </aside>
 
   <div class="toast-region" id="toastRegion" aria-live="polite"></div>
-  <script src="/static/app.js?v=16" defer></script>
+  <script src="/static/app.js?v=17" defer></script>
 </body>
 </html>
