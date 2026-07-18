@@ -1,14 +1,19 @@
 # Managed Linux Web service
 
-`radio-archive-service` installs the loopback browser companion as a per-user
+`radio-archive-service` installs the browser companion as a per-user
 systemd service. It is the managed Linux launch path for the same Library,
 acquisition, transcription, diarization, analysis, and evidence workflow used
 by `broadcastify-web`.
 
-It does not expose a LAN server. The generated configuration fixes the listener
-to `127.0.0.1`; the Web app still creates a random session token at every
+The generated configuration uses `127.0.0.1` by default. An explicit
+`--host` can instead select a private/link-local address or wildcard listener
+for a trusted LAN. The Web app still creates a random session token at every
 launch, requires its same-site cookie for data/media, and requires both the
-cookie and action token for every mutation.
+cookie and action token for every mutation. These controls are not user
+authentication: any client that can open the LAN page can obtain a session.
+
+TrueNAS SCALE should use the supported Apps deployment documented in
+[`deploy/truenas`](../deploy/truenas/README.md), not this user-systemd path.
 
 ## Install the Python package
 
@@ -42,6 +47,16 @@ Run this with the venv that contains the package:
 ~/.local/share/radio-archive/venv/bin/radio-archive-service status
 ~/.local/share/radio-archive/venv/bin/radio-archive-service start --open
 ```
+
+To opt into a trusted-LAN listener on an ordinary Linux host:
+
+```bash
+~/.local/share/radio-archive/venv/bin/radio-archive-service install \
+  --host 0.0.0.0
+```
+
+Use a host firewall, keep the network trusted, and do not publicly proxy or
+port-forward this unauthenticated application.
 
 The defaults are:
 
@@ -95,7 +110,7 @@ radio-archive-service uninstall
 ```
 
 `status` requires both an active systemd unit and the app's exact minimal
-loopback `/health` response. Start/restart waits up to 15 seconds for that
+`/health` response with the configured loopback or trusted-LAN scope. Start/restart waits up to 15 seconds for that
 response before directing the user to `radio-archive-service logs`. The unit
 appends stdout and stderr to the owner-only working-directory log so diagnostics
 remain available on appliances where an ordinary user cannot read the system
@@ -127,8 +142,9 @@ broadcastify-web \
   --database /absolute/path/to/archives/broadcastify-analysis.sqlite3
 ```
 
-The host remains restricted to loopback. `--host 0.0.0.0` is rejected rather
-than becoming an undocumented remote deployment mode.
+Add `--host 0.0.0.0` (or an assigned private numeric address) only when this
+foreground process is intentionally serving a trusted LAN. Public and
+multicast numeric addresses are rejected.
 
 ## Validation boundary
 
@@ -140,3 +156,9 @@ retained useful mode-0600 logs without journal permissions, stopped with no
 listener, and uninstalled while preserving every user-data path. No host
 package, system service, Broadcastify request, or model download was used in
 that launcher test.
+
+Exact `historical-validation` added the explicit trusted-LAN contract and regression coverage
+without changing the loopback default. The separately managed TrueNAS Apps
+deployment is validated from exact `historical-validation`; it should be preferred on that
+appliance because TrueNAS owns its lifecycle, LAN port, GPU device mapping, and
+persistent host-path storage.

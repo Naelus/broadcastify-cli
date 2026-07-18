@@ -53,7 +53,7 @@ Use this file for reproducible defects and concrete blockers, not the general ro
 
 - **Severity:** Medium for product portability; no impact on native Windows use.
 - **Observed:** Exact commit `historical-validation` completed a fresh network-disabled retained-radio workflow through the real loopback HTTP job boundary: same-site session cookie, action token, `continue-local` worker, whisper.cpp on AMD Vulkan, pyannote on CPU, local Gemma on AMD Vulkan, embeddings, summary persistence, and final Ready-to-review state. Exact commit `historical-validation` closed the managed Linux launch gap with a verified wheel and per-user systemd lifecycle. Exact commit `historical-validation` now closes the Linux full-model visual/accessibility gap: 148/148 host tests plus Local Library, Review, Area Watch, Settings, media, navigation, and keyboard QA at 1365×900 and 390×844, with exact document/client widths and no browser errors. Apple Metal is implemented with CPU diarization and macOS auto-selection when both Metal backends are detected, but no real Mac run has occurred. Cross-platform credential persistence is `.env`/session-only rather than an OS keychain.
-- **Next:** Run a real macOS install and CPU-or-Metal workflow; add a platform keychain adapter without weakening the loopback/session-token boundary. Non-developer packaging/model acquisition also remains roadmap work.
+- **Next:** Run a real macOS install and CPU-or-Metal workflow; add a platform keychain adapter without weakening the loopback-default/trusted-LAN session boundary. Non-developer packaging/model acquisition also remains roadmap work.
 
 ### B-007 — Archive quota size/reset schedule remains inferred
 

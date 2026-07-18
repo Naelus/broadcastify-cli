@@ -1,6 +1,6 @@
 # Radio Archive Intelligence
 
-An evidence-first local application for finding Broadcastify feeds, retaining premium archives, combining daily audio, transcribing and diarizing radio traffic, and producing auditable incident, daily, weekly, and regional story summaries. The tested Windows experience uses WinUI 3; the same Python backend now has a loopback-only browser companion for Windows, Linux, and macOS plus the original CLI.
+An evidence-first local application for finding Broadcastify feeds, retaining premium archives, combining daily audio, transcribing and diarizing radio traffic, and producing auditable incident, daily, weekly, and regional story summaries. The tested Windows experience uses WinUI 3; the same Python backend has a browser companion for Windows, Linux, and macOS plus the original CLI. It stays on loopback by default and can be explicitly hosted on a trusted LAN, including as a persistent TrueNAS App.
 
 The repository keeps its historical `broadcastify-cli` name for compatibility while the product direction is broader than a downloader.
 
@@ -9,8 +9,9 @@ This fork uses Broadcastify's website login and the same private web endpoints a
 ## What is implemented
 
 - Native WinUI 3 desktop UI on .NET 10 and current stable Windows App SDK 2.3.1
-- A responsive, loopback-only browser UI with the same Library, New Archive, Review & Ask, Area Watch, and Settings workflow for cross-platform use
-- A per-user Linux systemd launcher with install/start/stop/status/log commands, failure restart, private settings, and a fixed loopback-only service boundary
+- A responsive browser UI with the same Library, New Archive, Review & Ask, Area Watch, and Settings workflow for cross-platform use; loopback is the default and trusted-LAN hosting is explicit
+- A per-user Linux systemd launcher with install/start/stop/status/log commands, failure restart, private settings, and a configurable loopback or trusted-LAN service boundary
+- A TrueNAS Apps deployment with an immutable Vulkan image, persistent host-path data, AMD render-device access, and a LAN-hosted UI managed by TrueNAS
 - Feed search by agency, city, county, state, or ZIP, including the county-directory matches returned by the website
 - Premium website sign-in with an opt-in Windows Credential Locker login for automatic session refresh
 - A navigable WinUI shell for Local Library, New Archive, Review & Ask, Area Watch, and Settings instead of one long scrolling workspace
@@ -166,7 +167,7 @@ This writes `broadcastify-desktop.env` into the dedicated private publish output
 
 ## Cross-platform local Web UI
 
-The browser companion is served by Python and binds only to a loopback address. It does not need a cloud deployment or expose the archive library to the LAN:
+The browser companion is served by Python and binds to loopback by default:
 
 ```powershell
 .\.venv\Scripts\broadcastify-web.exe --open
@@ -177,6 +178,25 @@ On Linux or macOS, use the equivalent environment entry point:
 ```bash
 ./.venv/bin/broadcastify-web --open
 ```
+
+An explicit private/link-local address or `0.0.0.0` enables trusted-LAN mode:
+
+```bash
+./.venv/bin/broadcastify-web --host 0.0.0.0 --port 8765
+```
+
+Anyone who can reach a LAN listener can open the page, receive a session
+cookie/token, read retained audio/transcripts, and start supported jobs. The
+cookie/token, same-origin, CSP, media-containment, and quota controls still
+apply, but they are not user authentication. Use LAN mode only on a trusted
+network, bind/publish it on the intended private interface, and never
+port-forward or publicly proxy it without adding real authentication and TLS.
+
+On TrueNAS SCALE, use the supported **Apps** path instead of the experimental
+Containers/LXC feature or a hand-managed systemd process. The reference Custom
+App runs the UI and AMD Vulkan compute on the NAS, mounts its archive/model
+dataset at `/data`, and publishes only the selected NAS LAN address. See the
+[TrueNAS Apps deployment guide](deploy/truenas/README.md).
 
 On a Linux desktop with a systemd user session, the installed package can
 supervise the same Web app and reopen it after a process failure:
@@ -210,7 +230,7 @@ Use `continue-local` with `--payload-file` to exercise a retained day without do
 
 It exposes the retained Library and processing timeline, byte-range audio playback, bounded incident and transcript viewers, exact clip preparation, website feed search, guarded archive jobs, local continuation, provider-aware Q&A and weekly summaries, area profiles, retained regional briefs with redacted quote/provenance/clip packages, hardware diagnostics, and session-only sign-in. Settings is divided into keyboard-accessible Setup, Processing, Analysis & AI, and Account sections; direct URLs, Back/Forward, and the last selected section are preserved. Media links are archive-relative and never serialize local filesystem paths. One heavy job can run at a time, every archive job is forced to one download worker, and the explicit Broadcastify quota response still stops the range immediately.
 
-Every launch creates a random local session token. API and media routes require the same-site session cookie; actions also require the token header and reject cross-origin submissions. Non-secret settings use browser-local storage. API keys and first-download Hugging Face tokens remain in the active tab or an ignored `.env`; once Community-1 is fully cached, diarization can run offline without supplying the token again. The cross-platform UI does not claim OS-keychain persistence yet. See [docs/web-ui.md](docs/web-ui.md) for the runtime contract and current portability boundary.
+Every launch creates a random session token. API and media routes require the same-site session cookie; actions also require the token header and reject cross-origin submissions. Non-secret settings use browser-local storage. API keys and first-download Hugging Face tokens remain in the active tab or an ignored `.env`; once Community-1 is fully cached, diarization can run offline without supplying the token again. The cross-platform UI does not claim OS-keychain persistence yet. See [docs/web-ui.md](docs/web-ui.md) for the runtime contract and current portability boundary.
 
 ## Windows first run
 

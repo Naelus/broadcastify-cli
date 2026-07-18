@@ -90,3 +90,20 @@ Relevant TrueNAS guidance:
 
 - [Installing Custom Apps](https://apps.truenas.com/managing-apps/installing-custom-apps/)
 - [App storage](https://apps.truenas.com/getting-started/app-storage/)
+
+## Validated reference deployment
+
+On July 18, 2026, exact commit `historical-validation` was built from pinned official
+whisper.cpp/llama.cpp Vulkan image digests and installed through the TrueNAS
+25.04 Apps API as `radio-archive-intelligence`. The App runs as numeric user
+950 with only render group 107/device `renderD128`, publishes
+`10.200.1.227:8765`, and mounts `ssd_pool/radio-archive` at `/data`.
+
+A separate Windows client reached the LAN root, trusted-LAN health, protected
+bootstrap, diagnostics, and job API without an SSH tunnel. Diagnostics found
+the Radeon 890M as `Vulkan0`; the generated-input profile completed
+Whisper/Vulkan, sherpa CPU speaker labels, and Gemma/llama.cpp Vulkan in 4.920
+seconds. A TrueNAS-managed redeploy retained 367 feed-90001 files, 269
+feed-90003 files, the 8,253,440-byte SQLite store, 11 visible library days, 470
+incidents, and 2 weekly summaries. The Windows originals were copied, not
+moved or removed.
