@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -65,6 +66,43 @@ def test_llama_device_output_is_normalized(monkeypatch) -> None:
             "free_mib": 7000,
         },
     ]
+
+
+def test_llama_device_inspection_scopes_release_libraries_to_child(
+    monkeypatch, tmp_path: Path
+) -> None:
+    executable = tmp_path / "llama-server"
+    executable.write_bytes(b"binary")
+    captured: dict[str, object] = {}
+
+    def fake_run(*args, **kwargs):
+        captured["args"] = args
+        captured["kwargs"] = kwargs
+        return SimpleNamespace(stdout="  Vulkan0: Test GPU\n", stderr="")
+
+    prepared = accelerator_module._release_loader_environment(
+        executable,
+        {"LD_LIBRARY_PATH": "/shared/ggml"},
+        platform_name="linux",
+    )
+    assert prepared["LD_LIBRARY_PATH"].split(os.pathsep) == [
+        str(tmp_path.resolve()),
+        "/shared/ggml",
+    ]
+    monkeypatch.setattr(
+        "broadcastify_cli.accelerators._release_loader_environment",
+        lambda _executable: prepared,
+    )
+    monkeypatch.setattr(
+        "broadcastify_cli.accelerators.subprocess.run",
+        fake_run,
+    )
+
+    devices = inspect_llama_devices(executable)
+
+    environment = captured["kwargs"]["env"]
+    assert environment == prepared
+    assert devices[0]["backend"] == "vulkan"
 
 
 def test_whisper_cpp_backend_dlls_are_detected(tmp_path: Path) -> None:

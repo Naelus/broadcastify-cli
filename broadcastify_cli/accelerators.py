@@ -327,9 +327,36 @@ def whisper_cpp_backends(executable: str | Path | None) -> list[str]:
     return sorted(names)
 
 
+def _release_loader_environment(
+    executable: str | Path,
+    environment: dict[str, str] | None = None,
+    *,
+    platform_name: str | None = None,
+) -> dict[str, str]:
+    prepared = (environment or os.environ).copy()
+    platform = platform_name or sys.platform
+    if platform.startswith("win"):
+        return prepared
+    variable = "DYLD_LIBRARY_PATH" if platform == "darwin" else "LD_LIBRARY_PATH"
+    executable_directory = str(Path(executable).expanduser().resolve().parent)
+    existing = [
+        value
+        for value in prepared.get(variable, "").split(os.pathsep)
+        if value
+    ]
+    prepared[variable] = os.pathsep.join(
+        [
+            executable_directory,
+            *[value for value in existing if value != executable_directory],
+        ]
+    )
+    return prepared
+
+
 def inspect_llama_devices(executable: str | Path | None) -> list[dict[str, Any]]:
     if not executable:
         return []
+    environment = _release_loader_environment(executable)
     try:
         result = subprocess.run(
             [str(executable), "--list-devices"],
@@ -338,6 +365,7 @@ def inspect_llama_devices(executable: str | Path | None) -> list[dict[str, Any]]
             check=False,
             timeout=15,
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+            env=environment,
         )
     except (OSError, subprocess.SubprocessError):
         return []
