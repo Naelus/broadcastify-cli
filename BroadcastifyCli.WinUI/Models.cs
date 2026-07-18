@@ -154,6 +154,7 @@ internal abstract record AnalysisProviderRequest
 }
 
 internal sealed record AnalysisProviderDiagnosticsRequest : AnalysisProviderRequest;
+internal sealed record AnalysisSelfTestRequest : AnalysisProviderRequest;
 
 public sealed record AnalysisProviderStatus
 {
@@ -172,8 +173,14 @@ public sealed record AnalysisProviderStatus
     [JsonPropertyName("ready")]
     public bool Ready { get; init; }
 
+    [JsonPropertyName("configured")]
+    public bool Configured { get; init; }
+
     [JsonPropertyName("verified")]
     public bool Verified { get; init; }
+
+    [JsonPropertyName("elapsed_seconds")]
+    public double ElapsedSeconds { get; init; }
 
     [JsonPropertyName("message")]
     public string Message { get; init; } = "";
@@ -802,6 +809,12 @@ public sealed record HardwareProfileStatus
     [JsonPropertyName("ready")]
     public bool Ready { get; init; }
 
+    [JsonPropertyName("configured")]
+    public bool Configured { get; init; }
+
+    [JsonPropertyName("verified")]
+    public bool Verified { get; init; }
+
     [JsonPropertyName("transcription_ready")]
     public bool TranscriptionReady { get; init; }
 
@@ -823,9 +836,19 @@ public sealed record HardwareProfileStatus
     [JsonPropertyName("note")]
     public string Note { get; init; } = "";
 
-    public string StateText => Ready ? "Ready" : "Setup needed";
+    [JsonPropertyName("next_steps")]
+    public List<string> NextSteps { get; init; } = [];
+
+    public string StateText => Verified || Ready
+        ? "Verified"
+        : Configured
+            ? "Detected"
+            : "Setup needed";
     public string StageSummary =>
         $"Transcription: {Transcription}\nDiarization: {Diarization}\nAnalysis: {Analysis}";
+    public string NextStepSummary => Verified || Ready || NextSteps.Count == 0
+        ? ""
+        : "Next:\n• " + string.Join("\n• ", NextSteps);
 }
 
 internal sealed record LocalProcessingRequest : AnalysisProviderRequest

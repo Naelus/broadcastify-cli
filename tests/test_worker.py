@@ -9,6 +9,7 @@ from broadcastify_cli.storage import AnalysisStore
 from broadcastify_cli.worker import (
     _day_report,
     _incident_clip,
+    analysis_self_test,
     asr_self_test,
     diarization_self_test,
     load_worker_environment,
@@ -156,6 +157,66 @@ def test_diarization_self_test_can_reuse_cached_model_without_token(monkeypatch)
     assert diarization_self_test({"diarization_device": "cpu"}) == 0
     assert loaded["token"] == ""
     assert any(value["type"] == "diarization_self_test" for value in emitted)
+
+
+def test_analysis_self_test_executes_structured_synthetic_generation(
+    monkeypatch,
+) -> None:
+    emitted: list[dict[str, object]] = []
+    request: dict[str, object] = {}
+
+    class FakeClient:
+        model = "local-test-model.gguf"
+
+        def chat_json(
+            self,
+            system_prompt: str,
+            user_prompt: str,
+            schema_name: str,
+            schema: dict[str, object],
+            *,
+            max_tokens: int,
+        ) -> dict[str, object]:
+            request.update(
+                {
+                    "system_prompt": system_prompt,
+                    "user_prompt": user_prompt,
+                    "schema_name": schema_name,
+                    "schema": schema,
+                    "max_tokens": max_tokens,
+                }
+            )
+            return {"ready": True}
+
+    monkeypatch.setattr(
+        "broadcastify_cli.worker.open_analysis_client",
+        lambda _config: nullcontext(FakeClient()),
+    )
+    monkeypatch.setattr("broadcastify_cli.worker.emit", emitted.append)
+
+    exit_code = analysis_self_test(
+        {
+            "analysis_provider": "local",
+            "analysis_model": "requested-test-model.gguf",
+            "analysis_device": "cpu",
+            "analysis_api_key": "private-test-key",
+        }
+    )
+
+    result = next(
+        value["result"]
+        for value in emitted
+        if value["type"] == "analysis_self_test"
+    )
+    assert exit_code == 0
+    assert request["schema_name"] == "runtime_readiness"
+    assert request["max_tokens"] == 32
+    assert "synthetic" in str(request["user_prompt"]).lower()
+    assert result["ready"] is True
+    assert result["verified"] is True
+    assert result["device"] == "cpu"
+    assert result["model"] == "local-test-model.gguf"
+    assert "private-test-key" not in json.dumps(emitted)
 
 
 def test_explicit_private_environment_overrides_repository_defaults(

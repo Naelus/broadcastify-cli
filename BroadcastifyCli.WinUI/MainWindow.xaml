@@ -636,7 +636,7 @@
                                                 <Grid ColumnSpacing="14">
                                                     <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="220" /></Grid.ColumnDefinitions>
                                                     <StackPanel Spacing="3">
-                                                        <TextBlock Text="Ready for a first archive" Style="{StaticResource SubtitleTextBlockStyle}" />
+                                                        <TextBlock Text="Setup at a glance" Style="{StaticResource SubtitleTextBlockStyle}" />
                                                         <TextBlock x:Name="SetupReadinessCountText" Text="Inspecting account, storage, and local engines…"
                                                                    TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                                     </StackPanel>
@@ -720,7 +720,7 @@
                                                 </Border>
                                             </StackPanel>
                                         </Border>
-                                        <TextBlock Text="Detection checks installed components only. Test buttons execute generated local audio or a no-transcript provider check; no archive quota is used."
+                                        <TextBlock Text="Detection checks installed components only. Execution tests use generated audio or synthetic text; hosted analysis tests may create minimal provider usage. No Broadcastify quota is used."
                                                    TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
                                     </StackPanel>
                                 </ScrollViewer>
@@ -751,6 +751,9 @@
                                                 <TextBlock x:Name="HardwareProfileDescriptionText"
                                                            Text="Detecting the best engines for this computer…" TextWrapping="Wrap"
                                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                <InfoBar x:Name="ProfileNextStepsInfoBar" IsOpen="True" IsClosable="False"
+                                                         Severity="Informational" Title="Execution proof still needed"
+                                                         Message="Run the three generated-input tests before a long unattended job." />
                                                 <Grid ColumnSpacing="8">
                                                     <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                                                     <Expander Header="Compare detected profiles" HorizontalAlignment="Stretch">
@@ -770,6 +773,8 @@
                                                                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                                                             <TextBlock Text="{x:Bind Note}" TextWrapping="Wrap" FontSize="12"
                                                                                        Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                                                                            <TextBlock Text="{x:Bind NextStepSummary}" TextWrapping="Wrap" FontSize="12"
+                                                                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                                                         </StackPanel>
                                                                     </Border>
                                                                 </DataTemplate>
@@ -928,14 +933,20 @@
                                                     </StackPanel>
                                                 </Expander>
                                                 <Grid ColumnSpacing="10">
-                                                    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                                    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
                                                     <Button x:Name="AnalysisProviderCheckButton" Content="Check provider"
                                                             Click="CheckAnalysisProvider_Click" />
-                                                    <TextBlock x:Name="AnalysisProviderStatusText" Grid.Column="1"
+                                                    <Button x:Name="AnalysisModelTestButton" Grid.Column="1" Content="Test model"
+                                                            Click="AnalysisSelfTest_Click"
+                                                            ToolTipService.ToolTip="Generate a tiny structured response. Local models may download; hosted providers may create minimal usage." />
+                                                    <TextBlock x:Name="AnalysisProviderStatusText" Grid.Column="2"
                                                                Text="Local engine readiness is also included in Processing → hardware check."
                                                                TextWrapping="Wrap" VerticalAlignment="Center"
                                                                Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                                 </Grid>
+                                                <InfoBar x:Name="AnalysisSelfTestInfoBar" IsOpen="True" IsClosable="False"
+                                                         Severity="Informational" Title="Analysis model not tested this session"
+                                                         Message="The explicit test loads the selected model and generates a tiny structured response from synthetic text." />
                                             </StackPanel>
                                         </Border>
                                     </StackPanel>

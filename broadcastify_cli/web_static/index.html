@@ -7,7 +7,7 @@
   <meta name="color-scheme" content="light dark">
   <title>Radio Archive Intelligence</title>
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/static/app.css?v=14">
+  <link rel="stylesheet" href="/static/app.css?v=16">
 </head>
 <body>
   <div class="app-shell">
@@ -210,12 +210,12 @@
         <div class="settings-grid">
           <div class="card padded setup-overview">
             <div class="section-heading">
-              <div><p class="eyebrow">First-run readiness</p><h2>Ready for a first archive</h2><p id="setupReadinessSummary">Checking account, storage, and local engines…</p></div>
+              <div><p class="eyebrow">First-run readiness</p><h2>Pipeline readiness</h2><p id="setupReadinessSummary">Checking account, storage, and local engines…</p></div>
               <button class="button primary small" id="setupCheckButton">Check this computer</button>
             </div>
             <div class="setup-progress" aria-hidden="true"><div id="setupProgressBar"></div></div>
             <div class="setup-grid" id="setupReadinessGrid" aria-live="polite"></div>
-            <p class="setup-footnote">Detection does not download models or use Broadcastify quota. Execution tests use generated local audio; provider checks send no transcript text.</p>
+            <p class="setup-footnote">Detection does not download models or use Broadcastify quota. Execution tests use generated audio or synthetic text; hosted analysis tests may create minimal provider usage.</p>
           </div>
           <div class="card padded">
             <div class="section-heading"><div><h2>Runtime</h2><p id="runtimeDescription">Loading local runtime…</p></div><button class="button secondary small" id="runtimeCheckButton">Check hardware</button></div>
@@ -238,7 +238,7 @@
             <div class="notice" id="diarizationSelfTestNotice"><strong>Speakers not tested this session</strong><span>The explicit test runs pyannote on generated audio and may download its model once.</span></div>
           </div>
           <div class="card padded">
-            <div class="section-heading"><div><h2>Analysis &amp; AI</h2><p>Local Gemma is private by default. Hosted text transmission is always opt-in.</p></div><button class="button secondary small" id="providerCheckButton">Check provider</button></div>
+            <div class="section-heading"><div><h2>Analysis &amp; AI</h2><p>Local Gemma is private by default. Hosted text transmission is always opt-in.</p></div><div class="button-row"><button class="button secondary small" id="providerCheckButton">Check provider</button><button class="button secondary small" id="analysisSelfTestButton">Test model</button></div></div>
             <div class="form-grid two">
               <label><span>Provider</span><select id="settingAnalysisProvider"><option value="local">Local Gemma / llama.cpp</option><option value="openai-responses">OpenAI Responses</option><option value="openai-compatible">OpenAI-compatible /v1</option><option value="codex-cli">Codex saved login</option></select></label>
               <label><span>Model</span><input id="settingAnalysisModel" value="ggml-org/gemma-4-12B-it-GGUF:Q4_0"></label>
@@ -250,6 +250,7 @@
             </div>
             <label class="check-row external-consent"><input id="settingAllowExternal" type="checkbox"><span><strong>Allow transcript excerpts to leave this computer</strong><small>Only analysis prompts are sent, not raw audio. Radio text may still contain sensitive or unverified details.</small></span></label>
             <div class="notice success" id="providerNotice"><strong>Private local analysis</strong><span>Transcript text stays on this computer.</span></div>
+            <div class="notice" id="analysisSelfTestNotice"><strong>Analysis not tested this session</strong><span>The explicit test loads the selected model and generates a tiny structured response from synthetic text.</span></div>
           </div>
           <div class="card padded">
             <div class="section-heading"><div><h2>Broadcastify website login</h2><p>Uses the premium website session, not the official API. Prefer an ignored .env for repeat launches on Linux/macOS.</p></div></div>
@@ -279,6 +280,6 @@
   </aside>
 
   <div class="toast-region" id="toastRegion" aria-live="polite"></div>
-  <script src="/static/app.js?v=14" defer></script>
+  <script src="/static/app.js?v=16" defer></script>
 </body>
 </html>

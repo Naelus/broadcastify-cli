@@ -405,6 +405,7 @@ class JobManager:
 
         stdin_commands = {
             "analysis-provider-diagnostics",
+            "analysis-self-test",
             "analyze-day",
             "asr-self-test",
             "diarization-self-test",

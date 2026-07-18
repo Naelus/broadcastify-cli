@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from broadcastify_cli.accelerators import (
     collect_accelerator_diagnostics,
     find_whisper_cpp,
+    huggingface_model_cached,
     inspect_llama_devices,
     whisper_cpp_backends,
 )
@@ -61,6 +62,83 @@ def test_whisper_cpp_finds_portable_local_build(monkeypatch, tmp_path: Path) -> 
     monkeypatch.setattr("broadcastify_cli.accelerators.shutil.which", lambda _name: None)
 
     assert find_whisper_cpp() == str(executable.resolve())
+
+
+def test_huggingface_model_cache_detection_requires_expected_snapshot_file(
+    tmp_path: Path,
+) -> None:
+    cache = tmp_path / "hub"
+    snapshot = (
+        cache
+        / "models--pyannote--speaker-diarization-community-1"
+        / "snapshots"
+        / "test-revision"
+    )
+    snapshot.mkdir(parents=True)
+
+    assert not huggingface_model_cached(
+        "pyannote/speaker-diarization-community-1",
+        cache_root=cache,
+    )
+
+    (snapshot / "config.yaml").write_text("version: test\n", encoding="utf-8")
+
+    assert huggingface_model_cached(
+        "pyannote/speaker-diarization-community-1",
+        cache_root=cache,
+    )
+
+
+def test_cached_pyannote_model_counts_as_configured_without_token(
+    monkeypatch, tmp_path: Path
+) -> None:
+    snapshot = (
+        tmp_path
+        / "models--pyannote--speaker-diarization-community-1"
+        / "snapshots"
+        / "offline-revision"
+    )
+    snapshot.mkdir(parents=True)
+    (snapshot / "config.yaml").write_text("version: test\n", encoding="utf-8")
+    monkeypatch.setenv("HF_HUB_CACHE", str(tmp_path))
+    monkeypatch.delenv("HUGGINGFACE_TOKEN", raising=False)
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    monkeypatch.delenv("WHISPER_CPP_CONTAINER_IMAGE", raising=False)
+    monkeypatch.setattr(
+        "broadcastify_cli.accelerators._torch_diagnostics",
+        lambda: {"installed": True, "cuda_available": False, "cuda_devices": []},
+    )
+    monkeypatch.setattr(
+        "broadcastify_cli.accelerators._openvino_diagnostics",
+        lambda: {"runtime_installed": False, "genai_installed": False, "devices": []},
+    )
+    monkeypatch.setattr(
+        "broadcastify_cli.accelerators._onnx_diagnostics",
+        lambda: {"installed": False},
+    )
+    monkeypatch.setattr(
+        "broadcastify_cli.accelerators._windows_ml_diagnostics",
+        lambda: {"runtime_ready": False, "decode_ready": False},
+    )
+    monkeypatch.setattr("broadcastify_cli.accelerators.find_whisper_cpp", lambda: None)
+    monkeypatch.setattr(
+        "broadcastify_cli.accelerators.inspect_llama_devices",
+        lambda _path: [{"id": "CPU", "backend": "cpu", "name": "CPU"}],
+    )
+    monkeypatch.setattr("broadcastify_cli.accelerators.module_available", lambda _name: True)
+
+    diagnostics = collect_accelerator_diagnostics("/bin/llama-server")
+    speakers = diagnostics["speaker_labels"]
+    cpu = next(value for value in diagnostics["profiles"] if value["id"] == "cpu")
+
+    assert speakers["token_configured"] is False
+    assert speakers["model_cache_detected"] is True
+    assert speakers["access_configured"] is True
+    assert speakers["configured"] is True
+    assert cpu["configured"] is True
+    assert cpu["ready"] is False
+    assert cpu["diarization_ready"] is True
+    assert "cached model" in cpu["diarization"]
 
 
 def test_vulkan_profile_requires_vulkan_llama_backend(monkeypatch) -> None:
@@ -186,10 +264,13 @@ def test_macos_profile_requires_and_reports_both_metal_engines(monkeypatch) -> N
     automatic = next(value for value in diagnostics["profiles"] if value["id"] == "auto")
     metal = next(value for value in diagnostics["profiles"] if value["id"] == "metal")
 
-    assert automatic["ready"] is True
+    assert automatic["configured"] is True
+    assert automatic["ready"] is False
     assert automatic["transcription_ready"] is True
     assert automatic["diarization_ready"] is True
     assert automatic["analysis_ready"] is True
     assert automatic["transcription"] == "whisper.cpp on Apple Metal"
-    assert metal["ready"] is True
+    assert metal["configured"] is True
+    assert metal["ready"] is False
     assert metal["analysis"] == "llama.cpp / Metal"
+    assert len(metal["next_steps"]) == 3

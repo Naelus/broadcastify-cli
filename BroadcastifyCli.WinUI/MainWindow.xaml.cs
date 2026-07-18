@@ -62,7 +62,10 @@ public sealed partial class MainWindow : Window
     private bool? _analysisProviderReady;
     private bool _analysisProviderVerified;
     private string _analysisProviderReadinessMessage = "";
+    private bool _analysisModelVerifiedThisSession;
+    private string _analysisModelVerificationMessage = "";
     private bool _pyannotePackageInstalled;
+    private bool _pyannoteAccessConfigured;
     private bool _huggingFaceTokenConfigured;
     private bool _cudaAvailable;
 
@@ -397,6 +400,26 @@ public sealed partial class MainWindow : Window
             checkBox.Checked += (_, _) => ScheduleSettingsSave();
             checkBox.Unchecked += (_, _) => ScheduleSettingsSave();
         }
+        AnalysisModelBox.TextChanged += (_, _) => ResetAnalysisModelVerification();
+        AnalysisDeviceComboBox.SelectionChanged += (_, _) => ResetAnalysisModelVerification();
+        AnalysisApiKeyBox.PasswordChanged += (_, _) => ResetAnalysisModelVerification();
+        AnalysisApiKeyEnvironmentBox.TextChanged += (_, _) => ResetAnalysisModelVerification();
+        CodexCliPathBox.TextChanged += (_, _) => ResetAnalysisModelVerification();
+        ModelComboBox.SelectionChanged += (_, _) => ResetAsrVerification();
+        AsrEngineComboBox.SelectionChanged += (_, _) => ResetAsrVerification();
+        DeviceComboBox.SelectionChanged += (_, _) => ResetAsrVerification();
+        AsrModelPathBox.TextChanged += (_, _) => ResetAsrVerification();
+        DiarizationDeviceComboBox.SelectionChanged += (_, _) => ResetDiarizationVerification();
+        GpuIndexBox.ValueChanged += (_, _) =>
+        {
+            ResetAsrVerification();
+            ResetDiarizationVerification();
+        };
+        BatchSizeBox.ValueChanged += (_, _) =>
+        {
+            ResetAsrVerification();
+            ResetDiarizationVerification();
+        };
     }
 
     private void ScheduleSettingsSave()
@@ -407,6 +430,60 @@ public sealed partial class MainWindow : Window
         }
         _settingsSaveTimer.Stop();
         _settingsSaveTimer.Start();
+    }
+
+    private void ResetAnalysisModelVerification()
+    {
+        if (_loadingSettings)
+        {
+            return;
+        }
+        _analysisModelVerifiedThisSession = false;
+        _analysisModelVerificationMessage = "";
+        if (AnalysisSelfTestInfoBar is not null)
+        {
+            AnalysisSelfTestInfoBar.Severity = InfoBarSeverity.Informational;
+            AnalysisSelfTestInfoBar.Title = "Analysis model not tested for these settings";
+            AnalysisSelfTestInfoBar.Message =
+                "Run Test model after changing the provider, model, endpoint, credential, or device.";
+        }
+        UpdateSetupSummary();
+    }
+
+    private void ResetAsrVerification()
+    {
+        if (_loadingSettings)
+        {
+            return;
+        }
+        _asrVerifiedThisSession = false;
+        _asrVerificationMessage = "";
+        if (AsrSelfTestInfoBar is not null)
+        {
+            AsrSelfTestInfoBar.Severity = InfoBarSeverity.Informational;
+            AsrSelfTestInfoBar.Title = "Transcription not tested for these settings";
+            AsrSelfTestInfoBar.Message =
+                "Run Test transcription after changing its engine, model, device, path, or batch.";
+        }
+        UpdateSetupSummary();
+    }
+
+    private void ResetDiarizationVerification()
+    {
+        if (_loadingSettings)
+        {
+            return;
+        }
+        _diarizationVerifiedThisSession = false;
+        _diarizationVerificationMessage = "";
+        if (DiarizationSelfTestInfoBar is not null)
+        {
+            DiarizationSelfTestInfoBar.Severity = InfoBarSeverity.Informational;
+            DiarizationSelfTestInfoBar.Title = "Speaker labels not tested for these settings";
+            DiarizationSelfTestInfoBar.Message =
+                "Run Test speakers after changing its device, token, GPU, or batch.";
+        }
+        UpdateSetupSummary();
     }
 
     private void AnalysisProvider_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -469,6 +546,7 @@ public sealed partial class MainWindow : Window
         _analysisProviderReady = null;
         _analysisProviderVerified = false;
         _analysisProviderReadinessMessage = "";
+        ResetAnalysisModelVerification();
         AnalysisProviderStatusText.Text = "Provider settings changed; run the check before a large job.";
         UpdateAnalysisProviderUi();
         UpdateSetupSummary();
@@ -480,6 +558,7 @@ public sealed partial class MainWindow : Window
         {
             _analysisProviderReady = null;
             _analysisProviderVerified = false;
+            ResetAnalysisModelVerification();
             UpdateAnalysisProviderUi();
             UpdateSetupSummary();
         }
@@ -489,6 +568,7 @@ public sealed partial class MainWindow : Window
     {
         _analysisProviderReady = null;
         _analysisProviderVerified = false;
+        ResetAnalysisModelVerification();
         UpdateAnalysisProviderUi();
         UpdateSetupSummary();
     }
@@ -617,6 +697,71 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    private async void AnalysisSelfTest_Click(object sender, RoutedEventArgs e)
+    {
+        if (_worker is null || _operationCancellation is not null)
+        {
+            return;
+        }
+        _operationCancellation = new CancellationTokenSource();
+        SetBusy(true, "Testing the selected analysis model…", jobRunning: true);
+        JobProgress.IsIndeterminate = true;
+        AnalysisSelfTestInfoBar.Severity = InfoBarSeverity.Informational;
+        AnalysisSelfTestInfoBar.Title = "Loading and generating synthetic structured output";
+        AnalysisSelfTestInfoBar.Message = SelectedAnalysisProviderIsExternal()
+            ? "No archive text is sent, but the selected hosted provider may record minimal model usage."
+            : "The selected local model may download once. No archive text or Broadcastify quota is used.";
+        try
+        {
+            var status = await _worker.RunAnalysisSelfTestAsync(
+                ApplyAnalysisProvider(new AnalysisSelfTestRequest()),
+                HandleWorkerMessage,
+                _operationCancellation.Token);
+            if (status is null || !status.Ready || !status.Verified)
+            {
+                throw new InvalidOperationException(
+                    "The analysis worker ended without a successful generation result.");
+            }
+            AnalysisSelfTestInfoBar.Severity = InfoBarSeverity.Success;
+            AnalysisSelfTestInfoBar.Title = "Selected analysis model is ready";
+            AnalysisSelfTestInfoBar.Message = status.Message;
+            AnalysisProviderStatusText.Text = $"Verified: {status.Message}";
+            _analysisProviderReady = true;
+            _analysisModelVerifiedThisSession = true;
+            _analysisModelVerificationMessage = status.Message;
+            StatusText.Text = status.Message;
+            UpdateSetupSummary();
+        }
+        catch (OperationCanceledException)
+        {
+            AnalysisSelfTestInfoBar.Severity = InfoBarSeverity.Warning;
+            AnalysisSelfTestInfoBar.Title = "Analysis test cancelled";
+            AnalysisSelfTestInfoBar.Message = "No archive work was changed.";
+            _analysisModelVerifiedThisSession = false;
+            StatusText.Text = "Analysis model test cancelled";
+            UpdateSetupSummary();
+        }
+        catch (Exception exception)
+        {
+            AnalysisSelfTestInfoBar.Severity = InfoBarSeverity.Error;
+            AnalysisSelfTestInfoBar.Title = "Selected analysis model needs setup";
+            AnalysisSelfTestInfoBar.Message = exception.Message;
+            AnalysisProviderStatusText.Text = exception.Message;
+            _analysisModelVerifiedThisSession = false;
+            _analysisModelVerificationMessage = exception.Message;
+            StatusText.Text = exception.Message;
+            UpdateSetupSummary();
+            AppendLog(exception.Message);
+        }
+        finally
+        {
+            _operationCancellation.Dispose();
+            _operationCancellation = null;
+            JobProgress.IsIndeterminate = false;
+            SetBusy(false);
+        }
+    }
+
     private void ClearAnalysisKey_Click(object sender, RoutedEventArgs e)
     {
         CredentialStore.ClearAnalysisKey();
@@ -638,12 +783,88 @@ public sealed partial class MainWindow : Window
         {
             HardwareProfileDescriptionText.Text =
                 "Run diagnostics to confirm the transcription, speaker-label, and analysis engines for this profile.";
+            if (ProfileNextStepsInfoBar is not null)
+            {
+                ProfileNextStepsInfoBar.Severity = InfoBarSeverity.Informational;
+                ProfileNextStepsInfoBar.Title = "Hardware check needed";
+                ProfileNextStepsInfoBar.Message =
+                    "Refresh the check to build a stage-by-stage setup plan for this profile.";
+            }
             return;
         }
         HardwareProfileDescriptionText.Text =
             string.IsNullOrWhiteSpace(profile.Note)
                 ? $"{profile.Name}: {profile.StateText.ToLowerInvariant()}."
                 : profile.Note;
+        UpdateProfileReadinessBanner(profile);
+    }
+
+    private bool SelectedProfileVerifiedThisSession() =>
+        _asrVerifiedThisSession
+        && _diarizationVerifiedThisSession
+        && _analysisModelVerifiedThisSession;
+
+    private void UpdateProfileReadinessBanner(HardwareProfileStatus? profile = null)
+    {
+        if (DiagnosticsInfoBar is null || ProfileNextStepsInfoBar is null)
+        {
+            return;
+        }
+        profile ??= SelectedHardwareProfile();
+        if (profile is null)
+        {
+            return;
+        }
+
+        var verified = profile.Configured && SelectedProfileVerifiedThisSession();
+        UpdateHardwareProfileVerification(profile.Id, verified);
+        DiagnosticsInfoBar.Severity = verified
+            ? InfoBarSeverity.Success
+            : profile.Configured
+                ? InfoBarSeverity.Informational
+                : InfoBarSeverity.Warning;
+        DiagnosticsInfoBar.Title = verified
+            ? $"{profile.Name} is verified for this session"
+            : profile.Configured
+                ? $"{profile.Name} is detected"
+                : $"{profile.Name} needs setup";
+        DiagnosticsInfoBar.Message = verified
+            ? $"Transcription, speaker labels, and analysis executed successfully. "
+              + $"Transcription: {profile.Transcription} · Speakers: {profile.Diarization} · "
+              + $"Analysis: {profile.Analysis}"
+            : $"Transcription: {profile.Transcription} · Speakers: {profile.Diarization} · "
+              + $"Analysis: {profile.Analysis}";
+
+        ProfileNextStepsInfoBar.Severity = verified
+            ? InfoBarSeverity.Success
+            : profile.Configured
+                ? InfoBarSeverity.Informational
+                : InfoBarSeverity.Warning;
+        ProfileNextStepsInfoBar.Title = verified
+            ? "All three model stages executed"
+            : profile.Configured
+                ? "Detected, not yet execution-verified"
+                : "Complete these setup steps";
+        ProfileNextStepsInfoBar.Message = verified
+            ? "This proof is intentionally session-specific; changing an engine, model, or device requires a retest."
+            : profile.NextSteps.Count > 0
+                ? string.Join(" ", profile.NextSteps.Select((step, index) => $"{index + 1}. {step}"))
+                : "Run the stage tests before a long unattended job.";
+    }
+
+    private void UpdateHardwareProfileVerification(
+        string selectedProfileId,
+        bool selectedProfileVerified)
+    {
+        for (var index = 0; index < _hardwareProfiles.Count; index++)
+        {
+            var profile = _hardwareProfiles[index];
+            var verified = selectedProfileVerified && profile.Id == selectedProfileId;
+            if (profile.Verified != verified)
+            {
+                _hardwareProfiles[index] = profile with { Verified = verified };
+            }
+        }
     }
 
     private HardwareProfileStatus? SelectedHardwareProfile()
@@ -707,7 +928,7 @@ public sealed partial class MainWindow : Window
             || !string.IsNullOrWhiteSpace(HuggingFaceTokenBox?.Password);
         var selectedDiarizationDevice = SelectedComboValue(DiarizationDeviceComboBox, "auto");
         var typedTokenMakesDiarizationAvailable = _pyannotePackageInstalled
-            && tokenAvailable
+            && (_pyannoteAccessConfigured || tokenAvailable)
             && (selectedDiarizationDevice != "cuda" || _cudaAvailable);
         var transcriptionAvailable = _asrVerifiedThisSession
             || profile?.TranscriptionReady == true;
@@ -759,19 +980,25 @@ public sealed partial class MainWindow : Window
               ?? "Run the local hardware check to inspect pyannote and its model token.";
         SetupDiarizationActionButton.Content = _diarizationVerifiedThisSession ? "Retest" : "Test";
 
-        SetupAnalysisStateText.Text = _analysisProviderVerified
+        SetupAnalysisStateText.Text = _analysisModelVerifiedThisSession
             ? "Verified"
             : analysisAvailable
                 ? "Configured"
                 : _diagnosticsLoaded
                     ? "Check provider"
                     : "Checking";
-        SetupAnalysisDetailText.Text = !string.IsNullOrWhiteSpace(_analysisProviderReadinessMessage)
-            ? _analysisProviderReadinessMessage
+        SetupAnalysisDetailText.Text = _analysisModelVerifiedThisSession
+            ? _analysisModelVerificationMessage
+            : !string.IsNullOrWhiteSpace(_analysisProviderReadinessMessage)
+                ? _analysisProviderReadinessMessage
             : detectedLocalAnalysis
                 ? profile?.Analysis ?? "Local llama.cpp is detected."
                 : $"Check {SelectedAnalysisProviderDisplayName()} without sending transcript text.";
-        SetupAnalysisActionButton.Content = _analysisProviderVerified ? "Recheck" : "Check";
+        SetupAnalysisActionButton.Content = _analysisModelVerifiedThisSession
+            ? "Retest"
+            : analysisAvailable
+                ? "Test"
+                : "Check";
 
         var available = new[]
         {
@@ -786,25 +1013,33 @@ public sealed partial class MainWindow : Window
             _archiveAccessVerified,
             _asrVerifiedThisSession,
             _diarizationVerifiedThisSession,
-            _analysisProviderVerified,
+            _analysisModelVerifiedThisSession,
         }.Count(value => value);
+        var processingVerified = SelectedProfileVerifiedThisSession();
         SetupReadinessProgress.Value = available;
         SetupReadinessCountText.Text =
             $"{available} of 5 setup steps available · {verified} execution "
             + $"check{(verified == 1 ? "" : "s")} verified this session";
         SetupReadinessInfoBar.Severity = !_diagnosticsLoaded
             ? InfoBarSeverity.Informational
-            : available == 5
+            : available == 5 && processingVerified
                 ? InfoBarSeverity.Success
-                : InfoBarSeverity.Warning;
+                : available == 5
+                    ? InfoBarSeverity.Informational
+                    : InfoBarSeverity.Warning;
         SetupReadinessInfoBar.Title = !_diagnosticsLoaded
             ? "Checking this computer"
-            : available == 5
+            : available == 5 && processingVerified
+                ? "The processing pipeline is verified for this session"
+                : available == 5
                 ? "This computer is configured for the full pipeline"
                 : $"{5 - available} setup step{(available == 4 ? "" : "s")} need attention";
-        SetupReadinessInfoBar.Message = available == 5
+        SetupReadinessInfoBar.Message = available == 5 && processingVerified
+            ? "The selected transcription, speaker-label, and analysis models all executed successfully."
+            : available == 5
             ? "Detection is complete. Use the test actions to prove model execution before a long unattended run."
             : "Open the item that needs attention; no Broadcastify quota is used by these setup checks.";
+        UpdateProfileReadinessBanner(profile);
     }
 
     private void SetupAccount_Click(object sender, RoutedEventArgs e)
@@ -834,7 +1069,7 @@ public sealed partial class MainWindow : Window
     {
         var tokenAvailable = _huggingFaceTokenConfigured
             || !string.IsNullOrWhiteSpace(HuggingFaceTokenBox.Password);
-        if (_pyannotePackageInstalled && tokenAvailable)
+        if (_pyannotePackageInstalled && (_pyannoteAccessConfigured || tokenAvailable))
         {
             DiarizationSelfTest_Click(sender, e);
             return;
@@ -843,13 +1078,23 @@ public sealed partial class MainWindow : Window
         HuggingFaceTokenBox.Focus(FocusState.Programmatic);
     }
 
-    private void SetupAnalysis_Click(object sender, RoutedEventArgs e) =>
+    private void SetupAnalysis_Click(object sender, RoutedEventArgs e)
+    {
+        SettingsTabView.SelectedItem = AnalysisSettingsTab;
+        var localDetected = SelectedComboValue(AnalysisProviderComboBox, "local") == "local"
+            && SelectedHardwareProfile()?.AnalysisReady == true;
+        if (_analysisModelVerifiedThisSession || _analysisProviderReady == true || localDetected)
+        {
+            AnalysisSelfTest_Click(sender, e);
+            return;
+        }
         CheckAnalysisProvider_Click(sender, e);
+    }
 
     private void HuggingFaceToken_Changed(object sender, RoutedEventArgs e)
     {
-        _diarizationVerifiedThisSession = false;
-        UpdateSetupSummary();
+        ResetAsrVerification();
+        ResetDiarizationVerification();
     }
 
     private async void RefreshDiagnostics_Click(object sender, RoutedEventArgs e)
@@ -1900,24 +2145,24 @@ public sealed partial class MainWindow : Window
                         _pyannotePackageInstalled = speakerLabels.TryGetProperty(
                             "package_installed", out var packageInstalled)
                             && packageInstalled.GetBoolean();
+                        _pyannoteAccessConfigured = speakerLabels.TryGetProperty(
+                            "access_configured", out var accessConfigured)
+                            && accessConfigured.GetBoolean();
                     }
                 }
                 var selectedProfileId =
                     (HardwareProfileComboBox.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "auto";
                 var selectedProfile = _hardwareProfiles.FirstOrDefault(
                     profile => profile.Id == selectedProfileId);
-                var selectedReady = selectedProfile?.Ready ?? (cuda && llamaReady && tokenReady);
-                DiagnosticsInfoBar.Severity = selectedReady
-                    ? InfoBarSeverity.Success
-                    : InfoBarSeverity.Warning;
-                DiagnosticsInfoBar.Title = selectedReady
-                    ? $"{selectedProfile?.Name ?? "Local processing"} is ready"
-                    : $"{selectedProfile?.Name ?? "Local processing"} needs setup";
-                DiagnosticsInfoBar.Message = selectedProfile is not null
-                    ? $"Transcription: {selectedProfile.Transcription} · Speakers: {selectedProfile.Diarization} · Analysis: {selectedProfile.Analysis}"
-                    : $"GPU: {(gpu ?? (cuda ? "CUDA available" : "not available"))} · "
-                      + $"llama.cpp: {(llamaReady ? "ready" : "missing")} · "
-                      + $"pyannote token: {(tokenReady ? "configured" : "missing")}";
+                if (selectedProfile is null)
+                {
+                    DiagnosticsInfoBar.Severity = InfoBarSeverity.Warning;
+                    DiagnosticsInfoBar.Title = "Local processing needs setup";
+                    DiagnosticsInfoBar.Message =
+                        $"GPU: {(gpu ?? (cuda ? "CUDA available" : "not available"))} · "
+                        + $"llama.cpp: {(llamaReady ? "detected" : "missing")} · "
+                        + $"pyannote access: {(_pyannoteAccessConfigured ? "configured" : "missing")}";
+                }
                 ApplySelectedHardwareProfileDescription();
                 SettingsEnvironmentText.Text = string.IsNullOrWhiteSpace(environmentFile)
                     ? "Private build environment: no .env was loaded. Repository .env and private build output are both supported."
@@ -3142,6 +3387,7 @@ public sealed partial class MainWindow : Window
         ProcessAreaFeedsButton.IsEnabled = !busy && _worker is not null;
         GenerateAreaDigestButton.IsEnabled = !busy && _worker is not null;
         AnalysisProviderCheckButton.IsEnabled = !busy && _worker is not null;
+        AnalysisModelTestButton.IsEnabled = !busy && _worker is not null;
         AsrSelfTestButton.IsEnabled = !busy && _worker is not null;
         DiarizationSelfTestButton.IsEnabled = !busy && _worker is not null;
         SetupAccountActionButton.IsEnabled = !busy && _worker is not null;

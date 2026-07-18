@@ -78,6 +78,67 @@ def analysis_provider_diagnostics() -> int:
     return 0
 
 
+def analysis_self_test(payload: dict[str, Any] | None = None) -> int:
+    """Load the selected analysis model and prove one structured generation."""
+
+    settings = payload if payload is not None else json.load(sys.stdin)
+    config = AnalysisProviderConfig.from_mapping(settings)
+    provider_name = {
+        "local": "Local llama.cpp",
+        "openai-responses": "OpenAI Responses",
+        "openai-compatible": "OpenAI-compatible endpoint",
+        "codex-cli": "Codex CLI",
+    }.get(config.provider, config.provider)
+    started = time.monotonic()
+    emit(
+        {
+            "type": "progress",
+            "phase": "analysis_self_test",
+            "current": 0,
+            "total": 0,
+            "message": (
+                f"Loading {provider_name} model {config.model or 'provider default'}; "
+                "the test uses synthetic text only"
+            ),
+        }
+    )
+    schema = {
+        "type": "object",
+        "properties": {"ready": {"type": "boolean", "const": True}},
+        "required": ["ready"],
+        "additionalProperties": False,
+    }
+    with open_analysis_client(config) as client:
+        response = client.chat_json(
+            "You are a local runtime readiness probe. Follow the response schema exactly.",
+            "Return ready=true. This is synthetic setup text and contains no archive evidence.",
+            "runtime_readiness",
+            schema,
+            max_tokens=32,
+        )
+        effective_model = str(getattr(client, "model", "") or config.model)
+    if response.get("ready") is not True:
+        raise RuntimeError(
+            "The analysis model responded, but did not pass the structured readiness check."
+        )
+    elapsed = time.monotonic() - started
+    result = {
+        "provider": config.provider,
+        "model": effective_model or "provider default",
+        "device": config.device,
+        "external": config.is_external,
+        "ready": True,
+        "verified": True,
+        "elapsed_seconds": elapsed,
+        "message": (
+            f"{provider_name} generated valid structured output with "
+            f"{effective_model or 'the selected model'} in {elapsed:.2f} seconds."
+        ),
+    }
+    emit({"type": "analysis_self_test", "result": result})
+    return 0
+
+
 def search_area(
     zip_codes: list[str],
     *,
@@ -938,6 +999,7 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("asr-self-test")
     subparsers.add_parser("diarization-self-test")
     subparsers.add_parser("analysis-provider-diagnostics")
+    subparsers.add_parser("analysis-self-test")
     library = subparsers.add_parser("library")
     library.add_argument("--output-dir", default="archives")
     subparsers.add_parser("continue-local")
@@ -1016,6 +1078,8 @@ def main() -> int:
             return diarization_self_test()
         if arguments.command == "analysis-provider-diagnostics":
             return analysis_provider_diagnostics()
+        if arguments.command == "analysis-self-test":
+            return analysis_self_test()
         if arguments.command == "library":
             return library_days(arguments.output_dir)
         if arguments.command == "continue-local":

@@ -100,8 +100,9 @@ def test_loopback_web_app_serves_library_transcript_and_media(tmp_path: Path) ->
         assert cookie.startswith("radio_archive_session=")
         assert token_match is not None
         assert b'id="areaPublicSafetyOnly"' in body
-        assert b'/static/app.js?v=14' in body
+        assert b'/static/app.js?v=16' in body
         assert b'id="settingAnalysisDevice"' in body
+        assert b'id="analysisSelfTestButton"' in body
         assert b'/static/favicon.svg' in body
         token = token_match.group(1).decode()
 
@@ -110,17 +111,22 @@ def test_loopback_web_app_serves_library_transcript_and_media(tmp_path: Path) ->
         assert response.getheader("Content-Type") == "image/svg+xml"
         assert b"<svg" in body
 
-        response, body = _request(connection, "GET", "/static/app.js?v=14")
+        response, body = _request(connection, "GET", "/static/app.js?v=16")
         assert response.status == 200
         assert b"areaSelectedStoryIndex" in body
         assert b"data-area-story-index" in body
         assert b"story-browser" in body
         assert b"analysis_device: state.settings.analysisDevice" in body
+        assert b'analysis-self-test' in body
+        assert b"analysisSelfTest" in body
+        assert b"profile.configured" in body
+        assert b"const nextSteps = isVerified" in body
 
-        response, body = _request(connection, "GET", "/static/app.css?v=14")
+        response, body = _request(connection, "GET", "/static/app.css?v=16")
         assert response.status == 200
         assert b".story-browser" in body
         assert b".story-index-item.active" in body
+        assert b".runtime-profile-card.configured" in body
 
         response, body = _request(connection, "GET", "/api/bootstrap", cookie=cookie)
         bootstrap = json.loads(body)
@@ -374,3 +380,23 @@ def test_web_jobs_forward_explicit_diarization_self_test_settings(
     assert payload is not None
     assert payload["diarization_device"] == "cpu"
     assert payload["huggingface_token"] == "session-only-test-token"
+
+
+def test_web_jobs_forward_explicit_analysis_self_test_settings(
+    tmp_path: Path,
+) -> None:
+    manager = JobManager(tmp_path, tmp_path / "analysis.sqlite3", tmp_path)
+    arguments, payload = manager._worker_request(  # noqa: SLF001
+        "analysis-self-test",
+        {
+            "analysis_provider": "local",
+            "analysis_model": "local-model.gguf",
+            "analysis_device": "cpu",
+        },
+    )
+
+    assert arguments == ["analysis-self-test"]
+    assert payload is not None
+    assert payload["analysis_provider"] == "local"
+    assert payload["analysis_model"] == "local-model.gguf"
+    assert payload["analysis_device"] == "cpu"

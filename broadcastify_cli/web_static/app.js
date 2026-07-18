@@ -47,6 +47,7 @@ const state = {
   asrSelfTest: null,
   diarizationSelfTest: null,
   analysisProviderStatus: null,
+  analysisSelfTest: null,
   accountVerified: false,
 };
 
@@ -118,14 +119,19 @@ function applyHardwareProfile(profile, notify = true) {
   };
   const choice = choices[profile];
   if (!choice) {
-    state.asrSelfTest = null;
-    state.diarizationSelfTest = null;
+    resetAsrVerification();
+    resetDiarizationVerification();
+    resetAnalysisVerification();
+    state.analysisProviderStatus = null;
     readSettingsForm();
+    renderHardwareProfiles();
     renderSetupReadiness();
     return;
   }
-  state.asrSelfTest = null;
-  state.diarizationSelfTest = null;
+  resetAsrVerification();
+  resetDiarizationVerification();
+  resetAnalysisVerification();
+  state.analysisProviderStatus = null;
   applyingHardwareProfile = true;
   byId("settingHardwareProfile").value = profile;
   byId("settingAsrEngine").value = choice[0];
@@ -134,8 +140,36 @@ function applyHardwareProfile(profile, notify = true) {
   byId("settingAnalysisDevice").value = choice[3];
   applyingHardwareProfile = false;
   readSettingsForm();
+  renderHardwareProfiles();
   renderSetupReadiness();
   if (notify) toast(`${byId("settingHardwareProfile").selectedOptions[0].textContent} defaults applied.`);
+}
+
+function resetAsrVerification() {
+  state.asrSelfTest = null;
+  const notice = byId("asrSelfTestNotice");
+  if (!notice) return;
+  notice.className = "notice";
+  notice.querySelector("strong").textContent = "Transcription not tested for these settings";
+  notice.querySelector("span").textContent = "Run the synthetic decode after changing the engine, model, device, path, or batch.";
+}
+
+function resetDiarizationVerification() {
+  state.diarizationSelfTest = null;
+  const notice = byId("diarizationSelfTestNotice");
+  if (!notice) return;
+  notice.className = "notice";
+  notice.querySelector("strong").textContent = "Speakers not tested for these settings";
+  notice.querySelector("span").textContent = "Run the generated-audio test after changing its device, token, or batch.";
+}
+
+function resetAnalysisVerification() {
+  state.analysisSelfTest = null;
+  const notice = byId("analysisSelfTestNotice");
+  if (!notice) return;
+  notice.className = "notice";
+  notice.querySelector("strong").textContent = "Analysis not tested for these settings";
+  notice.querySelector("span").textContent = "Run Test model after changing the provider, model, endpoint, credential, or device.";
 }
 
 function providerPayload() {
@@ -440,22 +474,26 @@ function renderSetupReadiness() {
   const tokenInTab = Boolean(byId("settingHuggingFaceToken")?.value);
   const selectedDiarization = byId("settingDiarizationDevice")?.value || state.settings.diarizationDevice;
   const tokenConfigured = Boolean(speakerLabels.token_configured || tokenInTab);
-  const typedTokenReady = Boolean(
+  const speakerAccessConfigured = Boolean(speakerLabels.access_configured || tokenConfigured);
+  const speakerConfigured = Boolean(
     speakerLabels.package_installed
-    && tokenConfigured
+    && speakerAccessConfigured
     && (selectedDiarization !== "cuda" || speakerLabels.cuda_available)
   );
   const accountReady = Boolean(state.accountVerified || account.configured);
   const storageReady = Boolean(runtime.storage_ready);
   const transcriptionReady = Boolean(state.asrSelfTest?.ready || profile?.transcription_ready);
   const diarizationReady = Boolean(
-    state.diarizationSelfTest?.ready || profile?.diarization_ready || typedTokenReady
+    state.diarizationSelfTest?.ready || profile?.diarization_ready || speakerConfigured
   );
   const provider = byId("settingAnalysisProvider")?.value || state.settings.analysisProvider;
   const localAnalysisDetected = provider === "local" && Boolean(profile?.analysis_ready);
-  const analysisReady = state.analysisProviderStatus
+  const analysisConfigured = state.analysisProviderStatus
     ? Boolean(state.analysisProviderStatus.ready)
     : localAnalysisDetected;
+  const analysisVerified = Boolean(
+    state.analysisSelfTest?.ready && state.analysisSelfTest?.verified
+  );
 
   const items = [
     {
@@ -487,10 +525,10 @@ function renderSetupReadiness() {
       action: state.diarizationSelfTest?.ready ? "Retest" : diarizationReady ? "Test" : "Configure",
     },
     {
-      id: "analysis", icon: "✦", title: "Event analysis", available: analysisReady,
-      state: state.analysisProviderStatus?.verified ? "Verified" : analysisReady ? "Configured" : state.hardwareDiagnostics ? "Check provider" : "Check",
-      detail: state.analysisProviderStatus?.message || (localAnalysisDetected ? profile.analysis : "Check the selected local, API, endpoint, or Codex provider."),
-      action: state.analysisProviderStatus ? "Recheck" : "Check",
+      id: "analysis", icon: "✦", title: "Event analysis", available: analysisConfigured,
+      state: analysisVerified ? "Verified" : analysisConfigured ? "Configured" : state.hardwareDiagnostics ? "Check provider" : "Check",
+      detail: state.analysisSelfTest?.message || state.analysisProviderStatus?.message || (localAnalysisDetected ? profile.analysis : "Check the selected local, API, endpoint, or Codex provider."),
+      action: analysisVerified ? "Retest" : analysisConfigured ? "Test" : "Check",
     },
   ];
   const available = items.filter((item) => item.available).length;
@@ -498,7 +536,7 @@ function renderSetupReadiness() {
     state.accountVerified,
     state.asrSelfTest?.ready,
     state.diarizationSelfTest?.ready,
-    state.analysisProviderStatus?.verified,
+    analysisVerified,
   ].filter(Boolean).length;
   byId("setupReadinessSummary").textContent = `${available} of 5 setup steps available · ${verified} execution check${verified === 1 ? "" : "s"} verified this session`;
   byId("setupProgressBar").style.width = `${available * 20}%`;
@@ -525,16 +563,39 @@ function renderHardwareProfiles() {
     region.innerHTML = '<div class="runtime-profile-empty">Run the hardware check to compare stage-by-stage profiles.</div>';
     return;
   }
-  const ready = profiles.filter((profile) => profile.ready).length;
-  region.innerHTML = `<details class="runtime-profile-details"><summary><span>Compare hardware profiles</span><strong>${ready} of ${profiles.length} ready</strong></summary><div class="runtime-profile-grid">${profiles.map((profile) => `
-    <article class="runtime-profile-card${profile.ready ? " ready" : ""}">
-      <div class="runtime-profile-head"><strong>${html(profile.name)}</strong><span>${profile.ready ? "Ready" : "Setup needed"}</span></div>
+  const selectedId = byId("settingHardwareProfile")?.value || state.settings.hardwareProfile;
+  const configured = profiles.filter((profile) => Boolean(
+    profile.configured ?? (
+      profile.transcription_ready && profile.diarization_ready && profile.analysis_ready
+    )
+  )).length;
+  const executionVerified = Boolean(
+    state.asrSelfTest?.ready
+    && state.diarizationSelfTest?.ready
+    && state.analysisSelfTest?.ready
+    && state.analysisSelfTest?.verified
+  );
+  region.innerHTML = `<details class="runtime-profile-details"><summary><span>Compare hardware profiles</span><strong>${configured} of ${profiles.length} detected</strong></summary><div class="runtime-profile-grid">${profiles.map((profile) => {
+    const isConfigured = Boolean(profile.configured ?? (
+      profile.transcription_ready && profile.diarization_ready && profile.analysis_ready
+    ));
+    const isSelected = profile.id === selectedId;
+    const isVerified = isSelected && isConfigured && executionVerified;
+    const profileState = isVerified ? "Verified now" : isConfigured ? "Detected" : "Setup needed";
+    const nextSteps = isVerified
+      ? []
+      : Array.isArray(profile.next_steps) ? profile.next_steps : [];
+    return `
+    <article class="runtime-profile-card${isConfigured ? " configured" : ""}${isVerified ? " ready" : ""}${isSelected ? " selected" : ""}">
+      <div class="runtime-profile-head"><strong>${html(profile.name)}</strong><span>${profileState}</span></div>
       <div class="runtime-stage"><b>Transcribe</b><span>${html(profile.transcription)}</span></div>
       <div class="runtime-stage"><b>Speakers</b><span>${html(profile.diarization)}</span></div>
       <div class="runtime-stage"><b>Analyze</b><span>${html(profile.analysis)}</span></div>
       ${profile.note ? `<p>${html(profile.note)}</p>` : ""}
+      ${nextSteps.length ? `<ul class="runtime-next-steps">${nextSteps.map((step) => `<li>${html(step)}</li>`).join("")}</ul>` : ""}
       <button class="button secondary small" data-use-hardware-profile="${html(profile.id)}">Use this profile</button>
-    </article>`).join("")}</div></details>`;
+    </article>`;
+  }).join("")}</div></details>`;
 }
 
 function updateProviderNotice(message = "") {
@@ -954,21 +1015,45 @@ byId("settingAnalysisProvider").addEventListener("change", () => {
   const defaults = { local: "ggml-org/gemma-4-12B-it-GGUF:Q4_0", "openai-responses": "gpt-5.6-luna", "openai-compatible": "", "codex-cli": "" };
   byId("settingAnalysisModel").value = defaults[byId("settingAnalysisProvider").value] || "";
   state.analysisProviderStatus = null;
+  resetAnalysisVerification();
   updateProviderNotice();
+  renderHardwareProfiles();
   renderSetupReadiness();
 });
 ["settingAnalysisModel", "settingAnalysisEndpoint", "settingApiKeyEnvironment", "settingCodexPath", "settingAnalysisApiKey"].forEach((id) => byId(id).addEventListener("input", () => {
   state.analysisProviderStatus = null;
+  resetAnalysisVerification();
   updateProviderNotice();
+  renderHardwareProfiles();
   renderSetupReadiness();
 }));
 byId("settingAllowExternal").addEventListener("change", () => {
   state.analysisProviderStatus = null;
+  resetAnalysisVerification();
   updateProviderNotice();
+  renderHardwareProfiles();
   renderSetupReadiness();
 });
 byId("settingHuggingFaceToken").addEventListener("input", () => {
-  state.diarizationSelfTest = null;
+  resetAsrVerification();
+  resetDiarizationVerification();
+  renderHardwareProfiles();
+  renderSetupReadiness();
+});
+byId("settingWhisperModel").addEventListener("change", () => {
+  resetAsrVerification();
+  renderHardwareProfiles();
+  renderSetupReadiness();
+});
+byId("settingAsrModelPath").addEventListener("input", () => {
+  resetAsrVerification();
+  renderHardwareProfiles();
+  renderSetupReadiness();
+});
+byId("settingBatchSize").addEventListener("input", () => {
+  resetAsrVerification();
+  resetDiarizationVerification();
+  renderHardwareProfiles();
   renderSetupReadiness();
 });
 byId("jobDrawerToggle").addEventListener("click", () => {
@@ -1127,7 +1212,7 @@ async function runProviderCheck() {
     const result = eventOf(job, "analysis_provider_diagnostics")?.result;
     if (!result) return;
     state.analysisProviderStatus = result;
-    updateProviderNotice(`${result.verified ? "Verified" : result.ready ? "Configured" : "Setup needed"}: ${result.message}`);
+    updateProviderNotice(`${result.ready ? "Provider configured" : "Setup needed"}: ${result.message}`);
     renderSetupReadiness();
   } });
 }
@@ -1156,6 +1241,7 @@ async function runAsrSelfTest() {
     notice.querySelector("strong").textContent = "Transcription ready";
     const fallback = result.fallback_reason ? ` Fallback: ${result.fallback_reason}` : "";
     notice.querySelector("span").textContent = `${result.message}${fallback}`;
+    renderHardwareProfiles();
     renderSetupReadiness();
   } });
 }
@@ -1169,22 +1255,64 @@ async function runDiarizationSelfTest() {
     notice.className = "notice success";
     notice.querySelector("strong").textContent = "Speaker labels ready";
     notice.querySelector("span").textContent = result.message;
+    renderHardwareProfiles();
+    renderSetupReadiness();
+  } });
+}
+
+async function runAnalysisSelfTest() {
+  resetAnalysisVerification();
+  const notice = byId("analysisSelfTestNotice");
+  notice.querySelector("strong").textContent = "Loading and generating synthetic output";
+  notice.querySelector("span").textContent = "No archive evidence is used. A hosted provider may record minimal model usage.";
+  await startJob("analysis-self-test", providerPayload(), { label: "Testing selected analysis model", onComplete: (job) => {
+    const result = eventOf(job, "analysis_self_test")?.result;
+    if (!result) return;
+    state.analysisSelfTest = result;
+    state.analysisProviderStatus = {
+      ...(state.analysisProviderStatus || {}),
+      provider: result.provider,
+      model: result.model,
+      device: result.device,
+      external: result.external,
+      ready: true,
+      message: result.message,
+    };
+    notice.className = "notice success";
+    notice.querySelector("strong").textContent = "Analysis model ready";
+    notice.querySelector("span").textContent = result.message;
+    updateProviderNotice();
+    renderHardwareProfiles();
     renderSetupReadiness();
   } });
 }
 
 byId("providerCheckButton").addEventListener("click", runProviderCheck);
+byId("analysisSelfTestButton").addEventListener("click", runAnalysisSelfTest);
 byId("runtimeCheckButton").addEventListener("click", runHardwareCheck);
 byId("setupCheckButton").addEventListener("click", runHardwareCheck);
 byId("settingHardwareProfile").addEventListener("change", (event) => applyHardwareProfile(event.target.value));
-["settingAsrEngine", "settingDevice", "settingDiarizationDevice", "settingAnalysisDevice"].forEach((id) => byId(id).addEventListener("change", () => {
+["settingAsrEngine", "settingDevice"].forEach((id) => byId(id).addEventListener("change", () => {
   if (!applyingHardwareProfile) {
     byId("settingHardwareProfile").value = "custom";
-    state.asrSelfTest = null;
-    state.diarizationSelfTest = null;
   }
+  resetAsrVerification();
+  renderHardwareProfiles();
   renderSetupReadiness();
 }));
+byId("settingDiarizationDevice").addEventListener("change", () => {
+  if (!applyingHardwareProfile) byId("settingHardwareProfile").value = "custom";
+  resetDiarizationVerification();
+  renderHardwareProfiles();
+  renderSetupReadiness();
+});
+byId("settingAnalysisDevice").addEventListener("change", () => {
+  if (!applyingHardwareProfile) byId("settingHardwareProfile").value = "custom";
+  state.analysisProviderStatus = null;
+  resetAnalysisVerification();
+  renderHardwareProfiles();
+  renderSetupReadiness();
+});
 byId("runtimeProfiles").addEventListener("click", (event) => {
   const button = event.target.closest("[data-use-hardware-profile]");
   if (!button) return;
@@ -1203,8 +1331,9 @@ byId("setupReadinessGrid").addEventListener("click", async (event) => {
     if (!state.hardwareDiagnostics) await runHardwareCheck(); else await runAsrSelfTest();
   } else if (action === "diarization") {
     const speaker = state.hardwareDiagnostics?.accelerators?.speaker_labels || {};
-    const tokenReady = speaker.token_configured || byId("settingHuggingFaceToken").value;
-    if (speaker.package_installed && tokenReady) {
+    const accessReady = speaker.access_configured || speaker.token_configured || byId("settingHuggingFaceToken").value;
+    const selectedDevice = byId("settingDiarizationDevice").value;
+    if (speaker.package_installed && accessReady && (selectedDevice !== "cuda" || speaker.cuda_available)) {
       await runDiarizationSelfTest();
     } else if (!state.hardwareDiagnostics) {
       await runHardwareCheck();
@@ -1213,7 +1342,17 @@ byId("setupReadinessGrid").addEventListener("click", async (event) => {
       byId("settingHuggingFaceToken").focus();
     }
   } else if (action === "analysis") {
-    await runProviderCheck();
+    const profile = selectedHardwareProfile();
+    const provider = byId("settingAnalysisProvider").value;
+    const configured = Boolean(
+      state.analysisProviderStatus?.ready
+      || (provider === "local" && profile?.analysis_ready)
+    );
+    if (configured || state.analysisSelfTest?.ready) {
+      await runAnalysisSelfTest();
+    } else {
+      await runProviderCheck();
+    }
   }
 });
 byId("asrSelfTestButton").addEventListener("click", runAsrSelfTest);

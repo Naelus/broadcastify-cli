@@ -11,11 +11,55 @@ from pathlib import Path
 from typing import Any
 
 
+PYANNOTE_DIARIZATION_MODEL = "pyannote/speaker-diarization-community-1"
+
+
 def module_available(name: str) -> bool:
     try:
         return importlib.util.find_spec(name) is not None
     except (ImportError, ModuleNotFoundError, ValueError):
         return False
+
+
+def huggingface_model_cached(
+    repo_id: str,
+    *,
+    cache_root: str | Path | None = None,
+    required_files: tuple[str, ...] = ("config.yaml",),
+) -> bool:
+    """Cheaply detect a usable-looking Hub snapshot without loading a model.
+
+    This is intentionally only configuration evidence. The explicit model
+    self-test remains the execution proof and catches incomplete dependencies.
+    """
+
+    roots: list[Path] = []
+    if cache_root is not None:
+        roots.append(Path(cache_root).expanduser())
+    else:
+        configured = (
+            os.getenv("HF_HUB_CACHE")
+            or os.getenv("HUGGINGFACE_HUB_CACHE")
+            or ""
+        ).strip()
+        if configured:
+            roots.append(Path(configured).expanduser())
+        hf_home = str(os.getenv("HF_HOME") or "").strip()
+        if hf_home:
+            roots.append(Path(hf_home).expanduser() / "hub")
+        roots.append(Path.home() / ".cache" / "huggingface" / "hub")
+
+    repository_directory = "models--" + repo_id.replace("/", "--")
+    for root in dict.fromkeys(path.resolve() for path in roots):
+        snapshots = root / repository_directory / "snapshots"
+        try:
+            candidates = [path for path in snapshots.iterdir() if path.is_dir()]
+        except OSError:
+            continue
+        for snapshot in candidates:
+            if all((snapshot / relative).is_file() for relative in required_files):
+                return True
+    return False
 
 
 def find_whisper_cpp() -> str | None:
@@ -356,7 +400,7 @@ def _onnx_diagnostics() -> dict[str, Any]:
 def _profile(
     identifier: str,
     name: str,
-    ready: bool,
+    configured: bool,
     transcription: str,
     diarization: str,
     analysis: str,
@@ -365,22 +409,50 @@ def _profile(
     transcription_ready: bool | None = None,
     diarization_ready: bool | None = None,
     analysis_ready: bool | None = None,
+    transcription_setup: str = "Configure a supported transcription engine, then run Test transcription.",
+    diarization_setup: str = "Configure pyannote Community-1, then run Test speakers.",
+    analysis_setup: str = "Configure llama.cpp or another analysis provider, then run Test analysis.",
 ) -> dict[str, Any]:
+    transcription_configured = (
+        configured if transcription_ready is None else transcription_ready
+    )
+    diarization_configured = (
+        configured if diarization_ready is None else diarization_ready
+    )
+    analysis_configured = configured if analysis_ready is None else analysis_ready
+    next_steps = [
+        (
+            "Run Test transcription to prove this exact engine, model, and device."
+            if transcription_configured
+            else transcription_setup
+        ),
+        (
+            "Run Test speakers to prove Community-1 on the selected fallback or accelerator."
+            if diarization_configured
+            else diarization_setup
+        ),
+        (
+            "Run Test analysis to load the selected model and generate a local synthetic result."
+            if analysis_configured
+            else analysis_setup
+        ),
+    ]
     return {
         "id": identifier,
         "name": name,
-        "ready": ready,
-        "transcription_ready": ready
-        if transcription_ready is None
-        else transcription_ready,
-        "diarization_ready": ready
-        if diarization_ready is None
-        else diarization_ready,
-        "analysis_ready": ready if analysis_ready is None else analysis_ready,
+        # Diagnostics never execute every model stage, so a profile cannot be
+        # called verified/ready from this cheap inspection alone.
+        "ready": False,
+        "configured": configured,
+        "verified": False,
+        "transcription_ready": transcription_configured,
+        "diarization_ready": diarization_configured,
+        "analysis_ready": analysis_configured,
         "transcription": transcription,
         "diarization": diarization,
         "analysis": analysis,
         "note": note,
+        "next_steps": next_steps,
     }
 
 
@@ -395,7 +467,10 @@ def collect_accelerator_diagnostics(llama_server: str | Path | None) -> dict[str
     llama_devices = inspect_llama_devices(llama_server)
     llama_backends = {str(value.get("backend") or "") for value in llama_devices}
     token_ready = bool(os.getenv("HUGGINGFACE_TOKEN") or os.getenv("HF_TOKEN"))
-    pyannote_ready = module_available("pyannote.audio") and token_ready
+    pyannote_cache_detected = huggingface_model_cached(PYANNOTE_DIARIZATION_MODEL)
+    pyannote_package_installed = module_available("pyannote.audio")
+    pyannote_access_configured = token_ready or pyannote_cache_detected
+    pyannote_ready = pyannote_package_installed and pyannote_access_configured
     faster_whisper_ready = module_available("faster_whisper")
 
     cuda_ready = bool(torch["cuda_available"] and faster_whisper_ready)
@@ -418,7 +493,18 @@ def collect_accelerator_diagnostics(llama_server: str | Path | None) -> dict[str
     windows_ml_runtime = bool(windows_ml["runtime_ready"])
     windows_ml_decode = bool(windows_ml["decode_ready"])
     cpu_ready = bool(faster_whisper_ready and module_available("torch"))
-    cpu_diarization = "pyannote CPU ready" if pyannote_ready else "pyannote needs its package and HF token"
+    if pyannote_ready:
+        access_source = "cached model" if pyannote_cache_detected else "first-download token"
+        cpu_diarization = f"pyannote CPU configured ({access_source})"
+    elif pyannote_package_installed:
+        cpu_diarization = "pyannote installed; Community-1 needs a first-download token or complete cache"
+    else:
+        cpu_diarization = "pyannote package is not installed"
+    diarization_setup = (
+        "Install the transcription optional dependencies to add pyannote Community-1."
+        if not pyannote_package_installed
+        else "Add a Hugging Face read token for the first Community-1 download, or restore its complete local cache."
+    )
     llama_ready = bool(llama_server)
 
     if cuda_ready:
@@ -477,6 +563,11 @@ def collect_accelerator_diagnostics(llama_server: str | Path | None) -> dict[str
             transcription_ready=cuda_ready,
             diarization_ready=bool(torch["cuda_available"] and pyannote_ready),
             analysis_ready=llama_ready,
+            transcription_setup=(
+                "Install faster-whisper plus a CUDA-enabled PyTorch build, then rerun the hardware check."
+            ),
+            diarization_setup=diarization_setup,
+            analysis_setup="Install llama-server or configure LLAMA_SERVER_PATH.",
         ),
         _profile(
             "vulkan",
@@ -489,6 +580,15 @@ def collect_accelerator_diagnostics(llama_server: str | Path | None) -> dict[str
             transcription_ready=vulkan_asr,
             diarization_ready=pyannote_ready,
             analysis_ready=vulkan_llm,
+            transcription_setup=(
+                "Configure a Vulkan-enabled whisper-cli and a local GGML Whisper model "
+                "with WHISPER_CPP_PATH and WHISPER_CPP_MODEL_PATH."
+            ),
+            diarization_setup=diarization_setup,
+            analysis_setup=(
+                "Configure a Vulkan-enabled llama-server with LLAMA_SERVER_PATH; "
+                "device inspection must report a Vulkan adapter."
+            ),
         ),
         _profile(
             "openvino",
@@ -511,6 +611,12 @@ def collect_accelerator_diagnostics(llama_server: str | Path | None) -> dict[str
             transcription_ready=openvino_asr,
             diarization_ready=pyannote_ready,
             analysis_ready=llama_ready,
+            transcription_setup=(
+                'Install this app\'s OpenVINO optional dependencies (`pip install -e ".[openvino]"`), '
+                "then rerun the check and Test transcription."
+            ),
+            diarization_setup=diarization_setup,
+            analysis_setup="Install llama-server or configure LLAMA_SERVER_PATH.",
         ),
         _profile(
             "windowsml",
@@ -534,6 +640,12 @@ def collect_accelerator_diagnostics(llama_server: str | Path | None) -> dict[str
             transcription_ready=windows_ml_decode,
             diarization_ready=pyannote_ready,
             analysis_ready=llama_ready,
+            transcription_setup=(
+                "Use a build containing the Windows ML helper and set a compatible ONNX "
+                "Whisper model path; the profile unlocks only after its decode probe passes."
+            ),
+            diarization_setup=diarization_setup,
+            analysis_setup="Install llama-server or configure LLAMA_SERVER_PATH.",
         ),
     ]
     if sys.platform == "darwin":
@@ -549,6 +661,13 @@ def collect_accelerator_diagnostics(llama_server: str | Path | None) -> dict[str
                 transcription_ready=metal_asr,
                 diarization_ready=pyannote_ready,
                 analysis_ready=metal_llm,
+                transcription_setup=(
+                    "Configure a native ggml-metal whisper-cli and local GGML model."
+                ),
+                diarization_setup=diarization_setup,
+                analysis_setup=(
+                    "Configure a Metal-enabled llama-server; device inspection must report Metal."
+                ),
             )
         )
     profiles.append(
@@ -563,6 +682,11 @@ def collect_accelerator_diagnostics(llama_server: str | Path | None) -> dict[str
             transcription_ready=cpu_ready,
             diarization_ready=pyannote_ready,
             analysis_ready=llama_ready,
+            transcription_setup=(
+                "Install the transcription optional dependencies to add faster-whisper and PyTorch."
+            ),
+            diarization_setup=diarization_setup,
+            analysis_setup="Install llama-server or configure LLAMA_SERVER_PATH.",
         )
     )
 
@@ -573,8 +697,10 @@ def collect_accelerator_diagnostics(llama_server: str | Path | None) -> dict[str
         "onnx": onnx,
         "windows_ml": windows_ml,
         "speaker_labels": {
-            "package_installed": module_available("pyannote.audio"),
+            "package_installed": pyannote_package_installed,
             "token_configured": token_ready,
+            "model_cache_detected": pyannote_cache_detected,
+            "access_configured": pyannote_access_configured,
             "configured": pyannote_ready,
             "cuda_available": bool(torch["cuda_available"]),
         },

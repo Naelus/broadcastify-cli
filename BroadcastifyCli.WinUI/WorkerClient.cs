@@ -6,6 +6,9 @@ namespace BroadcastifyCli.WinUI;
 
 internal sealed class WorkerClient
 {
+    private static readonly Encoding Utf8WithoutBom =
+        new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
+
     private readonly PythonCommand _python;
 
     public string RepositoryRoot { get; }
@@ -565,6 +568,29 @@ internal sealed class WorkerClient
         return result;
     }
 
+    public async Task<AnalysisProviderStatus?> RunAnalysisSelfTestAsync(
+        AnalysisSelfTestRequest request,
+        Action<JsonElement> onMessage,
+        CancellationToken cancellationToken)
+    {
+        AnalysisProviderStatus? result = null;
+        await RunWorkerAsync(
+            ["-m", "broadcastify_cli.worker", "analysis-self-test"],
+            JsonSerializer.Serialize(request, JsonOptions),
+            message =>
+            {
+                if (message.TryGetProperty("type", out var type)
+                    && type.GetString() == "analysis_self_test"
+                    && message.TryGetProperty("result", out var value))
+                {
+                    result = value.Deserialize<AnalysisProviderStatus>(JsonOptions);
+                }
+                onMessage(message);
+            },
+            cancellationToken);
+        return result;
+    }
+
     private async Task RunWorkerAsync(
         IReadOnlyList<string> arguments,
         string? stdin,
@@ -644,9 +670,9 @@ internal sealed class WorkerClient
             RedirectStandardInput = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
-            StandardInputEncoding = Encoding.UTF8,
-            StandardOutputEncoding = Encoding.UTF8,
-            StandardErrorEncoding = Encoding.UTF8,
+            StandardInputEncoding = Utf8WithoutBom,
+            StandardOutputEncoding = Utf8WithoutBom,
+            StandardErrorEncoding = Utf8WithoutBom,
         };
         startInfo.Environment["PYTHONIOENCODING"] = "utf-8";
         startInfo.Environment["PYTHONUTF8"] = "1";
