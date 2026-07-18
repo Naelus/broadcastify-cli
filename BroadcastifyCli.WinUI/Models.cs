@@ -449,6 +449,9 @@ internal sealed record JobRequest
     [JsonPropertyName("asr_model_path")]
     public string? AsrModelPath { get; init; }
 
+    [JsonPropertyName("diarization_engine")]
+    public string DiarizationEngine { get; init; } = "community-1";
+
     [JsonPropertyName("diarization_device")]
     public string DiarizationDevice { get; init; } = "auto";
 
@@ -487,6 +490,12 @@ internal sealed record AsrSelfTestRequest
 
     [JsonPropertyName("asr_model_path")]
     public string? AsrModelPath { get; init; }
+
+    [JsonPropertyName("diarization_engine")]
+    public string DiarizationEngine { get; init; } = "community-1";
+
+    [JsonPropertyName("diarization_device")]
+    public string DiarizationDevice { get; init; } = "auto";
 
     [JsonPropertyName("batch_size")]
     public int BatchSize { get; init; } = 8;
@@ -572,6 +581,9 @@ public sealed record AsrModelPreparationStatus
 
 internal sealed record DiarizationSelfTestRequest
 {
+    [JsonPropertyName("diarization_engine")]
+    public string DiarizationEngine { get; init; } = "community-1";
+
     [JsonPropertyName("diarization_device")]
     public string DiarizationDevice { get; init; } = "auto";
 
@@ -580,6 +592,12 @@ internal sealed record DiarizationSelfTestRequest
 
     [JsonPropertyName("batch_size")]
     public int BatchSize { get; init; } = 8;
+
+    [JsonPropertyName("min_speakers")]
+    public int? MinimumSpeakers { get; init; }
+
+    [JsonPropertyName("max_speakers")]
+    public int? MaximumSpeakers { get; init; }
 
     [JsonPropertyName("huggingface_token")]
     public string? HuggingFaceToken { get; init; }
@@ -590,11 +608,20 @@ public sealed record DiarizationSelfTestStatus
     [JsonPropertyName("ready")]
     public bool Ready { get; init; }
 
+    [JsonPropertyName("engine")]
+    public string Engine { get; init; } = "";
+
     [JsonPropertyName("model")]
     public string Model { get; init; } = "";
 
     [JsonPropertyName("device")]
     public string Device { get; init; } = "";
+
+    [JsonPropertyName("provider")]
+    public string Provider { get; init; } = "";
+
+    [JsonPropertyName("quality")]
+    public string Quality { get; init; } = "";
 
     [JsonPropertyName("elapsed_seconds")]
     public double ElapsedSeconds { get; init; }
@@ -781,6 +808,15 @@ public sealed record LibraryDay
 
     [JsonPropertyName("has_diarization")]
     public bool HasDiarization { get; init; }
+
+    [JsonPropertyName("diarization_engine")]
+    public string DiarizationEngine { get; init; } = "";
+
+    [JsonPropertyName("diarization_quality")]
+    public string DiarizationQuality { get; init; } = "";
+
+    [JsonPropertyName("speaker_upgrade_available")]
+    public bool SpeakerUpgradeAvailable { get; init; }
 
     [JsonPropertyName("has_analysis")]
     public bool HasAnalysis { get; init; }
@@ -978,6 +1014,9 @@ internal sealed record LocalProcessingRequest : AnalysisProviderRequest
 
     [JsonPropertyName("asr_model_path")]
     public string? AsrModelPath { get; init; }
+
+    [JsonPropertyName("diarization_engine")]
+    public string DiarizationEngine { get; init; } = "community-1";
 
     [JsonPropertyName("diarization_device")]
     public string DiarizationDevice { get; init; } = "auto";

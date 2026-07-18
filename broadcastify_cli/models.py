@@ -5,6 +5,11 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Any, Iterator
 
+from .portable_diarization import (
+    COMMUNITY_DIARIZATION_ENGINE,
+    normalize_diarization_engine,
+)
+
 
 @dataclass(frozen=True)
 class FeedSearchResult:
@@ -37,6 +42,7 @@ class JobRequest:
     device_index: int = 0
     compute_type: str = "auto"
     asr_model_path: str | None = None
+    diarization_engine: str = COMMUNITY_DIARIZATION_ENGINE
     diarization_device: str = "auto"
     download_jobs: int = 1
     batch_size: int = 8
@@ -65,6 +71,12 @@ class JobRequest:
                 str(value["asr_model_path"]).strip()
                 if value.get("asr_model_path")
                 else None
+            ),
+            diarization_engine=normalize_diarization_engine(
+                str(
+                    value.get("diarization_engine")
+                    or COMMUNITY_DIARIZATION_ENGINE
+                )
             ),
             diarization_device=str(value.get("diarization_device") or "auto"),
             download_jobs=max(1, int(value.get("download_jobs", 1))),
@@ -131,6 +143,14 @@ class JobRequest:
             raise ValueError("The selected transcription device is not supported.")
         if self.diarization_device not in {"auto", "cpu", "cuda"}:
             raise ValueError("Diarization device must be auto, cpu, or cuda.")
+        normalize_diarization_engine(self.diarization_engine)
+        if (
+            self.diarization_engine == "sherpa-onnx"
+            and self.diarization_device == "cuda"
+        ):
+            raise ValueError(
+                "The sherpa-onnx speaker preview currently supports CPU or Automatic."
+            )
         if self.device_index < 0:
             raise ValueError("Device index cannot be negative.")
         if self.min_speakers is not None and self.min_speakers < 1:

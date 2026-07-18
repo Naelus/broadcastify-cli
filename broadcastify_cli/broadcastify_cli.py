@@ -66,7 +66,7 @@ def search(query: str) -> None:
 @click.option("--combine", is_flag=True, help="Combine each day before transcription")
 @click.option("--keep-originals/--delete-originals", default=True, show_default=True)
 @click.option("--transcribe", "-t", is_flag=True, help="Create local timestamped transcripts")
-@click.option("--diarize", is_flag=True, help="Assign local pyannote speaker labels")
+@click.option("--diarize", is_flag=True, help="Assign local anonymous speaker labels")
 @click.option(
     "--asr-engine",
     type=click.Choice(
@@ -96,6 +96,13 @@ def search(query: str) -> None:
 @click.option("--device-index", type=click.IntRange(min=0), default=0, show_default=True)
 @click.option("--compute-type", default="auto", show_default=True)
 @click.option("--asr-model-path", type=click.Path(path_type=Path, dir_okay=True))
+@click.option(
+    "--diarization-engine",
+    type=click.Choice(["community-1", "sherpa-onnx"]),
+    default="community-1",
+    show_default=True,
+    help="Accuracy-default Community-1 or fast portable CPU preview",
+)
 @click.option(
     "--diarization-device",
     type=click.Choice(["auto", "cpu", "cuda"]),
@@ -139,6 +146,7 @@ def download(
     device_index: int,
     compute_type: str,
     asr_model_path: Path | None,
+    diarization_engine: str,
     diarization_device: str,
     model_name: str,
     download_jobs: int,
@@ -174,6 +182,7 @@ def download(
         device_index=device_index,
         compute_type=compute_type,
         asr_model_path=str(asr_model_path) if asr_model_path else None,
+        diarization_engine=diarization_engine,
         diarization_device=diarization_device,
         download_jobs=download_jobs,
         batch_size=batch_size,
@@ -220,6 +229,11 @@ def download(
 @click.option("--compute-type", default="auto")
 @click.option("--asr-model-path", type=click.Path(path_type=Path, dir_okay=True))
 @click.option(
+    "--diarization-engine",
+    type=click.Choice(["community-1", "sherpa-onnx"]),
+    default="community-1",
+)
+@click.option(
     "--diarization-device",
     type=click.Choice(["auto", "cpu", "cuda"]),
     default="auto",
@@ -237,6 +251,7 @@ def transcribe(
     device_index: int,
     compute_type: str,
     asr_model_path: Path | None,
+    diarization_engine: str,
     diarization_device: str,
     model_name: str,
     batch_size: int,
@@ -258,6 +273,7 @@ def transcribe(
         device_index=device_index,
         compute_type=compute_type,
         asr_model_path=asr_model_path,
+        diarization_engine=diarization_engine,
         diarization_device=diarization_device,
         diarize=diarize,
         batch_size=batch_size,

@@ -127,7 +127,7 @@ def test_loopback_web_app_serves_library_transcript_and_media(tmp_path: Path) ->
         assert cookie.startswith("radio_archive_session=")
         assert token_match is not None
         assert b'id="areaPublicSafetyOnly"' in body
-        assert b'/static/app.js?v=24' in body
+        assert b'/static/app.js?v=25' in body
         assert b'value="qwen3-asr"' in body
         assert b'qwen3-asr-0.6b-int8' in body
         assert b'id="settingAnalysisDevice"' in body
@@ -147,7 +147,7 @@ def test_loopback_web_app_serves_library_transcript_and_media(tmp_path: Path) ->
         assert response.getheader("Content-Type") == "image/svg+xml"
         assert b"<svg" in body
 
-        response, body = _request(connection, "GET", "/static/app.js?v=24")
+        response, body = _request(connection, "GET", "/static/app.js?v=25")
         assert response.status == 200
         assert b"areaSelectedStoryIndex" in body
         assert b"data-area-story-index" in body
@@ -162,7 +162,8 @@ def test_loopback_web_app_serves_library_transcript_and_media(tmp_path: Path) ->
         assert b'setupProfileSelfTestButton").addEventListener' in body
         assert b"function syncPlatformProfileOptions" in body
         assert b"whisper.cpp has no managed distil-large-v3 mapping" in body
-        assert b' qwen: ["qwen3-asr", "cpu", "cpu", "auto"]' in body
+        assert b' qwen: ["qwen3-asr", "cpu", "cpu", "auto", "sherpa-onnx"]' in body
+        assert b"diarization_engine: state.settings.diarizationEngine" in body
         assert b"Fast CPU preview uses managed Qwen3-ASR 0.6B INT8" in body
         assert b"updateHardwareProfileDescription();" in body
         assert b"function ensureAsrModelCompatibility" in body

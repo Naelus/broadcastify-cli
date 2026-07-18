@@ -66,9 +66,12 @@ public sealed partial class MainWindow : Window
     private string _analysisModelVerificationMessage = "";
     private bool _pyannotePackageInstalled;
     private bool _pyannoteAccessConfigured;
+    private bool _portableDiarizationRuntimeInstalled;
+    private bool _portableDiarizationModelReady;
     private bool _huggingFaceTokenConfigured;
     private bool _cudaAvailable;
     private ProfileSetupAction? _profileRecoveryAction;
+    private int _diagnosticsLoadVersion;
 
     public MainWindow()
     {
@@ -196,36 +199,43 @@ public sealed partial class MainWindow : Window
             case "cuda":
                 SelectComboTag(AsrEngineComboBox, "faster-whisper");
                 SelectComboTag(DeviceComboBox, "cuda");
+                SelectComboTag(DiarizationEngineComboBox, "community-1");
                 SelectComboTag(DiarizationDeviceComboBox, "cuda");
                 break;
             case "vulkan":
                 SelectComboTag(AsrEngineComboBox, "whisper.cpp");
                 SelectComboTag(DeviceComboBox, "vulkan");
+                SelectComboTag(DiarizationEngineComboBox, "sherpa-onnx");
                 SelectComboTag(DiarizationDeviceComboBox, "cpu");
                 break;
             case "openvino":
                 SelectComboTag(AsrEngineComboBox, "openvino");
                 SelectComboTag(DeviceComboBox, "openvino-auto");
+                SelectComboTag(DiarizationEngineComboBox, "sherpa-onnx");
                 SelectComboTag(DiarizationDeviceComboBox, "cpu");
                 break;
             case "windowsml":
                 SelectComboTag(AsrEngineComboBox, "windows-ml");
                 SelectComboTag(DeviceComboBox, "auto");
+                SelectComboTag(DiarizationEngineComboBox, "sherpa-onnx");
                 SelectComboTag(DiarizationDeviceComboBox, "cpu");
                 break;
             case "qwen":
                 SelectComboTag(AsrEngineComboBox, "qwen3-asr");
                 SelectComboTag(DeviceComboBox, "cpu");
+                SelectComboTag(DiarizationEngineComboBox, "sherpa-onnx");
                 SelectComboTag(DiarizationDeviceComboBox, "cpu");
                 break;
             case "cpu":
                 SelectComboTag(AsrEngineComboBox, "faster-whisper");
                 SelectComboTag(DeviceComboBox, "cpu");
+                SelectComboTag(DiarizationEngineComboBox, "community-1");
                 SelectComboTag(DiarizationDeviceComboBox, "cpu");
                 break;
             default:
                 SelectComboTag(AsrEngineComboBox, "auto");
                 SelectComboTag(DeviceComboBox, "auto");
+                SelectComboTag(DiarizationEngineComboBox, "community-1");
                 SelectComboTag(DiarizationDeviceComboBox, "auto");
                 break;
         }
@@ -257,6 +267,11 @@ public sealed partial class MainWindow : Window
         UpdateAsrModelPreparationUi();
         ApplySelectedHardwareProfileDescription();
         UpdateSetupSummary();
+        if (_worker is not null && _diagnosticsLoaded)
+        {
+            StatusText.Text = "Refreshing the selected profile’s engine checks…";
+            _ = LoadDiagnosticsAndDaysAsync();
+        }
     }
 
     private void LoadUserSettings()
@@ -267,7 +282,9 @@ public sealed partial class MainWindow : Window
         SelectComboValue(ModelComboBox, settings.WhisperModel);
         SelectComboValue(AsrEngineComboBox, settings.AsrEngine);
         SelectComboValue(DeviceComboBox, settings.TranscriptionDevice);
+        SelectComboValue(DiarizationEngineComboBox, settings.DiarizationEngine);
         SelectComboValue(DiarizationDeviceComboBox, settings.DiarizationDevice);
+        EnsureDiarizationSelectionCompatibility();
         AsrModelPathBox.Text = settings.AsrModelPath;
         OutputFolderBox.Text = string.IsNullOrWhiteSpace(settings.OutputDirectory)
             ? "archives"
@@ -329,6 +346,7 @@ public sealed partial class MainWindow : Window
             WhisperModel = SelectedComboValue(ModelComboBox, "turbo"),
             AsrEngine = SelectedComboValue(AsrEngineComboBox, "auto"),
             TranscriptionDevice = SelectedComboValue(DeviceComboBox, "auto"),
+            DiarizationEngine = SelectedComboValue(DiarizationEngineComboBox, "community-1"),
             DiarizationDevice = SelectedComboValue(DiarizationDeviceComboBox, "auto"),
             AsrModelPath = AsrModelPathBox.Text.Trim(),
             OutputDirectory = string.IsNullOrWhiteSpace(OutputFolderBox.Text)
@@ -397,6 +415,7 @@ public sealed partial class MainWindow : Window
                      ModelComboBox,
                      AsrEngineComboBox,
                      DeviceComboBox,
+                     DiarizationEngineComboBox,
                      DiarizationDeviceComboBox,
                      AnalysisProviderComboBox,
                      AnalysisDeviceComboBox,
@@ -470,7 +489,16 @@ public sealed partial class MainWindow : Window
             UpdateAsrModelPreparationUi();
         };
         AsrModelPathBox.TextChanged += (_, _) => ResetAsrVerification();
-        DiarizationDeviceComboBox.SelectionChanged += (_, _) => ResetDiarizationVerification();
+        DiarizationEngineComboBox.SelectionChanged += (_, _) =>
+        {
+            EnsureDiarizationSelectionCompatibility();
+            ResetDiarizationVerification();
+        };
+        DiarizationDeviceComboBox.SelectionChanged += (_, _) =>
+        {
+            EnsureDiarizationSelectionCompatibility();
+            ResetDiarizationVerification();
+        };
         GpuIndexBox.ValueChanged += (_, _) =>
         {
             ResetAsrVerification();
@@ -481,6 +509,21 @@ public sealed partial class MainWindow : Window
             ResetAsrVerification();
             ResetDiarizationVerification();
         };
+    }
+
+    private void EnsureDiarizationSelectionCompatibility()
+    {
+        if (DiarizationEngineComboBox is null
+            || DiarizationDeviceComboBox is null)
+        {
+            return;
+        }
+        if (SelectedComboValue(DiarizationEngineComboBox, "community-1")
+                == "sherpa-onnx"
+            && SelectedComboValue(DiarizationDeviceComboBox, "auto") == "cuda")
+        {
+            SelectComboTag(DiarizationDeviceComboBox, "cpu");
+        }
     }
 
     private void ScheduleSettingsSave()
@@ -545,7 +588,7 @@ public sealed partial class MainWindow : Window
             DiarizationSelfTestInfoBar.Severity = InfoBarSeverity.Informational;
             DiarizationSelfTestInfoBar.Title = "Speaker labels not tested for these settings";
             DiarizationSelfTestInfoBar.Message =
-                "Run Test speakers after changing its device, token, GPU, or batch.";
+                "Run Test speakers after changing its engine, device, token, GPU, or batch.";
         }
         UpdateSetupSummary();
     }
@@ -1051,6 +1094,7 @@ public sealed partial class MainWindow : Window
         if (SetupReadinessInfoBar is null
             || HardwareProfileComboBox is null
             || AnalysisProviderComboBox is null
+            || DiarizationEngineComboBox is null
             || DiarizationDeviceComboBox is null
             || HuggingFaceTokenBox is null)
         {
@@ -1062,14 +1106,18 @@ public sealed partial class MainWindow : Window
         var tokenAvailable = _huggingFaceTokenConfigured
             || !string.IsNullOrWhiteSpace(HuggingFaceTokenBox?.Password);
         var selectedDiarizationDevice = SelectedComboValue(DiarizationDeviceComboBox, "auto");
+        var selectedDiarizationEngine = SelectedComboValue(
+            DiarizationEngineComboBox, "community-1");
         var typedTokenMakesDiarizationAvailable = _pyannotePackageInstalled
             && (_pyannoteAccessConfigured || tokenAvailable)
             && (selectedDiarizationDevice != "cuda" || _cudaAvailable);
+        var selectedEngineDetected = selectedDiarizationEngine == "sherpa-onnx"
+            ? _portableDiarizationRuntimeInstalled && _portableDiarizationModelReady
+            : typedTokenMakesDiarizationAvailable;
         var transcriptionAvailable = _asrVerifiedThisSession
             || profile?.TranscriptionReady == true;
         var diarizationAvailable = _diarizationVerifiedThisSession
-            || profile?.DiarizationReady == true
-            || typedTokenMakesDiarizationAvailable;
+            || selectedEngineDetected;
         var provider = SelectedComboValue(AnalysisProviderComboBox, "local");
         var detectedLocalAnalysis = provider == "local" && profile?.AnalysisReady == true;
         var analysisAvailable = _analysisProviderReady ?? detectedLocalAnalysis;
@@ -1122,7 +1170,7 @@ public sealed partial class MainWindow : Window
             : !diarizationAvailable && profileAction?.Stage == "diarization"
                 ? profileAction.Message
             : profile?.Diarization
-              ?? "Run the local hardware check to inspect pyannote and its model token.";
+              ?? "Run the local hardware check to inspect the selected speaker-label engine.";
         SetupDiarizationActionButton.Content = _diarizationVerifiedThisSession
             ? "Retest"
             : diarizationAvailable
@@ -1228,9 +1276,14 @@ public sealed partial class MainWindow : Window
 
     private void SetupDiarization_Click(object sender, RoutedEventArgs e)
     {
+        var selectedEngine = SelectedComboValue(
+            DiarizationEngineComboBox, "community-1");
         var tokenAvailable = _huggingFaceTokenConfigured
             || !string.IsNullOrWhiteSpace(HuggingFaceTokenBox.Password);
-        if (_pyannotePackageInstalled && (_pyannoteAccessConfigured || tokenAvailable))
+        var canTest = selectedEngine == "sherpa-onnx"
+            ? _portableDiarizationRuntimeInstalled
+            : _pyannotePackageInstalled && (_pyannoteAccessConfigured || tokenAvailable);
+        if (canTest)
         {
             DiarizationSelfTest_Click(sender, e);
             return;
@@ -1242,7 +1295,14 @@ public sealed partial class MainWindow : Window
             return;
         }
         SettingsTabView.SelectedItem = ProcessingSettingsTab;
-        HuggingFaceTokenBox.Focus(FocusState.Programmatic);
+        if (selectedEngine == "sherpa-onnx")
+        {
+            DiarizationEngineComboBox.Focus(FocusState.Programmatic);
+        }
+        else
+        {
+            HuggingFaceTokenBox.Focus(FocusState.Programmatic);
+        }
     }
 
     private void SetupAnalysis_Click(object sender, RoutedEventArgs e)
@@ -1380,6 +1440,10 @@ public sealed partial class MainWindow : Window
             AsrModelPath = string.IsNullOrWhiteSpace(AsrModelPathBox.Text)
                 ? null
                 : AsrModelPathBox.Text.Trim(),
+            DiarizationEngine = SelectedComboValue(
+                DiarizationEngineComboBox, "community-1"),
+            DiarizationDevice = SelectedComboValue(
+                DiarizationDeviceComboBox, "auto"),
             BatchSize = RequiredInteger(BatchSizeBox.Value, 8),
             HuggingFaceToken = string.IsNullOrWhiteSpace(HuggingFaceTokenBox.Password)
                 ? null
@@ -1533,15 +1597,19 @@ public sealed partial class MainWindow : Window
         DiarizationSelfTestInfoBar.Severity = InfoBarSeverity.Informational;
         DiarizationSelfTestInfoBar.Title = "Loading and executing the local speaker-label model";
         DiarizationSelfTestInfoBar.Message =
-            "The first explicit test may download the pyannote model. Archive audio and quota are not used.";
+            "The first explicit test may download the selected pinned model. Archive audio and quota are not used.";
         try
         {
             var result = await _worker.RunDiarizationSelfTestAsync(
                 new DiarizationSelfTestRequest
                 {
+                    DiarizationEngine = SelectedComboValue(
+                        DiarizationEngineComboBox, "community-1"),
                     DiarizationDevice = SelectedComboValue(DiarizationDeviceComboBox, "auto"),
                     DeviceIndex = RequiredInteger(GpuIndexBox.Value, 0),
                     BatchSize = RequiredInteger(BatchSizeBox.Value, 8),
+                    MinimumSpeakers = OptionalPositiveInteger(MinimumSpeakersBox.Value),
+                    MaximumSpeakers = OptionalPositiveInteger(MaximumSpeakersBox.Value),
                     HuggingFaceToken = string.IsNullOrWhiteSpace(HuggingFaceTokenBox.Password)
                         ? null
                         : HuggingFaceTokenBox.Password,
@@ -1598,6 +1666,8 @@ public sealed partial class MainWindow : Window
             AsrModelPath = string.IsNullOrWhiteSpace(AsrModelPathBox.Text)
                 ? null
                 : AsrModelPathBox.Text.Trim(),
+            DiarizationEngine = SelectedComboValue(
+                DiarizationEngineComboBox, "community-1"),
             DiarizationDevice = SelectedComboValue(DiarizationDeviceComboBox, "auto"),
             BatchSize = RequiredInteger(BatchSizeBox.Value, 8),
             HuggingFaceToken = string.IsNullOrWhiteSpace(HuggingFaceTokenBox.Password)
@@ -1897,7 +1967,9 @@ public sealed partial class MainWindow : Window
                 ? "→  3. Transcription — ready to run locally"
                 : "○  3. Transcription — waits for combined audio";
         LibraryDiarizationStageText.Text = day.HasDiarization
-            ? "✓  4. Speaker labels — diarization is attached"
+            ? day.SpeakerUpgradeAvailable
+                ? "✓  4. Speaker labels — fast preview attached; Community-1 accuracy upgrade is available"
+                : "✓  4. Speaker labels — Community-1 accuracy labels are attached"
             : day.HasTranscript
                 ? "→  4. Speaker labels — ready to add without repeating transcription"
                 : "○  4. Speaker labels — waits for a transcript";
@@ -1917,6 +1989,12 @@ public sealed partial class MainWindow : Window
             && day.PrimaryAction != "open_review"
                 ? Visibility.Visible
                 : Visibility.Collapsed;
+        LibrarySpeakerUpgradeButton.IsEnabled = day.SpeakerUpgradeAvailable
+            && _worker is not null
+            && _operationCancellation is null;
+        LibrarySpeakerUpgradeButton.Visibility = day.SpeakerUpgradeAvailable
+            ? Visibility.Visible
+            : Visibility.Collapsed;
         LibraryOpenFolderButton.IsEnabled = Directory.Exists(day.DayDirectory);
         LibraryOpenTranscriptButton.IsEnabled = File.Exists(day.TranscriptPath);
 
@@ -2039,6 +2117,15 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    private async void LibrarySpeakerUpgrade_Click(object sender, RoutedEventArgs e)
+    {
+        if (_selectedLibraryDay is not { SpeakerUpgradeAvailable: true } day)
+        {
+            return;
+        }
+        await ContinueLibraryDayAsync(day, diarizationEngineOverride: "community-1");
+    }
+
     private async void LibraryOpenFolder_Click(object sender, RoutedEventArgs e)
     {
         if (_selectedLibraryDay is null || !Directory.Exists(_selectedLibraryDay.DayDirectory))
@@ -2084,13 +2171,16 @@ public sealed partial class MainWindow : Window
         await ContinueLibraryDayAsync(day);
     }
 
-    private async Task ContinueLibraryDayAsync(LibraryDay day)
+    private async Task ContinueLibraryDayAsync(
+        LibraryDay day,
+        string? diarizationEngineOverride = null)
     {
         if (_worker is null)
         {
             return;
         }
-        if (day.PrimaryAction == "open_review")
+        if (day.PrimaryAction == "open_review"
+            && string.IsNullOrWhiteSpace(diarizationEngineOverride))
         {
             await OpenLibraryDayInReviewAsync(day);
             return;
@@ -2137,6 +2227,9 @@ public sealed partial class MainWindow : Window
                         AsrModelPath = string.IsNullOrWhiteSpace(AsrModelPathBox.Text)
                             ? null
                             : AsrModelPathBox.Text.Trim(),
+                        DiarizationEngine = diarizationEngineOverride
+                            ?? SelectedComboValue(
+                                DiarizationEngineComboBox, "community-1"),
                         DiarizationDevice = SelectedComboValue(DiarizationDeviceComboBox, "auto"),
                         BatchSize = RequiredInteger(BatchSizeBox.Value, 8),
                         Diarize = true,
@@ -2528,6 +2621,8 @@ public sealed partial class MainWindow : Window
         AsrModelPath = string.IsNullOrWhiteSpace(AsrModelPathBox.Text)
             ? null
             : AsrModelPathBox.Text.Trim(),
+        DiarizationEngine = SelectedComboValue(
+            DiarizationEngineComboBox, "community-1"),
         DiarizationDevice = SelectedComboValue(DiarizationDeviceComboBox, "auto"),
         DownloadJobs = _broadcastifyRateLimitObserved
             ? 1
@@ -2601,12 +2696,17 @@ public sealed partial class MainWindow : Window
         {
             return;
         }
+        var loadVersion = ++_diagnosticsLoadVersion;
         try
         {
             using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(30));
             var diagnostics = await _worker.GetDiagnosticsAsync(
                 cancellation.Token,
                 CreateAsrSelfTestRequest());
+            if (loadVersion != _diagnosticsLoadVersion)
+            {
+                return;
+            }
             if (diagnostics is JsonElement value)
             {
                 var cuda = value.TryGetProperty("cuda_available", out var cudaValue)
@@ -2647,6 +2747,18 @@ public sealed partial class MainWindow : Window
                         _pyannoteAccessConfigured = speakerLabels.TryGetProperty(
                             "access_configured", out var accessConfigured)
                             && accessConfigured.GetBoolean();
+                        if (speakerLabels.TryGetProperty(
+                                "portable", out var portableSpeakers))
+                        {
+                            _portableDiarizationRuntimeInstalled =
+                                portableSpeakers.TryGetProperty(
+                                    "runtime_installed", out var runtimeInstalled)
+                                && runtimeInstalled.GetBoolean();
+                            _portableDiarizationModelReady =
+                                portableSpeakers.TryGetProperty(
+                                    "model_ready", out var modelReady)
+                                && modelReady.GetBoolean();
+                        }
                     }
                 }
                 var selectedProfileId =
@@ -2660,7 +2772,9 @@ public sealed partial class MainWindow : Window
                     DiagnosticsInfoBar.Message =
                         $"GPU: {(gpu ?? (cuda ? "CUDA available" : "not available"))} · "
                         + $"llama.cpp: {(llamaReady ? "detected" : "missing")} · "
-                        + $"pyannote access: {(_pyannoteAccessConfigured ? "configured" : "missing")}";
+                        + "speaker engines: "
+                        + $"Community-1 {(_pyannoteAccessConfigured ? "configured" : "missing")}, "
+                        + $"portable preview {(_portableDiarizationModelReady ? "ready" : _portableDiarizationRuntimeInstalled ? "runtime only" : "missing")}";
                 }
                 ApplySelectedHardwareProfileDescription();
                 SettingsEnvironmentText.Text = string.IsNullOrWhiteSpace(environmentFile)
@@ -2685,10 +2799,23 @@ public sealed partial class MainWindow : Window
                 UpdateSetupSummary();
             }
             await RefreshAnalysisDaysAsync();
+            if (loadVersion != _diagnosticsLoadVersion)
+            {
+                return;
+            }
             await RefreshAreaProfilesAsync();
+            if (loadVersion == _diagnosticsLoadVersion
+                && _operationCancellation is null)
+            {
+                StatusText.Text = "Ready";
+            }
         }
         catch (Exception exception)
         {
+            if (loadVersion != _diagnosticsLoadVersion)
+            {
+                return;
+            }
             _diagnosticsLoaded = true;
             DiagnosticsInfoBar.Severity = InfoBarSeverity.Warning;
             DiagnosticsInfoBar.Title = "Diagnostics unavailable";

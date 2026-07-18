@@ -225,13 +225,18 @@
                                                     <ColumnDefinition Width="*" />
                                                     <ColumnDefinition Width="Auto" />
                                                     <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="Auto" />
                                                 </Grid.ColumnDefinitions>
                                                 <Button x:Name="LibraryDetailPrimaryButton" HorizontalAlignment="Stretch"
                                                         Style="{StaticResource AccentButtonStyle}"
                                                         Click="LibraryDetailPrimary_Click" />
                                                 <Button x:Name="LibraryDetailReviewButton" Grid.Column="1" Content="Open review"
                                                         Click="LibraryDetailReview_Click" />
-                                                <Button x:Name="LibraryOpenFolderButton" Grid.Column="2" Content="Open folder"
+                                                <Button x:Name="LibrarySpeakerUpgradeButton" Grid.Column="2" Content="Improve speakers"
+                                                        Visibility="Collapsed"
+                                                        Click="LibrarySpeakerUpgrade_Click"
+                                                        ToolTipService.ToolTip="Replace fast preview labels with Community-1 without repeating transcription." />
+                                                <Button x:Name="LibraryOpenFolderButton" Grid.Column="3" Content="Open folder"
                                                         Click="LibraryOpenFolder_Click" />
                                             </Grid>
                                         </Grid>
@@ -818,16 +823,22 @@
                                                         <Button x:Name="AsrSelfTestButton" Content="Test engine"
                                                                 Click="AsrSelfTest_Click" ToolTipService.ToolTip="Run a local execution check on generated silence. This proves the runtime path, not radio accuracy." />
                                                         <Button x:Name="DiarizationSelfTestButton" Content="Test speakers"
-                                                                Click="DiarizationSelfTest_Click" ToolTipService.ToolTip="Run pyannote on generated local audio. The first explicit test may download its model." />
+                                                                Click="DiarizationSelfTest_Click" ToolTipService.ToolTip="Run the selected local speaker engine on generated audio. A first explicit test may download its pinned model." />
                                                     </StackPanel>
                                                 </Grid>
                                                 <Grid ColumnSpacing="12">
-                                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
                                                     <ComboBox x:Name="ModelComboBox" Header="Transcription model" SelectedIndex="0" HorizontalAlignment="Stretch">
                                                         <ComboBoxItem Content="turbo" /><ComboBoxItem Content="distil-large-v3" /><ComboBoxItem Content="large-v3" /><ComboBoxItem Content="medium" /><ComboBoxItem Content="small" /><ComboBoxItem Content="base" /><ComboBoxItem Content="tiny" /><ComboBoxItem Content="qwen3-asr-0.6b-int8" />
                                                     </ComboBox>
                                                     <NumberBox x:Name="BatchSizeBox" Grid.Column="1" Header="ASR / speaker batch" Value="8" Minimum="1" Maximum="64" SpinButtonPlacementMode="Compact" />
+                                                    <ComboBox x:Name="DiarizationEngineComboBox" Grid.Column="2" Header="Speaker-label engine" SelectedIndex="0" HorizontalAlignment="Stretch">
+                                                        <ComboBoxItem Content="Community-1 — accuracy default" Tag="community-1" />
+                                                        <ComboBoxItem Content="Fast portable preview — CPU" Tag="sherpa-onnx" />
+                                                    </ComboBox>
                                                 </Grid>
+                                                <TextBlock Text="Fast portable preview is much faster on CPU but can miss short radio turns. Preview labels remain upgradeable to Community-1 without repeating transcription."
+                                                           TextWrapping="Wrap" FontSize="12" Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
                                                 <Expander x:Name="AdvancedProcessingExpander" Header="Advanced engine overrides and speaker tuning" HorizontalAlignment="Stretch">
                                                     <StackPanel Spacing="12" Padding="0,8,0,4">
                                                         <TextBlock Text="Changing the hardware profile resets these overrides to a compatible combination."
@@ -853,8 +864,8 @@
                                                             </ComboBox>
                                                             <ComboBox x:Name="DiarizationDeviceComboBox" Grid.Column="2" Header="Speaker-label accelerator" SelectedIndex="0" HorizontalAlignment="Stretch">
                                                                 <ComboBoxItem Content="Automatic" Tag="auto" />
-                                                                <ComboBoxItem Content="NVIDIA CUDA" Tag="cuda" />
-                                                                <ComboBoxItem Content="CPU fallback" Tag="cpu" />
+                                                                <ComboBoxItem Content="NVIDIA CUDA (Community-1)" Tag="cuda" />
+                                                                <ComboBoxItem Content="CPU" Tag="cpu" />
                                                             </ComboBox>
                                                         </Grid>
                                                         <Grid ColumnSpacing="12">
@@ -875,7 +886,7 @@
                                                          Message="The engine check decodes generated silence and may download a managed model. It proves local execution, not radio-word accuracy." />
                                                 <InfoBar x:Name="DiarizationSelfTestInfoBar" IsOpen="True" IsClosable="False" Severity="Informational"
                                                          Title="Speaker-label engine not tested this session"
-                                                         Message="The explicit test runs pyannote on generated audio and may download its model once." />
+                                                         Message="The explicit test runs the selected local engine on generated audio and may download its pinned model once." />
                                             </StackPanel>
                                         </Border>
 

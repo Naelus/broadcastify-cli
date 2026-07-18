@@ -57,6 +57,10 @@ qwen = [
     "numpy>=1.26,<3",
     "sherpa-onnx>=1.13.4,<2"
 ]
+portable-diarization = [
+    "numpy>=1.26,<3",
+    "sherpa-onnx>=1.13.4,<2"
+]
 dev = [
     "pytest>=8,<10"
 ]

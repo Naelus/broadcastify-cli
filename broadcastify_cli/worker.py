@@ -55,6 +55,15 @@ from .asr import (
     prepare_asr_model,
 )
 from .qwen_asr import find_qwen3_asr_model, qwen3_asr_diagnostics
+from .portable_diarization import (
+    COMMUNITY_DIARIZATION_ENGINE,
+    COMMUNITY_DIARIZATION_QUALITY,
+    PORTABLE_DIARIZATION_ENGINE,
+    SherpaOnnxDiarizer,
+    normalize_diarization_engine,
+    portable_diarization_diagnostics,
+    prepare_portable_diarization_model,
+)
 from .area_watch import AREA_PROMPT_VERSION, AreaStoryAnalyzer, _public_quote
 from .area_acquisition import AreaAcquisitionRunner
 from .broadcastify import BroadcastifyClient
@@ -288,8 +297,15 @@ def diagnostics(settings: dict[str, Any] | None = None) -> int:
     selected_windows_model: Path | None = None
     selected_qwen_model: Path | None = None
     selected_asr_engine: str | None = None
+    selected_diarization_engine: str | None = None
     selected_asr_model: dict[str, Any] = {}
     if settings is not None:
+        selected_diarization_engine = normalize_diarization_engine(
+            str(
+                settings.get("diarization_engine")
+                or COMMUNITY_DIARIZATION_ENGINE
+            )
+        )
         model = str(settings.get("model") or "turbo")
         engine = normalize_asr_engine(
             str(settings.get("asr_engine") or "auto"),
@@ -374,6 +390,7 @@ def diagnostics(settings: dict[str, Any] | None = None) -> int:
         selected_whisper_model=selected_whisper_model,
         selected_windows_model=selected_windows_model,
         selected_qwen_model=selected_qwen_model,
+        selected_diarization_engine=selected_diarization_engine,
     )
     if selected_asr_model:
         payload["selected_asr_model"] = selected_asr_model
@@ -584,20 +601,76 @@ def _speaker_turn_count(output: Any) -> int:
 
 def _diarization_self_test_result(settings: dict[str, Any]) -> dict[str, Any]:
     started = time.monotonic()
+    engine = normalize_diarization_engine(
+        str(
+            settings.get("diarization_engine")
+            or COMMUNITY_DIARIZATION_ENGINE
+        )
+    )
     token = str(settings.get("huggingface_token") or "").strip()
     token = token or os.getenv("HUGGINGFACE_TOKEN", "") or os.getenv("HF_TOKEN", "")
     requested_device = str(settings.get("diarization_device") or "auto")
-    emit(
-        {
-            "type": "progress",
-            "phase": "diarization_self_test",
-            "current": 0,
-            "total": 0,
-            "message": (
-                "Loading the local speaker-label model; a complete cache is reused offline, "
-                "and the first download requires a read token"
+    def progress(message: str) -> None:
+        emit(
+            {
+                "type": "progress",
+                "phase": "diarization_self_test",
+                "current": 0,
+                "total": 0,
+                "message": str(message),
+            }
+        )
+
+    if engine == PORTABLE_DIARIZATION_ENGINE:
+        if requested_device.lower() not in {"auto", "cpu"}:
+            raise RuntimeError(
+                "Fast portable speaker preview currently runs on CPU. "
+                "Select CPU or Automatic."
+            )
+        progress(
+            "Preparing the checksum-verified public sherpa-onnx preview models; "
+            "a complete managed copy is reused offline"
+        )
+        prepared = prepare_portable_diarization_model(progress=progress)
+        diarizer = SherpaOnnxDiarizer(
+            min_speakers=(
+                int(settings["min_speakers"])
+                if settings.get("min_speakers") not in {None, ""}
+                else None
             ),
+            max_speakers=(
+                int(settings["max_speakers"])
+                if settings.get("max_speakers") not in {None, ""}
+                else None
+            ),
+        )
+        with tempfile.TemporaryDirectory(
+            prefix="radio-archive-speaker-test-"
+        ) as temporary:
+            audio_path = Path(temporary) / "generated-test.wav"
+            _write_diarization_test_audio(audio_path)
+            turns = diarizer.process(audio_path, progress=progress)
+        result = {
+            "ready": True,
+            "engine": engine,
+            "model": str(prepared["model"]),
+            "device": "cpu",
+            "provider": "cpu",
+            "quality": "preview",
+            "elapsed_seconds": round(time.monotonic() - started, 3),
+            "turn_count": len(turns),
+            "metadata": dict(diarizer.metadata),
         }
+        result["message"] = (
+            "Fast portable speaker-preview self-test passed on CPU in "
+            f"{result['elapsed_seconds']:.1f} seconds. Synthetic-audio turn "
+            f"count: {len(turns)}. Community-1 remains the accuracy default."
+        )
+        return result
+
+    progress(
+        "Loading Community-1; a complete cache is reused offline, and the "
+        "first download requires a Hugging Face read token"
     )
     pipeline, selected_device = _load_diarization_pipeline(
         token=token,
@@ -617,8 +690,11 @@ def _diarization_self_test_result(settings: dict[str, Any]) -> dict[str, Any]:
             turn_count = _speaker_turn_count(output)
     result = {
         "ready": True,
+        "engine": engine,
         "model": LocalTranscriber.DIARIZATION_MODEL,
         "device": selected_device,
+        "provider": selected_device,
+        "quality": COMMUNITY_DIARIZATION_QUALITY,
         "elapsed_seconds": round(time.monotonic() - started, 3),
         "turn_count": turn_count,
     }
@@ -704,6 +780,29 @@ def _profile_recovery_action(
     """Return the first UI action that can materially advance a failed proof."""
 
     if stage == "diarization":
+        engine = normalize_diarization_engine(
+            str(
+                settings.get("diarization_engine")
+                or COMMUNITY_DIARIZATION_ENGINE
+            )
+        )
+        if engine == PORTABLE_DIARIZATION_ENGINE:
+            diagnostics = portable_diarization_diagnostics()
+            runtime_note = (
+                "The runtime is installed; Test speakers will acquire or reuse "
+                "the pinned public models."
+                if diagnostics["runtime_installed"]
+                else 'Install `python -m pip install -e ".[portable-diarization]"` first.'
+            )
+            return {
+                "stage": stage,
+                "kind": "configure-speakers",
+                "label": "Review portable speakers",
+                "message": (
+                    f"{message} {runtime_note} This path is a fast CPU preview; "
+                    "Community-1 remains available as the later accuracy upgrade."
+                ),
+            }
         return {
             "stage": stage,
             "kind": "configure-speakers",

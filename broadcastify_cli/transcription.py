@@ -21,6 +21,16 @@ from .asr import (
 )
 from .accelerators import find_whisper_cpp, whisper_cpp_backends
 from .audio import configure_ffmpeg_runtime, find_ffmpeg
+from .portable_diarization import (
+    COMMUNITY_DIARIZATION_ENGINE,
+    COMMUNITY_DIARIZATION_QUALITY,
+    PORTABLE_DIARIZATION_ENGINE,
+    PORTABLE_DIARIZATION_MODEL,
+    PORTABLE_DIARIZATION_QUALITY,
+    SherpaOnnxDiarizer,
+    diarization_engine_satisfies,
+    normalize_diarization_engine,
+)
 from .qwen_asr import SherpaQwen3Asr, normalize_qwen3_asr_model_name
 
 
@@ -190,7 +200,7 @@ def decoded_diarization_audio(audio_path: Path):
 
 
 class LocalTranscriber:
-    """Fast local ASR with optional local pyannote speaker diarization."""
+    """Fast local ASR with an accuracy or portable-preview diarization stage."""
 
     DIARIZATION_MODEL = "pyannote/speaker-diarization-community-1"
 
@@ -203,6 +213,7 @@ class LocalTranscriber:
         compute_type: str = "auto",
         asr_model_path: str | Path | None = None,
         diarization_device: str = "auto",
+        diarization_engine: str = COMMUNITY_DIARIZATION_ENGINE,
         diarize: bool = False,
         huggingface_token: str | None = None,
         batch_size: int = 8,
@@ -215,6 +226,7 @@ class LocalTranscriber:
         self.asr_engine = normalize_asr_engine(asr_engine, device)
         self.batch_size = max(1, batch_size)
         self.diarize = diarize
+        self.diarization_engine = normalize_diarization_engine(diarization_engine)
         self.min_speakers = min_speakers
         self.max_speakers = max_speakers
         self._torch = None
@@ -223,7 +235,10 @@ class LocalTranscriber:
         self._batched = False
         self.device_index = device_index
         torch = None
-        if self.asr_engine == "faster-whisper" or self.diarize:
+        if self.asr_engine == "faster-whisper" or (
+            self.diarize
+            and self.diarization_engine == COMMUNITY_DIARIZATION_ENGINE
+        ):
             try:
                 import torch
             except ModuleNotFoundError as exc:
@@ -344,7 +359,9 @@ class LocalTranscriber:
             )
 
         self._diarization_pipeline = None
-        if self.diarize:
+        self._portable_diarizer = None
+        self._diarization_details: dict[str, object] = {}
+        if self.diarize and self.diarization_engine == COMMUNITY_DIARIZATION_ENGINE:
             try:
                 warnings.filterwarnings(
                     "ignore",
@@ -401,8 +418,28 @@ class LocalTranscriber:
                 else torch.device("cpu")
             )
             self._diarization_pipeline.to(target)
+            self.diarization_model = self.DIARIZATION_MODEL
+            self.diarization_quality = COMMUNITY_DIARIZATION_QUALITY
+        elif self.diarize:
+            requested_diarization_device = (diarization_device or "auto").lower()
+            if requested_diarization_device == "auto":
+                requested_diarization_device = "cpu"
+            if requested_diarization_device != "cpu":
+                raise RuntimeError(
+                    "The fast portable speaker preview currently uses sherpa-onnx "
+                    "on CPU. Select CPU or Automatic."
+                )
+            self.diarization_device = "cpu"
+            self._portable_diarizer = SherpaOnnxDiarizer(
+                min_speakers=self.min_speakers,
+                max_speakers=self.max_speakers,
+            )
+            self.diarization_model = PORTABLE_DIARIZATION_MODEL
+            self.diarization_quality = PORTABLE_DIARIZATION_QUALITY
         else:
             self.diarization_device = "none"
+            self.diarization_model = None
+            self.diarization_quality = None
 
     def transcribe_files(
         self,
@@ -465,7 +502,23 @@ class LocalTranscriber:
             language = result.language
             language_probability = result.language_probability
             duration = result.duration
-            asr_metadata = result.metadata
+            asr_metadata = dict(result.metadata)
+            if (
+                isinstance(self._external_asr, SherpaQwen3Asr)
+                and turns
+                and getattr(
+                    self,
+                    "diarization_engine",
+                    COMMUNITY_DIARIZATION_ENGINE,
+                )
+                == PORTABLE_DIARIZATION_ENGINE
+            ):
+                asr_metadata["timestamp_source"] = (
+                    "sherpa-onnx-speaker-preview-turns"
+                )
+                asr_metadata["speaker_label_quality"] = (
+                    PORTABLE_DIARIZATION_QUALITY
+                )
             if result.text:
                 full_text.append(result.text)
             for word in result.words:
@@ -567,8 +620,35 @@ class LocalTranscriber:
             "speaker_turns": [asdict(turn) for turn in turns],
             "diarization_requested": self.diarize,
             "diarization_completed": self.diarize,
-            "diarization_model": self.DIARIZATION_MODEL if self.diarize else None,
+            "diarization_engine": (
+                getattr(
+                    self,
+                    "diarization_engine",
+                    COMMUNITY_DIARIZATION_ENGINE,
+                )
+                if self.diarize
+                else None
+            ),
+            "diarization_model": (
+                getattr(self, "diarization_model", self.DIARIZATION_MODEL)
+                if self.diarize
+                else None
+            ),
+            "diarization_quality": (
+                getattr(
+                    self,
+                    "diarization_quality",
+                    COMMUNITY_DIARIZATION_QUALITY,
+                )
+                if self.diarize
+                else None
+            ),
             "diarization_device": self.diarization_device,
+            "diarization_metadata": (
+                dict(getattr(self, "_diarization_details", {}))
+                if self.diarize
+                else {}
+            ),
             "asr_metadata": asr_metadata,
         }
         json_path.write_text(
@@ -592,7 +672,10 @@ class LocalTranscriber:
     ) -> Path:
         """Attach speaker labels without running Whisper a second time."""
 
-        if not self.diarize or self._diarization_pipeline is None:
+        if not self.diarize or (
+            self._diarization_pipeline is None
+            and getattr(self, "_portable_diarizer", None) is None
+        ):
             raise RuntimeError("Speaker diarization is not enabled for this operation.")
         audio_path = Path(audio_file)
         json_path = Path(transcript_file)
@@ -647,8 +730,21 @@ class LocalTranscriber:
         payload["speaker_turns"] = [asdict(turn) for turn in turns]
         payload["diarization_requested"] = True
         payload["diarization_completed"] = True
-        payload["diarization_model"] = self.DIARIZATION_MODEL
+        payload["diarization_engine"] = getattr(
+            self, "diarization_engine", COMMUNITY_DIARIZATION_ENGINE
+        )
+        payload["diarization_model"] = getattr(
+            self, "diarization_model", self.DIARIZATION_MODEL
+        )
+        payload["diarization_quality"] = getattr(
+            self,
+            "diarization_quality",
+            COMMUNITY_DIARIZATION_QUALITY,
+        )
         payload["diarization_device"] = self.diarization_device
+        payload["diarization_metadata"] = dict(
+            getattr(self, "_diarization_details", {})
+        )
 
         json_temp = json_path.with_suffix(json_path.suffix + ".tmp")
         json_temp.write_text(
@@ -704,20 +800,59 @@ class LocalTranscriber:
             requested = bool(payload.get("diarization_model")) or any(
                 value.get("speaker") for value in payload.get("segments", [])
             )
-        return requested == self.diarize
+        if requested != self.diarize:
+            return False
+        if not self.diarize:
+            return True
+        completed = bool(payload.get("diarization_completed"))
+        if "diarization_completed" not in payload:
+            completed = bool(payload.get("diarization_model")) and (
+                "speaker_turns" in payload
+                or any(value.get("speaker") for value in payload.get("segments", []))
+            )
+        if not completed:
+            return False
+        actual_diarization_engine = str(
+            payload.get("diarization_engine") or ""
+        )
+        if not actual_diarization_engine:
+            actual_model = str(payload.get("diarization_model") or "")
+            actual_diarization_engine = (
+                PORTABLE_DIARIZATION_ENGINE
+                if actual_model == PORTABLE_DIARIZATION_MODEL
+                else COMMUNITY_DIARIZATION_ENGINE
+            )
+        return diarization_engine_satisfies(
+            actual_diarization_engine,
+            getattr(
+                self,
+                "diarization_engine",
+                COMMUNITY_DIARIZATION_ENGINE,
+            ),
+        )
 
     def _diarize(
         self,
         audio_path: Path,
         progress: Callable[[str], None] | None = None,
     ) -> list[SpeakerTurn]:
-        if self._diarization_pipeline is None:
-            return []
         cached = self._load_diarization_cache(audio_path)
         if cached is not None:
             if progress:
                 progress(f"Reusing cached diarization for {audio_path.name}")
             return cached
+        portable = getattr(self, "_portable_diarizer", None)
+        if portable is not None:
+            portable_turns = portable.process(audio_path, progress=progress)
+            turns = [
+                SpeakerTurn(value.start, value.end, value.speaker)
+                for value in portable_turns
+            ]
+            self._diarization_details = dict(portable.metadata)
+            self._save_diarization_cache(audio_path, turns)
+            return turns
+        if self._diarization_pipeline is None:
+            return []
 
         diarization_args: dict[str, int] = {}
         if self.min_speakers is not None:
@@ -860,7 +995,15 @@ class LocalTranscriber:
         return prepared, True
 
     def _diarization_cache_path(self, audio_path: Path) -> Path:
-        return audio_path.parent / "transcripts" / f"{audio_path.stem}.diarization.json"
+        engine = getattr(
+            self, "diarization_engine", COMMUNITY_DIARIZATION_ENGINE
+        )
+        suffix = (
+            ".diarization.json"
+            if engine == COMMUNITY_DIARIZATION_ENGINE
+            else f".diarization.{engine}.json"
+        )
+        return audio_path.parent / "transcripts" / f"{audio_path.stem}{suffix}"
 
     def _load_diarization_cache(self, audio_path: Path) -> list[SpeakerTurn] | None:
         cache_path = self._diarization_cache_path(audio_path)
@@ -868,7 +1011,18 @@ class LocalTranscriber:
             return None
         try:
             payload = json.loads(cache_path.read_text(encoding="utf-8"))
-            if payload.get("model") != self.DIARIZATION_MODEL:
+            expected_engine = getattr(
+                self, "diarization_engine", COMMUNITY_DIARIZATION_ENGINE
+            )
+            cached_engine = str(
+                payload.get("engine") or COMMUNITY_DIARIZATION_ENGINE
+            )
+            if cached_engine != expected_engine:
+                return None
+            expected_model = getattr(
+                self, "diarization_model", self.DIARIZATION_MODEL
+            )
+            if payload.get("model") != expected_model:
                 return None
             if int(payload.get("audio_size", -1)) != audio_path.stat().st_size:
                 return None
@@ -878,6 +1032,7 @@ class LocalTranscriber:
                 return None
             if payload.get("max_speakers") != self.max_speakers:
                 return None
+            self._diarization_details = dict(payload.get("metadata") or {})
             return [SpeakerTurn(**value) for value in payload.get("turns", [])]
         except (OSError, TypeError, ValueError, json.JSONDecodeError):
             return None
@@ -891,12 +1046,27 @@ class LocalTranscriber:
         partial.write_text(
             json.dumps(
                 {
-                    "model": self.DIARIZATION_MODEL,
+                    "engine": getattr(
+                        self,
+                        "diarization_engine",
+                        COMMUNITY_DIARIZATION_ENGINE,
+                    ),
+                    "model": getattr(
+                        self, "diarization_model", self.DIARIZATION_MODEL
+                    ),
+                    "quality": getattr(
+                        self,
+                        "diarization_quality",
+                        COMMUNITY_DIARIZATION_QUALITY,
+                    ),
                     "audio_size": audio_path.stat().st_size,
                     "audio_mtime_ns": audio_path.stat().st_mtime_ns,
                     "min_speakers": self.min_speakers,
                     "max_speakers": self.max_speakers,
                     "device": self.diarization_device,
+                    "metadata": dict(
+                        getattr(self, "_diarization_details", {})
+                    ),
                     "turns": [asdict(value) for value in turns],
                 },
                 ensure_ascii=False,

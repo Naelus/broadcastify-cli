@@ -121,6 +121,7 @@ class JobRunner:
                 device_index=self.request.device_index,
                 compute_type=self.request.compute_type,
                 asr_model_path=self.request.asr_model_path,
+                diarization_engine=self.request.diarization_engine,
                 diarization_device=self.request.diarization_device,
                 diarize=self.request.diarize,
                 huggingface_token=(
@@ -138,7 +139,9 @@ class JobRunner:
                     "message": (
                         "Transcription: "
                         f"{getattr(transcriber, 'backend_description', f'{transcriber.device}:{transcriber.device_index} ({transcriber.compute_type})')}. "
-                        f"Diarization: {getattr(transcriber, 'diarization_device', 'auto')}."
+                        "Diarization: "
+                        f"{getattr(transcriber, 'diarization_engine', 'community-1')} "
+                        f"on {getattr(transcriber, 'diarization_device', 'auto')}."
                     ),
                 }
             )

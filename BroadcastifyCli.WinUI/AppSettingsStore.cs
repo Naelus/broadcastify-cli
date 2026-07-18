@@ -4,11 +4,12 @@ namespace BroadcastifyCli.WinUI;
 
 internal sealed record DesktopSettings
 {
-    public int Version { get; init; } = 2;
+    public int Version { get; init; } = 3;
     public string HardwareProfile { get; init; } = "auto";
     public string WhisperModel { get; init; } = "turbo";
     public string AsrEngine { get; init; } = "auto";
     public string TranscriptionDevice { get; init; } = "auto";
+    public string DiarizationEngine { get; init; } = "community-1";
     public string DiarizationDevice { get; init; } = "auto";
     public string AsrModelPath { get; init; } = "";
     public string OutputDirectory { get; init; } = "archives";

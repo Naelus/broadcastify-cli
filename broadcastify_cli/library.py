@@ -8,6 +8,13 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .analysis import PROMPT_VERSION
+from .portable_diarization import (
+    COMMUNITY_DIARIZATION_ENGINE,
+    COMMUNITY_DIARIZATION_QUALITY,
+    PORTABLE_DIARIZATION_ENGINE,
+    diarization_engine_satisfies,
+    normalize_diarization_engine,
+)
 from .storage import AnalysisStore
 from .transcription import LocalTranscriber
 
@@ -16,17 +23,23 @@ RAW_ARCHIVE_PATTERN = re.compile(r"^\d{12}-\d+-(\d+)\.mp3$", re.IGNORECASE)
 DAY_DIRECTORY_PATTERN = re.compile(r"^\d{8}$")
 
 
-def transcript_has_diarization(path: str | Path) -> bool:
-    """Confirm that diarization finished, rather than merely being requested."""
-
+def _transcript_tail(path: str | Path) -> str:
     transcript = Path(path)
     if not transcript.is_file():
-        return False
+        return ""
     try:
         with transcript.open("rb") as handle:
             handle.seek(max(0, transcript.stat().st_size - 512 * 1024))
-            tail = handle.read().decode("utf-8", errors="ignore").lower()
+            return handle.read().decode("utf-8", errors="ignore").lower()
     except OSError:
+        return ""
+
+
+def transcript_has_diarization(path: str | Path) -> bool:
+    """Confirm that diarization finished, rather than merely being requested."""
+
+    tail = _transcript_tail(path)
+    if not tail:
         return False
     if '"diarization_completed": true' in tail:
         return True
@@ -38,6 +51,32 @@ def transcript_has_diarization(path: str | Path) -> bool:
         or '"speaker":"speaker_' in tail
     )
     return requested and model_recorded and completion_evidence
+
+
+def transcript_diarization_engine(path: str | Path) -> str:
+    if not transcript_has_diarization(path):
+        return ""
+    tail = _transcript_tail(path)
+    match = re.search(r'"diarization_engine"\s*:\s*"([^"]+)"', tail)
+    if match:
+        try:
+            return normalize_diarization_engine(match.group(1))
+        except ValueError:
+            return match.group(1)
+    if "pyannote/speaker-diarization-community-1" in tail:
+        return COMMUNITY_DIARIZATION_ENGINE
+    if "pyannote-segmentation-3.0-int8+nemo-titanet-small" in tail:
+        return PORTABLE_DIARIZATION_ENGINE
+    # Completed transcripts written before engine metadata existed used
+    # Community-1 exclusively.
+    return COMMUNITY_DIARIZATION_ENGINE
+
+
+def transcript_satisfies_diarization(
+    path: str | Path, requested_engine: str
+) -> bool:
+    actual = transcript_diarization_engine(path)
+    return diarization_engine_satisfies(actual, requested_engine)
 
 
 def _friendly_feed_names(store: AnalysisStore) -> dict[str, str]:
@@ -120,6 +159,12 @@ def _state_for_day(
         transcript_has_diarization(transcript)
         or bool(stored and stored.get("has_diarization"))
     )
+    diarization_engine = (
+        transcript_diarization_engine(transcript) if has_diarization else ""
+    )
+    speaker_upgrade_available = (
+        diarization_engine == PORTABLE_DIARIZATION_ENGINE
+    )
     has_saved_analysis = bool(stored and stored.get("has_summary"))
     analysis_prompt_version = (
         str(stored.get("summary_prompt_version") or "") if stored else ""
@@ -197,6 +242,15 @@ def _state_for_day(
         "has_combined": has_combined,
         "has_transcript": has_transcript,
         "has_diarization": has_diarization,
+        "diarization_engine": diarization_engine,
+        "diarization_quality": (
+            "preview"
+            if diarization_engine == PORTABLE_DIARIZATION_ENGINE
+            else COMMUNITY_DIARIZATION_QUALITY
+            if diarization_engine == COMMUNITY_DIARIZATION_ENGINE
+            else ""
+        ),
+        "speaker_upgrade_available": speaker_upgrade_available,
         "has_analysis": has_analysis,
         "has_stale_analysis": has_stale_analysis,
         "analysis_prompt_version": analysis_prompt_version,
@@ -269,6 +323,7 @@ class LocalProcessingRequest:
     device_index: int = 0
     compute_type: str = "auto"
     asr_model_path: str | None = None
+    diarization_engine: str = COMMUNITY_DIARIZATION_ENGINE
     diarization_device: str = "auto"
     batch_size: int = 8
     diarize: bool = True
@@ -291,6 +346,12 @@ class LocalProcessingRequest:
                 str(value["asr_model_path"]).strip()
                 if value.get("asr_model_path")
                 else None
+            ),
+            diarization_engine=normalize_diarization_engine(
+                str(
+                    value.get("diarization_engine")
+                    or COMMUNITY_DIARIZATION_ENGINE
+                )
             ),
             diarization_device=str(value.get("diarization_device") or "auto"),
             batch_size=max(1, int(value.get("batch_size", 8))),
@@ -333,6 +394,7 @@ def prepare_local_day(
         "device_index": request.device_index,
         "compute_type": request.compute_type,
         "asr_model_path": request.asr_model_path,
+        "diarization_engine": request.diarization_engine,
         "diarization_device": request.diarization_device,
         "diarize": request.diarize,
         "huggingface_token": request.huggingface_token,
@@ -347,14 +409,24 @@ def prepare_local_day(
         transcriber = LocalTranscriber(**shared)
         transcript = transcriber.transcribe_file(audio, progress=progress)
         operation = "transcribed"
-    elif request.diarize and not transcript_has_diarization(transcript):
+    elif request.diarize and not transcript_satisfies_diarization(
+        transcript, request.diarization_engine
+    ):
+        previous_engine = transcript_diarization_engine(transcript)
         if progress:
-            progress("Loading the speaker model without reloading Whisper…")
+            progress(
+                "Loading the selected speaker model without reloading transcription…"
+            )
         transcriber = LocalTranscriber(**shared, load_asr=False)
         transcript = transcriber.diarize_existing_transcript(
             audio, transcript, progress=progress
         )
-        operation = "diarized"
+        operation = (
+            "upgraded_diarization"
+            if previous_engine == PORTABLE_DIARIZATION_ENGINE
+            and request.diarization_engine == COMMUNITY_DIARIZATION_ENGINE
+            else "diarized"
+        )
     elif progress:
         progress("The existing local transcript already satisfies the selected stages.")
 
@@ -363,5 +435,6 @@ def prepare_local_day(
         "archive_date": request.archive_date.isoformat(),
         "audio_path": str(audio.resolve()),
         "transcript_path": str(transcript.resolve()),
+        "diarization_engine": transcript_diarization_engine(transcript),
         "operation": operation,
     }

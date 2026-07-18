@@ -7,6 +7,7 @@ from broadcastify_cli.library import (
     LocalProcessingRequest,
     prepare_local_day,
     scan_local_library,
+    transcript_satisfies_diarization,
 )
 from broadcastify_cli.storage import AnalysisStore
 from broadcastify_cli.transcription import LocalTranscriber, SpeakerTurn
@@ -228,6 +229,150 @@ def test_library_does_not_treat_a_request_flag_as_completed_diarization(
 
     assert state["has_diarization"] is False
     assert state["next_step"] == "Add speaker labels"
+
+
+def test_library_labels_portable_speakers_as_preview_with_accuracy_upgrade(
+    tmp_path: Path,
+) -> None:
+    day = _day(tmp_path, "302", "2026-07-10")
+    (day / "combined_302_20260710.mp3").write_bytes(b"audio")
+    transcript = day / "transcripts" / "combined_302_20260710.json"
+    transcript.parent.mkdir()
+    transcript.write_text(
+        json.dumps(
+            {
+                "segments": [
+                    {
+                        "start": 0.0,
+                        "end": 1.0,
+                        "text": "Dispatch",
+                        "speaker": "SPEAKER_00",
+                    }
+                ],
+                "speaker_turns": [
+                    {"start": 0.0, "end": 1.0, "speaker": "SPEAKER_00"}
+                ],
+                "diarization_requested": True,
+                "diarization_completed": True,
+                "diarization_engine": "sherpa-onnx",
+                "diarization_model": (
+                    "pyannote-segmentation-3.0-int8+nemo-titanet-small"
+                ),
+                "diarization_quality": "preview",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    state = scan_local_library(tmp_path, tmp_path / "analysis.sqlite3")[0]
+
+    assert state["has_diarization"] is True
+    assert state["diarization_engine"] == "sherpa-onnx"
+    assert state["diarization_quality"] == "preview"
+    assert state["speaker_upgrade_available"] is True
+    assert transcript_satisfies_diarization(transcript, "sherpa-onnx") is True
+    assert transcript_satisfies_diarization(transcript, "community-1") is False
+
+
+def test_community_labels_satisfy_preview_without_being_downgraded(
+    tmp_path: Path,
+) -> None:
+    transcript = tmp_path / "transcript.json"
+    transcript.write_text(
+        json.dumps(
+            {
+                "diarization_requested": True,
+                "diarization_completed": True,
+                "diarization_engine": "community-1",
+                "diarization_model": "pyannote/speaker-diarization-community-1",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert transcript_satisfies_diarization(transcript, "community-1") is True
+    assert transcript_satisfies_diarization(transcript, "sherpa-onnx") is True
+
+
+def test_prepare_local_day_upgrades_preview_without_loading_asr(
+    monkeypatch, tmp_path: Path
+) -> None:
+    day = _day(tmp_path, "303", "2026-07-10")
+    audio = day / "combined_303_20260710.mp3"
+    transcript = day / "transcripts" / "combined_303_20260710.json"
+    audio.write_bytes(b"audio")
+    transcript.parent.mkdir()
+    transcript.write_text(
+        json.dumps(
+            {
+                "segments": [
+                    {
+                        "start": 0.0,
+                        "end": 1.0,
+                        "text": "Dispatch",
+                        "speaker": "SPEAKER_00",
+                    }
+                ],
+                "words": [],
+                "diarization_requested": True,
+                "diarization_completed": True,
+                "diarization_engine": "sherpa-onnx",
+                "diarization_model": (
+                    "pyannote-segmentation-3.0-int8+nemo-titanet-small"
+                ),
+            }
+        ),
+        encoding="utf-8",
+    )
+    constructor_arguments: list[dict[str, object]] = []
+
+    class FakeTranscriber:
+        def __init__(self, **kwargs: object) -> None:
+            constructor_arguments.append(kwargs)
+
+        def diarize_existing_transcript(
+            self, _audio: Path, value: Path, progress=None
+        ) -> Path:
+            payload = json.loads(value.read_text(encoding="utf-8"))
+            payload.update(
+                diarization_engine="community-1",
+                diarization_model="pyannote/speaker-diarization-community-1",
+                diarization_completed=True,
+            )
+            value.write_text(json.dumps(payload), encoding="utf-8")
+            return value
+
+    monkeypatch.setattr("broadcastify_cli.library.LocalTranscriber", FakeTranscriber)
+
+    result = prepare_local_day(
+        LocalProcessingRequest(
+            feed_id="303",
+            archive_date=date(2026, 7, 10),
+            output_dir=tmp_path,
+            diarization_engine="community-1",
+        )
+    )
+
+    assert result["operation"] == "upgraded_diarization"
+    assert result["diarization_engine"] == "community-1"
+    assert constructor_arguments == [
+        {
+            "model_name": "turbo",
+            "asr_engine": "auto",
+            "device": "auto",
+            "device_index": 0,
+            "compute_type": "auto",
+            "asr_model_path": None,
+            "diarization_engine": "community-1",
+            "diarization_device": "auto",
+            "diarize": True,
+            "huggingface_token": None,
+            "batch_size": 8,
+            "min_speakers": None,
+            "max_speakers": None,
+            "load_asr": False,
+        }
+    ]
 
 
 def test_diarize_existing_transcript_reuses_words_without_whisper(tmp_path: Path) -> None:

@@ -1,6 +1,8 @@
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 import broadcastify_cli.accelerators as accelerator_module
 from broadcastify_cli.accelerators import (
     collect_accelerator_diagnostics,
@@ -9,6 +11,27 @@ from broadcastify_cli.accelerators import (
     inspect_llama_devices,
     whisper_cpp_backends,
 )
+
+
+@pytest.fixture(autouse=True)
+def portable_speaker_runtime_ready(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "broadcastify_cli.portable_diarization.portable_diarization_diagnostics",
+        lambda: {
+            "runtime_installed": True,
+            "runtime_version": "test",
+            "model_ready": True,
+            "ready": True,
+            "engine": "sherpa-onnx",
+            "model": "test-portable-speakers",
+            "model_path": "/models/portable-speakers",
+            "segmentation_path": "/models/segmentation.onnx",
+            "embedding_path": "/models/embedding.onnx",
+            "provider": "cpu",
+            "quality": "preview",
+            "cluster_threshold": 0.95,
+        },
+    )
 
 
 def test_llama_device_output_is_normalized(monkeypatch) -> None:
@@ -141,6 +164,72 @@ def test_cached_pyannote_model_counts_as_configured_without_token(
     assert cpu["diarization_ready"] is True
     assert "cached model" in cpu["diarization"]
     assert cpu["next_action"]["kind"] == "verify-profile"
+
+
+def test_profile_speaker_defaults_do_not_follow_the_selected_custom_engine(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr("broadcastify_cli.accelerators.sys.platform", "win32")
+    snapshot = (
+        tmp_path
+        / "models--pyannote--speaker-diarization-community-1"
+        / "snapshots"
+        / "offline-revision"
+    )
+    snapshot.mkdir(parents=True)
+    (snapshot / "config.yaml").write_text("version: test\n", encoding="utf-8")
+    monkeypatch.setenv("HF_HUB_CACHE", str(tmp_path))
+    monkeypatch.setattr(
+        "broadcastify_cli.accelerators._torch_diagnostics",
+        lambda: {
+            "installed": True,
+            "cuda_available": True,
+            "cuda_devices": ["Test GPU"],
+        },
+    )
+    monkeypatch.setattr(
+        "broadcastify_cli.accelerators._openvino_diagnostics",
+        lambda: {
+            "runtime_installed": True,
+            "genai_installed": True,
+            "devices": ["CPU"],
+            "device_details": [],
+        },
+    )
+    monkeypatch.setattr(
+        "broadcastify_cli.accelerators._onnx_diagnostics",
+        lambda: {"installed": False},
+    )
+    monkeypatch.setattr(
+        "broadcastify_cli.accelerators._windows_ml_diagnostics",
+        lambda: {
+            "runtime_ready": True,
+            "decode_ready": True,
+            "backend": "Windows ML CPU",
+        },
+    )
+    monkeypatch.setattr(
+        "broadcastify_cli.accelerators.inspect_llama_devices",
+        lambda _path: [{"id": "CPU", "backend": "cpu", "name": "CPU"}],
+    )
+    monkeypatch.setattr(
+        "broadcastify_cli.accelerators.module_available", lambda _name: True
+    )
+
+    diagnostics = collect_accelerator_diagnostics(
+        "/bin/llama-server",
+        selected_diarization_engine="sherpa-onnx",
+    )
+    profiles = {value["id"]: value for value in diagnostics["profiles"]}
+
+    assert diagnostics["speaker_labels"]["selected_engine"] == "sherpa-onnx"
+    assert diagnostics["speaker_labels"]["configured"] is True
+    assert "pyannote" in profiles["auto"]["diarization"]
+    assert "pyannote" in profiles["cuda"]["diarization"]
+    assert "pyannote" in profiles["cpu"]["diarization"]
+    assert "sherpa-onnx" in profiles["openvino"]["diarization"]
+    assert "sherpa-onnx" in profiles["windowsml"]["diarization"]
+    assert "sherpa-onnx" in profiles["qwen"]["diarization"]
 
 
 def test_vulkan_profile_requires_vulkan_llama_backend(monkeypatch) -> None:

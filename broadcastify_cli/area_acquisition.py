@@ -26,6 +26,7 @@ PERSISTED_JOB_FIELDS = {
     "device_index",
     "compute_type",
     "asr_model_path",
+    "diarization_engine",
     "diarization_device",
     "download_jobs",
     "batch_size",

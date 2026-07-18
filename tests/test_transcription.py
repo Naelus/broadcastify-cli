@@ -153,6 +153,50 @@ def test_compatible_transcript_is_a_cache_hit(tmp_path: Path) -> None:
     assert transcriber._existing_transcript_is_current(audio, json_path, txt_path)
 
 
+def test_existing_transcript_respects_diarization_quality_direction(
+    tmp_path: Path,
+) -> None:
+    audio = tmp_path / "combined.mp3"
+    audio.write_bytes(b"audio")
+    transcript_dir = tmp_path / "transcripts"
+    transcript_dir.mkdir()
+    json_path = transcript_dir / "combined.json"
+    txt_path = transcript_dir / "combined.txt"
+    txt_path.write_text("", encoding="utf-8")
+    base_payload = {
+        "model": "turbo",
+        "asr_engine": "faster-whisper",
+        "segments": [],
+        "diarization_requested": True,
+        "diarization_completed": True,
+        "diarization_model": (
+            "pyannote-segmentation-3.0-int8+nemo-titanet-small"
+        ),
+        "diarization_engine": "sherpa-onnx",
+    }
+    json_path.write_text(json.dumps(base_payload), encoding="utf-8")
+    transcriber = object.__new__(LocalTranscriber)
+    transcriber.model_name = "turbo"
+    transcriber.asr_engine = "faster-whisper"
+    transcriber.diarize = True
+    transcriber.diarization_engine = "community-1"
+
+    assert not transcriber._existing_transcript_is_current(
+        audio, json_path, txt_path
+    )
+
+    base_payload.update(
+        diarization_engine="community-1",
+        diarization_model="pyannote/speaker-diarization-community-1",
+    )
+    json_path.write_text(json.dumps(base_payload), encoding="utf-8")
+    transcriber.diarization_engine = "sherpa-onnx"
+
+    assert transcriber._existing_transcript_is_current(
+        audio, json_path, txt_path
+    )
+
+
 def test_external_asr_records_actual_fallback_backend(tmp_path: Path) -> None:
     audio = tmp_path / "radio.wav"
     audio.write_bytes(b"audio")
@@ -196,6 +240,56 @@ def test_external_asr_records_actual_fallback_backend(tmp_path: Path) -> None:
         transcript_path,
         transcript_path.with_suffix(".txt"),
     )
+
+
+def test_portable_speakers_do_not_replace_external_asr_timestamp_identity(
+    tmp_path: Path,
+) -> None:
+    audio = tmp_path / "radio.wav"
+    audio.write_bytes(b"audio")
+
+    class FakeExternalAsr:
+        @staticmethod
+        def transcribe(_path: Path, progress=None) -> AsrResult:
+            return AsrResult(
+                text="unit responding",
+                duration=1.0,
+                segments=[AsrSegment(0.0, 1.0, "unit responding")],
+                engine="whisper.cpp",
+                backend="whisper.cpp Vulkan",
+                metadata={
+                    "model": "turbo",
+                    "timestamp_source": "whisper.cpp-token-timestamps",
+                },
+            )
+
+    transcriber = object.__new__(LocalTranscriber)
+    transcriber._asr = None
+    transcriber._external_asr = FakeExternalAsr()
+    transcriber._diarize = lambda _path, progress=None: [
+        SpeakerTurn(0.0, 1.0, "SPEAKER_00")
+    ]
+    transcriber.model_name = "turbo"
+    transcriber.asr_engine = "whisper.cpp"
+    transcriber.backend_description = "whisper.cpp Vulkan"
+    transcriber.device = "vulkan"
+    transcriber.compute_type = "q5_1"
+    transcriber.diarize = True
+    transcriber.diarization_engine = "sherpa-onnx"
+    transcriber.diarization_model = (
+        "pyannote-segmentation-3.0-int8+nemo-titanet-small"
+    )
+    transcriber.diarization_quality = "preview"
+    transcriber.diarization_device = "cpu"
+
+    transcript_path = transcriber.transcribe_file(audio)
+    payload = json.loads(transcript_path.read_text(encoding="utf-8"))
+
+    assert (
+        payload["asr_metadata"]["timestamp_source"]
+        == "whisper.cpp-token-timestamps"
+    )
+    assert "speaker_label_quality" not in payload["asr_metadata"]
 
 
 def test_qwen_reuses_diarization_turns_as_timestamped_asr_regions(
@@ -276,6 +370,51 @@ def test_diarization_turn_cache_is_parameter_and_audio_specific(tmp_path: Path) 
 
     transcriber.max_speakers = 9
     assert transcriber._load_diarization_cache(audio) is None
+
+
+def test_portable_and_community_diarization_caches_are_isolated(
+    tmp_path: Path,
+) -> None:
+    audio = tmp_path / "combined.mp3"
+    audio.write_bytes(b"audio")
+    community = object.__new__(LocalTranscriber)
+    community.diarization_engine = "community-1"
+    community.diarization_model = LocalTranscriber.DIARIZATION_MODEL
+    community.diarization_quality = "accuracy-default"
+    community.diarization_device = "cpu"
+    community.min_speakers = None
+    community.max_speakers = None
+    community._diarization_details = {}
+
+    portable = object.__new__(LocalTranscriber)
+    portable.diarization_engine = "sherpa-onnx"
+    portable.diarization_model = (
+        "pyannote-segmentation-3.0-int8+nemo-titanet-small"
+    )
+    portable.diarization_quality = "preview"
+    portable.diarization_device = "cpu"
+    portable.min_speakers = None
+    portable.max_speakers = None
+    portable._diarization_details = {"cluster_threshold": 0.95}
+
+    community._save_diarization_cache(
+        audio, [SpeakerTurn(1.0, 2.0, "SPEAKER_00")]
+    )
+    portable._save_diarization_cache(
+        audio, [SpeakerTurn(1.0, 2.0, "SPEAKER_01")]
+    )
+
+    assert community._diarization_cache_path(audio).name == "combined.diarization.json"
+    assert (
+        portable._diarization_cache_path(audio).name
+        == "combined.diarization.sherpa-onnx.json"
+    )
+    assert community._load_diarization_cache(audio) == [
+        SpeakerTurn(1.0, 2.0, "SPEAKER_00")
+    ]
+    assert portable._load_diarization_cache(audio) == [
+        SpeakerTurn(1.0, 2.0, "SPEAKER_01")
+    ]
 
 
 @pytest.mark.parametrize(

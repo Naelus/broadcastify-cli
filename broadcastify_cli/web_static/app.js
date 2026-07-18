@@ -14,6 +14,7 @@ const DEFAULT_SETTINGS = {
   whisperModel: "turbo",
   asrEngine: "auto",
   device: "auto",
+  diarizationEngine: "community-1",
   diarizationDevice: "auto",
   batchSize: 8,
   asrModelPath: "",
@@ -36,11 +37,11 @@ const SETTINGS_SECTIONS = {
 const HARDWARE_PROFILE_DESCRIPTIONS = {
   auto: "Automatic keeps the tested Windows behavior and chooses safe per-stage fallbacks elsewhere.",
   cuda: "NVIDIA CUDA keeps transcription and speaker labels on the GPU for the fastest validated Windows path.",
-  vulkan: "Cross-vendor Vulkan uses whisper.cpp for transcription and the dependable CPU fallback for speaker labels.",
-  openvino: "OpenVINO uses Intel's runtime for Whisper transcription and keeps speaker labels on the CPU fallback.",
-  metal: "Apple Metal uses whisper.cpp for transcription and the dependable CPU fallback for speaker labels.",
-  windowsml: "Windows ML uses the validated managed Whisper graph and the dependable CPU fallback for speaker labels.",
-  qwen: "Fast CPU preview uses managed Qwen3-ASR 0.6B INT8. It retains speech-region timestamps, but not word timestamps, and remains optional while longer radio-quality gates continue.",
+  vulkan: "Cross-vendor Vulkan uses whisper.cpp plus the fast sherpa-onnx CPU speaker preview. Community-1 remains the later accuracy upgrade.",
+  openvino: "OpenVINO uses Intel's runtime plus the fast sherpa-onnx CPU speaker preview. Community-1 remains the later accuracy upgrade.",
+  metal: "Apple Metal uses whisper.cpp plus the fast sherpa-onnx CPU speaker preview. Community-1 remains the later accuracy upgrade.",
+  windowsml: "Windows ML uses the validated managed Whisper graph plus the fast sherpa-onnx CPU speaker preview. Community-1 remains the later accuracy upgrade.",
+  qwen: "Fast CPU preview uses managed Qwen3-ASR 0.6B INT8 and sherpa-onnx speaker regions. Neither preview replaces the validated evidence defaults.",
   cpu: "CPU only avoids GPU dependencies for every stage; expect lower throughput on long archive ranges.",
   custom: "Custom overrides are active. Test transcription, speaker labels, and analysis before an unattended run.",
 };
@@ -99,6 +100,7 @@ function readSettingsForm() {
     whisperModel: byId("settingWhisperModel").value,
     asrEngine: byId("settingAsrEngine").value,
     device: byId("settingDevice").value,
+    diarizationEngine: byId("settingDiarizationEngine").value,
     diarizationDevice: byId("settingDiarizationDevice").value,
     batchSize: Math.max(1, Number(byId("settingBatchSize").value) || 8),
     asrModelPath: byId("settingAsrModelPath").value.trim(),
@@ -129,6 +131,7 @@ function applySettingsForm() {
   byId("settingWhisperModel").value = state.settings.whisperModel;
   byId("settingAsrEngine").value = state.settings.asrEngine;
   byId("settingDevice").value = state.settings.device;
+  byId("settingDiarizationEngine").value = state.settings.diarizationEngine;
   byId("settingDiarizationDevice").value = state.settings.diarizationDevice;
   byId("settingBatchSize").value = state.settings.batchSize;
   byId("settingAsrModelPath").value = state.settings.asrModelPath;
@@ -147,14 +150,14 @@ function applySettingsForm() {
 
 function applyHardwareProfile(profile, notify = true) {
   const choices = {
-    auto: ["auto", "auto", "auto", "auto"],
-    cuda: ["faster-whisper", "cuda", "cuda", "auto"],
-    vulkan: ["whisper.cpp", "vulkan", "cpu", "auto"],
-    openvino: ["openvino", "openvino-auto", "cpu", "auto"],
-    metal: ["whisper.cpp", "metal", "cpu", "auto"],
-    windowsml: ["windows-ml", "windows-ml", "cpu", "auto"],
-    qwen: ["qwen3-asr", "cpu", "cpu", "auto"],
-    cpu: ["faster-whisper", "cpu", "cpu", "cpu"],
+    auto: ["auto", "auto", "auto", "auto", "community-1"],
+    cuda: ["faster-whisper", "cuda", "cuda", "auto", "community-1"],
+    vulkan: ["whisper.cpp", "vulkan", "cpu", "auto", "sherpa-onnx"],
+    openvino: ["openvino", "openvino-auto", "cpu", "auto", "sherpa-onnx"],
+    metal: ["whisper.cpp", "metal", "cpu", "auto", "sherpa-onnx"],
+    windowsml: ["windows-ml", "windows-ml", "cpu", "auto", "sherpa-onnx"],
+    qwen: ["qwen3-asr", "cpu", "cpu", "auto", "sherpa-onnx"],
+    cpu: ["faster-whisper", "cpu", "cpu", "cpu", "community-1"],
   };
   const choice = choices[profile];
   if (!choice) {
@@ -188,6 +191,7 @@ function applyHardwareProfile(profile, notify = true) {
   byId("settingDevice").value = choice[1];
   byId("settingDiarizationDevice").value = choice[2];
   byId("settingAnalysisDevice").value = choice[3];
+  byId("settingDiarizationEngine").value = choice[4];
   if (resetWhisperModel) byId("settingWhisperModel").value = "turbo";
   if (useWindowsMlStarter) byId("settingWhisperModel").value = "base.en";
   if (useQwenStarter) byId("settingWhisperModel").value = "qwen3-asr-0.6b-int8";
@@ -206,6 +210,7 @@ function applyHardwareProfile(profile, notify = true) {
       ? " The optional Qwen3-ASR 0.6B INT8 fast-CPU model was selected; speech-region timestamps remain attached."
       : "";
     toast(`${byId("settingHardwareProfile").selectedOptions[0].textContent} defaults applied.${modelMessage}`);
+    void runHardwareCheck();
   }
 }
 
@@ -224,7 +229,7 @@ function resetDiarizationVerification() {
   if (!notice) return;
   notice.className = "notice";
   notice.querySelector("strong").textContent = "Speakers not tested for these settings";
-  notice.querySelector("span").textContent = "Run the generated-audio test after changing its device, token, or batch.";
+  notice.querySelector("span").textContent = "Run the generated-audio test after changing its engine, device, token, or batch.";
 }
 
 function resetAnalysisVerification() {
@@ -270,6 +275,7 @@ function processingPayload() {
     device_index: 0,
     compute_type: "auto",
     asr_model_path: state.settings.asrModelPath || undefined,
+    diarization_engine: state.settings.diarizationEngine,
     diarization_device: state.settings.diarizationDevice,
     batch_size: state.settings.batchSize,
     huggingface_token: huggingFaceToken || undefined,
@@ -522,7 +528,15 @@ function stageCards(day) {
     [Boolean(day.raw_file_count || day.has_combined), "Archive audio", day.raw_file_count ? `${day.raw_file_count} source blocks` : "retained audio"],
     [day.has_combined, "Combine", day.has_combined ? "continuous timeline" : "not ready"],
     [day.has_transcript, "Transcription", day.has_transcript ? `${day.segment_count || 0} segments` : "not ready"],
-    [day.has_diarization, "Speaker labels", day.has_diarization ? "attached" : "not ready"],
+    [
+      day.has_diarization,
+      "Speaker labels",
+      day.speaker_upgrade_available
+        ? "fast preview · accuracy upgrade available"
+        : day.has_diarization
+          ? "Community-1 accuracy labels"
+          : "not ready",
+    ],
     [day.has_analysis, "Event analysis", analysisDetail],
   ];
   return stages.map(([done, label, detail], index) => `<div class="stage${done ? " done" : ""}"><span class="stage-index">${done ? "✓" : index + 1}</span><strong>${html(label)}</strong><small>${html(detail)}</small></div>`).join("");
@@ -536,7 +550,8 @@ function renderDayDetail(activeTab = "incidents") {
   const actionDisabled = day.primary_action === "resume_download" ? "" : "";
   byId("dayDetail").innerHTML = `
     <div class="detail-head"><div><h2>${html(day.feed_name)}</h2><p>Feed ${html(day.feed_id)} · ${html(day.archive_date)} · ${bytes(day.storage_bytes)}</p></div>
-      <button class="button ${day.is_complete ? "secondary" : "primary"}" data-action="primary-day" ${actionDisabled}>${html(primaryLabel)}</button></div>
+      <div class="button-row">${day.speaker_upgrade_available ? '<button class="button secondary" data-action="upgrade-speakers" title="Replace fast preview labels with Community-1 without repeating transcription.">Improve speakers</button>' : ""}
+      <button class="button ${day.is_complete ? "secondary" : "primary"}" data-action="primary-day" ${actionDisabled}>${html(primaryLabel)}</button></div></div>
     <div class="notice ${day.is_complete ? "success" : day.needs_network ? "warning" : "success"}"><strong>${html(day.status)}</strong><span>${html(day.status_detail)}. Next: ${html(day.next_step)}.</span></div>
     <div class="pipeline">${stageCards(day)}</div>
     ${detail.audio_url ? `<div class="audio-block"><audio id="dayAudio" controls preload="metadata" src="${html(detail.audio_url)}"></audio><small>Retained continuous recording. Incident play buttons jump to the cited time without contacting Broadcastify.</small></div>` : ""}
@@ -673,18 +688,21 @@ function renderSetupReadiness() {
   const speakerLabels = state.hardwareDiagnostics?.accelerators?.speaker_labels || {};
   const tokenInTab = Boolean(byId("settingHuggingFaceToken")?.value);
   const selectedDiarization = byId("settingDiarizationDevice")?.value || state.settings.diarizationDevice;
+  const selectedDiarizationEngine = byId("settingDiarizationEngine")?.value || state.settings.diarizationEngine;
   const tokenConfigured = Boolean(speakerLabels.token_configured || tokenInTab);
   const speakerAccessConfigured = Boolean(speakerLabels.access_configured || tokenConfigured);
-  const speakerConfigured = Boolean(
-    speakerLabels.package_installed
-    && speakerAccessConfigured
-    && (selectedDiarization !== "cuda" || speakerLabels.cuda_available)
-  );
+  const speakerConfigured = selectedDiarizationEngine === "sherpa-onnx"
+    ? Boolean(speakerLabels.portable?.ready)
+    : Boolean(
+      speakerLabels.package_installed
+      && speakerAccessConfigured
+      && (selectedDiarization !== "cuda" || speakerLabels.cuda_available)
+    );
   const accountReady = Boolean(state.accountVerified || account.configured);
   const storageReady = Boolean(runtime.storage_ready);
   const transcriptionReady = Boolean(state.asrSelfTest?.ready || profile?.transcription_ready);
   const diarizationReady = Boolean(
-    state.diarizationSelfTest?.ready || profile?.diarization_ready || speakerConfigured
+    state.diarizationSelfTest?.ready || speakerConfigured
   );
   const provider = byId("settingAnalysisProvider")?.value || state.settings.analysisProvider;
   const localAnalysisDetected = provider === "local" && Boolean(profile?.analysis_ready);
@@ -721,7 +739,7 @@ function renderSetupReadiness() {
     {
       id: "diarization", icon: "◎", title: "Speaker labels", available: diarizationReady,
       state: state.diarizationSelfTest?.ready ? "Verified" : diarizationReady ? "Configured" : state.hardwareDiagnostics ? "Setup needed" : "Check",
-      detail: state.diarizationSelfTest?.message || (!diarizationReady && profileAction?.stage === "diarization" ? profileAction.message : profile?.diarization) || "Check pyannote, model access, and its CUDA or CPU path.",
+      detail: state.diarizationSelfTest?.message || (!diarizationReady && profileAction?.stage === "diarization" ? profileAction.message : profile?.diarization) || "Check the selected accuracy or fast-preview speaker engine.",
       action: state.diarizationSelfTest?.ready ? "Retest" : diarizationReady ? "Test" : profileAction?.stage === "diarization" ? profileAction.label : "Configure",
     },
     {
@@ -1203,6 +1221,26 @@ document.addEventListener("click", async (event) => {
       renderDayDetail("incidents");
     }
   }
+  if (action === "upgrade-speakers") {
+    const day = state.selectedDayDetail?.state;
+    if (!day?.speaker_upgrade_available) return;
+    await startJob(
+      "continue-local",
+      {
+        feed_id: day.feed_id,
+        archive_date: day.archive_date,
+        diarize: true,
+        analyze: true,
+        ...processingPayload(),
+        diarization_engine: "community-1",
+        ...providerPayload(),
+      },
+      {
+        label: `Improving speaker labels for ${day.archive_date}`,
+        onComplete: refreshBootstrap,
+      },
+    );
+  }
 });
 
 byId("menuButton").addEventListener("click", () => {
@@ -1656,13 +1694,18 @@ byId("settingHardwareProfile").addEventListener("change", (event) => applyHardwa
   renderHardwareProfiles();
   renderSetupReadiness();
 }));
-byId("settingDiarizationDevice").addEventListener("change", () => {
+["settingDiarizationEngine", "settingDiarizationDevice"].forEach((id) => byId(id).addEventListener("change", () => {
+  if (byId("settingDiarizationEngine").value === "sherpa-onnx"
+      && byId("settingDiarizationDevice").value === "cuda") {
+    byId("settingDiarizationDevice").value = "cpu";
+    toast("Fast portable speaker preview runs on CPU; the speaker device was reset to CPU.");
+  }
   if (!applyingHardwareProfile) byId("settingHardwareProfile").value = "custom";
   resetProfileVerification();
   resetDiarizationVerification();
   renderHardwareProfiles();
   renderSetupReadiness();
-});
+}));
 byId("settingAnalysisDevice").addEventListener("change", () => {
   if (!applyingHardwareProfile) byId("settingHardwareProfile").value = "custom";
   state.analysisProviderStatus = null;
@@ -1713,9 +1756,13 @@ byId("setupReadinessGrid").addEventListener("click", async (event) => {
     setSettingsSection("processing");
     const next = currentProfileAction();
     const speaker = state.hardwareDiagnostics?.accelerators?.speaker_labels || {};
+    const selectedEngine = byId("settingDiarizationEngine").value;
     const accessReady = speaker.access_configured || speaker.token_configured || byId("settingHuggingFaceToken").value;
     const selectedDevice = byId("settingDiarizationDevice").value;
-    if (speaker.package_installed && accessReady && (selectedDevice !== "cuda" || speaker.cuda_available)) {
+    const readyToTest = selectedEngine === "sherpa-onnx"
+      ? Boolean(speaker.portable?.runtime_installed)
+      : Boolean(speaker.package_installed && accessReady && (selectedDevice !== "cuda" || speaker.cuda_available));
+    if (readyToTest) {
       await runDiarizationSelfTest();
     } else if (next?.stage === "diarization") {
       await runProfileNextAction();

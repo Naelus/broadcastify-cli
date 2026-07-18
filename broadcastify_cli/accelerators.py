@@ -486,7 +486,7 @@ def _profile(
             else transcription_setup
         ),
         (
-            "Run Verify profile (or Test speakers) to prove Community-1 on the selected fallback or accelerator."
+            "Run Verify profile (or Test speakers) to prove the selected speaker-label engine."
             if diarization_configured
             else diarization_setup
         ),
@@ -554,7 +554,14 @@ def collect_accelerator_diagnostics(
     selected_whisper_model: str | Path | None = None,
     selected_windows_model: str | Path | None = None,
     selected_qwen_model: str | Path | None = None,
+    selected_diarization_engine: str | None = None,
 ) -> dict[str, Any]:
+    from .portable_diarization import (
+        COMMUNITY_DIARIZATION_ENGINE,
+        PORTABLE_DIARIZATION_ENGINE,
+        normalize_diarization_engine,
+        portable_diarization_diagnostics,
+    )
     from .qwen_asr import qwen3_asr_diagnostics
 
     torch = _torch_diagnostics()
@@ -584,6 +591,10 @@ def collect_accelerator_diagnostics(
     pyannote_package_installed = module_available("pyannote.audio")
     pyannote_access_configured = token_ready or pyannote_cache_detected
     pyannote_ready = pyannote_package_installed and pyannote_access_configured
+    selected_speaker_engine = normalize_diarization_engine(
+        selected_diarization_engine or COMMUNITY_DIARIZATION_ENGINE
+    )
+    portable_speakers = portable_diarization_diagnostics()
     faster_whisper_ready = module_available("faster_whisper")
 
     cuda_ready = bool(torch["cuda_available"] and faster_whisper_ready)
@@ -615,42 +626,72 @@ def collect_accelerator_diagnostics(
     windows_ml_runtime = bool(windows_ml["runtime_ready"])
     windows_ml_decode = bool(windows_ml["decode_ready"])
     cpu_ready = bool(faster_whisper_ready and module_available("torch"))
+    portable_ready = bool(portable_speakers["ready"])
+    portable_diarization = (
+        "sherpa-onnx CPU fast preview configured"
+        if portable_ready
+        else "sherpa-onnx runtime installed; pinned preview models need Test speakers"
+        if portable_speakers["runtime_installed"]
+        else "sherpa-onnx portable speaker runtime is not installed"
+    )
+    portable_diarization_setup = (
+        'Install `pip install -e ".[portable-diarization]"`, select Fast '
+        "portable preview, then run Test speakers."
+        if not portable_speakers["runtime_installed"]
+        else "Run Test speakers to checksum-verify the public segmentation and embedding models."
+    )
     if pyannote_ready:
-        access_source = "cached model" if pyannote_cache_detected else "first-download token"
-        cpu_diarization = f"pyannote CPU configured ({access_source})"
+        access_source = (
+            "cached model" if pyannote_cache_detected else "first-download token"
+        )
+        community_cpu_diarization = (
+            f"pyannote Community-1 CPU configured ({access_source})"
+        )
     elif pyannote_package_installed:
-        cpu_diarization = "pyannote installed; Community-1 needs a first-download token or complete cache"
+        community_cpu_diarization = (
+            "pyannote installed; Community-1 needs a first-download token "
+            "or complete cache"
+        )
     else:
-        cpu_diarization = "pyannote package is not installed"
-    diarization_setup = (
+        community_cpu_diarization = "pyannote package is not installed"
+    community_diarization_setup = (
         "Install the transcription optional dependencies to add pyannote Community-1."
         if not pyannote_package_installed
         else "Add a Hugging Face read token for the first Community-1 download, or restore its complete local cache."
+    )
+    selected_diarization_ready = (
+        portable_ready
+        if selected_speaker_engine == PORTABLE_DIARIZATION_ENGINE
+        else pyannote_ready
     )
     llama_ready = bool(llama_server)
 
     if cuda_ready:
         automatic_ready = cuda_ready and pyannote_ready and llama_ready
         automatic_transcription = "faster-whisper on CUDA"
-        automatic_diarization = "pyannote on CUDA" if pyannote_ready else cpu_diarization
+        automatic_diarization = (
+            "pyannote on CUDA"
+            if pyannote_ready
+            else community_cpu_diarization
+        )
         automatic_analysis = "llama.cpp " + next(iter(sorted(llama_backends)), "CPU")
         automatic_note = "Uses the validated Windows CUDA path and keeps per-stage fallbacks explicit."
     elif sys.platform == "darwin" and metal_asr and metal_llm:
         automatic_ready = pyannote_ready and llama_ready
         automatic_transcription = "whisper.cpp on Apple Metal"
-        automatic_diarization = cpu_diarization
+        automatic_diarization = community_cpu_diarization
         automatic_analysis = "llama.cpp / Metal"
         automatic_note = "Uses native Apple Metal for transcription and analysis; diarization stays on CPU."
     elif sys.platform.startswith("linux") and vulkan_asr and vulkan_llm:
         automatic_ready = pyannote_ready and llama_ready
         automatic_transcription = "whisper.cpp on Vulkan"
-        automatic_diarization = cpu_diarization
+        automatic_diarization = community_cpu_diarization
         automatic_analysis = "llama.cpp / Vulkan"
         automatic_note = "Uses detected Vulkan runtimes for transcription and analysis; diarization stays on CPU."
     else:
         automatic_ready = cpu_ready and pyannote_ready and llama_ready
         automatic_transcription = "faster-whisper on CPU" if cpu_ready else "CPU ASR dependencies unavailable"
-        automatic_diarization = cpu_diarization
+        automatic_diarization = community_cpu_diarization
         automatic_analysis = "llama.cpp / CPU" if llama_ready else "llama.cpp missing"
         automatic_note = "Uses the dependable CPU fallback because no validated accelerator pair was detected."
 
@@ -674,13 +715,18 @@ def collect_accelerator_diagnostics(
             ),
             diarization_ready=pyannote_ready,
             analysis_ready=llama_ready,
+            diarization_setup=community_diarization_setup,
         ),
         _profile(
             "cuda",
             "NVIDIA CUDA",
             cuda_ready and pyannote_ready and llama_ready,
             "faster-whisper / CUDA" if cuda_ready else "CUDA ASR dependencies unavailable",
-            "pyannote / CUDA" if torch["cuda_available"] and pyannote_ready else cpu_diarization,
+            (
+                "pyannote / CUDA"
+                if torch["cuda_available"] and pyannote_ready
+                else community_cpu_diarization
+            ),
             "llama.cpp auto-offload" if llama_ready else "llama.cpp missing",
             transcription_ready=cuda_ready,
             diarization_ready=bool(torch["cuda_available"] and pyannote_ready),
@@ -688,13 +734,13 @@ def collect_accelerator_diagnostics(
             transcription_setup=(
                 "Install faster-whisper plus a CUDA-enabled PyTorch build, then rerun the hardware check."
             ),
-            diarization_setup=diarization_setup,
+            diarization_setup=community_diarization_setup,
             analysis_setup="Install llama-server or configure LLAMA_SERVER_PATH.",
         ),
         _profile(
             "vulkan",
             "Cross-vendor Vulkan",
-            vulkan_asr and pyannote_ready and vulkan_llm,
+            vulkan_asr and portable_ready and vulkan_llm,
             (
                 "whisper.cpp / Vulkan"
                 if vulkan_asr
@@ -702,11 +748,12 @@ def collect_accelerator_diagnostics(
                 if vulkan_runtime
                 else "needs a Vulkan whisper.cpp build"
             ),
-            cpu_diarization,
+            portable_diarization,
             "llama.cpp / Vulkan" if vulkan_llm else "needs a Vulkan llama.cpp build",
-            "Diarization intentionally falls back to CPU because pyannote has no Vulkan backend.",
+            "Fast portable speaker preview runs on CPU and remains upgradeable "
+            "to Community-1 without repeating transcription.",
             transcription_ready=vulkan_asr,
-            diarization_ready=pyannote_ready,
+            diarization_ready=portable_ready,
             analysis_ready=vulkan_llm,
             transcription_setup=(
                 "Configure a Vulkan-enabled whisper-cli, then use Download & test model "
@@ -734,7 +781,7 @@ def collect_accelerator_diagnostics(
                     ),
                 }
             ),
-            diarization_setup=diarization_setup,
+            diarization_setup=portable_diarization_setup,
             analysis_setup=(
                 "Configure a Vulkan-enabled llama-server with LLAMA_SERVER_PATH; "
                 "device inspection must report a Vulkan adapter."
@@ -743,7 +790,7 @@ def collect_accelerator_diagnostics(
         _profile(
             "openvino",
             "Intel OpenVINO",
-            openvino_asr and pyannote_ready and llama_ready,
+            openvino_asr and portable_ready and llama_ready,
             (
                 "OpenVINO Whisper / "
                 + ", ".join(openvino_device_names or openvino_devices)
@@ -751,7 +798,7 @@ def collect_accelerator_diagnostics(
                 if openvino_asr
                 else "needs the OpenVINO GenAI optional package"
             ),
-            cpu_diarization,
+            portable_diarization,
             (
                 "llama.cpp / SYCL"
                 if "sycl" in llama_backends
@@ -759,7 +806,7 @@ def collect_accelerator_diagnostics(
             ),
             "Uses devices exposed by the installed OpenVINO runtime; unsupported model/device combinations retry on CPU.",
             transcription_ready=openvino_asr,
-            diarization_ready=pyannote_ready,
+            diarization_ready=portable_ready,
             analysis_ready=llama_ready,
             transcription_setup=(
                 'Install this app\'s OpenVINO optional dependencies (`pip install -e ".[openvino]"`), '
@@ -775,7 +822,7 @@ def collect_accelerator_diagnostics(
                     "The first explicit engine test may acquire the selected model."
                 ),
             },
-            diarization_setup=diarization_setup,
+            diarization_setup=portable_diarization_setup,
             analysis_setup="Install llama-server or configure LLAMA_SERVER_PATH.",
         ),
     ]
@@ -784,7 +831,7 @@ def collect_accelerator_diagnostics(
             _profile(
                 "windowsml",
                 "Windows ML",
-                windows_ml_decode and pyannote_ready and llama_ready,
+                windows_ml_decode and portable_ready and llama_ready,
                 (
                     f"{windows_ml.get('backend') or 'Windows ML ONNX Whisper'} (validated model)"
                     if windows_ml_decode
@@ -792,16 +839,17 @@ def collect_accelerator_diagnostics(
                     if windows_ml_runtime
                     else "needs the Windows ML helper and a compatible ONNX Whisper model"
                 ),
-                cpu_diarization,
+                portable_diarization,
                 "llama.cpp auto-offload or CPU" if llama_ready else "llama.cpp missing",
                 (
                     "The configured model passed an actual silent-audio decode self-test. "
-                    "Diarization uses the dependable CPU fallback."
+                    + "Fast portable speaker preview runs on CPU and remains "
+                    "upgradeable to Community-1."
                     if windows_ml_decode
                     else "A runtime-only probe is not enough; this profile remains unavailable until a model decode passes."
                 ),
                 transcription_ready=windows_ml_decode,
-                diarization_ready=pyannote_ready,
+                diarization_ready=portable_ready,
                 analysis_ready=llama_ready,
                 transcription_setup=(
                     "Use a build containing the Windows ML helper, then choose Build & test "
@@ -830,7 +878,7 @@ def collect_accelerator_diagnostics(
                         ),
                     }
                 ),
-                diarization_setup=diarization_setup,
+                diarization_setup=portable_diarization_setup,
                 analysis_setup="Install llama-server or configure LLAMA_SERVER_PATH.",
             )
         )
@@ -839,7 +887,7 @@ def collect_accelerator_diagnostics(
             _profile(
                 "metal",
                 "Apple Metal",
-                metal_asr and pyannote_ready and metal_llm,
+                metal_asr and portable_ready and metal_llm,
                 (
                     "whisper.cpp / Metal"
                     if metal_asr
@@ -847,11 +895,12 @@ def collect_accelerator_diagnostics(
                     if metal_runtime
                     else "needs a native ggml-metal whisper.cpp build"
                 ),
-                cpu_diarization,
+                portable_diarization,
                 "llama.cpp / Metal" if metal_llm else "needs a Metal llama.cpp build",
-                "Apple GPU acceleration is native-only; pyannote diarization intentionally uses CPU.",
+                "Fast portable speaker preview uses CPU and remains upgradeable "
+                "to Community-1 without repeating transcription.",
                 transcription_ready=metal_asr,
-                diarization_ready=pyannote_ready,
+                diarization_ready=portable_ready,
                 analysis_ready=metal_llm,
                 transcription_setup=(
                     "Configure a native ggml-metal whisper-cli and local GGML model."
@@ -877,7 +926,7 @@ def collect_accelerator_diagnostics(
                         ),
                     }
                 ),
-                diarization_setup=diarization_setup,
+                diarization_setup=portable_diarization_setup,
                 analysis_setup=(
                     "Configure a Metal-enabled llama-server; device inspection must report Metal."
                 ),
@@ -887,7 +936,7 @@ def collect_accelerator_diagnostics(
         _profile(
             "qwen",
             "Fast CPU preview (Qwen3-ASR)",
-            bool(qwen3_asr["ready"] and pyannote_ready and llama_ready),
+            bool(qwen3_asr["ready"] and portable_ready and llama_ready),
             (
                 "Qwen3-ASR 0.6B INT8 / sherpa-onnx CPU"
                 if qwen3_asr["ready"]
@@ -895,7 +944,7 @@ def collect_accelerator_diagnostics(
                 if qwen3_asr["runtime_installed"]
                 else "needs the optional sherpa-onnx runtime and managed model"
             ),
-            cpu_diarization,
+            portable_diarization,
             "llama.cpp auto-offload or CPU" if llama_ready else "llama.cpp missing",
             (
                 "Optional fast-CPU transcription candidate. Source-region timestamps "
@@ -903,7 +952,7 @@ def collect_accelerator_diagnostics(
                 "not replace the validated Whisper evidence default."
             ),
             transcription_ready=bool(qwen3_asr["ready"]),
-            diarization_ready=pyannote_ready,
+            diarization_ready=portable_ready,
             analysis_ready=llama_ready,
             transcription_setup=(
                 'Install `pip install -e ".[qwen]"`, then choose Download & test '
@@ -930,7 +979,7 @@ def collect_accelerator_diagnostics(
                     ),
                 }
             ),
-            diarization_setup=diarization_setup,
+            diarization_setup=portable_diarization_setup,
             analysis_setup="Install llama-server or configure LLAMA_SERVER_PATH.",
         )
     )
@@ -940,7 +989,7 @@ def collect_accelerator_diagnostics(
             "CPU only",
             cpu_ready and pyannote_ready and llama_ready,
             "faster-whisper / INT8 CPU" if cpu_ready else "CPU ASR dependencies unavailable",
-            cpu_diarization,
+            community_cpu_diarization,
             "llama.cpp / CPU" if llama_ready else "llama.cpp missing",
             "Slowest but portable and a dependable fallback for every stage.",
             transcription_ready=cpu_ready,
@@ -949,7 +998,7 @@ def collect_accelerator_diagnostics(
             transcription_setup=(
                 "Install the transcription optional dependencies to add faster-whisper and PyTorch."
             ),
-            diarization_setup=diarization_setup,
+            diarization_setup=community_diarization_setup,
             analysis_setup="Install llama-server or configure LLAMA_SERVER_PATH.",
         )
     )
@@ -962,12 +1011,19 @@ def collect_accelerator_diagnostics(
         "windows_ml": windows_ml,
         "qwen3_asr": qwen3_asr,
         "speaker_labels": {
+            "selected_engine": selected_speaker_engine,
             "package_installed": pyannote_package_installed,
             "token_configured": token_ready,
             "model_cache_detected": pyannote_cache_detected,
             "access_configured": pyannote_access_configured,
-            "configured": pyannote_ready,
+            "configured": selected_diarization_ready,
             "cuda_available": bool(torch["cuda_available"]),
+            "community_1": {
+                "package_installed": pyannote_package_installed,
+                "access_configured": pyannote_access_configured,
+                "ready": pyannote_ready,
+            },
+            "portable": portable_speakers,
         },
         "whisper_cpp": {
             "executable": whisper_executable,

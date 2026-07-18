@@ -3,6 +3,9 @@ import os
 from contextlib import nullcontext
 from datetime import date
 from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
 
 from broadcastify_cli.analysis import PROMPT_VERSION
 from broadcastify_cli.storage import AnalysisStore
@@ -205,6 +208,86 @@ def test_diarization_self_test_can_reuse_cached_model_without_token(monkeypatch)
     assert diarization_self_test({"diarization_device": "cpu"}) == 0
     assert loaded["token"] == ""
     assert any(value["type"] == "diarization_self_test" for value in emitted)
+
+
+def test_portable_diarization_self_test_prepares_and_executes_public_models(
+    monkeypatch,
+) -> None:
+    emitted: list[dict[str, object]] = []
+    prepared: dict[str, object] = {}
+    initialized: dict[str, object] = {}
+
+    def fake_prepare(*, progress=None):
+        prepared["called"] = True
+        assert progress is not None
+        progress("Verified public models")
+        return {
+            "ready": True,
+            "model": "segmentation+titanet",
+        }
+
+    class FakeDiarizer:
+        def __init__(self, **kwargs: object) -> None:
+            initialized.update(kwargs)
+            self.metadata = {
+                "cluster_threshold": 0.95,
+                "speaker_identity_scope": "processing-chunk",
+            }
+
+        def process(self, path: Path, progress=None):
+            assert path.is_file()
+            assert progress is not None
+            progress("Portable execution complete")
+            return [SimpleNamespace(start=0.0, end=1.0, speaker="SPEAKER_00")]
+
+    monkeypatch.setattr(
+        "broadcastify_cli.worker.prepare_portable_diarization_model",
+        fake_prepare,
+    )
+    monkeypatch.setattr(
+        "broadcastify_cli.worker.SherpaOnnxDiarizer", FakeDiarizer
+    )
+    monkeypatch.setattr("broadcastify_cli.worker.emit", emitted.append)
+
+    assert (
+        diarization_self_test(
+            {
+                "diarization_engine": "sherpa-onnx",
+                "diarization_device": "cpu",
+                "min_speakers": 2,
+                "max_speakers": 8,
+            }
+        )
+        == 0
+    )
+
+    result = next(
+        value["result"]
+        for value in emitted
+        if value["type"] == "diarization_self_test"
+    )
+    assert prepared["called"] is True
+    assert initialized == {"min_speakers": 2, "max_speakers": 8}
+    assert result["engine"] == "sherpa-onnx"
+    assert result["quality"] == "preview"
+    assert result["turn_count"] == 1
+
+
+def test_portable_diarization_self_test_rejects_cuda_before_model_work(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "broadcastify_cli.worker.prepare_portable_diarization_model",
+        lambda **_kwargs: pytest.fail("model preparation should not start"),
+    )
+
+    with pytest.raises(RuntimeError, match="currently runs on CPU"):
+        diarization_self_test(
+            {
+                "diarization_engine": "sherpa-onnx",
+                "diarization_device": "cuda",
+            }
+        )
 
 
 def test_analysis_self_test_executes_structured_synthetic_generation(

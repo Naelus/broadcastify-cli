@@ -242,13 +242,14 @@
                   <label><span>Transcription model</span><select id="settingWhisperModel"><option>turbo</option><option>distil-large-v3</option><option>large-v3</option><option>medium.en</option><option>small.en</option><option>base.en</option><option>tiny.en</option><option>qwen3-asr-0.6b-int8</option></select></label>
                   <label><span>ASR engine</span><select id="settingAsrEngine"><option value="auto">Automatic</option><option value="faster-whisper">faster-whisper</option><option value="whisper.cpp">whisper.cpp</option><option value="openvino">OpenVINO</option><option value="windows-ml">Windows ML</option><option value="qwen3-asr">Qwen3-ASR (fast CPU preview)</option></select></label>
                   <label><span>Transcription device</span><select id="settingDevice"><option value="auto">Automatic</option><option value="cuda">CUDA</option><option value="cpu">CPU</option><option value="vulkan">Vulkan</option><option value="metal">Apple Metal</option><option value="openvino-auto">OpenVINO Auto</option><option value="openvino-gpu">OpenVINO GPU</option><option value="openvino-npu">OpenVINO NPU</option><option value="windows-ml">Windows ML</option></select></label>
-                  <label><span>Diarization device</span><select id="settingDiarizationDevice"><option value="auto">Automatic</option><option value="cuda">CUDA</option><option value="cpu">CPU fallback</option></select></label>
+                  <label><span>Speaker-label engine</span><select id="settingDiarizationEngine"><option value="community-1">Community-1 — accuracy default</option><option value="sherpa-onnx">Fast portable preview — CPU</option></select><small>The preview is much faster but can miss short radio turns. Existing preview labels can be upgraded later without repeating transcription.</small></label>
+                  <label><span>Diarization device</span><select id="settingDiarizationDevice"><option value="auto">Automatic</option><option value="cuda">CUDA (Community-1)</option><option value="cpu">CPU</option></select></label>
                   <label><span>Batch size</span><input id="settingBatchSize" type="number" min="1" max="64" value="8"></label>
                   <label><span>Optional ASR model path</span><input id="settingAsrModelPath" placeholder="Use automatic model discovery"></label>
                 </div>
                 <label class="secret-field"><span>Hugging Face token for this tab</span><input id="settingHuggingFaceToken" type="password" autocomplete="off" placeholder="Or set HUGGINGFACE_TOKEN in .env"></label>
                 <div class="notice" id="asrSelfTestNotice"><strong>Not tested this session</strong><span>The engine check decodes generated silence and may download a managed model. It proves local execution, not radio-word accuracy.</span></div>
-                <div class="notice" id="diarizationSelfTestNotice"><strong>Speakers not tested this session</strong><span>The explicit test runs pyannote on generated audio and may download its model once.</span></div>
+                <div class="notice" id="diarizationSelfTestNotice"><strong>Speakers not tested this session</strong><span>The explicit test runs the selected local engine on generated audio. A first explicit test may download its pinned model.</span></div>
               </div>
             </div>
           </section>
@@ -303,6 +304,6 @@
   </aside>
 
   <div class="toast-region" id="toastRegion" aria-live="polite"></div>
-  <script src="/static/app.js?v=24" defer></script>
+  <script src="/static/app.js?v=25" defer></script>
 </body>
 </html>
