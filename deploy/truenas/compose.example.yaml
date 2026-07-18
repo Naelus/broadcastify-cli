@@ -1,0 +1,50 @@
+name: radio-archive-intelligence
+
+services:
+  web:
+    image: radio-archive-intelligence:SOURCE_COMMIT
+    pull_policy: never
+    restart: unless-stopped
+    init: true
+    user: "APP_UID:APP_GID"
+    group_add:
+      - "RENDER_GID"
+    devices:
+      - /dev/dri/renderD128:/dev/dri/renderD128
+    ports:
+      - "TRUENAS_LAN_IP:8765:8765"
+    command:
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8765"
+      - --working-dir
+      - /data
+      - --output-dir
+      - /data/archives
+      - --database
+      - /data/archives/broadcastify-analysis.sqlite3
+    environment:
+      HOME: /data/runtime/home
+      XDG_CACHE_HOME: /data/runtime/cache
+      HF_HOME: /data/models/huggingface
+      LLAMA_CACHE: /data/models/llama-cache
+      BROADCASTIFY_RUNTIME_DIR: /data/runtime
+      BROADCASTIFY_MODEL_DIR: /data/models
+      FFMPEG_PATH: /usr/bin/ffmpeg
+      WHISPER_CPP_PATH: /app/build/bin/whisper-cli
+      WHISPER_CPP_MODEL_PATH: /data/models/whisper/ggml-tiny.en-q5_1.bin
+      LLAMA_SERVER_PATH: /opt/llama/llama-server
+      ANALYSIS_PROVIDER: local
+      ANALYSIS_MODEL: /data/models/llama/gemma-3-1b-it-q4_k_m.gguf
+    volumes:
+      - TRUENAS_DATASET_PATH:/data
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=2g
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 2048
+    stop_grace_period: 30s

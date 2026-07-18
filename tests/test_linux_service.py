@@ -142,12 +142,36 @@ def test_service_install_rejects_a_missing_python_runtime(tmp_path: Path) -> Non
         )
 
 
-def test_service_config_rejects_non_loopback_host(tmp_path: Path) -> None:
+def test_service_config_accepts_explicit_trusted_lan_host(tmp_path: Path) -> None:
     value = {
         **json.loads(json.dumps(_config(tmp_path).__dict__)),
         "host": "0.0.0.0",
     }
-    with pytest.raises(ValueError, match="127.0.0.1"):
+    config = LinuxServiceConfig.from_mapping(value)
+
+    assert config.host == "0.0.0.0"
+    assert config.health_host == "127.0.0.1"
+    assert config.access_scope == "trusted-lan"
+
+
+def test_service_config_accepts_specific_private_host(tmp_path: Path) -> None:
+    config = build_service_config(
+        python_executable=sys.executable,
+        working_dir=tmp_path / "data",
+        host="10.200.1.99",
+    )
+
+    assert config.host == "10.200.1.99"
+    assert config.url == "http://10.200.1.99:8765/"
+    assert config.access_scope == "trusted-lan"
+
+
+def test_service_config_rejects_public_host(tmp_path: Path) -> None:
+    value = {
+        **json.loads(json.dumps(_config(tmp_path).__dict__)),
+        "host": "8.8.8.8",
+    }
+    with pytest.raises(ValueError, match="public"):
         LinuxServiceConfig.from_mapping(value)
 
 
@@ -196,8 +220,16 @@ def test_service_config_preserves_virtual_environment_python_path(
 
 def test_web_entry_point_accepts_explicit_working_directory(tmp_path: Path) -> None:
     arguments = build_web_parser().parse_args(
-        ["--working-dir", str(tmp_path), "--port", "18765"]
+        [
+            "--working-dir",
+            str(tmp_path),
+            "--host",
+            "0.0.0.0",
+            "--port",
+            "18765",
+        ]
     )
 
     assert arguments.working_dir == str(tmp_path)
+    assert arguments.host == "0.0.0.0"
     assert arguments.port == 18765

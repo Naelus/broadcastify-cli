@@ -16,7 +16,13 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Sequence
 
-from .web_app import run_web_app
+from .web_app import (
+    bind_is_loopback,
+    bind_scope,
+    format_web_url,
+    run_web_app,
+    validate_bind_host,
+)
 
 
 SERVICE_NAME = "radio-archive-web.service"
@@ -58,8 +64,8 @@ class LinuxServiceConfig:
                 f"Unsupported service configuration version {self.version}; "
                 f"expected {CONFIG_VERSION}."
             )
-        if self.host != "127.0.0.1":
-            raise ValueError("The managed Web service must remain bound to 127.0.0.1.")
+        if validate_bind_host(self.host) != self.host:
+            raise ValueError("The Web service host may not contain surrounding whitespace.")
         if not 1 <= int(self.port) <= 65535:
             raise ValueError("The Web service port must be between 1 and 65535.")
         for label, raw_value in (
@@ -76,7 +82,19 @@ class LinuxServiceConfig:
 
     @property
     def url(self) -> str:
-        return f"http://{self.host}:{self.port}/"
+        return format_web_url(self.host, self.port)
+
+    @property
+    def health_host(self) -> str:
+        if self.host == "0.0.0.0":
+            return "127.0.0.1"
+        if self.host == "::":
+            return "::1"
+        return self.host
+
+    @property
+    def access_scope(self) -> str:
+        return bind_scope(self.host)
 
     @classmethod
     def from_mapping(cls, value: dict[str, Any]) -> "LinuxServiceConfig":
@@ -119,6 +137,7 @@ def build_service_config(
     output_dir: str | Path | None = None,
     database_path: str | Path | None = None,
     environment_file: str | Path | None = None,
+    host: str = "127.0.0.1",
     port: int = DEFAULT_PORT,
 ) -> LinuxServiceConfig:
     executable_value = os.path.expanduser(os.fspath(python_executable))
@@ -143,7 +162,7 @@ def build_service_config(
         output_dir=str(output),
         database_path=str(database),
         environment_file=str(environment),
-        host="127.0.0.1",
+        host=validate_bind_host(host),
         port=int(port),
     )
     config.validate()
@@ -382,7 +401,11 @@ def install_service(
 
 
 def health_ready(config: LinuxServiceConfig, timeout: float = 1.0) -> bool:
-    connection = http.client.HTTPConnection(config.host, config.port, timeout=timeout)
+    connection = http.client.HTTPConnection(
+        config.health_host,
+        config.port,
+        timeout=timeout,
+    )
     try:
         connection.request("GET", "/health")
         response = connection.getresponse()
@@ -390,7 +413,7 @@ def health_ready(config: LinuxServiceConfig, timeout: float = 1.0) -> bool:
         if response.status != 200:
             return False
         value = json.loads(body)
-        return value == {"status": "ok", "scope": "loopback-only"}
+        return value == {"status": "ok", "scope": config.access_scope}
     except (OSError, http.client.HTTPException, json.JSONDecodeError):
         return False
     finally:
@@ -455,6 +478,15 @@ def _add_storage_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--database")
     parser.add_argument("--env-file")
     parser.add_argument("--python", default=sys.executable, dest="python_executable")
+    parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        type=validate_bind_host,
+        help=(
+            "Loopback or a trusted private/link-local interface address. "
+            "0.0.0.0/:: listens on every interface."
+        ),
+    )
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--config-dir", default=str(default_config_dir()))
     parser.add_argument("--unit-dir", default=str(default_unit_dir()))
@@ -463,8 +495,9 @@ def _add_storage_arguments(parser: argparse.ArgumentParser) -> None:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Install and manage the loopback-only Radio Archive Web app as a "
-            "per-user Linux systemd service."
+            "Install and manage the private Radio Archive Web app as a per-user "
+            "Linux systemd service. Loopback is the default; trusted-LAN mode "
+            "requires an explicit host."
         )
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -509,6 +542,7 @@ def _config_from_arguments(arguments: argparse.Namespace) -> LinuxServiceConfig:
         output_dir=arguments.output_dir,
         database_path=arguments.database,
         environment_file=arguments.env_file,
+        host=arguments.host,
         port=arguments.port,
     )
 
@@ -558,6 +592,11 @@ def _main(arguments: argparse.Namespace) -> int:
         )
         print(f"Installed {SERVICE_NAME} for this user.")
         print(f"Private settings template: {config.environment_file}")
+        if not bind_is_loopback(config.host):
+            print(
+                "Trusted-LAN mode is active. Anyone who can reach this address "
+                "can open retained transcripts and audio; do not port-forward it."
+            )
         if arguments.no_start:
             print("The service is enabled and will start at the next user login.")
         else:

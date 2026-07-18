@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import hmac
+import ipaddress
 import json
 import mimetypes
 import os
@@ -39,6 +40,48 @@ MAX_BODY_BYTES = 1_048_576
 MAX_EVENTS = 500
 FEED_ID_PATTERN = re.compile(r"^\d+$")
 ZIP_PATTERN = re.compile(r"^\d{5}$")
+
+
+def validate_bind_host(host: str) -> str:
+    """Allow only loopback or an explicitly selected trusted-LAN interface."""
+
+    value = str(host).strip()
+    if value == "localhost":
+        return value
+    try:
+        address = ipaddress.ip_address(value)
+    except ValueError as exc:
+        raise ValueError(
+            "The web host must be localhost or a numeric loopback/private/link-local "
+            "address; use 0.0.0.0 or :: only when every attached network is trusted."
+        ) from exc
+    if address.is_multicast or not (
+        address.is_loopback
+        or address.is_private
+        or address.is_link_local
+        or address.is_unspecified
+    ):
+        raise ValueError(
+            "The web app refuses a public or multicast bind address. "
+            "Choose a loopback or trusted-LAN address."
+        )
+    return value
+
+
+def bind_is_loopback(host: str) -> bool:
+    value = validate_bind_host(host)
+    return value == "localhost" or ipaddress.ip_address(value).is_loopback
+
+
+def bind_scope(host: str) -> str:
+    return "loopback-only" if bind_is_loopback(host) else "trusted-lan"
+
+
+def format_web_url(host: str, port: int) -> str:
+    value = validate_bind_host(host)
+    if ":" in value and not value.startswith("["):
+        value = f"[{value}]"
+    return f"http://{value}:{int(port)}/"
 
 
 def utc_now() -> str:
@@ -463,6 +506,9 @@ class WebAppState:
     static_dir: Path
     session_token: str
     jobs: JobManager
+    bind_host: str
+    access_scope: str
+    loopback_only: bool
 
 
 def _safe_media_path(state: WebAppState, relative_value: str) -> Path:
@@ -637,8 +683,9 @@ def create_server(
     port: int = 8765,
     working_dir: str | Path | None = None,
 ) -> ThreadingHTTPServer:
-    if host not in {"127.0.0.1", "localhost", "::1"}:
-        raise ValueError("The web app may only bind to a loopback address.")
+    host = validate_bind_host(host)
+    access_scope = bind_scope(host)
+    loopback_only = access_scope == "loopback-only"
     root = Path(output_dir).expanduser().resolve()
     database = (
         Path(database_path).expanduser().resolve()
@@ -655,6 +702,9 @@ def create_server(
         static_dir=static_dir,
         session_token=token,
         jobs=JobManager(root, database, work),
+        bind_host=host,
+        access_scope=access_scope,
+        loopback_only=loopback_only,
     )
 
     class Handler(BaseHTTPRequestHandler):
@@ -689,7 +739,10 @@ def create_server(
         def _get(self) -> None:
             parsed = urlparse(self.path)
             if parsed.path == "/health":
-                self._json(HTTPStatus.OK, {"status": "ok", "scope": "loopback-only"})
+                self._json(
+                    HTTPStatus.OK,
+                    {"status": "ok", "scope": state.access_scope},
+                )
                 return
             if parsed.path == "/":
                 index_path = state.static_dir / "index.html"
@@ -732,7 +785,9 @@ def create_server(
                             "python": platform.python_version(),
                             "output_dir": str(state.output_dir),
                             "database_path": str(state.database_path),
-                            "loopback_only": True,
+                            "loopback_only": state.loopback_only,
+                            "access_scope": state.access_scope,
+                            "bind_host": state.bind_host,
                             **_runtime_readiness(state),
                         },
                     },
@@ -972,7 +1027,11 @@ def create_server(
                     remaining -= len(chunk)
 
     class LocalThreadingHTTPServer(ThreadingHTTPServer):
-        address_family = socket.AF_INET6 if host == "::1" else socket.AF_INET
+        address_family = (
+            socket.AF_INET6
+            if host != "localhost" and ipaddress.ip_address(host).version == 6
+            else socket.AF_INET
+        )
         daemon_threads = True
 
     server = LocalThreadingHTTPServer((host, port), Handler)
@@ -983,7 +1042,10 @@ def create_server(
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Run the loopback-only cross-platform radio archive web app."
+        description=(
+            "Run the private cross-platform radio archive web app. "
+            "It defaults to loopback and supports an explicit trusted-LAN bind."
+        )
     )
     parser.add_argument("--output-dir", default="archives")
     parser.add_argument("--database")
@@ -994,7 +1056,15 @@ def build_parser() -> argparse.ArgumentParser:
             "Defaults to the current directory."
         ),
     )
-    parser.add_argument("--host", default="127.0.0.1", choices=["127.0.0.1", "localhost", "::1"])
+    parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        type=validate_bind_host,
+        help=(
+            "Loopback or a trusted private/link-local interface address. "
+            "0.0.0.0/:: listens on every interface and must not be port-forwarded."
+        ),
+    )
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--open", action="store_true", dest="open_browser")
     return parser
@@ -1017,9 +1087,19 @@ def run_web_app(
         port=port,
     )
     bound_host, bound_port = server.server_address[:2]
-    display_host = "127.0.0.1" if bound_host in {"0.0.0.0", "::"} else bound_host
-    url = f"http://{display_host}:{bound_port}/"
+    display_host = (
+        "127.0.0.1"
+        if bound_host == "0.0.0.0"
+        else "::1" if bound_host == "::" else str(bound_host)
+    )
+    url = format_web_url(display_host, bound_port)
     print(f"Radio Archive Intelligence is available at {url}", flush=True)
+    if not bind_is_loopback(host):
+        print(
+            "Trusted-LAN mode is active: anyone who can reach this address can "
+            "open retained transcripts and audio.",
+            flush=True,
+        )
     if open_browser:
         webbrowser.open(url)
     try:

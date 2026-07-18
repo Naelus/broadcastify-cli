@@ -294,9 +294,36 @@ def test_loopback_web_app_hides_stale_daily_claims(tmp_path: Path) -> None:
         thread.join(timeout=3)
 
 
-def test_web_app_rejects_non_loopback_binding(tmp_path: Path) -> None:
-    with pytest.raises(ValueError, match="loopback"):
-        create_server(tmp_path, host="0.0.0.0", port=0)
+def test_web_app_allows_explicit_trusted_lan_binding(tmp_path: Path) -> None:
+    server = create_server(tmp_path, host="0.0.0.0", port=0)
+    server.quiet = True  # type: ignore[attr-defined]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)
+    try:
+        response, body = _request(connection, "GET", "/health")
+        assert response.status == 200
+        assert json.loads(body) == {"status": "ok", "scope": "trusted-lan"}
+
+        response, body = _request(connection, "GET", "/")
+        cookie = response.getheader("Set-Cookie", "").split(";", 1)[0]
+        assert response.status == 200
+        response, body = _request(connection, "GET", "/api/bootstrap", cookie=cookie)
+        assert response.status == 200
+        runtime = json.loads(body)["runtime"]
+        assert runtime["loopback_only"] is False
+        assert runtime["access_scope"] == "trusted-lan"
+        assert runtime["bind_host"] == "0.0.0.0"
+    finally:
+        connection.close()
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=3)
+
+
+def test_web_app_rejects_public_binding(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="public"):
+        create_server(tmp_path, host="8.8.8.8", port=0)
 
 
 def test_web_jobs_force_quota_safe_archive_defaults(tmp_path: Path) -> None:
