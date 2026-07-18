@@ -289,7 +289,6 @@ function applyRuntimeProcessingDefaults() {
     return false;
   }
   const mapped = {
-    hardwareProfile: defaults.hardware_profile,
     whisperModel: defaults.model,
     asrEngine: defaults.asr_engine,
     device: defaults.device,
@@ -302,9 +301,13 @@ function applyRuntimeProcessingDefaults() {
       state.settings[field] = value;
     }
   });
+  // Keep Automatic as the user's selection. The server resolves it again at
+  // every job boundary, so a deployment preset can be upgraded without a
+  // browser silently turning the prior resolved preset into an explicit one.
+  state.settings.hardwareProfile = "auto";
   localStorage.setItem("radioArchiveSettings", JSON.stringify(state.settings));
   applySettingsForm();
-  toast(`${words(defaults.hardware_profile)} deployment defaults applied for the installed runtime.`);
+  toast(`${words(defaults.hardware_profile)} deployment defaults are active while Automatic remains selected.`);
   return true;
 }
 
