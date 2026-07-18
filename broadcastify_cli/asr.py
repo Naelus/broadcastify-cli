@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -112,6 +113,14 @@ WHISPER_CPP_MODELS = {
     "tiny": "ggml-tiny.en-q5_1.bin",
 }
 
+WHISPER_CPP_VAD_FILENAME = "ggml-silero-v6.2.0.bin"
+WHISPER_CPP_VAD_REPOSITORY = "ggml-org/whisper-vad"
+WHISPER_CPP_VAD_REVISION = "9ffd54a1e1ee413ddf265af9913beaf518d1639b"
+WHISPER_CPP_VAD_BYTES = 885_098
+WHISPER_CPP_VAD_SHA256 = (
+    "2aa269b785eeb53a82983a20501ddf7c1d9c48e33ab63a41391ac6c9f7fb6987"
+)
+
 
 def whisper_cpp_model_filename(model_name: str) -> str:
     normalized = normalize_whisper_model_name(model_name)
@@ -163,6 +172,46 @@ def find_whisper_cpp_model(
     return None
 
 
+def find_whisper_cpp_vad_model(
+    explicit_path: str | Path | None = None,
+    *,
+    model_path: str | Path | None = None,
+) -> Path | None:
+    configured = explicit_path or os.getenv("WHISPER_CPP_VAD_MODEL_PATH")
+    if configured:
+        candidate = Path(configured).expanduser()
+        if candidate.is_file() and candidate.stat().st_size > 0:
+            return candidate.resolve()
+        return None
+    roots = [
+        _default_model_root() / "whisper.cpp",
+        Path.cwd() / "models",
+        Path.cwd() / "whisper.cpp" / "models",
+    ]
+    if model_path:
+        roots.insert(0, Path(model_path).expanduser().resolve().parent)
+    executable = find_whisper_cpp()
+    if executable:
+        roots.append(Path(executable).resolve().parent / "models")
+    for root in roots:
+        candidate = root / WHISPER_CPP_VAD_FILENAME
+        if candidate.is_file() and candidate.stat().st_size > 0:
+            return candidate.resolve()
+    return None
+
+
+def whisper_cpp_vad_model_is_verified(path: str | Path) -> bool:
+    candidate = Path(path)
+    try:
+        return (
+            candidate.stat().st_size == WHISPER_CPP_VAD_BYTES
+            and hashlib.sha256(candidate.read_bytes()).hexdigest().lower()
+            == WHISPER_CPP_VAD_SHA256
+        )
+    except OSError:
+        return False
+
+
 class WhisperCppAsr:
     """Runs native or explicitly configured containerized whisper.cpp."""
 
@@ -173,6 +222,7 @@ class WhisperCppAsr:
         device_index: int = 0,
         executable: str | Path | None = None,
         model_path: str | Path | None = None,
+        vad_model_path: str | Path | None = None,
         container_image: str | None = None,
         container_runtime: str | Path | None = None,
         container_device: str | Path | None = None,
@@ -266,6 +316,17 @@ class WhisperCppAsr:
                 f"{_default_model_root() / 'whisper.cpp'} or set WHISPER_CPP_MODEL_PATH."
             )
         self.model_path = resolved_model
+        resolved_vad_model = find_whisper_cpp_vad_model(
+            vad_model_path,
+            model_path=resolved_model,
+        )
+        if resolved_vad_model is None:
+            raise AsrDependencyError(
+                f"The whisper.cpp VAD model {WHISPER_CPP_VAD_FILENAME} was not found. "
+                "Use Download & test model to install its verified speech detector, "
+                "or set WHISPER_CPP_VAD_MODEL_PATH."
+            )
+        self.vad_model_path = resolved_vad_model
         self.backends = (
             sorted({"cpu", self.container_backend})
             if self.containerized
@@ -320,7 +381,7 @@ class WhisperCppAsr:
 
     def _container_arguments(
         self, source: Path, output_directory: Path
-    ) -> tuple[list[str], str, str, str]:
+    ) -> tuple[list[str], str, str, str, str]:
         assert self.container_runtime is not None
         arguments = [
             self.container_runtime,
@@ -352,13 +413,25 @@ class WhisperCppAsr:
                 "--mount",
                 self._mount(self.model_path, "/models/model.bin", readonly=True),
                 "--mount",
+                self._mount(
+                    self.vad_model_path,
+                    "/models/vad.bin",
+                    readonly=True,
+                ),
+                "--mount",
                 self._mount(output_directory, "/output"),
                 "--entrypoint",
                 self.container_executable,
                 self.container_image,
             ]
         )
-        return arguments, "/input/audio.wav", "/models/model.bin", "/output/result"
+        return (
+            arguments,
+            "/input/audio.wav",
+            "/models/model.bin",
+            "/models/vad.bin",
+            "/output/result",
+        )
 
     def _prepare_audio(
         self,
@@ -434,7 +507,7 @@ class WhisperCppAsr:
             with tempfile.TemporaryDirectory(prefix="whisper-cpp-", dir=cache_dir) as temporary:
                 output_directory = Path(temporary)
                 if self.containerized:
-                    arguments, input_path, model_path, output_path = (
+                    arguments, input_path, model_path, vad_model_path, output_path = (
                         self._container_arguments(prepared_source, output_directory)
                     )
                     output_base = output_directory / "result"
@@ -442,6 +515,7 @@ class WhisperCppAsr:
                     arguments = [self.executable]
                     input_path = str(prepared_source)
                     model_path = str(self.model_path)
+                    vad_model_path = str(self.vad_model_path)
                     output_base = output_directory / source.stem
                     output_path = str(output_base)
                 arguments.extend(
@@ -454,11 +528,28 @@ class WhisperCppAsr:
                         "en",
                         "--beam-size",
                         "5",
+                        "--max-context",
+                        "0",
                         "--no-speech-thold",
                         "0.6",
                         "--prompt",
                         "Police, fire, EMS, and public safety radio traffic.",
                         "--suppress-nst",
+                        "--vad",
+                        "--vad-model",
+                        vad_model_path,
+                        "--vad-threshold",
+                        "0.5",
+                        "--vad-min-speech-duration-ms",
+                        "250",
+                        "--vad-min-silence-duration-ms",
+                        "250",
+                        "--vad-max-speech-duration-s",
+                        "25",
+                        "--vad-speech-pad-ms",
+                        "250",
+                        "--vad-samples-overlap",
+                        "0.10",
                         "--output-json",
                         "--output-file",
                         output_path,
@@ -537,6 +628,12 @@ class WhisperCppAsr:
                 "requested_model": self.model_name,
                 "system_info": system_info,
                 "model_path": str(self.model_path),
+                "vad_enabled": True,
+                "vad_model_path": str(self.vad_model_path),
+                "vad_model": "Silero VAD 6.2.0",
+                "vad_threshold": 0.5,
+                "vad_max_speech_seconds": 25,
+                "condition_on_previous_text": False,
                 "available_backends": self.backends,
                 "container_image": self.container_image if self.containerized else "",
                 "container_runtime": (
@@ -1178,12 +1275,16 @@ def prepare_whisper_cpp_model(
     huggingface_token: str | None = None,
     progress: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
-    """Download one official public GGML file after an explicit user action."""
+    """Download one official GGML ASR file plus the pinned speech detector."""
 
     requested = normalize_whisper_model_name(model_name)
     filename = whisper_cpp_model_filename(requested)
     existing = find_whisper_cpp_model(requested, explicit_path)
-    if existing:
+    existing_vad = find_whisper_cpp_vad_model(model_path=existing)
+    verified_existing_vad = bool(
+        existing_vad and whisper_cpp_vad_model_is_verified(existing_vad)
+    )
+    if existing and existing_vad and verified_existing_vad:
         return {
             "ready": True,
             "engine": "whisper.cpp",
@@ -1192,9 +1293,13 @@ def prepare_whisper_cpp_model(
             "provider": "local",
             "precision": "ggml-quantized",
             "path": str(existing),
+            "vad_path": str(existing_vad),
             "reused": True,
-            "bytes": existing.stat().st_size,
-            "message": f"Reusing the matching whisper.cpp model at {existing}.",
+            "bytes": existing.stat().st_size + existing_vad.stat().st_size,
+            "message": (
+                f"Reusing whisper.cpp {requested} and Silero VAD at "
+                f"{existing.parent}."
+            ),
         }
     try:
         from huggingface_hub import hf_hub_download
@@ -1205,24 +1310,75 @@ def prepare_whisper_cpp_model(
         ) from exc
     target_root = _default_model_root() / "whisper.cpp"
     target_root.mkdir(parents=True, exist_ok=True)
-    if progress:
+    if progress and not existing:
         progress(
             f"Downloading public whisper.cpp model {filename} from "
             "ggerganov/whisper.cpp. The runtime binary is kept separate."
         )
-    downloaded = Path(
-        hf_hub_download(
-            repo_id="ggerganov/whisper.cpp",
-            filename=filename,
-            local_dir=target_root,
-            token=huggingface_token or None,
+    if existing:
+        target = existing
+    else:
+        downloaded = Path(
+            hf_hub_download(
+                repo_id="ggerganov/whisper.cpp",
+                filename=filename,
+                local_dir=target_root,
+                token=huggingface_token or None,
+            )
         )
-    )
-    target = target_root / filename
-    if not target.is_file() and downloaded.is_file():
-        target = downloaded
+        target = target_root / filename
+        if not target.is_file() and downloaded.is_file():
+            target = downloaded
     if not target.is_file() or target.stat().st_size <= 0:
         raise RuntimeError("The whisper.cpp model download did not produce a usable file.")
+
+    vad_target = (
+        existing_vad
+        if existing_vad and verified_existing_vad
+        else target_root / WHISPER_CPP_VAD_FILENAME
+    )
+    vad_reused = verified_existing_vad
+    if not verified_existing_vad:
+        if os.getenv("WHISPER_CPP_VAD_MODEL_PATH"):
+            raise RuntimeError(
+                "The configured WHISPER_CPP_VAD_MODEL_PATH is missing or does not "
+                "match the pinned Silero VAD byte count and SHA-256."
+            )
+        if vad_target.is_file():
+            vad_target.unlink(missing_ok=True)
+        if progress:
+            progress(
+                "Downloading the pinned Silero VAD model that bounds sparse-radio "
+                "speech before Whisper decoding."
+            )
+        downloaded_vad = Path(
+            hf_hub_download(
+                repo_id=WHISPER_CPP_VAD_REPOSITORY,
+                filename=WHISPER_CPP_VAD_FILENAME,
+                revision=WHISPER_CPP_VAD_REVISION,
+                local_dir=target_root,
+                token=huggingface_token or None,
+            )
+        )
+        if not vad_target.is_file() and downloaded_vad.is_file():
+            vad_target = downloaded_vad
+    try:
+        vad_bytes = vad_target.stat().st_size
+        vad_sha256 = hashlib.sha256(vad_target.read_bytes()).hexdigest()
+    except OSError as exc:
+        raise RuntimeError(
+            "The whisper.cpp VAD download did not produce a usable file."
+        ) from exc
+    if (
+        vad_bytes != WHISPER_CPP_VAD_BYTES
+        or vad_sha256.lower() != WHISPER_CPP_VAD_SHA256
+    ):
+        if not vad_reused:
+            vad_target.unlink(missing_ok=True)
+        raise RuntimeError(
+            "The downloaded whisper.cpp Silero VAD model failed its pinned "
+            "byte-count or SHA-256 check."
+        )
     return {
         "ready": True,
         "engine": "whisper.cpp",
@@ -1231,9 +1387,13 @@ def prepare_whisper_cpp_model(
         "provider": "local",
         "precision": "ggml-quantized",
         "path": str(target.resolve()),
-        "reused": False,
-        "bytes": target.stat().st_size,
-        "message": f"Downloaded whisper.cpp {requested} model to {target.resolve()}.",
+        "vad_path": str(vad_target.resolve()),
+        "reused": bool(existing and vad_reused),
+        "bytes": target.stat().st_size + vad_bytes,
+        "message": (
+            f"Prepared whisper.cpp {requested} plus checksum-verified Silero VAD "
+            f"under {target.resolve().parent}."
+        ),
     }
 
 

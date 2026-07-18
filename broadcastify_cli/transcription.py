@@ -1,12 +1,15 @@
 from __future__ import annotations
 
-import json
 import gc
+import hashlib
+import json
 import os
+import re
 import subprocess
 import sys
 import time
 import warnings
+from collections import Counter
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -129,6 +132,51 @@ def format_timestamp(seconds: float) -> str:
 
 class TranscriptionDependencyError(RuntimeError):
     pass
+
+
+class TranscriptionQualityError(RuntimeError):
+    pass
+
+
+def transcript_quality_report(texts: Sequence[str]) -> dict[str, object]:
+    nonempty = [str(value or "").strip() for value in texts if str(value or "").strip()]
+    normalized = [
+        re.sub(r"[\W_]+", " ", value.casefold(), flags=re.UNICODE).strip()
+        or re.sub(r"\s+", "", value)
+        for value in nonempty
+    ]
+    counts = Counter(normalized)
+    segment_count = len(normalized)
+    unique_count = len(counts)
+    dominant_count = max(counts.values(), default=0)
+    unique_ratio = unique_count / segment_count if segment_count else 1.0
+    dominant_ratio = dominant_count / segment_count if segment_count else 0.0
+    alphanumeric_characters = sum(
+        1 for value in nonempty for character in value if character.isalnum()
+    )
+    rejected = bool(
+        (segment_count >= 10 and alphanumeric_characters == 0)
+        or (
+            segment_count >= 20
+            and dominant_ratio >= 0.75
+            and unique_ratio <= 0.20
+        )
+        or (
+            segment_count >= 100
+            and dominant_ratio >= 0.55
+            and unique_ratio <= 0.10
+        )
+    )
+    return {
+        "status": "rejected" if rejected else "passed",
+        "segment_count": segment_count,
+        "unique_normalized_segments": unique_count,
+        "unique_ratio": round(unique_ratio, 6),
+        "dominant_segment_count": dominant_count,
+        "dominant_segment_ratio": round(dominant_ratio, 6),
+        "alphanumeric_characters": alphanumeric_characters,
+        "policy": "repetition-collapse-v1",
+    }
 
 
 @contextmanager
@@ -600,9 +648,28 @@ class LocalTranscriber:
         output_segments = group_words(words) if words else [
             value for value in fallback_segments if value.text
         ]
+        quality = transcript_quality_report(
+            [segment.text for segment in output_segments]
+        )
+        if quality["status"] == "rejected":
+            raise TranscriptionQualityError(
+                "Transcription quality check rejected a repetitive or non-speech "
+                f"collapse: {quality['unique_normalized_segments']} unique segments "
+                f"across {quality['segment_count']}, with the most common output at "
+                f"{float(quality['dominant_segment_ratio']) * 100:.1f}%. No new "
+                "transcript or analysis was saved. Use a VAD-backed profile and Base "
+                "or larger Whisper model, then retry the retained audio."
+            )
         transcript_dir.mkdir(parents=True, exist_ok=True)
 
         actual_model = str(asr_metadata.get("model") or self.model_name)
+        lines = []
+        for segment in output_segments:
+            speaker = f" {segment.speaker}:" if segment.speaker else ""
+            lines.append(
+                f"[{format_timestamp(segment.start)}]{speaker} {segment.text}".rstrip()
+            )
+        rendered_text = "\n".join(lines) + ("\n" if lines else "")
         payload = {
             "audio_file": audio_path.name,
             "model": actual_model,
@@ -650,18 +717,24 @@ class LocalTranscriber:
                 else {}
             ),
             "asr_metadata": asr_metadata,
+            "transcription_quality": quality,
+            "rendered_text_sha256": hashlib.sha256(
+                rendered_text.encode("utf-8")
+            ).hexdigest(),
         }
-        json_path.write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
-
-        lines = []
-        for segment in output_segments:
-            speaker = f" {segment.speaker}:" if segment.speaker else ""
-            lines.append(
-                f"[{format_timestamp(segment.start)}]{speaker} {segment.text}".rstrip()
+        json_temp = json_path.with_suffix(json_path.suffix + ".tmp")
+        txt_temp = txt_path.with_suffix(txt_path.suffix + ".tmp")
+        try:
+            txt_temp.write_text(rendered_text, encoding="utf-8", newline="\n")
+            json_temp.write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2),
+                encoding="utf-8",
             )
-        txt_path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
+            txt_temp.replace(txt_path)
+            json_temp.replace(json_path)
+        finally:
+            txt_temp.unlink(missing_ok=True)
+            json_temp.unlink(missing_ok=True)
         return json_path
 
     def diarize_existing_transcript(
@@ -779,6 +852,26 @@ class LocalTranscriber:
             payload = json.loads(json_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             return False
+        quality = transcript_quality_report(
+            [
+                str(value.get("text") or "")
+                for value in payload.get("segments", [])
+                if isinstance(value, dict)
+            ]
+        )
+        if quality["status"] == "rejected":
+            return False
+        saved_quality = payload.get("transcription_quality")
+        if isinstance(saved_quality, dict) and saved_quality.get("status") == "rejected":
+            return False
+        expected_text_sha256 = str(payload.get("rendered_text_sha256") or "")
+        if expected_text_sha256:
+            try:
+                actual_text_sha256 = hashlib.sha256(txt_path.read_bytes()).hexdigest()
+            except OSError:
+                return False
+            if actual_text_sha256 != expected_text_sha256:
+                return False
         expected_engine = getattr(self, "asr_engine", "faster-whisper")
         requested_model = str(payload.get("requested_model") or payload.get("model") or "")
         if expected_engine == "qwen3-asr":

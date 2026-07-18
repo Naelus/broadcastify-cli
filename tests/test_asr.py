@@ -1,3 +1,4 @@
+import hashlib
 import io
 import json
 import sys
@@ -14,9 +15,16 @@ from broadcastify_cli.asr import (
     WindowsMlWhisperAsr,
     find_windows_ml_model,
     normalize_asr_engine,
+    prepare_whisper_cpp_model,
     prepare_windows_ml_model,
     windows_ml_model_info,
 )
+
+
+def _write_whisper_cpp_vad(path: Path) -> Path:
+    vad = path / "ggml-silero-v6.2.0.bin"
+    vad.write_bytes(b"vad")
+    return vad
 
 
 def test_engine_auto_selection_follows_requested_accelerator() -> None:
@@ -44,6 +52,7 @@ def test_whisper_cpp_accepts_native_metal_backend(tmp_path: Path) -> None:
     (tmp_path / "libggml-metal.dylib").write_bytes(b"backend")
     model = tmp_path / "ggml-tiny.en-q5_1.bin"
     model.write_bytes(b"model")
+    _write_whisper_cpp_vad(tmp_path)
 
     engine = WhisperCppAsr(
         "tiny", device="metal", executable=executable, model_path=model
@@ -199,6 +208,75 @@ def test_whisper_cpp_rejects_renamed_or_mismatched_explicit_model(
         )
 
 
+def test_whisper_cpp_requires_a_speech_detector(tmp_path: Path) -> None:
+    executable = tmp_path / "whisper-cli"
+    executable.write_bytes(b"binary")
+    model = tmp_path / "ggml-tiny.en-q5_1.bin"
+    model.write_bytes(b"model")
+
+    with pytest.raises(AsrDependencyError, match="VAD model"):
+        WhisperCppAsr(
+            "tiny",
+            device="cpu",
+            executable=executable,
+            model_path=model,
+        )
+
+
+def test_whisper_cpp_preparation_pins_and_verifies_vad(
+    monkeypatch, tmp_path: Path
+) -> None:
+    import broadcastify_cli.asr as asr_module
+
+    model_root = tmp_path / "managed"
+    model_bytes = b"model"
+    vad_bytes = b"verified-vad"
+    calls: list[tuple[str, str, str | None]] = []
+    monkeypatch.setenv("BROADCASTIFY_MODEL_DIR", str(model_root))
+    monkeypatch.delenv("WHISPER_CPP_MODEL_PATH", raising=False)
+    monkeypatch.delenv("WHISPER_CPP_VAD_MODEL_PATH", raising=False)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(asr_module, "WHISPER_CPP_VAD_BYTES", len(vad_bytes))
+    monkeypatch.setattr(
+        asr_module,
+        "WHISPER_CPP_VAD_SHA256",
+        hashlib.sha256(vad_bytes).hexdigest(),
+    )
+
+    def fake_download(
+        *,
+        repo_id: str,
+        filename: str,
+        local_dir: Path,
+        token=None,
+        revision=None,
+    ) -> str:
+        calls.append((repo_id, filename, revision))
+        target = Path(local_dir) / filename
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(
+            vad_bytes
+            if filename == asr_module.WHISPER_CPP_VAD_FILENAME
+            else model_bytes
+        )
+        return str(target)
+
+    monkeypatch.setattr("huggingface_hub.hf_hub_download", fake_download)
+
+    result = prepare_whisper_cpp_model("tiny")
+    reused = prepare_whisper_cpp_model("tiny")
+
+    assert result["reused"] is False
+    assert result["bytes"] == len(model_bytes) + len(vad_bytes)
+    assert Path(result["vad_path"]).read_bytes() == vad_bytes
+    assert calls[-1] == (
+        asr_module.WHISPER_CPP_VAD_REPOSITORY,
+        asr_module.WHISPER_CPP_VAD_FILENAME,
+        asr_module.WHISPER_CPP_VAD_REVISION,
+    )
+    assert reused["reused"] is True
+
+
 @pytest.mark.parametrize(
     ("device", "expected"),
     [
@@ -226,11 +304,14 @@ def test_whisper_cpp_json_is_normalized(monkeypatch, tmp_path: Path) -> None:
     (tmp_path / "ggml-vulkan.dll").write_bytes(b"backend")
     model = tmp_path / "ggml-large-v3-turbo-q5_0.bin"
     model.write_bytes(b"model")
+    _write_whisper_cpp_vad(tmp_path)
     audio = tmp_path / "radio.wav"
     audio.write_bytes(b"audio")
+    invoked_with: list[str] = []
 
     class FakeProcess:
         def __init__(self, arguments, **_kwargs) -> None:
+            invoked_with.extend(arguments)
             output = Path(arguments[arguments.index("--output-file") + 1]).with_suffix(".json")
             output.write_text(
                 json.dumps(
@@ -266,6 +347,13 @@ def test_whisper_cpp_json_is_normalized(monkeypatch, tmp_path: Path) -> None:
     assert result.text == "Unit responding."
     assert result.segments[0].start == 1.25
     assert result.segments[0].end == 4.5
+    assert "--vad" in invoked_with
+    assert invoked_with[invoked_with.index("--max-context") + 1] == "0"
+    assert (
+        Path(invoked_with[invoked_with.index("--vad-model") + 1]).name
+        == "ggml-silero-v6.2.0.bin"
+    )
+    assert result.metadata["vad_enabled"] is True
     assert "whisper.cpp transcription: 100%" in messages
 
 
@@ -274,6 +362,7 @@ def test_whisper_cpp_prepares_non_wav_audio(monkeypatch, tmp_path: Path) -> None
     executable.write_bytes(b"binary")
     model = tmp_path / "ggml-tiny.en-q5_1.bin"
     model.write_bytes(b"model")
+    _write_whisper_cpp_vad(tmp_path)
     audio = tmp_path / "radio.mp3"
     audio.write_bytes(b"compressed audio")
     invoked_with: list[str] = []
@@ -328,6 +417,7 @@ def test_whisper_cpp_container_is_rootless_offline_and_bind_limited(
 ) -> None:
     model = tmp_path / "ggml-tiny.en-q5_1.bin"
     model.write_bytes(b"model")
+    _write_whisper_cpp_vad(tmp_path)
     audio = tmp_path / "radio.wav"
     audio.write_bytes(b"audio")
     dri = tmp_path / "dri"

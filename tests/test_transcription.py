@@ -14,10 +14,12 @@ from broadcastify_cli.qwen_asr import SherpaQwen3Asr
 from broadcastify_cli.transcription import (
     LocalTranscriber,
     SpeakerTurn,
+    TranscriptionQualityError,
     TranscriptWord,
     format_timestamp,
     group_words,
     speaker_for_interval,
+    transcript_quality_report,
 )
 
 
@@ -240,6 +242,99 @@ def test_external_asr_records_actual_fallback_backend(tmp_path: Path) -> None:
         audio,
         transcript_path,
         transcript_path.with_suffix(".txt"),
+    )
+
+
+def test_transcript_quality_rejects_repetition_collapse() -> None:
+    report = transcript_quality_report(
+        ["15. I'll show you enough for that."] * 1_881
+        + [f"variation {index}" for index in range(28)]
+    )
+
+    assert report["status"] == "rejected"
+    assert report["segment_count"] == 1_909
+    assert report["dominant_segment_ratio"] > 0.98
+
+
+def test_repetition_collapse_is_not_saved_or_marked_current(tmp_path: Path) -> None:
+    audio = tmp_path / "radio.wav"
+    audio.write_bytes(b"audio")
+
+    class RepeatingExternalAsr:
+        @staticmethod
+        def transcribe(_path: Path, progress=None) -> AsrResult:
+            return AsrResult(
+                text=" ".join(["same hallucinated sentence"] * 100),
+                duration=3_600.0,
+                segments=[
+                    AsrSegment(
+                        float(index * 30),
+                        float(index * 30 + 5),
+                        "same hallucinated sentence",
+                    )
+                    for index in range(100)
+                ],
+                engine="whisper.cpp",
+                backend="whisper.cpp Vulkan",
+                metadata={"model": "base"},
+            )
+
+    transcriber = object.__new__(LocalTranscriber)
+    transcriber._asr = None
+    transcriber._external_asr = RepeatingExternalAsr()
+    transcriber.model_name = "base.en"
+    transcriber.asr_engine = "whisper.cpp"
+    transcriber.backend_description = "whisper.cpp Vulkan"
+    transcriber.device = "vulkan"
+    transcriber.compute_type = "ggml quantized"
+    transcriber.diarize = False
+    transcriber.diarization_device = "none"
+
+    with pytest.raises(TranscriptionQualityError, match="quality check rejected"):
+        transcriber.transcribe_file(audio)
+
+    transcript_dir = tmp_path / "transcripts"
+    assert not (transcript_dir / "radio.json").exists()
+    assert not (transcript_dir / "radio.txt").exists()
+
+
+def test_rendered_transcript_hash_detects_interrupted_file_pair(
+    tmp_path: Path,
+) -> None:
+    audio = tmp_path / "radio.wav"
+    audio.write_bytes(b"audio")
+
+    class FakeExternalAsr:
+        @staticmethod
+        def transcribe(_path: Path, progress=None) -> AsrResult:
+            return AsrResult(
+                text="unit responding",
+                duration=1.0,
+                segments=[AsrSegment(0.0, 1.0, "unit responding")],
+                engine="openvino",
+                backend="OpenVINO CPU",
+                metadata={"model": "tiny"},
+            )
+
+    transcriber = object.__new__(LocalTranscriber)
+    transcriber._asr = None
+    transcriber._external_asr = FakeExternalAsr()
+    transcriber.model_name = "tiny"
+    transcriber.asr_engine = "openvino"
+    transcriber.backend_description = "OpenVINO CPU"
+    transcriber.device = "openvino-cpu"
+    transcriber.compute_type = "int8"
+    transcriber.diarize = False
+    transcriber.diarization_device = "none"
+
+    transcript_path = transcriber.transcribe_file(audio)
+    text_path = transcript_path.with_suffix(".txt")
+    text_path.write_text("partial replacement", encoding="utf-8")
+
+    assert not transcriber._existing_transcript_is_current(
+        audio,
+        transcript_path,
+        text_path,
     )
 
 

@@ -33,9 +33,10 @@ services:
       BROADCASTIFY_MODEL_DIR: /data/models
       FFMPEG_PATH: /usr/bin/ffmpeg
       WHISPER_CPP_PATH: /app/build/bin/whisper-cli
-      WHISPER_CPP_MODEL_PATH: /data/models/whisper/ggml-tiny.en-q5_1.bin
+      WHISPER_CPP_MODEL_PATH: /data/models/whisper.cpp/ggml-base.en-q5_1.bin
+      WHISPER_CPP_VAD_MODEL_PATH: /data/models/whisper.cpp/ggml-silero-v6.2.0.bin
       BROADCASTIFY_DEFAULT_HARDWARE_PROFILE: vulkan
-      BROADCASTIFY_DEFAULT_WHISPER_MODEL: tiny.en
+      BROADCASTIFY_DEFAULT_WHISPER_MODEL: base.en
       BROADCASTIFY_DEFAULT_ASR_ENGINE: whisper.cpp
       BROADCASTIFY_DEFAULT_DEVICE: vulkan
       BROADCASTIFY_DEFAULT_DIARIZATION_ENGINE: sherpa-onnx
