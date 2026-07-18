@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 from broadcastify_cli.asr import AsrResult, AsrSegment
+from broadcastify_cli.portable_diarization import PortableSpeakerTurn
 from broadcastify_cli.qwen_asr import SherpaQwen3Asr
 from broadcastify_cli.transcription import (
     LocalTranscriber,
@@ -415,6 +416,50 @@ def test_portable_and_community_diarization_caches_are_isolated(
     assert portable._load_diarization_cache(audio) == [
         SpeakerTurn(1.0, 2.0, "SPEAKER_01")
     ]
+
+
+def test_portable_diarization_uses_archive_specific_chunk_checkpoint(
+    tmp_path: Path,
+) -> None:
+    audio = tmp_path / "combined.mp3"
+    audio.write_bytes(b"audio")
+    captured: dict[str, object] = {}
+
+    class FakePortable:
+        metadata = {"engine": "sherpa-onnx"}
+
+        def process(
+            self,
+            path: Path,
+            progress=None,
+            checkpoint_path: Path | None = None,
+        ) -> list[PortableSpeakerTurn]:
+            captured["path"] = path
+            captured["checkpoint_path"] = checkpoint_path
+            return [PortableSpeakerTurn(1.0, 2.0, "SPEAKER_00")]
+
+    transcriber = object.__new__(LocalTranscriber)
+    transcriber._portable_diarizer = FakePortable()
+    transcriber._diarization_pipeline = None
+    transcriber.diarization_engine = "sherpa-onnx"
+    transcriber.diarization_model = (
+        "pyannote-segmentation-3.0-int8+nemo-titanet-small"
+    )
+    transcriber.diarization_quality = "preview"
+    transcriber.diarization_device = "cpu"
+    transcriber.min_speakers = None
+    transcriber.max_speakers = None
+
+    turns = transcriber._diarize(audio)
+
+    expected = (
+        tmp_path
+        / "transcripts"
+        / "combined.diarization.sherpa-onnx.chunks.json"
+    )
+    assert turns == [SpeakerTurn(1.0, 2.0, "SPEAKER_00")]
+    assert captured == {"path": audio, "checkpoint_path": expected}
+    assert transcriber._diarization_cache_path(audio).is_file()
 
 
 @pytest.mark.parametrize(

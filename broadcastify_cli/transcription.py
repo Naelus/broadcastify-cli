@@ -838,12 +838,24 @@ class LocalTranscriber:
     ) -> list[SpeakerTurn]:
         cached = self._load_diarization_cache(audio_path)
         if cached is not None:
+            if (
+                getattr(self, "diarization_engine", COMMUNITY_DIARIZATION_ENGINE)
+                == PORTABLE_DIARIZATION_ENGINE
+            ):
+                self._portable_diarization_checkpoint_path(audio_path).unlink(
+                    missing_ok=True
+                )
             if progress:
                 progress(f"Reusing cached diarization for {audio_path.name}")
             return cached
         portable = getattr(self, "_portable_diarizer", None)
         if portable is not None:
-            portable_turns = portable.process(audio_path, progress=progress)
+            checkpoint_path = self._portable_diarization_checkpoint_path(audio_path)
+            portable_turns = portable.process(
+                audio_path,
+                progress=progress,
+                checkpoint_path=checkpoint_path,
+            )
             turns = [
                 SpeakerTurn(value.start, value.end, value.speaker)
                 for value in portable_turns
@@ -1004,6 +1016,13 @@ class LocalTranscriber:
             else f".diarization.{engine}.json"
         )
         return audio_path.parent / "transcripts" / f"{audio_path.stem}{suffix}"
+
+    def _portable_diarization_checkpoint_path(self, audio_path: Path) -> Path:
+        return (
+            audio_path.parent
+            / "transcripts"
+            / f"{audio_path.stem}.diarization.{PORTABLE_DIARIZATION_ENGINE}.chunks.json"
+        )
 
     def _load_diarization_cache(self, audio_path: Path) -> list[SpeakerTurn] | None:
         cache_path = self._diarization_cache_path(audio_path)

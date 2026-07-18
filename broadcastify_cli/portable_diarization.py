@@ -54,6 +54,7 @@ PORTABLE_EMBEDDING_SHA256 = (
 PORTABLE_DEFAULT_CLUSTER_THRESHOLD = 0.95
 PORTABLE_DEFAULT_CHUNK_SECONDS = 15 * 60
 PORTABLE_DEFAULT_OVERLAP_SECONDS = 5.0
+PORTABLE_CHECKPOINT_SCHEMA = 1
 
 _DIARIZATION_ALIASES = {
     "community": COMMUNITY_DIARIZATION_ENGINE,
@@ -743,10 +744,204 @@ class SherpaOnnxDiarizer:
                 merged.append(turn)
         return merged
 
+    def _checkpoint_identity(
+        self,
+        audio_path: Path,
+        *,
+        duration: float,
+        chunk_count: int,
+    ) -> dict[str, Any]:
+        audio_stat = audio_path.stat()
+        model_files: list[dict[str, Any]] = []
+        model_info = getattr(self, "model_info", None)
+        for role, attribute in (
+            ("segmentation", "segmentation_path"),
+            ("embedding", "embedding_path"),
+        ):
+            value = getattr(model_info, attribute, None)
+            if value is None:
+                continue
+            path = Path(value)
+            try:
+                model_stat = path.stat()
+            except OSError:
+                continue
+            model_files.append(
+                {
+                    "role": role,
+                    "path": str(path.resolve()),
+                    "size": model_stat.st_size,
+                    "mtime_ns": model_stat.st_mtime_ns,
+                }
+            )
+        metadata = getattr(self, "metadata", {})
+        return {
+            "schema": PORTABLE_CHECKPOINT_SCHEMA,
+            "engine": metadata.get("engine", PORTABLE_DIARIZATION_ENGINE),
+            "model": metadata.get("model", PORTABLE_DIARIZATION_MODEL),
+            "provider": metadata.get("provider", "cpu"),
+            "quality": metadata.get("quality", PORTABLE_DIARIZATION_QUALITY),
+            "runtime_version": metadata.get("runtime_version", ""),
+            "audio_path": str(audio_path.resolve()),
+            "audio_size": audio_stat.st_size,
+            "audio_mtime_ns": audio_stat.st_mtime_ns,
+            "duration_seconds": duration,
+            "chunk_count": chunk_count,
+            "chunk_seconds": self.chunk_seconds,
+            "overlap_seconds": self.overlap_seconds,
+            "cluster_threshold": getattr(self, "cluster_threshold", None),
+            "min_speakers": getattr(self, "min_speakers", None),
+            "max_speakers": getattr(self, "max_speakers", None),
+            "model_files": model_files,
+        }
+
+    @staticmethod
+    def _checkpoint_turns(
+        value: Any,
+        *,
+        chunk_index: int,
+        chunk_count: int,
+        chunk_seconds: int,
+        duration: float,
+    ) -> list[PortableSpeakerTurn] | None:
+        if not isinstance(value, list):
+            return None
+        expected_prefix = (
+            "SPEAKER_"
+            if chunk_count == 1
+            else f"SPEAKER_C{chunk_index:03d}_"
+        )
+        core_start = chunk_index * chunk_seconds
+        core_end = min(duration, core_start + chunk_seconds)
+        result: list[PortableSpeakerTurn] = []
+        for item in value:
+            if not isinstance(item, dict):
+                return None
+            start = item.get("start")
+            end = item.get("end")
+            speaker = item.get("speaker")
+            if (
+                isinstance(start, bool)
+                or isinstance(end, bool)
+                or not isinstance(start, (int, float))
+                or not isinstance(end, (int, float))
+                or not math.isfinite(float(start))
+                or not math.isfinite(float(end))
+                or float(start) < 0
+                or float(end) <= float(start)
+                or float(end) > duration + 0.001
+                or not isinstance(speaker, str)
+                or not speaker.startswith(expected_prefix)
+                or not speaker[len(expected_prefix) :].isdigit()
+                or len(speaker) > 128
+            ):
+                return None
+            midpoint = (float(start) + float(end)) / 2
+            belongs = midpoint >= core_start and (
+                midpoint < core_end
+                or (
+                    chunk_index == chunk_count - 1
+                    and midpoint <= core_end
+                )
+            )
+            if not belongs:
+                return None
+            result.append(
+                PortableSpeakerTurn(
+                    start=float(start),
+                    end=float(end),
+                    speaker=speaker,
+                )
+            )
+        return result
+
+    def _load_checkpoint(
+        self,
+        checkpoint_path: Path,
+        *,
+        identity: dict[str, Any],
+        duration: float,
+        chunk_count: int,
+    ) -> tuple[dict[int, list[PortableSpeakerTurn]], bool]:
+        if not checkpoint_path.is_file():
+            return {}, False
+        try:
+            payload = json.loads(checkpoint_path.read_text(encoding="utf-8"))
+            if (
+                not isinstance(payload, dict)
+                or payload.get("schema") != PORTABLE_CHECKPOINT_SCHEMA
+                or payload.get("identity") != identity
+                or not isinstance(payload.get("chunks"), list)
+            ):
+                return {}, True
+            chunks: dict[int, list[PortableSpeakerTurn]] = {}
+            for item in payload["chunks"]:
+                if not isinstance(item, dict):
+                    return {}, True
+                index = item.get("index")
+                if (
+                    isinstance(index, bool)
+                    or not isinstance(index, int)
+                    or index < 0
+                    or index >= chunk_count
+                    or index in chunks
+                ):
+                    return {}, True
+                turns = self._checkpoint_turns(
+                    item.get("turns"),
+                    chunk_index=index,
+                    chunk_count=chunk_count,
+                    chunk_seconds=self.chunk_seconds,
+                    duration=duration,
+                )
+                if turns is None:
+                    return {}, True
+                chunks[index] = turns
+            return chunks, False
+        except (OSError, TypeError, ValueError, json.JSONDecodeError):
+            return {}, True
+
+    @staticmethod
+    def _write_checkpoint(
+        checkpoint_path: Path,
+        *,
+        identity: dict[str, Any],
+        chunks: dict[int, list[PortableSpeakerTurn]],
+    ) -> None:
+        checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+        partial = checkpoint_path.with_name(checkpoint_path.name + ".tmp")
+        partial.write_text(
+            json.dumps(
+                {
+                    "schema": PORTABLE_CHECKPOINT_SCHEMA,
+                    "identity": identity,
+                    "chunks": [
+                        {
+                            "index": index,
+                            "turns": [
+                                {
+                                    "start": turn.start,
+                                    "end": turn.end,
+                                    "speaker": turn.speaker,
+                                }
+                                for turn in chunks[index]
+                            ],
+                        }
+                        for index in sorted(chunks)
+                    ],
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        partial.replace(checkpoint_path)
+
     def process(
         self,
         audio_file: str | Path,
         progress: Callable[[str], None] | None = None,
+        checkpoint_path: str | Path | None = None,
     ) -> list[PortableSpeakerTurn]:
         audio_path = Path(audio_file)
         if not audio_path.is_file():
@@ -756,8 +951,35 @@ class SherpaOnnxDiarizer:
             raise RuntimeError("FFmpeg is required for portable speaker labels.")
         duration = _probe_audio_duration(audio_path, ffmpeg)
         chunk_count = max(1, math.ceil(duration / self.chunk_seconds))
+        checkpoint = Path(checkpoint_path) if checkpoint_path is not None else None
+        checkpoint_identity = self._checkpoint_identity(
+            audio_path,
+            duration=duration,
+            chunk_count=chunk_count,
+        )
+        checkpoint_chunks: dict[int, list[PortableSpeakerTurn]] = {}
+        checkpoint_ignored = False
+        if checkpoint is not None:
+            checkpoint_chunks, checkpoint_ignored = self._load_checkpoint(
+                checkpoint,
+                identity=checkpoint_identity,
+                duration=duration,
+                chunk_count=chunk_count,
+            )
         turns: list[PortableSpeakerTurn] = []
         started = time.monotonic()
+        self.metadata.update(
+            {
+                "checkpoint_enabled": checkpoint is not None,
+                "checkpoint_chunks_reused": len(checkpoint_chunks),
+                "checkpoint_ignored": checkpoint_ignored,
+            }
+        )
+        if progress and checkpoint_ignored:
+            progress(
+                "Ignoring an incompatible or incomplete fast speaker preview "
+                "checkpoint and starting its chunks again."
+            )
         if (
             progress
             and not self.metadata.get("speaker_range_honored", True)
@@ -768,6 +990,14 @@ class SherpaOnnxDiarizer:
                 "an exact count."
             )
         for chunk_index in range(chunk_count):
+            if chunk_index in checkpoint_chunks:
+                turns.extend(checkpoint_chunks[chunk_index])
+                if progress:
+                    progress(
+                        "Reusing checkpointed fast speaker preview chunk "
+                        f"{chunk_index + 1}/{chunk_count}"
+                    )
+                continue
             core_start = chunk_index * self.chunk_seconds
             core_end = min(duration, core_start + self.chunk_seconds)
             decode_start = max(0.0, core_start - self.overlap_seconds)
@@ -810,6 +1040,7 @@ class SherpaOnnxDiarizer:
                 if chunk_count == 1
                 else f"SPEAKER_C{chunk_index:03d}_"
             )
+            chunk_turns: list[PortableSpeakerTurn] = []
             for segment in segments:
                 local_start = float(segment.start)
                 local_end = float(segment.end)
@@ -828,12 +1059,20 @@ class SherpaOnnxDiarizer:
                 )
                 if not belongs or absolute_end <= absolute_start:
                     continue
-                turns.append(
+                chunk_turns.append(
                     PortableSpeakerTurn(
                         start=absolute_start,
                         end=absolute_end,
                         speaker=f"{prefix}{int(segment.speaker):02d}",
                     )
+                )
+            turns.extend(chunk_turns)
+            if checkpoint is not None:
+                checkpoint_chunks[chunk_index] = chunk_turns
+                self._write_checkpoint(
+                    checkpoint,
+                    identity=checkpoint_identity,
+                    chunks=checkpoint_chunks,
                 )
         merged = self._merge_turns(turns)
         self.metadata.update(
@@ -845,6 +1084,11 @@ class SherpaOnnxDiarizer:
                 "speaker_identity_scope": "processing-chunk",
             }
         )
+        if checkpoint is not None:
+            try:
+                checkpoint.unlink(missing_ok=True)
+            except OSError as exc:
+                self.metadata["checkpoint_cleanup_error"] = str(exc)
         if progress:
             progress(
                 f"Fast speaker preview found {len(merged)} turns in "

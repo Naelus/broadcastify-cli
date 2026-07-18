@@ -215,3 +215,133 @@ def test_chunked_preview_scopes_speakers_and_discards_overlap_duplicates(
     ]
     assert adapter.metadata["chunk_count"] == 2
     assert adapter.metadata["speaker_identity_scope"] == "processing-chunk"
+
+
+def test_chunk_checkpoint_resumes_after_failure_and_is_removed_on_success(
+    monkeypatch, tmp_path: Path
+) -> None:
+    audio = tmp_path / "radio.wav"
+    audio.write_bytes(b"audio")
+    checkpoint = tmp_path / "radio.sherpa-onnx.chunks.json"
+
+    class FailingEngine:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def process(self, _samples: object, callback) -> list[SimpleNamespace]:
+            self.calls += 1
+            callback(1, 1)
+            if self.calls == 2:
+                raise RuntimeError("interrupted")
+            return [SimpleNamespace(start=10.0, end=12.0, speaker=0)]
+
+    class CompletingEngine:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def process(self, _samples: object, callback) -> list[SimpleNamespace]:
+            self.calls += 1
+            callback(1, 1)
+            return [SimpleNamespace(start=10.0, end=12.0, speaker=1)]
+
+    def adapter(engine: object) -> SherpaOnnxDiarizer:
+        value = object.__new__(SherpaOnnxDiarizer)
+        value.chunk_seconds = 60
+        value.overlap_seconds = 5.0
+        value.cluster_threshold = 0.95
+        value.min_speakers = None
+        value.max_speakers = None
+        value._numpy = SimpleNamespace(
+            float32="float32",
+            frombuffer=lambda *_a, **_k: [0.0],
+        )
+        value._engine = engine
+        value.metadata = {}
+        value._decode_chunk = lambda *_a, **_k: [0.0]
+        return value
+
+    monkeypatch.setattr(portable, "find_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(portable, "_probe_audio_duration", lambda *_args: 120.0)
+    first_engine = FailingEngine()
+
+    with pytest.raises(RuntimeError, match="interrupted"):
+        adapter(first_engine).process(audio, checkpoint_path=checkpoint)
+
+    assert first_engine.calls == 2
+    assert checkpoint.is_file()
+    payload = json.loads(checkpoint.read_text(encoding="utf-8"))
+    assert [value["index"] for value in payload["chunks"]] == [0]
+
+    second_engine = CompletingEngine()
+    resumed = adapter(second_engine)
+    messages: list[str] = []
+    turns = resumed.process(
+        audio,
+        progress=messages.append,
+        checkpoint_path=checkpoint,
+    )
+
+    assert second_engine.calls == 1
+    assert turns == [
+        PortableSpeakerTurn(10.0, 12.0, "SPEAKER_C000_00"),
+        PortableSpeakerTurn(65.0, 67.0, "SPEAKER_C001_01"),
+    ]
+    assert resumed.metadata["checkpoint_enabled"] is True
+    assert resumed.metadata["checkpoint_chunks_reused"] == 1
+    assert resumed.metadata["checkpoint_ignored"] is False
+    assert "Reusing checkpointed fast speaker preview chunk 1/2" in messages
+    assert not checkpoint.exists()
+
+
+def test_chunk_checkpoint_is_not_reused_after_audio_changes(
+    monkeypatch, tmp_path: Path
+) -> None:
+    audio = tmp_path / "radio.wav"
+    audio.write_bytes(b"audio")
+    checkpoint = tmp_path / "radio.sherpa-onnx.chunks.json"
+
+    class Engine:
+        def __init__(self, fail_on_second: bool = False) -> None:
+            self.calls = 0
+            self.fail_on_second = fail_on_second
+
+        def process(self, _samples: object, callback) -> list[SimpleNamespace]:
+            self.calls += 1
+            callback(1, 1)
+            if self.fail_on_second and self.calls == 2:
+                raise RuntimeError("interrupted")
+            return [SimpleNamespace(start=10.0, end=12.0, speaker=0)]
+
+    def adapter(engine: object) -> SherpaOnnxDiarizer:
+        value = object.__new__(SherpaOnnxDiarizer)
+        value.chunk_seconds = 60
+        value.overlap_seconds = 5.0
+        value.cluster_threshold = 0.95
+        value.min_speakers = None
+        value.max_speakers = None
+        value._numpy = SimpleNamespace(
+            float32="float32",
+            frombuffer=lambda *_a, **_k: [0.0],
+        )
+        value._engine = engine
+        value.metadata = {}
+        value._decode_chunk = lambda *_a, **_k: [0.0]
+        return value
+
+    monkeypatch.setattr(portable, "find_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(portable, "_probe_audio_duration", lambda *_args: 120.0)
+    with pytest.raises(RuntimeError, match="interrupted"):
+        adapter(Engine(fail_on_second=True)).process(
+            audio,
+            checkpoint_path=checkpoint,
+        )
+
+    audio.write_bytes(b"changed audio")
+    replacement_engine = Engine()
+    replacement = adapter(replacement_engine)
+    replacement.process(audio, checkpoint_path=checkpoint)
+
+    assert replacement_engine.calls == 2
+    assert replacement.metadata["checkpoint_chunks_reused"] == 0
+    assert replacement.metadata["checkpoint_ignored"] is True
+    assert not checkpoint.exists()
