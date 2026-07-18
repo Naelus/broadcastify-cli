@@ -18,6 +18,16 @@ class FakeWriter:
         return "**Top leads**\n* A shots-fired dispatch report appeared in overlapping selected feeds. Verify independently."
 
 
+class MisstatingWriter:
+    model = "misstating-test-model"
+
+    def chat_text(self, **_kwargs: object) -> str:
+        return (
+            "Coverage covers one feed-day with data available for one.\n"
+            "Fire/Arson report across the 12345 area."
+        )
+
+
 def test_public_quote_redacts_contextual_name_and_phone() -> None:
     quote, changed = _public_quote(
         "Check the welfare of Summer Gibson; call 309-555-0123."
@@ -26,6 +36,20 @@ def test_public_quote_redacts_contextual_name_and_phone() -> None:
     assert changed is True
     assert "Summer Gibson" not in quote
     assert "309-555-0123" not in quote
+
+
+def test_public_quote_redacts_names_after_check_for_and_direct_address() -> None:
+    quote, changed = _public_quote(
+        "Apartment 4, check for Jordan Example. Hey, Matthew, you have a call."
+    )
+
+    assert changed is True
+    assert "Jordan Example" not in quote
+    assert "Matthew" not in quote
+    assert quote == (
+        "Apartment 4, check for [private person]. "
+        "Hey, [private person], you have a call."
+    )
 
 
 def test_public_quote_redacts_a_name_after_the_known_incident_location() -> None:
@@ -39,6 +63,16 @@ def test_public_quote_redacts_a_name_after_the_known_incident_location() -> None
     assert quote.endswith("[private person].")
 
 
+def test_public_quote_redacts_a_single_name_after_an_unpunctuated_location() -> None:
+    quote, changed = _public_quote(
+        "447 Fallen Oak, apartment 1D David on the back patio.",
+        location="447 Fallen Oak, apartment 1D",
+    )
+
+    assert changed is True
+    assert quote == "447 Fallen Oak, apartment 1D [private person] on the back patio."
+
+
 def test_public_quote_redacts_a_location_adjacent_name_before_dispatch_clause() -> None:
     quote, changed = _public_quote(
         "9805, Jordan Example, for an intrusion alarm on the garage door.",
@@ -48,6 +82,46 @@ def test_public_quote_redacts_a_location_adjacent_name_before_dispatch_clause() 
     assert changed is True
     assert "Jordan Example" not in quote
     assert quote == "9805, [private person], for an intrusion alarm on the garage door."
+
+
+def test_area_summary_uses_db_coverage_and_does_not_treat_zip_as_a_geofence(
+    tmp_path: Path,
+) -> None:
+    with AnalysisStore(tmp_path / "analysis.sqlite3") as store:
+        summary = AreaStoryAnalyzer(store, MisstatingWriter())._write_digest(  # noqa: SLF001
+            {"name": "Example City", "zip_codes": ["12345"]},
+            date(2026, 7, 15),
+            date(2026, 7, 16),
+            [
+                {
+                    "story_id": "S1",
+                    "newsworthiness_score": 70,
+                    "interest_level": "Strong lead",
+                    "priority": 4,
+                    "event_type": "fire",
+                    "first_reported": "2026-07-15 16:08:48",
+                    "headline": "Reported fire",
+                    "summary": "Radio traffic reported a fire.",
+                    "location": "Fallen Oak",
+                    "feed_ids": ["90001"],
+                }
+            ],
+            {
+                "feed_days_available": 2,
+                "feed_days_expected": 2,
+                "feeds_with_data": 1,
+                "feed_count": 1,
+            },
+        )
+
+    assert summary.startswith(
+        "Coverage: 2/2 selected feed-days analyzed; "
+        "1/1 selected feeds had retained current analysis."
+    )
+    assert "Coverage covers" not in summary
+    assert "arson" not in summary.lower()
+    assert "12345 area" not in summary
+    assert "reported fire report on the selected feeds" in summary.lower()
 
 
 def _transcript(path: Path, text: str) -> None:
@@ -186,6 +260,10 @@ def test_area_digest_clusters_cross_feed_reports_and_is_cached(tmp_path: Path) -
         assert all(value["quote"] for value in story["incident_references"])
         assert all(not value["clip_available"] for value in story["incident_references"])
         assert first["coverage"]["feed_days_available"] == 2
+        assert first["summary"].startswith(
+            "Coverage: 2/2 selected feed-days analyzed; "
+            "2/2 selected feeds had retained current analysis."
+        )
         assert "**" not in first["summary"]
         assert second["cached"] is True
         assert writer.calls == 1
@@ -290,6 +368,61 @@ def test_area_digest_merges_near_duplicate_same_feed_reports(tmp_path: Path) -> 
 
     assert len(result["stories"]) == 1
     assert len(result["stories"][0]["incident_references"]) == 2
+
+
+def test_area_digest_surfaces_a_supported_single_feed_vehicle_theft(
+    tmp_path: Path,
+) -> None:
+    archive_date = date(2026, 7, 16)
+    writer = FakeWriter()
+    with AnalysisStore(tmp_path / "analysis.sqlite3") as store:
+        transcript = tmp_path / "90001.json"
+        _transcript(
+            transcript,
+            "Example Township Police had a squad car stolen; it was later located unoccupied.",
+        )
+        imported = store.import_transcript("90001", archive_date, transcript)
+        incident_ids = store.replace_incidents(
+            imported.day_id,
+            [
+                _incident(
+                    "example-township-stolen-squad",
+                    "vehicle_theft",
+                    "Stolen vehicle located in Example Township",
+                    "Radio traffic reported a stolen squad car was located unoccupied.",
+                    "Example Township",
+                    2,
+                )
+            ],
+            "test-model",
+            PROMPT_VERSION,
+        )
+        store.save_daily_summary(
+            imported.day_id,
+            "A supported stolen-vehicle report was retained.",
+            incident_ids,
+            model="test-model",
+            prompt_version=PROMPT_VERSION,
+            transcript_sha256=imported.transcript_sha256,
+        )
+        store.save_area_profile(
+            "Regional desk",
+            ["12345"],
+            [{"feed_id": "90001", "name": "Example City Public Safety"}],
+        )
+
+        result = AreaStoryAnalyzer(store, writer).summarize(
+            "Regional desk",
+            archive_date,
+            archive_date,
+        )
+
+    assert len(result["stories"]) == 1
+    story = result["stories"][0]
+    assert story["event_type"] == "vehicle_theft"
+    assert story["priority"] == 3
+    assert story["newsworthiness_score"] >= 48
+    assert story["feed_count"] == 1
 
 
 def test_area_digest_excludes_stale_daily_claims(tmp_path: Path) -> None:

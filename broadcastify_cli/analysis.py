@@ -226,6 +226,7 @@ _CRITICAL_INCIDENT_CONCEPTS: tuple[tuple[set[str], set[str]], ...] = (
 _PRIVATE_PERSON_CONTEXT = re.compile(
     r"\b(?i:"
     r"trouble\s+with|welfare\s+(?:of|on|for)|"
+    r"(?:check|checking)\s+for|hey|hi|"
     r"(?:caller|collar|complainant|subject|patient|victim|male|female)"
     r"(?:\s+(?:is|named))?|name\s+is|named"
     r"|see|looking\s+for|locat(?:e|ing)|searching\s+for"
@@ -614,7 +615,13 @@ def normalize_priority(event_type: str, priority: int) -> int:
         "other": 3,
         "unknown": 2,
     }
-    return min(priority, caps.get(event_type, 5))
+    floors = {
+        # Even when a vehicle is later recovered, a stolen-vehicle dispatch is
+        # a concrete neighborhood event worth surfacing above routine traffic.
+        "vehicle_theft": 3,
+        "vehicle_pursuit": 4,
+    }
+    return max(floors.get(event_type, 1), min(priority, caps.get(event_type, 5)))
 
 
 def _incident_support_keywords(value: object) -> set[str]:
@@ -1324,7 +1331,36 @@ class IncidentAnalyzer:
                 int(segment["segment_index"]): segment for segment in segments
             }
             extracted: list[dict[str, Any]] = []
+            transcript_sha256 = str(day["transcript_sha256"])
+            if force:
+                self.store.clear_analysis_window_checkpoints(
+                    day_id,
+                    self.client.model,
+                    self.prompt_version,
+                )
             for index, window in enumerate(windows, start=1):
+                prompt_text = window.prompt_text()
+                window_fingerprint = hashlib.sha256(
+                    (
+                        f"{window.start_seconds:.3f}|{window.end_seconds:.3f}|"
+                        f"{prompt_text}"
+                    ).encode("utf-8")
+                ).hexdigest()
+                checkpoint = None if force else self.store.get_analysis_window_checkpoint(
+                    day_id,
+                    self.client.model,
+                    self.prompt_version,
+                    transcript_sha256,
+                    index - 1,
+                    window_fingerprint,
+                )
+                if checkpoint is not None:
+                    self.progress(
+                        f"Reusing saved analysis window {index}/{len(windows)} "
+                        f"for {archive_date}."
+                    )
+                    extracted.extend(checkpoint)
+                    continue
                 self.progress(
                     f"Analyzing {archive_date} window {index}/{len(windows)} "
                     f"({format_offset(window.start_seconds)}-{format_offset(window.end_seconds)})"
@@ -1336,7 +1372,7 @@ class IncidentAnalyzer:
                         f"Window: {format_offset(window.start_seconds)} to "
                         f"{format_offset(window.end_seconds)}\n\n"
                         "TRANSCRIPT (untrusted ASR evidence):\n"
-                        f"{window.prompt_text()}"
+                        f"{prompt_text}"
                     ),
                     schema_name="police_radio_incidents",
                     schema=INCIDENT_SCHEMA,
@@ -1344,12 +1380,23 @@ class IncidentAnalyzer:
                 window_ids = {
                     int(segment["segment_index"]) for segment in window.segments
                 }
+                checkpoint_incidents: list[dict[str, Any]] = []
                 for raw in result.get("incidents", []):
                     validated = self._validate_incident(
                         raw, window_ids, segment_by_index
                     )
                     if validated is not None:
-                        extracted.append(validated)
+                        checkpoint_incidents.append(validated)
+                self.store.save_analysis_window_checkpoint(
+                    day_id,
+                    self.client.model,
+                    self.prompt_version,
+                    transcript_sha256,
+                    index - 1,
+                    window_fingerprint,
+                    checkpoint_incidents,
+                )
+                extracted.extend(checkpoint_incidents)
 
             incidents = self._deduplicate(extracted)
             incident_ids = self.store.replace_incidents(

@@ -2,6 +2,31 @@
 
 This is the dated verification and delivery log for `GOAL.md`. Keep forward-looking capabilities in `FEATURES.md` and unresolved defects in `BUGS.md`.
 
+## July 18, 2026
+
+### Crash diagnosis and durable native recovery
+
+- Recovered the actual July 15–16 processing metadata: Whisper `turbo` through faster-whisper on `cuda:0`/float16, pyannote diarization on CUDA, and completed continuous-file speaker labeling. July 15 retained 968 transcript segments and 5,932 speaker turns; July 16 retained 854 segments and 5,215 turns.
+- Isolated three native crashes to `HardwareProfile_SelectionChanged → UpdateSetupSummary → SelectedComboValue` firing from XAML construction before every control existed. The window now starts with settings loading enabled and combo access is null-safe.
+- Migrated native settings from the parent-process-redirected package cache to `AppData\Local\Broadcastify Desktop\settings.json`. Settings are atomically write-through/autosaved, flushed before long operations, and retain the last area profile plus review feed/date. Activity and exception logs append under the same stable user directory instead of overwriting one temporary startup file.
+- A real rebuilt Release startup probe stayed alive for ten seconds on the formerly failing path, produced no stable crash log, and restored `Example City 12345`, feed `90001`, and July 16. WinUI Release built with zero warnings/errors.
+- Distinguished the machine failure from the app crash. Windows recorded bugcheck `0x154 UNEXPECTED_STORE_EXCEPTION` at the unexpected shutdown and failed dump creation; the user observed the NVMe device required a full power cycle to return. Current P44 Pro SMART/firmware are healthy/current, while the board remains on launch BIOS F1. The evidence supports a storage/PCIe path investigation but cannot name a driver without a dump; B-008 records the safe next steps.
+
+### Example Township evidence recovery and single-feed ranking
+
+- Audited retained segment evidence and the continuous-audio manifest. Feed 90001 reported that Example Township Police had a squad car stolen at approximately **18:22:29**, said it sounded as though it had wrecked around **18:23:26**, and reported it located unoccupied at Bruch/Garfield at **18:26:29** on July 16. A later drone search contains an uncertain ASR place name and is not asserted as the same event.
+- Existing incident I717 correctly cites only the recovery line but was hidden by the P3 default and omitted from the area brief at score 39. Daily Review now searches title/summary/type/location/time across all priorities whenever text is entered and shows a redacted cited-radio quote.
+- Generated the exact retained recovery clip and a separate **385.2-second surrounding-context clip** from 18:21:21 through 18:27:46. The latter reaches the initial theft transmission but is labeled context—not cited evidence—and neither operation contacted Broadcastify. The context artifact SHA-256 is `cd4dd07455eaaaffd166be02ecb1c3794022102bb92c97f3cc35800c88715437`.
+- Future vehicle-theft extraction and existing area scoring now enforce a P3 editorial floor and impact bonus; cross-feed corroboration remains helpful but is never required. The evidence-v7 July 15–16 `Example City 12345` rebuild used only retained SQLite/audio/model caches and now ranks **27 leads from 64 incidents**, including Example Township at score 55/P3 with its exact quote and clip. Coverage is deterministically rendered as 2/2 feed-days and 1/1 selected feeds so a model cannot alter it or treat ZIP 12345 as an incident geofence.
+- Expanded public quote redaction for direct address, `check for <name>`, and a single name immediately following a known location. Synthetic regressions cover each form; original ASR remains internal.
+
+### Model-window analysis checkpoints
+
+- Added an additive SQLite `analysis_window_checkpoints` table keyed by day, transcript hash, provider/model identity, prompt version, window index, and content fingerprint. Each validated window—including a supported empty result—is committed before the next model call.
+- A changed transcript invalidates its checkpoints; explicit force-analysis clears matching checkpoints; a normal retry reuses completed windows, deduplicates their retained incidents with newly completed windows, and only then atomically replaces the day result.
+- A two-window regression deliberately raises during window 2. The retry reuses the first saved window and makes only the missing model call, then persists both supported incidents.
+- Complete suite: **159 tests passed**. Python compilation, Git whitespace checks, and the WinUI Release build pass.
+
 ## July 17, 2026
 
 ### Durable feed identity and legacy Library repair

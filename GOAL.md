@@ -1,6 +1,6 @@
 # Project goal
 
-Last updated: July 17, 2026
+Last updated: July 18, 2026
 
 Build a dependable, evidence-first radio archive intelligence application that is pleasant for an ordinary user on Windows and has a credible path to the same core workflow on Linux and macOS.
 
@@ -9,7 +9,7 @@ The tested Windows experience remains the reference behavior. A user should be a
 ## Current acceptance targets
 
 1. **Pipeline parity:** CUDA, CPU, Vulkan, OpenVINO, and Windows ML profiles must each report stage-by-stage readiness honestly. A profile is called ready only after real transcription, diarization/fallback, and local-analysis checks appropriate to that profile pass.
-2. **Resumability:** downloads, combination, transcription, diarization, embeddings, incident extraction, and summaries persist independently. A retry starts at the first missing or invalid stage; an evidence-rule upgrade reuses retained audio/transcripts while withholding older claims until local reanalysis finishes.
+2. **Resumability:** downloads, combination, transcription, diarization, embeddings, incident extraction, and summaries persist independently. Incident extraction checkpoints every completed model window, so an interrupted full-day analysis resumes inside that stage instead of discarding earlier model work. A retry starts at the first missing or invalid stage; an evidence-rule upgrade reuses retained audio/transcripts while withholding older claims until local reanalysis finishes.
 3. **Evidence:** every surfaced event can be traced to timestamped transcript text and a playable/exportable local clip. Missing coverage is never described as inactivity.
 4. **Quota safety:** archive acquisition is sequential by default, paced, cache-aware, responsive to `Retry-After`, and stops all further media requests after the explicit Broadcastify download-limit response.
 5. **Usable UI:** primary workflows use clear navigation and master/detail views rather than one long page. Common actions fit at the reference 1240x900 window size; advanced hardware controls stay optional.
@@ -26,6 +26,7 @@ The tested Windows experience remains the reference behavior. A user should be a
 - Windows ML performs a real ONNX Whisper decode through the packaged helper and is integrated only after the model/runtime self-test passes. Exact source commit `historical-validation` completes the matching fresh protected 60-second Web job in 32 seconds and an idempotent resume without repeating ASR, diarization, analysis, or embeddings.
 - Settings explain the selected stage backends, consolidate account/storage/transcription/speaker/analysis readiness, offer explicit real-execution ASR and diarization self-tests in both UIs, and prevent unsupported combinations or CPU fallbacks from looking like the requested accelerator succeeded.
 - The Local Library viewer makes unfinished diarization, analysis, and evidence-rule upgrades obvious, offers the exact next action, and never presents an older analysis version as current.
+- Native settings, the last review day/area profile, operation logs, and model-window progress survive an application or machine interruption; a startup failure leaves an append-only local diagnostic rather than overwriting the previous one.
 - Regional story review keeps the ranked lead list and one selected evidence package visible as a bounded master/detail workspace in both UIs, including responsive phone navigation, rather than rendering every full story card in one long page.
 - Linux has a wheel-packaged, loopback-only per-user service lifecycle validated from exact commit `historical-validation`, and exact commit `historical-validation` passes the full-model desktop/mobile visual and accessibility matrix plus all 148 host tests. Real macOS validation still prevents calling portability complete.
 - The application receives another visual QA and accessibility pass after every material navigation/viewer change.

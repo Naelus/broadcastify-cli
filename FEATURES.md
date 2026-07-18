@@ -1,6 +1,6 @@
 # Feature inventory
 
-Last updated: July 17, 2026
+Last updated: July 18, 2026
 
 Status labels: **Validated**, **Implemented**, **Foundation**, or **Planned**.
 
@@ -26,7 +26,7 @@ Status labels: **Validated**, **Implemented**, **Foundation**, or **Planned**.
 | Windows ML Whisper | Validated | Batched streaming C# helper and real CPU decode/self-test pass; provider discovery/acquisition is explicit, while DML/TensorRT acceleration stays gated after measured incompatibilities. |
 | pyannote diarization CUDA/CPU | Validated | Existing transcripts can gain labels without rerunning ASR; FFmpeg-to-memory-mapped waveform input bypasses broken TorchCodec file loaders. |
 | Non-CUDA diarization acceleration | Planned | Current portable behavior is CPU fallback. |
-| SQLite transcript/incident/summary store | Validated | Includes FTS, embeddings, Q&A history, area profiles/queues, cached briefs, and prompt-version invalidation so retained media survives an evidence-rule upgrade while older claims are withheld. |
+| SQLite transcript/incident/summary store | Validated | Includes FTS, embeddings, Q&A history, area profiles/queues, cached briefs, per-model-window incident-analysis checkpoints, and prompt-version invalidation so retained media survives an interruption or evidence-rule upgrade while older claims are withheld. |
 | Evidence/identity safety gates | Validated | Exact-citation claim/concept checks, bounded evidence gaps, deterministic category/priority correction, contained-evidence dedupe, outcome-language rejection, and public identifier/name redaction including location-adjacent dispatch forms; original ASR remains available for internal audit. |
 | Quantized llama.cpp analysis | Validated | Gemma GGUF selector or explicit local path; retained removed quants are reused from older Hub snapshots, clean installs use the current `Q4_0` default, and real AMD Vulkan generation offloaded all tested model layers. |
 | Provider API/Codex harness | Validated | Native Settings and CLI support local Gemma, OpenAI Responses, compatible `/v1` endpoints, and ephemeral saved-login Codex with explicit transcript-sharing consent and readiness checks. |
@@ -39,7 +39,7 @@ Status labels: **Validated**, **Implemented**, **Foundation**, or **Planned**.
 | Local Library master/detail viewer | Validated | Processing timeline, audio playback, transcript preview, resume/open actions, durable human-readable names from catalog/manifest identity, and a distinct local-only reanalysis state for summaries created under older evidence rules. |
 | Saved secure Broadcastify login | Implemented | Windows Credential Locker plus session refresh. |
 | Private `.env` build option | Implemented | Explicit opt-in only; normal builds remove stale copies. |
-| Daily incident/evidence review | Validated | Exact local clips and export actions; a real Example City long-span card was verified to cut/play the cited event rather than seek to the broad incident-envelope start. |
+| Daily incident/evidence review | Validated | Priority-filtered browsing plus search across every priority, redacted cited-radio quotes, exact playable/exportable clips, and an explicitly non-evidentiary surrounding-context clip for hearing an earlier dispatch before a cited disposition. |
 | Seven-day summaries | Validated | Explicitly separates available, missing, and retained-but-needing-reanalysis days. |
 | Regional story leads | Validated | Evidence-backed assignment leads, not confirmations; explicit feed selection survives rediscovery/filtering, older briefs are version-gated, and both UIs use a bounded ranked-list/selected-evidence master/detail viewer with redacted quotes plus exact playable/exportable clips. |
 | Cross-platform browser UI | Validated | Windows QA plus exact Linux commit `historical-validation` passed 148 host tests and full-model desktop/mobile visual, accessibility, navigation, media, and loopback-security checks; safe area-evidence packages expose no local paths. Real macOS validation remains open. |
@@ -47,6 +47,7 @@ Status labels: **Validated**, **Implemented**, **Foundation**, or **Planned**.
 | Explicit ASR runtime self-test | Validated | Native and Web Settings decode local synthetic audio using the selected model/device, with managed downloads only after a user starts the test. |
 | Explicit diarization runtime self-test | Validated | Native and Web Settings load Community-1 and execute generated waveform audio on CUDA/CPU; a complete cache now works offline without retaining a token. |
 | First-run readiness overview | Validated | Five concise account/storage/transcription/speaker/analysis steps share stage diagnostics and direct setup/test actions in native and Web UIs. |
+| Native crash/state recovery | Validated | Stable per-user atomic settings with legacy migration and debounced autosave, restored review/profile selection, append-only activity/crash logs, and a real startup probe of the formerly crashing XAML event path. |
 | Verified Windows publish | Validated | Runnable WinUI resources plus namespaced Windows ML runtime; normal/private credential isolation is verified. |
 | Installer/model manager/onboarding | Foundation | In-app readiness, verified Windows publish, and the managed Linux service are implemented; dependency/model acquisition and non-developer packaging remain. |
 

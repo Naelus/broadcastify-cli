@@ -30,15 +30,15 @@ This fork uses Broadcastify's website login and the same private web endpoints a
 - A native **Analysis & AI** Settings tab with explicit transcript-sharing consent, no-usage readiness checks, session/env keys, and optional Windows Credential Locker storage
 - A five-step first-run setup overview in both UIs covering account, storage, transcription, speaker labels, and analysis without hiding the stage-specific controls
 - Explicit transcription and speaker-label execution tests that use generated local audio and never consume Broadcastify archive quota
-- Cache/resume behavior for downloads, combined audio, transcripts, embeddings, incidents, and summaries
+- Cache/resume behavior for downloads, combined audio, transcripts, embeddings, incidents, and summaries, including a durable checkpoint after every completed incident-analysis model window
 - Automatic transcript import, incident extraction, summary, and semantic indexing after a completed UI job
-- Saved-day review, priority-filtered incident timeline, and evidence-grounded date-range questions in the UI
+- Saved-day review with priority filters, all-priority text search, redacted cited-radio quotes, exact evidence clips, optional surrounding radio context, and evidence-grounded date-range questions
 - Persisted seven-day activity briefs with explicit coverage gaps, exact category counts, and deterministic notable-record IDs
 - Center-plus-radius or ordered-ZIP area watch that follows Broadcastify's ZIP-to-county results, deduplicates feeds, defaults to a live public-safety filter, and saves explicit nearest-first newsroom feed profiles
 - Persisted nearest-first multi-feed archive queues that recover interrupted work, skip completed feeds, and stop every lower priority at the first explicit quota response
 - Sequential post-transcription analysis plus persisted cross-feed story briefs with deterministic source references, coverage gaps, and a bounded ranked-list/selected-evidence master/detail viewer in both UIs
 - Newsworthiness ranking separate from dispatch priority, with conservative time/location clustering and routine single-person calls suppressed
-- One-click incident playback that cuts and plays a compact clip around the strongest cited transcript segment, avoiding unreliable seeks inside day-long MP3s
+- One-click incident playback that cuts and plays a compact clip around the strongest cited transcript segment, plus a clearly labeled five-minutes-before/one-minute-after context option for hearing an earlier dispatch without treating surrounding chatter as evidence
 - Native **Export clip…** actions for saved incidents and area-story evidence; exports are local MP3 copies and never trigger an archive download
 - Evidence packages on every ranked area lead: obvious-identifier-redacted ASR excerpts, timestamped source clips, confidence, diarization status, and SHA-256 provenance
 - Subscription-ready neighborhood and topic tags, with every candidate held in `review_required` status until an editor verifies it

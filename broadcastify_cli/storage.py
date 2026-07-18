@@ -173,6 +173,26 @@ class AnalysisStore:
                 UNIQUE(day_id, fingerprint, model, prompt_version)
             );
 
+            CREATE TABLE IF NOT EXISTS analysis_window_checkpoints (
+                id INTEGER PRIMARY KEY,
+                day_id INTEGER NOT NULL REFERENCES feed_days(id) ON DELETE CASCADE,
+                model TEXT NOT NULL,
+                prompt_version TEXT NOT NULL,
+                transcript_sha256 TEXT NOT NULL,
+                window_index INTEGER NOT NULL,
+                window_fingerprint TEXT NOT NULL,
+                incidents_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(
+                    day_id,
+                    model,
+                    prompt_version,
+                    transcript_sha256,
+                    window_index
+                )
+            );
+
             CREATE TABLE IF NOT EXISTS daily_summaries (
                 day_id INTEGER PRIMARY KEY REFERENCES feed_days(id) ON DELETE CASCADE,
                 summary TEXT NOT NULL,
@@ -412,6 +432,10 @@ class AnalysisStore:
             )
             connection.execute("DELETE FROM incidents WHERE day_id=?", (day_id,))
             connection.execute("DELETE FROM daily_summaries WHERE day_id=?", (day_id,))
+            connection.execute(
+                "DELETE FROM analysis_window_checkpoints WHERE day_id=?",
+                (day_id,),
+            )
             connection.execute("DELETE FROM transcript_segments WHERE day_id=?", (day_id,))
             connection.execute("DELETE FROM passages WHERE day_id=?", (day_id,))
             connection.execute("DELETE FROM embeddings WHERE entity_type='passage' AND entity_id NOT IN (SELECT id FROM passages)")
@@ -681,6 +705,96 @@ class AnalysisStore:
                 if cursor.lastrowid:
                     ids.append(int(cursor.lastrowid))
         return ids
+
+    def get_analysis_window_checkpoint(
+        self,
+        day_id: int,
+        model: str,
+        prompt_version: str,
+        transcript_sha256: str,
+        window_index: int,
+        window_fingerprint: str,
+    ) -> list[dict[str, Any]] | None:
+        row = self.connection.execute(
+            """
+            SELECT incidents_json FROM analysis_window_checkpoints
+            WHERE day_id=? AND model=? AND prompt_version=?
+              AND transcript_sha256=? AND window_index=? AND window_fingerprint=?
+            """,
+            (
+                day_id,
+                model,
+                prompt_version,
+                transcript_sha256,
+                window_index,
+                window_fingerprint,
+            ),
+        ).fetchone()
+        if row is None:
+            return None
+        try:
+            value = json.loads(str(row["incidents_json"]))
+        except (TypeError, json.JSONDecodeError):
+            return None
+        if not isinstance(value, list) or not all(
+            isinstance(item, dict) for item in value
+        ):
+            return None
+        return value
+
+    def save_analysis_window_checkpoint(
+        self,
+        day_id: int,
+        model: str,
+        prompt_version: str,
+        transcript_sha256: str,
+        window_index: int,
+        window_fingerprint: str,
+        incidents: Sequence[dict[str, Any]],
+    ) -> None:
+        now = utc_now()
+        with self.transaction() as connection:
+            connection.execute(
+                """
+                INSERT INTO analysis_window_checkpoints(
+                    day_id, model, prompt_version, transcript_sha256,
+                    window_index, window_fingerprint, incidents_json,
+                    created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(
+                    day_id, model, prompt_version, transcript_sha256, window_index
+                ) DO UPDATE SET
+                    window_fingerprint=excluded.window_fingerprint,
+                    incidents_json=excluded.incidents_json,
+                    updated_at=excluded.updated_at
+                """,
+                (
+                    day_id,
+                    model,
+                    prompt_version,
+                    transcript_sha256,
+                    window_index,
+                    window_fingerprint,
+                    json.dumps(list(incidents), ensure_ascii=False, sort_keys=True),
+                    now,
+                    now,
+                ),
+            )
+
+    def clear_analysis_window_checkpoints(
+        self,
+        day_id: int,
+        model: str,
+        prompt_version: str,
+    ) -> None:
+        with self.transaction() as connection:
+            connection.execute(
+                """
+                DELETE FROM analysis_window_checkpoints
+                WHERE day_id=? AND model=? AND prompt_version=?
+                """,
+                (day_id, model, prompt_version),
+            )
 
     def get_incidents(
         self,
@@ -1513,6 +1627,7 @@ class AnalysisStore:
                 "transcript_segments",
                 "passages",
                 "incidents",
+                "analysis_window_checkpoints",
                 "daily_summaries",
                 "weekly_summaries",
                 "area_profiles",

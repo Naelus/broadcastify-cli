@@ -1,10 +1,17 @@
 # Known bugs and gaps
 
-Last updated: July 17, 2026
+Last updated: July 18, 2026
 
 Use this file for reproducible defects and concrete blockers, not the general roadmap. Remove an entry only after its fix and verification are recorded in `PROGRESS.md`.
 
 ## Active
+
+### B-008 — Reference Windows host intermittently loses its NVMe storage path
+
+- **Severity:** High for long unattended validation; this is not currently attributable to application code.
+- **Observed:** The July 17 unattended run ended in Windows bugcheck `0x154 UNEXPECTED_STORE_EXCEPTION`; `volmgr` then failed to create the dump, so no driver stack survived. The user also observed that the SSD was absent until a full power cycle. A separate earlier `0x193 VIDEO_DXGKRNL_LIVEDUMP` was nonfatal and does not identify the storage failure.
+- **Current evidence:** The Solidigm P44 Pro reports healthy SMART state and current firmware `001C`. The Gigabyte B850 AORUS ELITE WIFI7 remains on launch BIOS F1; later stable BIOS releases include PCIe-compatibility work. This makes motherboard firmware, chipset/PCIe power management, slot/contact/power, and the drive/controller path more plausible than an application memory failure, but the missing dump prevents a definitive cause.
+- **Next:** Keep current backups, install the current stable (not beta) board BIOS and AMD chipset package when the user is ready, then retest. If the drive again disappears from BIOS until a power cycle, treat it as a hardware/firmware-path fault and pursue slot/drive diagnostics or RMA. The app now checkpoints model windows and writes state/logs durably, but software cannot prevent a controller disappearing from firmware.
 
 ### B-001 — Windows ML GPU providers do not yet accelerate Whisper reliably
 
@@ -40,6 +47,14 @@ Use this file for reproducible defects and concrete blockers, not the general ro
 - **Next:** Ask Broadcastify support for authoritative details and prioritize future regional acquisition by user distance/importance rather than a guessed quota size.
 
 ## Recently fixed
+
+### F-023 — A supported single-feed stolen-vehicle report was hidden from the area brief
+
+The retained July 16 feed contained an exact Example Township stolen-squad-car report, a possible wreck follow-up, and recovery traffic, but the saved extraction cited only the recovery and remained P2/score 39. Daily Review also defaulted to P3+, hiding it. Review search now searches every priority, the cited public quote is visible, and an optional six-minute surrounding-context clip reaches the earlier dispatch while remaining clearly separate from exact evidence. Vehicle theft is deterministically at least P3 for future extraction and area ranking; the v7 area contract gives it an editorial impact bonus without requiring a second feed. The rebuilt two-day Example City brief contains the Example Township item at score 55 with one exact clip and the separately generated context clip.
+
+### F-022 — Native startup/state and full-day model progress were lost on interruption
+
+Three native crash reports traced to a XAML selection event calling `SelectedComboValue` before all controls existed. Settings were also saved only on a clean close and could follow a parent application's redirected LocalAppData path. Startup now begins in loading mode, combo lookup is null-safe, settings migrate to a stable user path and autosave atomically, the last review/profile reopens, and activity/crash logs append on disk. Incident analysis stores each validated model window in SQLite and resumes unfinished days from the next window. A simulated window-2 failure reused window 1, and the rebuilt WinUI executable remained open through the formerly crashing startup path.
 
 ### F-021 — Retained feed days could lose their human-readable name
 

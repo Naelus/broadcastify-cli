@@ -72,6 +72,41 @@ class FakeLlamaClient:
         return "Two available days included reported shots-fired calls, with five dates missing from coverage."
 
 
+class InterruptingWindowClient:
+    model = "interrupting-test-model"
+
+    def __init__(self) -> None:
+        self.incident_calls = 0
+        self.failed_once = False
+
+    def chat_json(self, *_args: object, **kwargs: object) -> dict[str, object]:
+        if kwargs["schema_name"] != "police_radio_incidents":
+            return {
+                "summary": "Radio traffic contained supported shots-fired reports."
+            }
+        self.incident_calls += 1
+        if self.incident_calls == 2 and not self.failed_once:
+            self.failed_once = True
+            raise RuntimeError("simulated process interruption")
+        user = str(kwargs["user"])
+        segment_id = 1 if "S1 " in user else 0
+        location = "Oak and Ninth" if segment_id else "Main and First"
+        return {
+            "incidents": [
+                {
+                    "event_type": "shots_fired",
+                    "title": "Reported shots fired",
+                    "summary": f"Dispatch reported possible shots fired near {location}.",
+                    "location": location,
+                    "priority": 4,
+                    "confidence": 0.8,
+                    "evidence_segment_ids": [segment_id],
+                    "attributes": {},
+                }
+            ]
+        }
+
+
 class FakeResponse:
     def __init__(self, status_code: int, payload: dict[str, object]) -> None:
         self.status_code = status_code
@@ -376,6 +411,8 @@ def test_clear_evidence_corrects_category_and_routine_priority() -> None:
     assert normalize_event_type("Routine follow-up requested", "warrant_arrest") == "other"
     assert normalize_priority("theft_shoplifting", 5) == 3
     assert normalize_priority("unknown", 5) == 2
+    assert normalize_priority("vehicle_theft", 2) == 3
+    assert normalize_priority("vehicle_pursuit", 2) == 4
 
 
 def test_public_text_redacts_contextual_private_names_and_identifiers() -> None:
@@ -773,6 +810,50 @@ def test_incident_analysis_requires_valid_evidence(tmp_path: Path) -> None:
     assert all(item["segment_index"] != 999 for item in incidents[0]["evidence"])
     assert resumed["incidents"] == 1
     assert client.calls == first_call_count
+
+
+def test_incident_analysis_resumes_after_the_last_completed_model_window(
+    tmp_path: Path,
+) -> None:
+    archive_date = date(2026, 7, 12)
+    transcript = tmp_path / "transcript.json"
+    transcript.write_text(
+        json.dumps(
+            {
+                "model": "turbo",
+                "duration": 10_020.0,
+                "segments": [
+                    {
+                        "start": 10.0,
+                        "end": 15.0,
+                        "text": "Possible shots fired near Main and First.",
+                    },
+                    {
+                        "start": 10_000.0,
+                        "end": 10_005.0,
+                        "text": "Possible shots fired near Oak and Ninth.",
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    client = InterruptingWindowClient()
+
+    with AnalysisStore(tmp_path / "analysis.sqlite3") as store:
+        store.import_transcript("90001", archive_date, transcript)
+        analyzer = IncidentAnalyzer(store, client)
+        with pytest.raises(RuntimeError, match="simulated process interruption"):
+            analyzer.analyze_day("90001", archive_date)
+
+        assert store.stats()["analysis_window_checkpoints"] == 1
+        resumed = analyzer.analyze_day("90001", archive_date)
+        incidents = store.get_incidents("90001", archive_date, archive_date)
+
+    assert resumed["windows"] == 2
+    assert resumed["incidents"] == 2
+    assert len(incidents) == 2
+    assert client.incident_calls == 3
 
 
 def test_weekly_summary_covers_available_days_and_is_cached(tmp_path: Path) -> None:

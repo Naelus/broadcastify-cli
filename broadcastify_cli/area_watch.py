@@ -11,13 +11,14 @@ from .analysis import (
     PROMPT_VERSION,
     archive_datetime_for_offset,
     format_archive_time,
+    normalize_priority,
     redact_public_text,
 )
 from .audio import AudioClipError, extract_audio_clip
 from .storage import AnalysisStore
 
 
-AREA_PROMPT_VERSION = "police-radio-area-stories-v6-evidence-v9"
+AREA_PROMPT_VERSION = "police-radio-area-stories-v7-evidence-v9"
 MIN_STORY_SCORE = 48
 MAX_STORIES = 30
 EVIDENCE_CONTEXT_BEFORE_SECONDS = 8.0
@@ -59,6 +60,8 @@ _IMPACT_BONUS = {
     "weapons": 8,
     "traffic_collision": 7,
     "burglary": 6,
+    "vehicle_theft": 8,
+    "vehicle_pursuit": 10,
     "self_harm_crisis": 5,
     "medical": 4,
     "eviction_civil": 10,
@@ -105,14 +108,21 @@ def _public_quote(value: str, *, location: str = "") -> tuple[str, bool]:
         # Dispatch lines often use "<known incident location>, First Last"
         # either at the end or before a clause such as ", for an alarm".
         # The location is useful public context; the private name is not.
-        location_prefix = rf"(?i:{re.escape(normalized_location)})\s*,\s*"
-        name = r"(?P<name>[A-Z][A-Za-z'’-]{1,30}\s+[A-Z][A-Za-z'’-]{1,30})"
+        location_prefix = rf"(?i:{re.escape(normalized_location)})\s*,?\s*"
+        name = (
+            r"(?P<name>[A-Z][A-Za-z'’-]{1,30}"
+            r"(?:\s+[A-Z][A-Za-z'’-]{1,30})?)"
+        )
         for pattern in (
             location_prefix + name + r"\s*[.!?]?\s*$",
             location_prefix
             + name
             + r"(?=\s*,\s*(?i:for|regarding|about|who|caller|complainant|"
             r"subject|resident|owner|reports?|reporting|alarm|welfare)\b)",
+            location_prefix
+            + name
+            + r"(?=\s+(?i:on|at|who|caller|complainant|subject|resident|"
+            r"owner|reports?|reporting)\b)",
         ):
             match = re.search(pattern, value)
             if match:
@@ -438,12 +448,21 @@ class AreaStoryAnalyzer:
             raise ValueError(f"Area profile not found: {profile_name}.")
         feed_ids = list(profile["feed_ids"])
         feed_names = {str(value["feed_id"]): str(value["name"]) for value in profile["feeds"]}
-        incidents = self.store.get_incidents_for_feeds(
-            feed_ids,
-            start_date,
-            end_date,
-            prompt_version=PROMPT_VERSION,
-        )
+        incidents = [
+            {
+                **value,
+                "priority": normalize_priority(
+                    str(value.get("event_type") or "unknown"),
+                    int(value.get("priority") or 1),
+                ),
+            }
+            for value in self.store.get_incidents_for_feeds(
+                feed_ids,
+                start_date,
+                end_date,
+                prompt_version=PROMPT_VERSION,
+            )
+        ]
         retained_days = [
             value
             for value in self.store.list_days()
@@ -583,9 +602,15 @@ class AreaStoryAnalyzer:
         stories: Sequence[dict[str, Any]],
         coverage: dict[str, Any],
     ) -> str:
+        coverage_line = (
+            f"Coverage: {coverage['feed_days_available']}/{coverage['feed_days_expected']} "
+            f"selected feed-days analyzed; {coverage['feeds_with_data']}/"
+            f"{coverage['feed_count']} selected feeds had retained current analysis."
+        )
         if not stories:
             return (
-                "No sufficiently supported, newsworthy story leads were found in the analyzed feed-days. "
+                coverage_line
+                + "\n\nNo sufficiently supported, newsworthy story leads were found in the analyzed feed-days. "
                 "This does not mean no events occurred; missing archives, radio coverage, and noisy ASR limit the result."
             )
         cards = [
@@ -599,7 +624,10 @@ class AreaStoryAnalyzer:
             "Write a concise local-news assignment brief from structured police-radio story leads. "
             "Use only supplied facts. Treat every item as an unconfirmed dispatch report, never as a proven crime or outcome. "
             "Prioritize public impact and cross-feed overlap, but state that feeds can rebroadcast the same traffic. "
-            "Do not include private identifiers. Mention coverage gaps. Use plain text, under 250 words, with short section labels."
+            "Do not include private identifiers. Do not restate archive/feed coverage counts; the application adds "
+            "its exact SQLite-derived coverage line. A ZIP identifies the feed-discovery center, not an incident "
+            "geofence; do not say events occurred within a ZIP unless a supplied story says so. "
+            "Use plain text, under 250 words, with short section labels."
         )
         user = (
             f"Area profile: {profile['name']}; ZIPs: {', '.join(profile['zip_codes'])}; "
@@ -609,7 +637,30 @@ class AreaStoryAnalyzer:
             "RANKED STORY LEADS:\n" + "\n".join(cards)
         )
         summary = self.client.chat_text(system=system, user=user, max_tokens=2_048).strip()
-        return self._plain_text(summary or self._fallback(stories, coverage))
+        body = self._plain_text(summary or self._fallback(stories, coverage))
+        body_lines = [
+            line
+            for line in body.splitlines()
+            if not (
+                re.search(r"\bfeed-days?\b", line, flags=re.I)
+                or re.search(r"\bfeeds?\s+with\s+data\b", line, flags=re.I)
+                or (
+                    re.match(r"^\s*coverage\b", line, flags=re.I)
+                    and re.search(r"\b(?:feed|data|archive)\b", line, flags=re.I)
+                )
+            )
+        ]
+        body = "\n".join(body_lines).strip()
+        body = re.sub(r"\bfire\s*/\s*arson\b", "reported fire", body, flags=re.I)
+        body = re.sub(r"\barson\b", "reported fire", body, flags=re.I)
+        for zip_code in profile["zip_codes"]:
+            body = re.sub(
+                rf"\b(?:across|in)\s+(?:the\s+)?{re.escape(str(zip_code))}\s+area\b",
+                "on the selected feeds",
+                body,
+                flags=re.I,
+            )
+        return coverage_line + (f"\n\n{body}" if body else "")
 
     @staticmethod
     def _plain_text(value: str) -> str:
@@ -631,7 +682,6 @@ class AreaStoryAnalyzer:
             for value in stories[:6]
         )
         return (
-            f"Coverage: {coverage['feed_days_available']}/{coverage['feed_days_expected']} selected feed-days were analyzed. "
             f"Leading unconfirmed dispatch reports: {leads}. These are newsroom leads, not verified events; "
             "feeds may overlap, archives may be missing, and radio ASR can be wrong."
         )
