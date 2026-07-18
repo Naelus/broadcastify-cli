@@ -733,7 +733,7 @@ function renderSetupReadiness() {
     {
       id: "transcription", icon: "≋", title: "Transcription", available: transcriptionReady,
       state: state.asrSelfTest?.ready ? "Verified" : transcriptionReady ? "Detected" : state.hardwareDiagnostics ? "Setup needed" : "Check",
-      detail: state.asrSelfTest?.message || (!transcriptionReady && profileAction?.stage === "transcription" ? profileAction.message : profile?.transcription) || "Check this computer to choose a Whisper path.",
+      detail: state.asrSelfTest?.message || (!transcriptionReady && profileAction?.stage === "transcription" ? profileAction.message : profile?.transcription) || "Check this computer to choose a local transcription path.",
       action: state.asrSelfTest?.ready ? "Retest" : transcriptionReady ? "Test" : profileAction?.stage === "transcription" ? profileAction.label : "Check",
     },
     {

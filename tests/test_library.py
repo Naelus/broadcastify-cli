@@ -182,6 +182,50 @@ def test_prepare_local_day_uses_diarization_only_for_existing_transcript(
     assert constructor_arguments[0]["load_asr"] is False
 
 
+def test_prepare_local_day_progress_uses_selected_transcription_model_language(
+    monkeypatch, tmp_path: Path
+) -> None:
+    day = _day(tmp_path, "90001", "2026-07-13")
+    audio = day / "combined_90001_20260713.mp3"
+    audio.write_bytes(b"audio")
+    messages: list[str] = []
+
+    class FakeTranscriber:
+        def __init__(self, **_kwargs: object) -> None:
+            pass
+
+        def transcribe_file(self, _audio: Path, progress=None) -> Path:
+            transcript = (
+                day / "transcripts" / "combined_90001_20260713.json"
+            )
+            transcript.parent.mkdir()
+            transcript.write_text(
+                json.dumps({"segments": [], "words": []}),
+                encoding="utf-8",
+            )
+            return transcript
+
+    monkeypatch.setattr("broadcastify_cli.library.LocalTranscriber", FakeTranscriber)
+
+    result = prepare_local_day(
+        LocalProcessingRequest(
+            feed_id="90001",
+            archive_date=date(2026, 7, 13),
+            output_dir=tmp_path,
+            model="qwen3-asr-0.6b-int8",
+            asr_engine="qwen3-asr",
+            diarize=False,
+        ),
+        progress=messages.append,
+    )
+
+    assert result["operation"] == "transcribed"
+    assert messages == [
+        "Loading local transcription qwen3-asr-0.6b-int8 for 2026-07-13…"
+    ]
+    assert all("Whisper" not in message for message in messages)
+
+
 def test_library_marks_existing_plain_transcript_for_diarization(tmp_path: Path) -> None:
     day = _day(tmp_path, "300", "2026-07-10")
     (day / "combined_300_20260710.mp3").write_bytes(b"audio")
@@ -202,8 +246,27 @@ def test_library_marks_existing_plain_transcript_for_diarization(tmp_path: Path)
 
     assert state["status"] == "Transcript ready"
     assert state["next_step"] == "Add speaker labels"
+    assert state["status_detail"] == (
+        "Transcript exists; speaker labels can run without repeating transcription"
+    )
     assert state["primary_action"] == "continue_local"
     assert state["needs_network"] is False
+
+
+def test_library_describes_audio_ready_state_without_assuming_whisper(
+    tmp_path: Path,
+) -> None:
+    day = _day(tmp_path, "299", "2026-07-10")
+    (day / "combined_299_20260710.mp3").write_bytes(b"audio")
+
+    state = scan_local_library(tmp_path, tmp_path / "analysis.sqlite3")[0]
+
+    assert state["status"] == "Audio ready"
+    assert state["next_step"] == "Transcribe locally"
+    assert state["status_detail"] == (
+        "Combined audio is ready for local transcription"
+    )
+    assert "Whisper" not in state["status_detail"]
 
 
 def test_library_does_not_treat_a_request_flag_as_completed_diarization(

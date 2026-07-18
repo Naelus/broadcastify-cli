@@ -68,3 +68,17 @@ def test_native_and_web_expose_preview_engine_and_accuracy_upgrade() -> None:
         "Fast portable speaker preview runs on CPU; the speaker device was reset to CPU."
         in web_js
     )
+
+
+def test_setup_copy_does_not_assume_every_transcription_engine_is_whisper() -> None:
+    native = (
+        ROOT / "BroadcastifyCli.WinUI" / "MainWindow.xaml"
+    ).read_text(encoding="utf-8")
+    web = (
+        ROOT / "broadcastify_cli" / "web_static" / "app.js"
+    ).read_text(encoding="utf-8")
+
+    assert "Detecting the selected transcription engine and accelerator." in native
+    assert "Detecting the selected Whisper engine and accelerator." not in native
+    assert "choose a local transcription path" in web
+    assert "choose a Whisper path" not in web

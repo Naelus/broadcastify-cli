@@ -697,7 +697,7 @@
                                                                 <TextBlock Text="Transcription" FontWeight="SemiBold" />
                                                                 <TextBlock x:Name="SetupTranscriptionStateText" Grid.Column="1" Text="Checking" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                                             </Grid>
-                                                            <TextBlock x:Name="SetupTranscriptionDetailText" Text="Detecting the selected Whisper engine and accelerator." TextWrapping="Wrap" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                            <TextBlock x:Name="SetupTranscriptionDetailText" Text="Detecting the selected transcription engine and accelerator." TextWrapping="Wrap" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                                         </StackPanel>
                                                         <Button x:Name="SetupTranscriptionActionButton" Grid.Column="2" Content="Test" Click="SetupTranscription_Click" VerticalAlignment="Center" />
                                                     </Grid>

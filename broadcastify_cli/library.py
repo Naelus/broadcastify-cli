@@ -188,12 +188,14 @@ def _state_for_day(
         next_step = "Transcribe locally"
         action = "continue_local"
         status = "Audio ready"
-        status_detail = "Combined audio is ready for Whisper"
+        status_detail = "Combined audio is ready for local transcription"
     elif not has_diarization:
         next_step = "Add speaker labels"
         action = "continue_local"
         status = "Transcript ready"
-        status_detail = "Transcript exists; diarization can run without repeating Whisper"
+        status_detail = (
+            "Transcript exists; speaker labels can run without repeating transcription"
+        )
     elif has_stale_analysis:
         next_step = "Re-run evidence analysis"
         action = "continue_local"
@@ -405,7 +407,10 @@ def prepare_local_day(
     operation = "reused"
     if not transcript.is_file():
         if progress:
-            progress(f"Loading Whisper {request.model} for {request.archive_date}…")
+            progress(
+                f"Loading local transcription {request.model} "
+                f"for {request.archive_date}…"
+            )
         transcriber = LocalTranscriber(**shared)
         transcript = transcriber.transcribe_file(audio, progress=progress)
         operation = "transcribed"

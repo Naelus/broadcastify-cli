@@ -670,7 +670,7 @@ class LocalTranscriber:
         transcript_file: str | Path,
         progress: Callable[[str], None] | None = None,
     ) -> Path:
-        """Attach speaker labels without running Whisper a second time."""
+        """Attach speaker labels without running transcription a second time."""
 
         if not self.diarize or (
             self._diarization_pipeline is None
