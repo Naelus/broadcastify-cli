@@ -100,10 +100,11 @@ def test_loopback_web_app_serves_library_transcript_and_media(tmp_path: Path) ->
         assert cookie.startswith("radio_archive_session=")
         assert token_match is not None
         assert b'id="areaPublicSafetyOnly"' in body
-        assert b'/static/app.js?v=19' in body
+        assert b'/static/app.js?v=20' in body
         assert b'id="settingAnalysisDevice"' in body
         assert b'id="analysisSelfTestButton"' in body
         assert b'id="profileSelfTestButton"' in body
+        assert b'id="setupProfileSelfTestButton"' in body
         assert b'id="profileSelfTestNotice"' in body
         assert b'id="settingsSectionTabs"' in body
         assert b'data-settings-panel="processing"' in body
@@ -116,7 +117,7 @@ def test_loopback_web_app_serves_library_transcript_and_media(tmp_path: Path) ->
         assert response.getheader("Content-Type") == "image/svg+xml"
         assert b"<svg" in body
 
-        response, body = _request(connection, "GET", "/static/app.js?v=19")
+        response, body = _request(connection, "GET", "/static/app.js?v=20")
         assert response.status == 200
         assert b"areaSelectedStoryIndex" in body
         assert b"data-area-story-index" in body
@@ -126,6 +127,7 @@ def test_loopback_web_app_serves_library_transcript_and_media(tmp_path: Path) ->
         assert b'profile-self-test' in body
         assert b"analysisSelfTest" in body
         assert b"function runProfileSelfTest" in body
+        assert b'setupProfileSelfTestButton").addEventListener' in body
         assert b"function syncPlatformProfileOptions" in body
         assert b"whisper.cpp has no managed distil-large-v3 mapping" in body
         assert b"profile.configured" in body
@@ -136,7 +138,7 @@ def test_loopback_web_app_serves_library_transcript_and_media(tmp_path: Path) ->
         assert b'radioArchiveSettingsSection' in body
         assert b'setSettingsSection("processing")' in body
 
-        response, body = _request(connection, "GET", "/static/app.css?v=19")
+        response, body = _request(connection, "GET", "/static/app.css?v=20")
         assert response.status == 200
         assert b".story-browser" in body
         assert b".story-index-item.active" in body

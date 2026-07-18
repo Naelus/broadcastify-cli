@@ -7,7 +7,7 @@
   <meta name="color-scheme" content="light dark">
   <title>Radio Archive Intelligence</title>
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/static/app.css?v=19">
+  <link rel="stylesheet" href="/static/app.css?v=20">
 </head>
 <body>
   <div class="app-shell">
@@ -219,7 +219,7 @@
               <div class="card padded setup-overview">
                 <div class="section-heading">
                   <div><p class="eyebrow">First-run readiness</p><h2>Pipeline readiness</h2><p id="setupReadinessSummary">Checking account, storage, and local engines…</p></div>
-                  <button class="button primary small" id="setupCheckButton">Check this computer</button>
+                  <div class="button-row"><button class="button secondary small" id="setupCheckButton">Check this computer</button><button class="button primary small" id="setupProfileSelfTestButton">Verify model stages</button></div>
                 </div>
                 <div class="setup-progress" aria-hidden="true"><div id="setupProgressBar"></div></div>
                 <div class="setup-grid" id="setupReadinessGrid" aria-live="polite"></div>
@@ -303,6 +303,6 @@
   </aside>
 
   <div class="toast-region" id="toastRegion" aria-live="polite"></div>
-  <script src="/static/app.js?v=19" defer></script>
+  <script src="/static/app.js?v=20" defer></script>
 </body>
 </html>

@@ -311,6 +311,34 @@ def test_profile_self_test_stops_at_first_failed_stage(monkeypatch) -> None:
     assert analysis_called is False
 
 
+def test_profile_self_test_bounds_native_runtime_dump(monkeypatch) -> None:
+    emitted: list[dict[str, object]] = []
+    runtime_dump = "\n".join(
+        [
+            "whisper_model_load: model metadata",
+            "/source/ggml-backend.cpp:595: GGML_ASSERT(device) failed",
+            *[f"/lib/frame-{index}.so(+0x1234)" for index in range(100)],
+        ]
+    )
+    monkeypatch.setattr(
+        "broadcastify_cli.worker._asr_self_test_result",
+        lambda _settings: (_ for _ in ()).throw(RuntimeError(runtime_dump)),
+    )
+    monkeypatch.setattr("broadcastify_cli.worker.emit", emitted.append)
+
+    assert profile_self_test({}) == 0
+
+    result = next(
+        value["result"]
+        for value in emitted
+        if value["type"] == "profile_self_test"
+    )
+    assert "GGML_ASSERT(device) failed" in result["message"]
+    assert "individual transcription test" in result["message"]
+    assert "frame-99" not in result["message"]
+    assert len(result["message"]) < 700
+
+
 def test_explicit_private_environment_overrides_repository_defaults(
     monkeypatch, tmp_path: Path
 ) -> None:

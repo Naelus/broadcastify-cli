@@ -1349,6 +1349,10 @@ public sealed partial class MainWindow : Window
         _operationCancellation = new CancellationTokenSource();
         SetBusy(true, "Verifying transcription, speaker labels, and analysis…", jobRunning: true);
         JobProgress.IsIndeterminate = true;
+        SetupReadinessInfoBar.Severity = InfoBarSeverity.Informational;
+        SetupReadinessInfoBar.Title = "Verifying all three model stages";
+        SetupReadinessInfoBar.Message =
+            "Generated input is used in sequence; archive audio and quota are not used.";
         ProfileNextStepsInfoBar.Severity = InfoBarSeverity.Informational;
         ProfileNextStepsInfoBar.Title = "Running all three execution checks";
         ProfileNextStepsInfoBar.Message =
@@ -1377,6 +1381,11 @@ public sealed partial class MainWindow : Window
                 StatusText.Text = status.Message;
                 AppendLog(status.Message);
                 UpdateSetupSummary();
+                SetupReadinessInfoBar.Severity = InfoBarSeverity.Warning;
+                SetupReadinessInfoBar.Title = string.IsNullOrWhiteSpace(status.FailedStage)
+                    ? "Profile verification needs attention"
+                    : $"{status.FailedStage.Replace('_', ' ')} needs attention";
+                SetupReadinessInfoBar.Message = status.Message;
                 return;
             }
             ProfileNextStepsInfoBar.Severity = InfoBarSeverity.Success;
@@ -1393,6 +1402,9 @@ public sealed partial class MainWindow : Window
             ProfileNextStepsInfoBar.Message = "No archive work was changed.";
             StatusText.Text = "Profile verification cancelled";
             UpdateSetupSummary();
+            SetupReadinessInfoBar.Severity = InfoBarSeverity.Warning;
+            SetupReadinessInfoBar.Title = "Profile verification cancelled";
+            SetupReadinessInfoBar.Message = "No archive work was changed.";
         }
         catch (Exception exception)
         {
@@ -1402,6 +1414,9 @@ public sealed partial class MainWindow : Window
             StatusText.Text = exception.Message;
             AppendLog(exception.Message);
             UpdateSetupSummary();
+            SetupReadinessInfoBar.Severity = InfoBarSeverity.Error;
+            SetupReadinessInfoBar.Title = "Profile verification could not finish";
+            SetupReadinessInfoBar.Message = exception.Message;
         }
         finally
         {
@@ -3548,6 +3563,7 @@ public sealed partial class MainWindow : Window
         GenerateAreaDigestButton.IsEnabled = !busy && _worker is not null;
         AnalysisProviderCheckButton.IsEnabled = !busy && _worker is not null;
         AnalysisModelTestButton.IsEnabled = !busy && _worker is not null;
+        SetupProfileSelfTestButton.IsEnabled = !busy && _worker is not null;
         ProfileSelfTestButton.IsEnabled = !busy && _worker is not null;
         AsrSelfTestButton.IsEnabled = !busy && _worker is not null;
         DiarizationSelfTestButton.IsEnabled = !busy && _worker is not null;

@@ -1470,6 +1470,7 @@ byId("providerCheckButton").addEventListener("click", runProviderCheck);
 byId("analysisSelfTestButton").addEventListener("click", runAnalysisSelfTest);
 byId("runtimeCheckButton").addEventListener("click", runHardwareCheck);
 byId("setupCheckButton").addEventListener("click", runHardwareCheck);
+byId("setupProfileSelfTestButton").addEventListener("click", runProfileSelfTest);
 byId("profileSelfTestButton").addEventListener("click", runProfileSelfTest);
 byId("settingHardwareProfile").addEventListener("change", (event) => applyHardwareProfile(event.target.value));
 ["settingAsrEngine", "settingDevice"].forEach((id) => byId(id).addEventListener("change", () => {

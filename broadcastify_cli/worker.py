@@ -548,6 +548,44 @@ def _release_profile_stage_memory() -> None:
         pass
 
 
+def _profile_failure_summary(exc: Exception, stage: str) -> str:
+    """Keep native runtime dumps from overwhelming the setup UI."""
+
+    raw = str(exc).strip()
+    if not raw:
+        return f"The {stage} self-test failed."
+    lines = [line.strip() for line in raw.splitlines() if line.strip()]
+    if len(raw) <= 600 and len(lines) <= 4:
+        return raw
+    markers = (
+        "error",
+        "failed",
+        "not found",
+        "cannot",
+        "could not",
+        "requires",
+        "unavailable",
+        "unsupported",
+        "invalid",
+        "assert",
+    )
+    signal = next(
+        (
+            line
+            for line in lines
+            if any(marker in line.lower() for marker in markers)
+        ),
+        lines[0],
+    )
+    if "GGML_ASSERT" in signal:
+        signal = signal[signal.index("GGML_ASSERT") :]
+    if len(signal) > 500:
+        signal = signal[:497].rstrip() + "..."
+    return (
+        f"{signal} Run the individual {stage} test for detailed diagnostics."
+    )
+
+
 def profile_self_test(payload: dict[str, Any] | None = None) -> int:
     """Execute ASR, diarization, and analysis proofs as one guided action."""
 
@@ -571,7 +609,7 @@ def profile_self_test(payload: dict[str, Any] | None = None) -> int:
         try:
             result = runner(settings)
         except Exception as exc:
-            message = str(exc).strip() or f"The {stage} self-test failed."
+            message = _profile_failure_summary(exc, stage)
             _release_profile_stage_memory()
             profile_result = {
                 "ready": False,

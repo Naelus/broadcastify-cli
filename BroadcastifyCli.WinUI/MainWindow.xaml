@@ -634,13 +634,16 @@
                                         <Border Style="{StaticResource CardBorderStyle}">
                                             <StackPanel Spacing="14">
                                                 <Grid ColumnSpacing="14">
-                                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="220" /></Grid.ColumnDefinitions>
+                                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="220" /></Grid.ColumnDefinitions>
                                                     <StackPanel Spacing="3">
                                                         <TextBlock Text="Setup at a glance" Style="{StaticResource SubtitleTextBlockStyle}" />
                                                         <TextBlock x:Name="SetupReadinessCountText" Text="Inspecting account, storage, and local engines…"
                                                                    TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                                     </StackPanel>
-                                                    <ProgressBar x:Name="SetupReadinessProgress" Grid.Column="1" Minimum="0" Maximum="5"
+                                                    <Button x:Name="SetupProfileSelfTestButton" Grid.Column="1" Content="Verify model stages"
+                                                            Style="{StaticResource AccentButtonStyle}" Click="ProfileSelfTest_Click"
+                                                            ToolTipService.ToolTip="Run transcription, speaker labels, and analysis in sequence using generated input." />
+                                                    <ProgressBar x:Name="SetupReadinessProgress" Grid.Column="2" Minimum="0" Maximum="5"
                                                                  Value="0" VerticalAlignment="Center" />
                                                 </Grid>
 
