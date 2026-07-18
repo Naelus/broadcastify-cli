@@ -32,7 +32,7 @@ services:
       BROADCASTIFY_RUNTIME_DIR: /data/runtime
       BROADCASTIFY_MODEL_DIR: /data/models
       FFMPEG_PATH: /usr/bin/ffmpeg
-      WHISPER_CPP_PATH: /opt/whisper/build/bin/whisper-cli
+      WHISPER_CPP_PATH: /app/build/bin/whisper-cli
       WHISPER_CPP_MODEL_PATH: /data/models/whisper/ggml-tiny.en-q5_1.bin
       LLAMA_SERVER_PATH: /app/llama-server
       ANALYSIS_PROVIDER: local

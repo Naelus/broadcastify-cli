@@ -24,7 +24,9 @@ RUN apt-get update \
         python3-venv \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=whisper_runtime /app /opt/whisper
+# whisper.cpp's release binaries retain an absolute /app/build/bin RUNPATH.
+# Preserve that path while leaving llama.cpp's root /app libraries separate.
+COPY --from=whisper_runtime /app/build /app/build
 
 WORKDIR /opt/radio-archive
 COPY pyproject.toml README.md LICENSE ./
@@ -35,11 +37,11 @@ RUN python3 -m venv /opt/radio-archive-venv \
     && /opt/radio-archive-venv/bin/python -m pip install --no-cache-dir \
         ".[analysis,portable-diarization]"
 
-ENV PATH="/opt/radio-archive-venv/bin:/opt/whisper/build/bin:/app:${PATH}" \
+ENV PATH="/opt/radio-archive-venv/bin:/app/build/bin:/app:${PATH}" \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     FFMPEG_PATH=/usr/bin/ffmpeg \
-    WHISPER_CPP_PATH=/opt/whisper/build/bin/whisper-cli \
+    WHISPER_CPP_PATH=/app/build/bin/whisper-cli \
     LLAMA_SERVER_PATH=/app/llama-server
 
 EXPOSE 8765
