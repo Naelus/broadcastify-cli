@@ -3526,7 +3526,7 @@ public sealed partial class MainWindow : Window
                 _areaStories.Clear();
                 ClearAreaStoryDetail(
                     "Older story claims are hidden until their source days use the current evidence rules.");
-                AreaSummaryText.Text = "";
+                SetAreaSummary("");
                 AreaCoverageText.Text =
                     "No current evidence-gated area brief is saved. Reanalyze retained feed-days, then find story leads again.";
                 return;
@@ -3551,7 +3551,7 @@ public sealed partial class MainWindow : Window
     {
         var selectedStoryId = (AreaStoryList.SelectedItem as AreaStory)?.StoryId;
         AreaCoverageText.Text = report.CoverageSummary;
-        AreaSummaryText.Text = report.Summary;
+        SetAreaSummary(report.Summary);
         _areaStories.Clear();
         foreach (var story in report.Stories)
         {
@@ -3569,6 +3569,14 @@ public sealed partial class MainWindow : Window
         {
             AreaStoryList.ScrollIntoView(selectedStory);
         }
+    }
+
+    private void SetAreaSummary(string value)
+    {
+        AreaSummaryText.Text = value;
+        var hasSummary = !string.IsNullOrWhiteSpace(value);
+        AreaSummaryExpander.Visibility = hasSummary ? Visibility.Visible : Visibility.Collapsed;
+        AreaSummaryExpander.IsExpanded = false;
     }
 
     private void AreaStoryList_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -3786,8 +3794,9 @@ public sealed partial class MainWindow : Window
         _operationCancellation = new CancellationTokenSource();
         SetBusy(true, $"Ranking story leads for {profile.Name}…", jobRunning: true);
         JobProgress.IsIndeterminate = true;
-        AreaCoverageText.Text = "Loading saved incidents across selected feeds…";
-        AreaSummaryText.Text = $"Working with {SelectedAnalysisProviderDisplayName()}…";
+        AreaCoverageText.Text =
+            $"Loading saved incidents across selected feeds with {SelectedAnalysisProviderDisplayName()}…";
+        SetAreaSummary("");
         _areaStoryMediaPlayer.Pause();
         _areaStoryMediaPlayer.Source = null;
         _areaStories.Clear();
@@ -3806,7 +3815,7 @@ public sealed partial class MainWindow : Window
             if (report is null)
             {
                 AreaCoverageText.Text = "No area report was returned.";
-                AreaSummaryText.Text = "";
+                SetAreaSummary("");
                 return;
             }
             ApplyAreaDigest(report);
@@ -3814,7 +3823,7 @@ public sealed partial class MainWindow : Window
         catch (OperationCanceledException)
         {
             AreaCoverageText.Text = "Area digest cancelled.";
-            AreaSummaryText.Text = "";
+            SetAreaSummary("");
         }
         catch (Exception exception)
         {

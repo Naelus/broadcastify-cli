@@ -4,6 +4,14 @@ This is the dated verification and delivery log for `GOAL.md`. Keep forward-look
 
 ## July 18, 2026
 
+### Evidence-first regional review hierarchy
+
+- Audited the retained July 15–16 Example City Story Leads view at the 1228×894 reference size. The native client permanently reserved up to 150 pixels for the generated assignment narrative above the source workspace, even though the warning, deterministic coverage, ranked lead, quote, timestamp, provenance, and exact clip are the decision-critical content.
+- Replaced that native block with an accessible **Generated assignment brief** expander, collapsed on every saved/new digest bind. Empty, stale, running, cancelled, and no-report states hide it instead of leaving an empty row; the running provider is reported in the coverage status without presenting placeholder prose as a brief.
+- Kept the Web client's existing closed `<details>` behavior and added one regression contract that parses the native XAML and checks both surfaces default closed.
+- Rebuilt and interacted with the exact Release executable. At 1228×894, the collapsed view reclaimed about 100 vertical pixels and kept selected I741, its redacted exact-window quote, timestamped source record, and Play/Export actions in the primary workspace. Expanding exposed the complete saved narrative; collapsing restored the evidence-first state.
+- Complete suite: **196 passed in 7.62 seconds**. Python compileall, bundled-Node JavaScript parsing, and Git whitespace checks passed. The WinUI Release x64 build completed with **0 warnings and 0 errors**.
+
 ### Web evidence serialization and coordinated-name privacy boundary
 
 - Audited the actual public transformation without printing retained names. The native worker and area builder were safe, but the Web day serializer was taking the first raw SQLite evidence row directly and that row was not necessarily inside the exact exported-clip window.

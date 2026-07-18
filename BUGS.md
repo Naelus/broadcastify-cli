@@ -61,6 +61,14 @@ Use this file for reproducible defects and concrete blockers, not the general ro
 
 ## Recently fixed
 
+### F-029 — The native generated narrative crowded out source evidence
+
+The native Story Leads view always reserved up to 150 pixels for the model-written assignment narrative above the ranked leads and selected evidence package. At the 1228×894 reference window, that made a secondary synthesis more prominent than the quote, timestamp, provenance, and exact-clip controls an editor must verify. The Web viewer already treated the same narrative as optional disclosure.
+
+Native now uses an accessible **Generated assignment brief** expander that is collapsed whenever a saved or newly generated digest is bound. The publication warning and deterministic coverage line remain visible, empty/running/error states do not leave a blank expander, and the selected source package is unchanged. The collapsed live view reclaimed about 100 vertical pixels for evidence while retaining explicit expansion and selectable narrative text. A shared UI-contract regression verifies that both native and Web narratives default closed.
+
+Live rebuilt WinUI QA at 1228×894 confirmed the collapsed state, selected I741 evidence, and Play/Export source actions; expansion exposed the complete saved brief and collapse restored the evidence-first layout. The complete suite passes **196 tests in 7.62 seconds**; Python compilation, bundled-Node JavaScript parsing, Git whitespace, and the WinUI Release x64 build pass with **0 warnings and 0 errors**.
+
 ### F-028 — The Web day viewer bypassed quote redaction
 
 The native day-report worker and area-story builder assembled a bounded citation quote and applied deterministic public-text redaction, but the Web day serializer returned the first raw `evidence.text` value from SQLite. That made the same retained incident safe in one viewer and unsanitized in another, and the chosen text was not guaranteed to match the exact exported clip. A separate current area quote used the bounded dispatch form `known location, private name, and for …`; the location-adjacent sanitizer handled `for …` but missed that coordinating word.

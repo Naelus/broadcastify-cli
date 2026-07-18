@@ -531,9 +531,15 @@
                                     <InfoBar Grid.Row="1" IsOpen="True" IsClosable="False" Severity="Warning" Title="Assignment leads, not confirmed events"
                                              Message="Police-radio ASR can be wrong. Verify every quote and clip before publication or subscriber delivery." />
                                     <TextBlock x:Name="AreaCoverageText" Grid.Row="2" Text="Save or choose a profile, then select a date range." TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                    <ScrollViewer Grid.Row="3" MaxHeight="150">
-                                        <TextBlock x:Name="AreaSummaryText" TextWrapping="Wrap" IsTextSelectionEnabled="True" />
-                                    </ScrollViewer>
+                                    <Expander x:Name="AreaSummaryExpander" Grid.Row="3"
+                                              Header="Generated assignment brief"
+                                              IsExpanded="False" Visibility="Collapsed"
+                                              HorizontalAlignment="Stretch">
+                                        <ScrollViewer MaxHeight="150">
+                                            <TextBlock x:Name="AreaSummaryText" TextWrapping="Wrap"
+                                                       IsTextSelectionEnabled="True" />
+                                        </ScrollViewer>
+                                    </Expander>
                                     <Grid Grid.Row="4" ColumnSpacing="12">
                                         <Grid.ColumnDefinitions><ColumnDefinition Width="330" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
                                         <Border BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8"
