@@ -7,6 +7,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import time
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
@@ -924,6 +925,31 @@ def prepare_llama_environment(
     return prepared
 
 
+def prepare_llama_loader_environment(
+    environment: dict[str, str],
+    executable: str | Path,
+    *,
+    platform_name: str | None = None,
+) -> dict[str, str]:
+    """Resolve release-bundled llama.cpp libraries in the child process only."""
+
+    prepared = environment.copy()
+    platform = platform_name or sys.platform
+    if platform.startswith("win"):
+        return prepared
+    variable = "DYLD_LIBRARY_PATH" if platform == "darwin" else "LD_LIBRARY_PATH"
+    executable_directory = str(Path(executable).expanduser().resolve().parent)
+    existing = [
+        value
+        for value in prepared.get(variable, "").split(os.pathsep)
+        if value
+    ]
+    prepared[variable] = os.pathsep.join(
+        [executable_directory, *[value for value in existing if value != executable_directory]]
+    )
+    return prepared
+
+
 class LlamaServerError(RuntimeError):
     pass
 
@@ -991,6 +1017,7 @@ class LlamaServerProcess:
         environment = prepare_llama_environment(
             os.environ.copy(), self.log_path.parent / ".runtime"
         )
+        environment = prepare_llama_loader_environment(environment, executable)
         self.model_path, self.effective_model = resolve_local_llama_model(self.model)
         model_arguments = (
             ["--model", str(self.model_path)]

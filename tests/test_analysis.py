@@ -1,4 +1,5 @@
 import json
+import os
 from copy import deepcopy
 from datetime import date
 from pathlib import Path
@@ -19,6 +20,7 @@ from broadcastify_cli.analysis import (
     normalize_event_type,
     normalize_priority,
     prepare_llama_environment,
+    prepare_llama_loader_environment,
     redact_public_text,
     resolve_local_llama_model,
 )
@@ -333,6 +335,55 @@ def test_llama_environment_provides_rootless_cache_paths(
     assert Path(prepared["LLAMA_CACHE"]).is_dir()
     assert Path(prepared["HF_HOME"]).is_dir()
     assert prepared["HF_TOKEN"] == "test-token"
+
+
+def test_llama_loader_path_is_scoped_and_prefers_executable_siblings(
+    tmp_path: Path,
+) -> None:
+    executable = tmp_path / "llama-release" / "llama-server"
+    executable.parent.mkdir()
+    executable.write_bytes(b"binary")
+    original = {
+        "LD_LIBRARY_PATH": f"/shared/ggml{os.pathsep}{executable.parent.resolve()}",
+        "UNRELATED": "retained",
+    }
+
+    prepared = prepare_llama_loader_environment(
+        original,
+        executable,
+        platform_name="linux",
+    )
+
+    assert prepared["LD_LIBRARY_PATH"].split(os.pathsep) == [
+        str(executable.parent.resolve()),
+        "/shared/ggml",
+    ]
+    assert prepared["UNRELATED"] == "retained"
+    assert original["LD_LIBRARY_PATH"].startswith("/shared/ggml")
+
+
+def test_llama_loader_path_uses_macos_variable_and_skips_windows(
+    tmp_path: Path,
+) -> None:
+    executable = tmp_path / "llama-server"
+    executable.write_bytes(b"binary")
+
+    mac = prepare_llama_loader_environment(
+        {"DYLD_LIBRARY_PATH": "/existing"},
+        executable,
+        platform_name="darwin",
+    )
+    windows = prepare_llama_loader_environment(
+        {"PATH": "C:\\Windows"},
+        executable,
+        platform_name="win32",
+    )
+
+    assert mac["DYLD_LIBRARY_PATH"].split(os.pathsep) == [
+        str(tmp_path.resolve()),
+        "/existing",
+    ]
+    assert windows == {"PATH": "C:\\Windows"}
 
 
 def test_legacy_llama_model_reuses_main_gguf_from_older_hub_snapshot(
