@@ -18,7 +18,7 @@ from .audio import AudioClipError, extract_audio_clip
 from .storage import AnalysisStore
 
 
-AREA_PROMPT_VERSION = "police-radio-area-stories-v7-evidence-v9"
+AREA_PROMPT_VERSION = "police-radio-area-stories-v8-evidence-v9"
 MIN_STORY_SCORE = 48
 MAX_STORIES = 30
 EVIDENCE_CONTEXT_BEFORE_SECONDS = 8.0
@@ -117,7 +117,7 @@ def _public_quote(value: str, *, location: str = "") -> tuple[str, bool]:
             location_prefix + name + r"\s*[.!?]?\s*$",
             location_prefix
             + name
-            + r"(?=\s*,\s*(?i:for|regarding|about|who|caller|complainant|"
+            + r"(?=\s*,\s*(?i:(?:and\s+)?for|regarding|about|who|caller|complainant|"
             r"subject|resident|owner|reports?|reporting|alarm|welfare)\b)",
             location_prefix
             + name

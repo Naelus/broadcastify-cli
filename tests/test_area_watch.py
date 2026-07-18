@@ -84,6 +84,17 @@ def test_public_quote_redacts_a_location_adjacent_name_before_dispatch_clause() 
     assert quote == "9805, [private person], for an intrusion alarm on the garage door."
 
 
+def test_public_quote_redacts_a_location_adjacent_name_before_coordinated_clause() -> None:
+    quote, changed = _public_quote(
+        "9805, Jordan Example, and for a theft of a license plate.",
+        location="9805",
+    )
+
+    assert changed is True
+    assert "Jordan Example" not in quote
+    assert quote == "9805, [private person], and for a theft of a license plate."
+
+
 def test_area_summary_uses_db_coverage_and_does_not_treat_zip_as_a_geofence(
     tmp_path: Path,
 ) -> None:

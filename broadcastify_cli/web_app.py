@@ -28,7 +28,8 @@ from urllib.parse import parse_qs, quote, unquote, urlparse
 from dotenv import dotenv_values
 
 from .analysis import PROMPT_VERSION, WEEKLY_PROMPT_VERSION
-from .area_watch import AREA_PROMPT_VERSION
+from .area_watch import AREA_PROMPT_VERSION, _public_quote
+from .audio import select_incident_evidence_window
 from .library import scan_local_library
 from .storage import AnalysisStore
 
@@ -144,14 +145,23 @@ def _area_stories_for_web(
     output_dir: str | Path,
     stories: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """Add safe clip URLs without exposing workstation paths to the browser."""
+    """Prepare redacted evidence and safe clip URLs for the browser."""
 
     rendered: list[dict[str, Any]] = []
     for raw_story in stories:
         story = dict(raw_story)
+        location = str(story.get("location") or "")
         references: list[dict[str, Any]] = []
         for raw_reference in raw_story.get("incident_references", []):
             reference = dict(raw_reference)
+            safe_quote, quote_changed = _public_quote(
+                str(reference.get("quote") or ""),
+                location=location,
+            )
+            reference["quote"] = safe_quote
+            reference["quote_redacted"] = bool(
+                reference.get("quote_redacted")
+            ) or quote_changed
             clip_path = str(reference.pop("clip_path", "") or "")
             reference.pop("source_audio_path", None)
             reference["media_url"] = _retained_media_url(output_dir, clip_path)
@@ -489,12 +499,27 @@ def _library_payload(state: WebAppState) -> dict[str, Any]:
 
 def _compact_incident(value: dict[str, Any]) -> dict[str, Any]:
     evidence = list(value.get("evidence") or [])
-    quote_text = ""
+    quote_parts: list[str] = []
+    evidence_start, evidence_end = select_incident_evidence_window(value)
     for item in evidence:
         if isinstance(item, dict):
-            quote_text = str(item.get("text") or item.get("quote") or "").strip()
-            if quote_text:
-                break
+            try:
+                segment_start = float(item.get("start_seconds", 0.0))
+                segment_end = float(item.get("end_seconds", segment_start))
+            except (TypeError, ValueError):
+                continue
+            text = str(item.get("text") or item.get("quote") or "").strip()
+            if (
+                text
+                and segment_end >= evidence_start
+                and segment_start <= evidence_end
+                and text not in quote_parts
+            ):
+                quote_parts.append(text)
+    quote_text, quote_redacted = _public_quote(
+        " ".join(quote_parts),
+        location=str(value.get("location") or ""),
+    )
     return {
         "id": int(value["id"]),
         "event_type": str(value.get("event_type") or "other"),
@@ -506,6 +531,7 @@ def _compact_incident(value: dict[str, Any]) -> dict[str, Any]:
         "start_seconds": float(value.get("start_seconds") or 0),
         "end_seconds": float(value.get("end_seconds") or 0),
         "quote": quote_text,
+        "quote_redacted": quote_redacted,
     }
 
 

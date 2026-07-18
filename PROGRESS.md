@@ -4,6 +4,17 @@ This is the dated verification and delivery log for `GOAL.md`. Keep forward-look
 
 ## July 18, 2026
 
+### Web evidence serialization and coordinated-name privacy boundary
+
+- Audited the actual public transformation without printing retained names. The native worker and area builder were safe, but the Web day serializer was taking the first raw SQLite evidence row directly and that row was not necessarily inside the exact exported-clip window.
+- Replaced that browser boundary with the shared compact evidence-window selection, unique in-window quote assembly, and deterministic redaction. The area Web serializer now re-sanitizes every persisted reference while stripping source/clip workstation paths, so generator safety is no longer the browser's only defense.
+- The current 27-reference Example City brief exposed one additional bounded form: `known location, private name, and for …`. Added only that coordinated clause to avoid treating capitalized locations or vehicle makes as people. Synthetic tests cover the clause, the Web day endpoint, and the area-package serializer; original evidence remains internal.
+- Advanced the area contract to `police-radio-area-stories-v8-evidence-v9` and rebuilt July 15–16 from retained SQLite/audio with local Gemma 4 12B Q4_0. The rebuild made no Broadcastify request, completed in **16.7 seconds**, and retained **2/2 feed-days, 27 leads, 27 references, 27 exact clips, and eight redacted quotes**.
+- The corpus-wide serializer audit covered **470/470 incident quotes**: 31 were redacted, zero retained a strong detected name context, and zero exceeded the 800-character display cap. The current area JSON exposes no local paths and the native saved-digest worker reports the v8 result as current rather than stale.
+- Live loopback QA rendered all 27 leads with one selected evidence pane at the default 1265-pixel client width and at 390×844. The exact I748 package retained its source identity, redaction marker, audio control, and download link; neither document nor panel overflowed and the browser reported zero warnings/errors.
+- Rebuilt native QA at 1228×894 opened the same 27-lead brief and selected I748. Its exact source time, `[private person]` marker, complete dispatch context, Play/Export actions, and **Timestamped evidence clip ready** state remained visible in the bounded master/detail workspace. The app remains open on that corrected source package for inspection.
+- Complete suite: **195 passed in 8.31 seconds**. Python compileall, bundled-Node JavaScript parsing, Git whitespace, and a changed-file credential-prefix scan passed. The WinUI Release x64 build completed with **0 warnings and 0 errors**.
+
 ### Exact recovery actions for portable hardware profiles
 
 - Replaced generic profile-repair prose with one structured next action shared by diagnostics, the joined worker result, WinUI, and the loopback Web UI. The contract identifies the failed stage, action kind, user-facing label, and exact message.

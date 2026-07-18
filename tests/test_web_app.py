@@ -72,10 +72,37 @@ def _retained_day(
     )
     with AnalysisStore(database) as store:
         imported = store.import_transcript("90001", date(2026, 7, 12), transcript, audio)
+        incident_ids = store.replace_incidents(
+            imported.day_id,
+            [
+                {
+                    "fingerprint": "web-redaction-boundary",
+                    "event_type": "welfare_check",
+                    "title": "Welfare check requested",
+                    "summary": "Radio traffic requested a welfare check.",
+                    "location": "Retained Place",
+                    "start_seconds": 1.0,
+                    "end_seconds": 2.5,
+                    "priority": 2,
+                    "confidence": 0.9,
+                    "evidence": [
+                        {
+                            "segment_index": 0,
+                            "start_seconds": 1.0,
+                            "end_seconds": 2.5,
+                            "speaker": "SPEAKER_00",
+                            "text": "Check the welfare of Jordan Example at the retained location.",
+                        }
+                    ],
+                }
+            ],
+            model="test",
+            prompt_version=prompt_version,
+        )
         store.save_daily_summary(
             imported.day_id,
             "One retained dispatch call.",
-            [],
+            incident_ids,
             model="test",
             prompt_version=prompt_version,
             transcript_sha256=imported.transcript_sha256,
@@ -175,6 +202,11 @@ def test_loopback_web_app_serves_library_transcript_and_media(tmp_path: Path) ->
         assert response.status == 200
         assert detail["summary"] == "One retained dispatch call."
         assert detail["audio_url"].startswith("/media?path=")
+        assert len(detail["incidents"]) == 1
+        assert detail["incidents"][0]["quote_redacted"] is True
+        assert detail["incidents"][0]["quote"] == (
+            "Check the welfare of [private person] at the retained location."
+        )
 
         response, body = _request(
             connection,
@@ -326,12 +358,13 @@ def test_web_area_story_packages_use_safe_media_urls_without_local_paths(
     stories = [
         {
             "story_id": "S1",
+            "location": "9805",
             "incident_references": [
                 {
                     "incident_id": 694,
                     "clip_path": str(clip),
                     "source_audio_path": str(output / "90001" / "day.mp3"),
-                    "quote": "A redacted report.",
+                    "quote": "9805, Jordan Example, and for a theft report.",
                 }
             ],
         }
@@ -342,8 +375,11 @@ def test_web_area_story_packages_use_safe_media_urls_without_local_paths(
 
     assert reference["media_url"] == "/media?path=90001/20260716/evidence-clips/I694.mp3"
     assert reference["filename"] == "I694.mp3"
+    assert reference["quote"] == "9805, [private person], and for a theft report."
+    assert reference["quote_redacted"] is True
     assert "clip_path" not in reference
     assert "source_audio_path" not in reference
+    assert "Jordan Example" in stories[0]["incident_references"][0]["quote"]
     assert "clip_path" in stories[0]["incident_references"][0]
 
 

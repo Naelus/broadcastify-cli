@@ -61,6 +61,14 @@ Use this file for reproducible defects and concrete blockers, not the general ro
 
 ## Recently fixed
 
+### F-028 — The Web day viewer bypassed quote redaction
+
+The native day-report worker and area-story builder assembled a bounded citation quote and applied deterministic public-text redaction, but the Web day serializer returned the first raw `evidence.text` value from SQLite. That made the same retained incident safe in one viewer and unsanitized in another, and the chosen text was not guaranteed to match the exact exported clip. A separate current area quote used the bounded dispatch form `known location, private name, and for …`; the location-adjacent sanitizer handled `for …` but missed that coordinating word.
+
+The Web day boundary now selects every unique evidence segment overlapping `select_incident_evidence_window`, joins and redacts that exact-clip text, and returns an explicit redaction flag. Area packages are re-sanitized again when converted to browser JSON, even if a persisted package was produced elsewhere, while workstation paths remain stripped. The bounded location rule now accepts `and for`, synthetic regressions cover both serializers and the new clause, and the area contract advances to `police-radio-area-stories-v8-evidence-v9`.
+
+A read-only audit passed all **470 retained incidents**: 470 bounded quotes, 31 redactions, zero residual strong name contexts, and zero quotes beyond the 800-character cap. The local-only Gemma rebuild completed in **16.7 seconds** with **2/2 feed-days, 27 leads/references, 27 exact clips, and eight redacted public quotes**. Live Web QA selected the exact corrected I748 package at desktop and 390×844 widths; the redaction marker, source record, audio control, and download link were present, document/panel widths did not overflow, and the console was empty. Rebuilt native QA opened the same I748 source at 1228×894 with the redaction marker, source time, Play, Export, and ready exact-clip state intact. The complete suite passes **195 tests**; Python compilation, bundled-Node parsing, Git whitespace, changed-file secret scanning, and the WinUI Release build pass with **0 warnings and 0 errors**.
+
 ### F-027 — Portable setup recovery confused a missing runtime with a missing model
 
 Hardware profiles described their three missing stages, but the first actionable repair was still flattened into prose. In particular, a Windows machine without a Vulkan-enabled `whisper-cli` could show **Download & test model**, even though acquiring a GGML file could not make the selected runtime execute. A failed joined proof similarly returned only a stage/message pair, forcing both clients to guess where the user should go next. The joined payload also carried both the ASR and analysis choices; if the analysis model was explicitly blank, the legacy local-provider fallback could mistake the ASR `model` value (`turbo`) for a llama.cpp repository.
