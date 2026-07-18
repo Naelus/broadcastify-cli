@@ -138,6 +138,18 @@ class TranscriptionQualityError(RuntimeError):
     pass
 
 
+LOCALIZED_REPETITION_POLICY = "localized-repetition-collapse-v1"
+
+
+def _is_localized_repetition_collapse(text: str) -> bool:
+    """Identify a long, low-variety decoder loop inside one ASR segment."""
+
+    tokens = re.findall(r"[\w]+", str(text or "").casefold(), flags=re.UNICODE)
+    if len(tokens) < 50:
+        return False
+    return len(set(tokens)) / len(tokens) <= 0.12
+
+
 def transcript_quality_report(texts: Sequence[str]) -> dict[str, object]:
     nonempty = [str(value or "").strip() for value in texts if str(value or "").strip()]
     normalized = [
@@ -154,8 +166,12 @@ def transcript_quality_report(texts: Sequence[str]) -> dict[str, object]:
     alphanumeric_characters = sum(
         1 for value in nonempty for character in value if character.isalnum()
     )
+    localized_repetition_count = sum(
+        1 for value in nonempty if _is_localized_repetition_collapse(value)
+    )
     rejected = bool(
         (segment_count >= 10 and alphanumeric_characters == 0)
+        or localized_repetition_count
         or (
             segment_count >= 20
             and dominant_ratio >= 0.75
@@ -175,8 +191,151 @@ def transcript_quality_report(texts: Sequence[str]) -> dict[str, object]:
         "dominant_segment_count": dominant_count,
         "dominant_segment_ratio": round(dominant_ratio, 6),
         "alphanumeric_characters": alphanumeric_characters,
-        "policy": "repetition-collapse-v1",
+        "localized_repetition_segment_count": localized_repetition_count,
+        "policy": "repetition-collapse-v2",
     }
+
+
+def _discard_localized_repetition_segments(
+    segments: Sequence[TranscriptSegment],
+) -> tuple[list[TranscriptSegment], list[TranscriptSegment]]:
+    kept: list[TranscriptSegment] = []
+    discarded: list[TranscriptSegment] = []
+    for segment in segments:
+        target = (
+            discarded
+            if _is_localized_repetition_collapse(segment.text)
+            else kept
+        )
+        target.append(segment)
+    return kept, discarded
+
+
+def _render_transcript_segments(segments: Sequence[TranscriptSegment]) -> str:
+    lines: list[str] = []
+    for segment in segments:
+        speaker = f" {segment.speaker}:" if segment.speaker else ""
+        lines.append(
+            f"[{format_timestamp(segment.start)}]{speaker} {segment.text}".rstrip()
+        )
+    return "\n".join(lines) + ("\n" if lines else "")
+
+
+def _cleanup_metadata(
+    discarded: Sequence[TranscriptSegment],
+    *,
+    previous_count: int = 0,
+    previous_intervals: Sequence[dict[str, object]] = (),
+) -> dict[str, object]:
+    return {
+        "policy": LOCALIZED_REPETITION_POLICY,
+        "discarded_segment_count": previous_count + len(discarded),
+        "discarded_intervals": list(previous_intervals)
+        + [
+            {
+                "start": round(float(segment.start), 3),
+                "end": round(float(segment.end), 3),
+            }
+            for segment in discarded
+        ],
+    }
+
+
+def _repair_cached_localized_repetition(
+    json_path: Path,
+    txt_path: Path,
+) -> bool:
+    """Remove provable decoder loops from an otherwise useful cached transcript."""
+
+    payload = json.loads(json_path.read_text(encoding="utf-8"))
+    raw_segments = payload.get("segments")
+    if not isinstance(raw_segments, list):
+        return False
+    segments = [
+        TranscriptSegment(
+            start=float(value.get("start", 0.0)),
+            end=float(value.get("end", value.get("start", 0.0))),
+            text=str(value.get("text") or "").strip(),
+            speaker=(
+                str(value.get("speaker"))
+                if value.get("speaker") is not None
+                else None
+            ),
+        )
+        for value in raw_segments
+        if isinstance(value, dict) and str(value.get("text") or "").strip()
+    ]
+    kept, discarded = _discard_localized_repetition_segments(segments)
+    if not discarded:
+        return False
+
+    quality = transcript_quality_report([segment.text for segment in kept])
+    if quality["status"] == "rejected":
+        return False
+
+    intervals = [
+        (float(segment.start), float(segment.end)) for segment in discarded
+    ]
+    raw_words = payload.get("words")
+    if isinstance(raw_words, list):
+        payload["words"] = [
+            value
+            for value in raw_words
+            if not (
+                isinstance(value, dict)
+                and any(
+                    start
+                    <= (
+                        float(value.get("start", 0.0))
+                        + float(value.get("end", value.get("start", 0.0)))
+                    )
+                    / 2.0
+                    <= end
+                    for start, end in intervals
+                )
+            )
+        ]
+
+    prior_cleanup = payload.get("transcription_cleanup")
+    if not isinstance(prior_cleanup, dict):
+        prior_cleanup = {}
+    prior_intervals = prior_cleanup.get("discarded_intervals")
+    if not isinstance(prior_intervals, list):
+        prior_intervals = []
+    try:
+        prior_count = int(prior_cleanup.get("discarded_segment_count", 0))
+    except (TypeError, ValueError):
+        prior_count = 0
+
+    rendered_text = _render_transcript_segments(kept)
+    payload["segments"] = [asdict(segment) for segment in kept]
+    payload["text"] = " ".join(segment.text for segment in kept).strip()
+    payload["transcription_quality"] = quality
+    payload["transcription_cleanup"] = _cleanup_metadata(
+        discarded,
+        previous_count=prior_count,
+        previous_intervals=[
+            value for value in prior_intervals if isinstance(value, dict)
+        ],
+    )
+    payload["rendered_text_sha256"] = hashlib.sha256(
+        rendered_text.encode("utf-8")
+    ).hexdigest()
+
+    json_temp = json_path.with_suffix(json_path.suffix + ".tmp")
+    txt_temp = txt_path.with_suffix(txt_path.suffix + ".tmp")
+    try:
+        txt_temp.write_text(rendered_text, encoding="utf-8", newline="\n")
+        json_temp.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        txt_temp.replace(txt_path)
+        json_temp.replace(json_path)
+    finally:
+        txt_temp.unlink(missing_ok=True)
+        json_temp.unlink(missing_ok=True)
+    return True
 
 
 @contextmanager
@@ -528,7 +687,6 @@ class LocalTranscriber:
         turns = self._diarize(audio_path, progress=progress) if self.diarize else []
         words: list[TranscriptWord] = []
         fallback_segments: list[TranscriptSegment] = []
-        full_text: list[str] = []
         language = "en"
         language_probability = None
         duration = None
@@ -567,8 +725,6 @@ class LocalTranscriber:
                 asr_metadata["speaker_label_quality"] = (
                     PORTABLE_DIARIZATION_QUALITY
                 )
-            if result.text:
-                full_text.append(result.text)
             for word in result.words:
                 words.append(
                     TranscriptWord(
@@ -612,8 +768,6 @@ class LocalTranscriber:
             duration = getattr(info, "duration", None)
             for segment in raw_segments:
                 segment_text = str(segment.text).strip()
-                if segment_text:
-                    full_text.append(segment_text)
 
                 segment_words = getattr(segment, "words", None) or []
                 added_word = False
@@ -648,6 +802,22 @@ class LocalTranscriber:
         output_segments = group_words(words) if words else [
             value for value in fallback_segments if value.text
         ]
+        output_segments, discarded_segments = _discard_localized_repetition_segments(
+            output_segments
+        )
+        if discarded_segments and words:
+            discarded_intervals = [
+                (float(segment.start), float(segment.end))
+                for segment in discarded_segments
+            ]
+            words = [
+                word
+                for word in words
+                if not any(
+                    start <= (float(word.start) + float(word.end)) / 2.0 <= end
+                    for start, end in discarded_intervals
+                )
+            ]
         quality = transcript_quality_report(
             [segment.text for segment in output_segments]
         )
@@ -663,13 +833,7 @@ class LocalTranscriber:
         transcript_dir.mkdir(parents=True, exist_ok=True)
 
         actual_model = str(asr_metadata.get("model") or self.model_name)
-        lines = []
-        for segment in output_segments:
-            speaker = f" {segment.speaker}:" if segment.speaker else ""
-            lines.append(
-                f"[{format_timestamp(segment.start)}]{speaker} {segment.text}".rstrip()
-            )
-        rendered_text = "\n".join(lines) + ("\n" if lines else "")
+        rendered_text = _render_transcript_segments(output_segments)
         payload = {
             "audio_file": audio_path.name,
             "model": actual_model,
@@ -681,7 +845,7 @@ class LocalTranscriber:
             "language": language,
             "language_probability": language_probability,
             "duration": duration,
-            "text": " ".join(full_text).strip(),
+            "text": " ".join(segment.text for segment in output_segments).strip(),
             "segments": [asdict(segment) for segment in output_segments],
             "words": [asdict(word) for word in words],
             "speaker_turns": [asdict(turn) for turn in turns],
@@ -718,6 +882,7 @@ class LocalTranscriber:
             ),
             "asr_metadata": asr_metadata,
             "transcription_quality": quality,
+            "transcription_cleanup": _cleanup_metadata(discarded_segments),
             "rendered_text_sha256": hashlib.sha256(
                 rendered_text.encode("utf-8")
             ).hexdigest(),
@@ -846,7 +1011,14 @@ class LocalTranscriber:
     ) -> bool:
         if not json_path.is_file() or not txt_path.is_file():
             return False
-        if min(json_path.stat().st_mtime, txt_path.stat().st_mtime) < audio_path.stat().st_mtime:
+        if (
+            min(json_path.stat().st_mtime, txt_path.stat().st_mtime)
+            < audio_path.stat().st_mtime
+        ):
+            return False
+        try:
+            _repair_cached_localized_repetition(json_path, txt_path)
+        except (OSError, TypeError, ValueError, json.JSONDecodeError):
             return False
         try:
             payload = json.loads(json_path.read_text(encoding="utf-8"))

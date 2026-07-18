@@ -256,6 +256,127 @@ def test_transcript_quality_rejects_repetition_collapse() -> None:
     assert report["dominant_segment_ratio"] > 0.98
 
 
+def test_transcript_quality_rejects_repetition_inside_one_segment() -> None:
+    report = transcript_quality_report(
+        [f"unique dispatch {index}" for index in range(100)]
+        + [", ".join(["I'm 13"] * 80)]
+    )
+
+    assert report["status"] == "rejected"
+    assert report["localized_repetition_segment_count"] == 1
+    assert report["policy"] == "repetition-collapse-v2"
+
+
+def test_localized_repetition_is_discarded_without_losing_good_segments(
+    tmp_path: Path,
+) -> None:
+    audio = tmp_path / "radio.wav"
+    audio.write_bytes(b"audio")
+
+    class PartlyRepeatingExternalAsr:
+        @staticmethod
+        def transcribe(_path: Path, progress=None) -> AsrResult:
+            return AsrResult(
+                text="unit responding followed by a decoder loop",
+                duration=60.0,
+                segments=[
+                    AsrSegment(0.0, 2.0, "unit responding"),
+                    AsrSegment(2.0, 30.0, ", ".join(["I'm 13"] * 80)),
+                    AsrSegment(30.0, 32.0, "dispatcher copies"),
+                ],
+                engine="whisper.cpp",
+                backend="whisper.cpp Vulkan",
+                metadata={"model": "base"},
+            )
+
+    transcriber = object.__new__(LocalTranscriber)
+    transcriber._asr = None
+    transcriber._external_asr = PartlyRepeatingExternalAsr()
+    transcriber.model_name = "base.en"
+    transcriber.asr_engine = "whisper.cpp"
+    transcriber.backend_description = "whisper.cpp Vulkan"
+    transcriber.device = "vulkan"
+    transcriber.compute_type = "ggml quantized"
+    transcriber.diarize = False
+    transcriber.diarization_device = "none"
+
+    transcript_path = transcriber.transcribe_file(audio)
+    payload = json.loads(transcript_path.read_text(encoding="utf-8"))
+    rendered = transcript_path.with_suffix(".txt").read_text(encoding="utf-8")
+
+    assert [value["text"] for value in payload["segments"]] == [
+        "unit responding",
+        "dispatcher copies",
+    ]
+    assert payload["transcription_quality"]["status"] == "passed"
+    assert payload["transcription_cleanup"]["discarded_segment_count"] == 1
+    assert "I'm 13" not in rendered
+
+
+def test_cached_localized_repetition_is_repaired_without_rerunning_asr(
+    tmp_path: Path,
+) -> None:
+    audio = tmp_path / "radio.wav"
+    audio.write_bytes(b"audio")
+
+    class InitialExternalAsr:
+        @staticmethod
+        def transcribe(_path: Path, progress=None) -> AsrResult:
+            return AsrResult(
+                text="unit responding",
+                duration=2.0,
+                segments=[AsrSegment(0.0, 2.0, "unit responding")],
+                engine="whisper.cpp",
+                backend="whisper.cpp Vulkan",
+                metadata={"model": "base"},
+            )
+
+    transcriber = object.__new__(LocalTranscriber)
+    transcriber._asr = None
+    transcriber._external_asr = InitialExternalAsr()
+    transcriber.model_name = "base.en"
+    transcriber.asr_engine = "whisper.cpp"
+    transcriber.backend_description = "whisper.cpp Vulkan"
+    transcriber.device = "vulkan"
+    transcriber.compute_type = "ggml quantized"
+    transcriber.diarize = False
+    transcriber.diarization_device = "none"
+
+    transcript_path = transcriber.transcribe_file(audio)
+    text_path = transcript_path.with_suffix(".txt")
+    payload = json.loads(transcript_path.read_text(encoding="utf-8"))
+    payload["segments"].append(
+        {
+            "start": 2.0,
+            "end": 30.0,
+            "text": ", ".join(["I'm 13"] * 80),
+            "speaker": None,
+        }
+    )
+    transcript_path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    text_path.write_text(
+        text_path.read_text(encoding="utf-8")
+        + f"[00:00:02.000] {', '.join(['I am 13'] * 80)}\n",
+        encoding="utf-8",
+    )
+
+    class FailingExternalAsr:
+        @staticmethod
+        def transcribe(_path: Path, progress=None) -> AsrResult:
+            raise AssertionError("ASR should not rerun for a repairable cache")
+
+    transcriber._external_asr = FailingExternalAsr()
+    assert transcriber.transcribe_file(audio) == transcript_path
+
+    repaired = json.loads(transcript_path.read_text(encoding="utf-8"))
+    assert len(repaired["segments"]) == 1
+    assert repaired["transcription_cleanup"]["discarded_segment_count"] == 1
+    assert repaired["transcription_quality"]["status"] == "passed"
+
+
 def test_repetition_collapse_is_not_saved_or_marked_current(tmp_path: Path) -> None:
     audio = tmp_path / "radio.wav"
     audio.write_bytes(b"audio")
