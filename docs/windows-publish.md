@@ -1,6 +1,6 @@
 # Windows publish and runtime layout
 
-Last verified: July 16, 2026.
+Last verified: July 18, 2026.
 
 The Windows reference shell can now be produced with `dotnet publish` without merging the Windows ML helper into the WinUI dependency graph:
 
@@ -10,6 +10,8 @@ The Windows reference shell can now be produced with `dotnet publish` without me
 ```
 
 The verifier performs a real Release publish, checks the unpackaged WinUI compiled XAML and PRI resources, confirms the private environment is absent, and executes `windowsml\BroadcastifyCli.WindowsML.exe --probe`. The helper is kept in a namespaced subdirectory with its complete runtime so duplicate Windows App SDK filenames cannot collide with the desktop shell. The desktop passes that exact helper path to every Python child unless `WINDOWS_ML_HELPER_PATH` was explicitly configured by the user.
+
+Both native projects currently target the maintained Windows App SDK 1.8 servicing line at **1.8.10 / 1.8.260710003** (released July 14, 2026). This updates the validated 1.8 runtime without silently crossing to a newer major Windows ML/runtime contract. The current isolated Release build succeeds with zero warnings or errors, and the bundled helper still performs a real CPU Whisper decode; GPU execution remains gated by the model/provider tests in [hardware-backends.md](hardware-backends.md).
 
 For the owner's private build only:
 

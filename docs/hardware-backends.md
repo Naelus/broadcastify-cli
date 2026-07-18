@@ -1,24 +1,24 @@
 # Hardware backends and portable runtimes
 
-The application chooses a backend independently for transcription, diarization, and analysis. A GPU-capable ASR engine does not imply that pyannote supports the same API, and a generic `llama-server` executable does not prove that its Vulkan or SYCL backend loaded. **Settings → Refresh check** therefore reports all three stages separately.
+The application chooses a backend independently for transcription, diarization, and analysis. A GPU-capable ASR engine does not imply that pyannote supports the same API, and a generic `llama-server` executable does not prove that its Vulkan or SYCL backend loaded. **Settings → Refresh check** reports cheap stage diagnostics; **Verify profile** then executes all three stages sequentially with generated input.
 
 Readiness uses three deliberately different terms:
 
 - **Detected** means a runtime, device, model cache, or provider catalog entry exists.
 - **Configured** means the selected stages have enough local configuration to attempt execution.
-- **Verified** means ASR, diarization, and analysis each completed a real selected-runtime self-test in the current UI session.
+- **Verified** means ASR, diarization, and analysis each completed a real selected-runtime self-test with the current settings in the current UI session.
 
-Refreshing hardware does not download a model or execution provider and never promotes detection to verification.
+Refreshing hardware does not download a model or execution provider and never promotes detection to verification. **Verify profile** may download a missing managed model after the user starts it, releases each model before loading the next stage, stops at the first actionable failure, and never consumes Broadcastify archive quota.
 
 ## Current validation boundary
 
 | Profile | Transcription | Diarization | Analysis | Evidence |
 |---|---|---|---|---|
-| Windows CUDA | faster-whisper CUDA | pyannote CUDA | llama.cpp auto-offload | Full retained-day reference workflow; exact `historical-validation` stage tests completed in 3.5/5.3/7.80 seconds on RTX 3090 |
+| Windows CUDA | faster-whisper CUDA | pyannote CUDA | llama.cpp auto-offload | Full retained-day reference workflow; joined native verification completed in 14.9 seconds on RTX 3090 |
 | CPU | faster-whisper INT8 or whisper.cpp CPU | pyannote CPU | llama.cpp CPU | Protected 30-second all-CPU Web job validated; full-day benchmark remains open |
-| AMD Vulkan/Linux | whisper.cpp Vulkan | pyannote CPU fallback | llama.cpp Vulkan | Protected end-to-end Web job validated; exact `historical-validation` stage tests completed in 4.413/4.221/5.622 seconds on Radeon 890M |
-| OpenVINO | OpenVINO GenAI AUTO/CPU | pyannote CPU fallback | llama.cpp SYCL/auto/CPU | Exact `historical-validation` protected 60-second job completed all stages in 31 seconds; a current Tiny CPU self-test completed in 1.188 seconds |
-| Windows ML | ONNX Runtime GenAI CPU | pyannote CPU fallback | llama.cpp auto/CPU | Exact `historical-validation` protected 60-second job completed all stages in 32 seconds and resumed idempotently; DML/TensorRT acceleration remains gated |
+| AMD Vulkan/Linux | whisper.cpp Vulkan | pyannote CPU fallback | llama.cpp Vulkan | Exact `historical-validation` joined verification completed in 27.886 seconds on Radeon 890M; protected retained-audio Web job also validated |
+| OpenVINO | OpenVINO GenAI AUTO/CPU | pyannote CPU fallback | llama.cpp SYCL/auto/CPU | Joined Web verification completed in 13.8 seconds; exact `historical-validation` protected 60-second job completed all stages in 31 seconds |
+| Windows ML | ONNX Runtime GenAI CPU | pyannote CPU fallback | llama.cpp auto/CPU | Joined Web verification completed in 13.3 seconds; exact `historical-validation` protected 60-second job completed all stages in 32 seconds and resumed idempotently; GPU providers remain gated |
 | macOS | whisper.cpp Metal or CPU | pyannote CPU | llama.cpp Metal or CPU | Explicit profile and detection exist; a real Mac install and model run remain required |
 
 The official [whisper.cpp project](https://github.com/ggml-org/whisper.cpp) documents Windows, Linux, macOS, Docker, quantized models, Metal, OpenVINO, and `GGML_VULKAN=1`. The official [llama.cpp project](https://github.com/ggml-org/llama.cpp) documents native packages/releases, Vulkan and SYCL backends, quantized GGUF models, and its OpenAI-compatible server.
@@ -85,11 +85,13 @@ The adapter retains sanitized initialization lines such as the selected Vulkan a
 
 The managed local provider discovers `llama-server` from `LLAMA_SERVER_PATH` or `PATH` on every platform. On Linux/macOS it creates a private writable fallback `HOME`, `LLAMA_CACHE`, and `HF_HOME` only when the inherited home is absent or unwritable, which matters for numeric-user containers. `BROADCASTIFY_RUNTIME_DIR` can select that fallback root.
 
+Official release archives often place `llama-server` beside backend and GGML shared libraries. The launcher prepends that sibling directory to `LD_LIBRARY_PATH` on Linux or `DYLD_LIBRARY_PATH` on macOS **only for the llama-server child**. Do not export a llama release directory globally: exact joined AMD testing showed that whisper.cpp can otherwise load llama.cpp's incompatible GGML library first. Windows resolves the release DLLs through the executable directory and receives no Unix loader override.
+
 An existing llama.cpp/Ollama/LM Studio-style loopback server can be used instead: choose the local provider and enter its `/v1` endpoint. This is the recommended container boundary for analysis because the UI can health-check the server and the model process can be supervised independently. The upstream [llama-server documentation](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md) describes native and container launches. Expose it only on loopback for this app; do not publish an unauthenticated model endpoint to the LAN.
 
 ## Intel/OpenVINO
 
-Install the optional packages with `pip install -e ".[openvino]"`, choose OpenVINO plus AUTO/GPU/NPU, and select **Test engine**. That explicit test may download the selected official OpenVINO Whisper model, then decodes one second of local synthetic audio through the same long-recording adapter used by archive jobs. The general hardware check remains download-free.
+Install the optional packages with `pip install -e ".[openvino]"`, choose OpenVINO plus AUTO/GPU/NPU, and select **Verify profile** or **Test transcription**. That explicit action may download the selected official OpenVINO Whisper model, then decodes one second of local synthetic audio through the same long-recording adapter used by archive jobs. The general hardware check remains download-free.
 
 The adapter uses INT8 model mappings for Tiny through Large V3 Turbo, including `OpenVINO/distil-whisper-large-v3-int8-ov`. English-suffixed Web UI choices such as `tiny.en` normalize to the same managed model. The current [OpenVINO GenAI documentation](https://docs.openvino.ai/2026/openvino-workflow-generative/inference-with-genai.html) lists WhisperPipeline on CPU, GPU, and NPU, and the [2026 release notes](https://docs.openvino.ai/nightly/about-openvino/release-notes-openvino.html) add word-level Whisper timestamps across those devices. OpenVINO 2026.2.1's [NPU Whisper guidance](https://docs.openvino.ai/2026/openvino-workflow-generative/inference-with-genai/inference-with-genai-on-npu.html) says the ordinary Whisper GenAI pipeline works on NPU without NPU-specific pipeline flags, so the app no longer injects the obsolete static-pipeline override.
 
@@ -103,9 +105,9 @@ The later `historical-validation` selected-engine test loaded current Tiny Engli
 
 The validated Windows ML functional path is a CPU FP32 Whisper model. The helper uses `Config`, passes a one-item prompt batch to the multimodal processor, keeps one model process alive across archive chunks, and reports the provider parsed from `genai_config.json`. A scalar prompt call is not equivalent for Whisper and caused the formerly misleading `DivideByZeroException`.
 
-Verified Windows publish folders carry the helper and its complete runtime under `windowsml/`. The desktop sets `WINDOWS_ML_HELPER_PATH` for Python children only when the user has not explicitly configured another helper. The published helper's FP32 CPU model self-test completed in 0.589 seconds and reported `Windows ML / ONNX Runtime GenAI CPU`; see [windows-publish.md](windows-publish.md).
+Verified Windows publish folders carry the helper and its complete runtime under `windowsml/`. The desktop sets `WINDOWS_ML_HELPER_PATH` for Python children only when the user has not explicitly configured another helper. The published helper's FP32 CPU model self-test completed in 0.589 seconds and reported `Windows ML / ONNX Runtime GenAI CPU`; the current joined Web run decoded through that CPU path in 0.4 seconds. Both native projects use the maintained Windows App SDK **1.8.10 / 1.8.260710003** servicing patch; see [windows-publish.md](windows-publish.md).
 
-Provider management is explicit and follows Microsoft's [Windows ML execution-provider catalog](https://learn.microsoft.com/en-us/windows/ai/new-windows-ml/initialize-execution-providers). The current [supported-provider catalog](https://learn.microsoft.com/en-us/windows/ai/new-windows-ml/supported-execution-providers) can expose AMD MIGraphX/VitisAI, Intel OpenVINO, Qualcomm QNN, NVIDIA TensorRT RTX, CPU, and legacy DirectML on compatible Windows 11 systems. Catalog status is only detection; each selected provider/model pair still needs a real decode. These commands respectively inspect, activate only an already-installed provider, or allow Windows to download and register compatible certified providers:
+Provider management is explicit and follows Microsoft's [Windows ML execution-provider catalog](https://learn.microsoft.com/en-us/windows/ai/new-windows-ml/initialize-execution-providers). As of July 18, 2026, the current [supported-provider catalog](https://learn.microsoft.com/en-us/windows/ai/new-windows-ml/supported-execution-providers) lists AMD MIGraphX/VitisAI, Intel OpenVINO, Qualcomm QNN, NVIDIA TensorRT RTX, CPU, and legacy DirectML for compatible Windows 11 24H2+ systems. The 1.8 catalog currently lists OpenVINO package 1.8.80.0, NVIDIA TensorRT RTX 1.8.24.0, MIGraphX 1.8.57.0, VitisAI 1.8.63.0, and QNN 1.8.30.0; Microsoft explicitly says the current MIGraphX provider is not supported for GenAI scenarios. Catalog status is only detection, and these versions update independently through Windows Update; each selected provider/model pair still needs a real decode. These commands respectively inspect, activate only an already-installed provider, or allow Windows to download and register compatible certified providers:
 
 ```powershell
 $helper = ".\BroadcastifyCli.WindowsML\bin\Release\net10.0-windows10.0.26100.0\win-x64\BroadcastifyCli.WindowsML.exe"
@@ -137,7 +139,7 @@ cmake -S llama.cpp -B llama.cpp/build -DGGML_METAL=ON
 cmake --build llama.cpp/build --config Release -j --target llama-server
 ```
 
-Set `WHISPER_CPP_PATH`, `WHISPER_CPP_MODEL_PATH`, and `LLAMA_SERVER_PATH`, choose **Apple Metal**, then run **Test engine**. The app accepts Metal only when the native whisper.cpp directory/linkage exposes ggml-metal, and the hardware comparison requires llama.cpp to list a `Metal` device as well. The upstream [whisper.cpp repository](https://github.com/ggml-org/whisper.cpp) also documents optional Core ML encoder acceleration on Apple Silicon; its compiled encoder directory must accompany the matching GGML model. The upstream [llama.cpp repository](https://github.com/ggml-org/llama.cpp) describes Apple Silicon as a first-class Metal target.
+Set `WHISPER_CPP_PATH`, `WHISPER_CPP_MODEL_PATH`, and `LLAMA_SERVER_PATH`, choose **Apple Metal**, then run **Verify profile** or **Test transcription**. The app accepts Metal only when the native whisper.cpp directory/linkage exposes ggml-metal, and the hardware comparison requires llama.cpp to list a `Metal` device as well. Metal is never offered as a container recovery path because Docker and Podman cannot expose Apple Metal through this adapter. The upstream [whisper.cpp repository](https://github.com/ggml-org/whisper.cpp) also documents optional Core ML encoder acceleration on Apple Silicon; its compiled encoder directory must accompany the matching GGML model. The upstream [llama.cpp repository](https://github.com/ggml-org/llama.cpp) describes Apple Silicon as a first-class Metal target.
 
 If either native backend is absent, Automatic stays on the portable CPU route. pyannote remains a CPU stage because it does not expose a supported Metal backend through this app. No macOS performance claim is made until the exact self-test and a retained radio clip run on real Apple hardware.
 
@@ -150,6 +152,8 @@ The separate llama.cpp b9637 Vulkan run used public `ggml-org/gemma-3-1b-it-GGUF
 No packages, services, or storage configuration were changed on the appliance host. Image/model hashes and the remaining limitations are recorded in `PROGRESS.md` and `BUGS.md`.
 
 Exact pushed source `historical-validation` was later archived at SHA-256 `d6d770a150a322bdd9435b67aff3e61412660456ceb4233c424570a10c7d676e` and independently extracted in a fresh user-owned path. Its cheap diagnostics saw the Vulkan runtime, cached Community-1 model, and llama.cpp Vulkan device but correctly left the profile configured/unverified. The three explicit proofs then completed whisper.cpp Vulkan ASR in 4.413 seconds, CPU Community-1 diarization in 4.221 seconds, and Gemma 3 1B `Q4_K_M` Vulkan generation in 5.622 seconds. A protected loopback analysis job completed in 1.413 seconds, and the exact source passed all 163 tests in 3.82 seconds inside the immutable runtime boundary.
+
+Exact pushed source `historical-validation` was then hash-verified and extracted in another fresh path. Its one-action profile verifier completed whisper.cpp Vulkan in **4.578 seconds**, tokenless cached Community-1 CPU in **10.595 seconds**, and Gemma 3 1B `Q4_K_M` llama.cpp Vulkan in **10.645 seconds**, **27.886 seconds total**. The llama log identifies `Vulkan0 : AMD Radeon 890M Graphics (RADV GFX1150)`. The exact source passed all **171 tests in 5.90 seconds** with networking disabled, read-only source/root, dropped capabilities, `no-new-privileges`, numeric user 950, and only the existing render device/group. No validation container remained.
 
 ### Joined current-worker measurement
 
