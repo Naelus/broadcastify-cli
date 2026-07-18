@@ -127,7 +127,8 @@ def test_loopback_web_app_serves_library_transcript_and_media(tmp_path: Path) ->
         assert cookie.startswith("radio_archive_session=")
         assert token_match is not None
         assert b'id="areaPublicSafetyOnly"' in body
-        assert b'/static/app.js?v=25' in body
+        assert b'/static/app.js?v=26' in body
+        assert b'id="accessScopeStatus"' in body
         assert b'value="qwen3-asr"' in body
         assert b'qwen3-asr-0.6b-int8' in body
         assert b'id="settingAnalysisDevice"' in body
@@ -147,7 +148,7 @@ def test_loopback_web_app_serves_library_transcript_and_media(tmp_path: Path) ->
         assert response.getheader("Content-Type") == "image/svg+xml"
         assert b"<svg" in body
 
-        response, body = _request(connection, "GET", "/static/app.js?v=25")
+        response, body = _request(connection, "GET", "/static/app.js?v=26")
         assert response.status == 200
         assert b"areaSelectedStoryIndex" in body
         assert b"data-area-story-index" in body
@@ -161,6 +162,9 @@ def test_loopback_web_app_serves_library_transcript_and_media(tmp_path: Path) ->
         assert b"function currentProfileAction" in body
         assert b'setupProfileSelfTestButton").addEventListener' in body
         assert b"function syncPlatformProfileOptions" in body
+        assert b"function applyRuntimeProcessingDefaults" in body
+        assert b"hardware_profile: state.settings.hardwareProfile" in body
+        assert b'"Trusted LAN"' in body
         assert b"whisper.cpp has no managed distil-large-v3 mapping" in body
         assert b' qwen: ["qwen3-asr", "cpu", "cpu", "auto", "sherpa-onnx"]' in body
         assert b"diarization_engine: state.settings.diarizationEngine" in body
@@ -190,6 +194,7 @@ def test_loopback_web_app_serves_library_transcript_and_media(tmp_path: Path) ->
         assert bootstrap["summary"]["day_count"] == 1
         assert bootstrap["days"][0]["feed_name"] == "Example City Public Safety"
         assert bootstrap["runtime"]["loopback_only"] is True
+        assert bootstrap["runtime"]["processing_defaults"] == {}
         assert bootstrap["runtime"]["storage_ready"] is True
         assert isinstance(bootstrap["runtime"]["account"]["configured"], bool)
 
@@ -321,6 +326,54 @@ def test_web_app_allows_explicit_trusted_lan_binding(tmp_path: Path) -> None:
         thread.join(timeout=3)
 
 
+def test_web_app_advertises_validated_deployment_processing_defaults(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    defaults = {
+        "BROADCASTIFY_DEFAULT_HARDWARE_PROFILE": "vulkan",
+        "BROADCASTIFY_DEFAULT_WHISPER_MODEL": "tiny.en",
+        "BROADCASTIFY_DEFAULT_ASR_ENGINE": "whisper.cpp",
+        "BROADCASTIFY_DEFAULT_DEVICE": "vulkan",
+        "BROADCASTIFY_DEFAULT_DIARIZATION_ENGINE": "sherpa-onnx",
+        "BROADCASTIFY_DEFAULT_DIARIZATION_DEVICE": "cpu",
+        "BROADCASTIFY_DEFAULT_BATCH_SIZE": "8",
+    }
+    for name, value in defaults.items():
+        monkeypatch.setenv(name, value)
+    server = create_server(tmp_path, port=0, working_dir=tmp_path)
+    server.quiet = True  # type: ignore[attr-defined]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    connection = http.client.HTTPConnection(
+        "127.0.0.1", server.server_port, timeout=5
+    )
+    try:
+        response, _body = _request(connection, "GET", "/")
+        cookie = response.getheader("Set-Cookie", "").split(";", 1)[0]
+        response, body = _request(
+            connection,
+            "GET",
+            "/api/bootstrap",
+            cookie=cookie,
+        )
+        assert response.status == 200
+        assert json.loads(body)["runtime"]["processing_defaults"] == {
+            "hardware_profile": "vulkan",
+            "model": "tiny.en",
+            "asr_engine": "whisper.cpp",
+            "device": "vulkan",
+            "diarization_engine": "sherpa-onnx",
+            "diarization_device": "cpu",
+            "batch_size": 8,
+        }
+    finally:
+        connection.close()
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=3)
+
+
 def test_web_app_rejects_public_binding(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="public"):
         create_server(tmp_path, host="8.8.8.8", port=0)
@@ -349,6 +402,74 @@ def test_web_jobs_force_quota_safe_archive_defaults(tmp_path: Path) -> None:
     assert payload["combine"] is True
     assert payload["transcribe"] is True
     assert payload["output_dir"] == str(tmp_path)
+
+
+def test_web_jobs_resolve_automatic_against_the_installed_deployment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    defaults = {
+        "BROADCASTIFY_DEFAULT_HARDWARE_PROFILE": "vulkan",
+        "BROADCASTIFY_DEFAULT_WHISPER_MODEL": "tiny.en",
+        "BROADCASTIFY_DEFAULT_ASR_ENGINE": "whisper.cpp",
+        "BROADCASTIFY_DEFAULT_DEVICE": "vulkan",
+        "BROADCASTIFY_DEFAULT_DIARIZATION_ENGINE": "sherpa-onnx",
+        "BROADCASTIFY_DEFAULT_DIARIZATION_DEVICE": "cpu",
+    }
+    for name, value in defaults.items():
+        monkeypatch.setenv(name, value)
+    manager = JobManager(tmp_path, tmp_path / "analysis.sqlite3", tmp_path)
+    _arguments, payload = manager._worker_request(  # noqa: SLF001
+        "run",
+        {
+            "feed_id": "90001",
+            "start_date": "2026-07-17",
+            "end_date": "2026-07-18",
+            "hardware_profile": "auto",
+            "model": "turbo",
+            "asr_engine": "auto",
+            "device": "auto",
+            "diarization_engine": "community-1",
+            "diarization_device": "auto",
+        },
+    )
+
+    assert payload is not None
+    assert payload["hardware_profile"] == "vulkan"
+    assert payload["model"] == "tiny.en"
+    assert payload["asr_engine"] == "whisper.cpp"
+    assert payload["device"] == "vulkan"
+    assert payload["diarization_engine"] == "sherpa-onnx"
+    assert payload["diarization_device"] == "cpu"
+
+    _arguments, legacy = manager._worker_request(  # noqa: SLF001
+        "continue-local",
+        {
+            "feed_id": "90001",
+            "archive_date": "2026-07-17",
+            "model": "turbo",
+            "asr_engine": "auto",
+            "device": "auto",
+            "diarization_engine": "community-1",
+        },
+    )
+    assert legacy is not None
+    assert legacy["hardware_profile"] == "vulkan"
+    assert legacy["model"] == "tiny.en"
+    assert legacy["diarization_engine"] == "sherpa-onnx"
+
+    _arguments, custom = manager._worker_request(  # noqa: SLF001
+        "asr-self-test",
+        {
+            "hardware_profile": "custom",
+            "model": "base.en",
+            "asr_engine": "whisper.cpp",
+            "device": "cpu",
+        },
+    )
+    assert custom is not None
+    assert custom["model"] == "base.en"
+    assert custom["device"] == "cpu"
 
 
 def test_web_area_jobs_force_the_same_quota_boundary(tmp_path: Path) -> None:

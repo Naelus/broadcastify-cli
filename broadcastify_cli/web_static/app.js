@@ -269,6 +269,7 @@ function processingPayload() {
   readSettingsForm();
   const huggingFaceToken = byId("settingHuggingFaceToken").value;
   return {
+    hardware_profile: state.settings.hardwareProfile,
     model: state.settings.whisperModel,
     asr_engine: state.settings.asrEngine,
     device: state.settings.device,
@@ -280,6 +281,31 @@ function processingPayload() {
     batch_size: state.settings.batchSize,
     huggingface_token: huggingFaceToken || undefined,
   };
+}
+
+function applyRuntimeProcessingDefaults() {
+  const defaults = state.bootstrap.runtime?.processing_defaults || {};
+  if (!defaults.hardware_profile || state.settings.hardwareProfile !== "auto") {
+    return false;
+  }
+  const mapped = {
+    hardwareProfile: defaults.hardware_profile,
+    whisperModel: defaults.model,
+    asrEngine: defaults.asr_engine,
+    device: defaults.device,
+    diarizationEngine: defaults.diarization_engine,
+    diarizationDevice: defaults.diarization_device,
+    batchSize: defaults.batch_size,
+  };
+  Object.entries(mapped).forEach(([field, value]) => {
+    if (value !== undefined && value !== null && value !== "") {
+      state.settings[field] = value;
+    }
+  });
+  localStorage.setItem("radioArchiveSettings", JSON.stringify(state.settings));
+  applySettingsForm();
+  toast(`${words(defaults.hardware_profile)} deployment defaults applied for the installed runtime.`);
+  return true;
 }
 
 function effectiveAsrEngine() {
@@ -442,6 +468,7 @@ async function refreshBootstrap({ preserveSelection = true } = {}) {
   setBusyLabel("Refreshing local records…");
   try {
     state.bootstrap = await api("/api/bootstrap");
+    applyRuntimeProcessingDefaults();
     renderMetrics();
     renderLibrary();
     renderProfiles();
@@ -638,6 +665,13 @@ function syncPlatformProfileOptions(platform) {
 function renderRuntime() {
   const runtime = state.bootstrap.runtime || {};
   syncPlatformProfileOptions(runtime.platform);
+  const accessStatus = byId("accessScopeStatus");
+  if (accessStatus) {
+    accessStatus.innerHTML = `<span class="status-dot"></span>${runtime.loopback_only ? "Loopback only" : "Trusted LAN"}`;
+    accessStatus.title = runtime.loopback_only
+      ? "Only this computer can open the app."
+      : "The app is available to devices on the trusted local network.";
+  }
   byId("runtimeDescription").textContent = `${runtime.platform || "Unknown"} ${runtime.platform_release || ""} · Python ${runtime.python || ""}`;
   byId("runtimeFacts").innerHTML = [
     ["Access", runtime.loopback_only ? "This computer only" : "Network"],

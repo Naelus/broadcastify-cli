@@ -34,6 +34,13 @@ services:
       FFMPEG_PATH: /usr/bin/ffmpeg
       WHISPER_CPP_PATH: /app/build/bin/whisper-cli
       WHISPER_CPP_MODEL_PATH: /data/models/whisper/ggml-tiny.en-q5_1.bin
+      BROADCASTIFY_DEFAULT_HARDWARE_PROFILE: vulkan
+      BROADCASTIFY_DEFAULT_WHISPER_MODEL: tiny.en
+      BROADCASTIFY_DEFAULT_ASR_ENGINE: whisper.cpp
+      BROADCASTIFY_DEFAULT_DEVICE: vulkan
+      BROADCASTIFY_DEFAULT_DIARIZATION_ENGINE: sherpa-onnx
+      BROADCASTIFY_DEFAULT_DIARIZATION_DEVICE: cpu
+      BROADCASTIFY_DEFAULT_BATCH_SIZE: "8"
       LLAMA_SERVER_PATH: /app/llama-server
       ANALYSIS_PROVIDER: local
       ANALYSIS_MODEL: /data/models/llama/gemma-3-1b-it-q4_k_m.gguf

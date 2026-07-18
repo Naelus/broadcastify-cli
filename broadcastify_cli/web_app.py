@@ -40,6 +40,61 @@ MAX_BODY_BYTES = 1_048_576
 MAX_EVENTS = 500
 FEED_ID_PATTERN = re.compile(r"^\d+$")
 ZIP_PATTERN = re.compile(r"^\d{5}$")
+PROCESSING_DEFAULT_ENVIRONMENT = {
+    "hardware_profile": "BROADCASTIFY_DEFAULT_HARDWARE_PROFILE",
+    "model": "BROADCASTIFY_DEFAULT_WHISPER_MODEL",
+    "asr_engine": "BROADCASTIFY_DEFAULT_ASR_ENGINE",
+    "device": "BROADCASTIFY_DEFAULT_DEVICE",
+    "diarization_engine": "BROADCASTIFY_DEFAULT_DIARIZATION_ENGINE",
+    "diarization_device": "BROADCASTIFY_DEFAULT_DIARIZATION_DEVICE",
+}
+PROCESSING_DEFAULT_CHOICES = {
+    "hardware_profile": {
+        "auto",
+        "cuda",
+        "vulkan",
+        "openvino",
+        "metal",
+        "windowsml",
+        "qwen",
+        "cpu",
+    },
+    "model": {
+        "turbo",
+        "distil-large-v3",
+        "large-v3",
+        "medium.en",
+        "small.en",
+        "base.en",
+        "tiny.en",
+        "qwen3-asr-0.6b-int8",
+    },
+    "asr_engine": {
+        "auto",
+        "faster-whisper",
+        "whisper.cpp",
+        "openvino",
+        "windows-ml",
+        "qwen3-asr",
+    },
+    "device": {
+        "auto",
+        "cpu",
+        "cuda",
+        "vulkan",
+        "metal",
+        "openvino-auto",
+        "openvino-cpu",
+        "openvino-gpu",
+        "openvino-npu",
+        "gpu",
+        "npu",
+        "windows-ml",
+        "directml",
+    },
+    "diarization_engine": {"community-1", "sherpa-onnx"},
+    "diarization_device": {"auto", "cpu", "cuda"},
+}
 
 
 def validate_bind_host(host: str) -> str:
@@ -109,6 +164,63 @@ def _readiness_environment(working_dir: Path) -> tuple[dict[str, str], str]:
         )
         loaded_path = str(candidate.resolve())
     return values, loaded_path
+
+
+def _processing_defaults(values: dict[str, str]) -> dict[str, Any]:
+    """Return a validated, non-secret processing preset for this deployment."""
+
+    defaults: dict[str, Any] = {}
+    for field, environment_name in PROCESSING_DEFAULT_ENVIRONMENT.items():
+        value = str(values.get(environment_name) or "").strip().lower()
+        if value and value in PROCESSING_DEFAULT_CHOICES[field]:
+            defaults[field] = value
+    batch_value = str(
+        values.get("BROADCASTIFY_DEFAULT_BATCH_SIZE") or ""
+    ).strip()
+    if batch_value:
+        try:
+            batch_size = int(batch_value)
+        except ValueError:
+            batch_size = 0
+        if 1 <= batch_size <= 128:
+            defaults["batch_size"] = batch_size
+    return defaults if defaults.get("hardware_profile") else {}
+
+
+def _apply_automatic_processing_defaults(
+    payload: dict[str, Any],
+    defaults: dict[str, Any],
+) -> dict[str, Any]:
+    """Resolve Automatic against a deployment's installed runtime.
+
+    New browsers name their selected hardware profile. The legacy test below
+    keeps an already-open pre-upgrade browser safe without overriding an
+    explicit custom/runtime selection.
+    """
+
+    if not defaults:
+        return payload
+    selected_profile = str(payload.get("hardware_profile") or "").strip().lower()
+    legacy_automatic = (
+        not selected_profile
+        and str(payload.get("asr_engine") or "auto").strip().lower() == "auto"
+        and str(payload.get("device") or "auto").strip().lower() == "auto"
+    )
+    if selected_profile != "auto" and not legacy_automatic:
+        return payload
+    resolved = dict(payload)
+    for field in (
+        "hardware_profile",
+        "model",
+        "asr_engine",
+        "device",
+        "diarization_engine",
+        "diarization_device",
+        "batch_size",
+    ):
+        if field in defaults:
+            resolved[field] = defaults[field]
+    return resolved
 
 
 def _runtime_readiness(state: "WebAppState") -> dict[str, Any]:
@@ -408,6 +520,21 @@ class JobManager:
         if not isinstance(raw_payload, dict):
             raise WebRequestError(HTTPStatus.BAD_REQUEST, "The job payload must be a JSON object.")
         payload = dict(raw_payload)
+        processing_commands = {
+            "asr-self-test",
+            "continue-local",
+            "diagnostics-selected",
+            "diarization-self-test",
+            "prepare-asr-model",
+            "profile-self-test",
+            "run",
+        }
+        if command in processing_commands:
+            values, _environment_file = _readiness_environment(self.working_dir)
+            payload = _apply_automatic_processing_defaults(
+                payload,
+                _processing_defaults(values),
+            )
         if command == "search":
             query = str(payload.get("query") or "").strip()
             if not query or len(query) > 160:
@@ -488,6 +615,11 @@ class JobManager:
                 payload["transcribe"] = True
         if command == "run-area":
             job_payload = dict(payload.get("job") or {})
+            values, _environment_file = _readiness_environment(self.working_dir)
+            job_payload = _apply_automatic_processing_defaults(
+                job_payload,
+                _processing_defaults(values),
+            )
             job_payload["output_dir"] = str(self.output_dir)
             job_payload["download_jobs"] = 1
             job_payload["keep_originals"] = True
@@ -770,6 +902,9 @@ def create_server(
             query = parse_qs(parsed.query)
             if parsed.path == "/api/bootstrap":
                 library = _library_payload(state)
+                readiness_values, _environment_file = _readiness_environment(
+                    state.working_dir
+                )
                 with AnalysisStore(state.database_path) as store:
                     profiles = store.list_area_profiles()
                     area_runs = store.list_area_acquisition_runs(limit=20)
@@ -788,6 +923,9 @@ def create_server(
                             "loopback_only": state.loopback_only,
                             "access_scope": state.access_scope,
                             "bind_host": state.bind_host,
+                            "processing_defaults": _processing_defaults(
+                                readiness_values
+                            ),
                             **_runtime_readiness(state),
                         },
                     },

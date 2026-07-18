@@ -54,6 +54,15 @@ preview. Community-1 and faster-whisper are intentionally not baked into this
 NAS image; their much larger Python/Torch stack remains an optional future
 variant. Pin the two base-image digests for a reproducible production build.
 
+The Compose definition advertises the exact installed pipeline as the Web
+app's Automatic preset: Tiny English Q5_1 through whisper.cpp/Vulkan, portable
+sherpa-onnx speakers on CPU, and the configured local llama.cpp model. This is
+both a browser default and a server-side compatibility boundary, so a tab that
+was opened before an App upgrade cannot accidentally request the absent
+PyTorch/Community-1 stack. Selecting an explicit named or custom profile still
+wins. The sidebar reports **Trusted LAN** from the live bootstrap scope rather
+than displaying a static loopback label.
+
 A registry-hosted image works too. A local image is sufficient when the image
 is built on the TrueNAS host before installing the Custom App.
 
