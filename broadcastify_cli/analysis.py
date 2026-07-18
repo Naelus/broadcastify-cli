@@ -1386,6 +1386,18 @@ class IncidentAnalyzer:
                         f"Reusing saved analysis window {index}/{len(windows)} "
                         f"for {archive_date}."
                     )
+                    # Promote an exact-fingerprint checkpoint from an earlier
+                    # transcript revision so the successful current run can
+                    # prune older revisions without losing reusable windows.
+                    self.store.save_analysis_window_checkpoint(
+                        day_id,
+                        self.client.model,
+                        self.prompt_version,
+                        transcript_sha256,
+                        index - 1,
+                        window_fingerprint,
+                        checkpoint,
+                    )
                     extracted.extend(checkpoint)
                     continue
                 self.progress(
@@ -1448,6 +1460,12 @@ class IncidentAnalyzer:
             day_id,
             summary,
             notable_ids,
+            self.client.model,
+            self.prompt_version,
+            str(day["transcript_sha256"]),
+        )
+        self.store.prune_analysis_window_checkpoints(
+            day_id,
             self.client.model,
             self.prompt_version,
             str(day["transcript_sha256"]),

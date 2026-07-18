@@ -907,6 +907,80 @@ def test_incident_analysis_resumes_after_the_last_completed_model_window(
     assert client.incident_calls == 3
 
 
+def test_incident_analysis_reuses_unchanged_windows_after_append(
+    tmp_path: Path,
+) -> None:
+    archive_date = date(2026, 7, 12)
+    transcript = tmp_path / "transcript.json"
+
+    class CountingClient:
+        model = "append-window-test-model"
+
+        def __init__(self) -> None:
+            self.incident_calls = 0
+
+        def chat_json(
+            self, *_args: object, **kwargs: object
+        ) -> dict[str, object]:
+            if kwargs["schema_name"] == "police_radio_incidents":
+                self.incident_calls += 1
+                return {"incidents": []}
+            return {"summary": "No clearly supported eventful incidents."}
+
+    def write_transcript(include_append: bool) -> None:
+        segments = [
+            {"start": 10.0, "end": 15.0, "text": "Routine radio check."},
+            {"start": 8_000.0, "end": 8_005.0, "text": "Routine radio check."},
+            {"start": 14_500.0, "end": 14_505.0, "text": "Routine radio check."},
+        ]
+        if include_append:
+            segments.append(
+                {
+                    "start": 22_000.0,
+                    "end": 22_005.0,
+                    "text": "Routine radio check.",
+                }
+            )
+        transcript.write_text(
+            json.dumps(
+                {
+                    "model": "turbo",
+                    "duration": segments[-1]["end"],
+                    "segments": segments,
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    client = CountingClient()
+    with AnalysisStore(tmp_path / "analysis.sqlite3") as store:
+        write_transcript(False)
+        store.import_transcript("90001", archive_date, transcript)
+        first = IncidentAnalyzer(store, client).analyze_day(
+            "90001",
+            archive_date,
+        )
+        assert first["windows"] == 3
+        assert client.incident_calls == 3
+
+        write_transcript(True)
+        store.import_transcript("90001", archive_date, transcript)
+        messages: list[str] = []
+        second = IncidentAnalyzer(
+            store,
+            client,
+            progress=messages.append,
+        ).analyze_day("90001", archive_date)
+
+        assert second["windows"] == 4
+        assert client.incident_calls == 5
+        assert sum(
+            message.startswith("Reusing saved analysis window")
+            for message in messages
+        ) == 2
+        assert store.stats()["analysis_window_checkpoints"] == 4
+
+
 def test_weekly_summary_covers_available_days_and_is_cached(tmp_path: Path) -> None:
     client = FakeLlamaClient()
     with AnalysisStore(tmp_path / "analysis.sqlite3") as store:

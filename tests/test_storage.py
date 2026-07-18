@@ -60,6 +60,92 @@ def test_import_is_idempotent_and_searchable(tmp_path: Path) -> None:
         assert "Main and First" in results[0]["text"]
 
 
+def test_analysis_window_checkpoint_reuses_exact_window_across_transcript_revisions(
+    tmp_path: Path,
+) -> None:
+    transcript = tmp_path / "transcript.json"
+    make_transcript(transcript)
+
+    with AnalysisStore(tmp_path / "analysis.sqlite3") as store:
+        imported = store.import_transcript(
+            "90001",
+            date(2026, 7, 12),
+            transcript,
+        )
+        old_incidents = [{"title": "old exact window"}]
+        store.save_analysis_window_checkpoint(
+            imported.day_id,
+            "local-model",
+            "prompt-v1",
+            "old-transcript",
+            0,
+            "same-window",
+            old_incidents,
+        )
+
+        transcript.write_text(
+            transcript.read_text(encoding="utf-8").replace(
+                '"duration": 600.0',
+                '"duration": 900.0',
+            ),
+            encoding="utf-8",
+        )
+        reimported = store.import_transcript(
+            "90001",
+            date(2026, 7, 12),
+            transcript,
+        )
+
+        assert reimported.day_id == imported.day_id
+        assert store.stats()["analysis_window_checkpoints"] == 1
+        assert store.get_analysis_window_checkpoint(
+            imported.day_id,
+            "local-model",
+            "prompt-v1",
+            "new-transcript",
+            0,
+            "same-window",
+        ) == old_incidents
+        assert (
+            store.get_analysis_window_checkpoint(
+                imported.day_id,
+                "local-model",
+                "prompt-v1",
+                "new-transcript",
+                0,
+                "changed-window",
+            )
+            is None
+        )
+
+        new_incidents = [{"title": "new exact window"}]
+        store.save_analysis_window_checkpoint(
+            imported.day_id,
+            "local-model",
+            "prompt-v1",
+            "new-transcript",
+            0,
+            "same-window",
+            new_incidents,
+        )
+        assert store.get_analysis_window_checkpoint(
+            imported.day_id,
+            "local-model",
+            "prompt-v1",
+            "new-transcript",
+            0,
+            "same-window",
+        ) == new_incidents
+
+        store.prune_analysis_window_checkpoints(
+            imported.day_id,
+            "local-model",
+            "prompt-v1",
+            "new-transcript",
+        )
+        assert store.stats()["analysis_window_checkpoints"] == 1
+
+
 def test_area_profiles_are_persisted_and_updated(tmp_path: Path) -> None:
     with AnalysisStore(tmp_path / "analysis.sqlite3") as store:
         first = store.save_area_profile(

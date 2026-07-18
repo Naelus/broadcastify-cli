@@ -432,10 +432,6 @@ class AnalysisStore:
             )
             connection.execute("DELETE FROM incidents WHERE day_id=?", (day_id,))
             connection.execute("DELETE FROM daily_summaries WHERE day_id=?", (day_id,))
-            connection.execute(
-                "DELETE FROM analysis_window_checkpoints WHERE day_id=?",
-                (day_id,),
-            )
             connection.execute("DELETE FROM transcript_segments WHERE day_id=?", (day_id,))
             connection.execute("DELETE FROM passages WHERE day_id=?", (day_id,))
             connection.execute("DELETE FROM embeddings WHERE entity_type='passage' AND entity_id NOT IN (SELECT id FROM passages)")
@@ -719,15 +715,19 @@ class AnalysisStore:
             """
             SELECT incidents_json FROM analysis_window_checkpoints
             WHERE day_id=? AND model=? AND prompt_version=?
-              AND transcript_sha256=? AND window_index=? AND window_fingerprint=?
+              AND window_index=? AND window_fingerprint=?
+            ORDER BY
+              CASE WHEN transcript_sha256=? THEN 0 ELSE 1 END,
+              updated_at DESC
+            LIMIT 1
             """,
             (
                 day_id,
                 model,
                 prompt_version,
-                transcript_sha256,
                 window_index,
                 window_fingerprint,
+                transcript_sha256,
             ),
         ).fetchone()
         if row is None:
@@ -794,6 +794,25 @@ class AnalysisStore:
                 WHERE day_id=? AND model=? AND prompt_version=?
                 """,
                 (day_id, model, prompt_version),
+            )
+
+    def prune_analysis_window_checkpoints(
+        self,
+        day_id: int,
+        model: str,
+        prompt_version: str,
+        transcript_sha256: str,
+    ) -> None:
+        """Keep only the completed current transcript revision for one run."""
+
+        with self.transaction() as connection:
+            connection.execute(
+                """
+                DELETE FROM analysis_window_checkpoints
+                WHERE day_id=? AND model=? AND prompt_version=?
+                  AND transcript_sha256<>?
+                """,
+                (day_id, model, prompt_version, transcript_sha256),
             )
 
     def get_incidents(
