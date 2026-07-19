@@ -341,6 +341,8 @@ class AnalysisStore:
         manifest_path: str | Path | None = None,
     ) -> ImportedDay:
         transcript = Path(transcript_path).resolve()
+        resolved_audio = Path(audio_path).resolve() if audio_path else None
+        resolved_manifest = Path(manifest_path).resolve() if manifest_path else None
         transcript_hash = sha256_file(transcript)
         existing = self.connection.execute(
             """
@@ -350,6 +352,35 @@ class AnalysisStore:
             (feed_id, archive_date.isoformat()),
         ).fetchone()
         if existing is not None and existing["transcript_sha256"] == transcript_hash:
+            # A retained library can be moved between Windows, Linux, and a NAS
+            # without changing its transcript bytes. Refresh the physical paths
+            # even when the evidence import itself is already current.
+            audio_value = (
+                str(resolved_audio)
+                if resolved_audio is not None and resolved_audio.is_file()
+                else None
+            )
+            audio_hash = sha256_file(resolved_audio) if audio_value else None
+            with self.transaction() as connection:
+                connection.execute(
+                    """
+                    UPDATE feed_days SET
+                        audio_path=COALESCE(?, audio_path),
+                        transcript_path=?,
+                        manifest_path=COALESCE(?, manifest_path),
+                        audio_sha256=COALESCE(?, audio_sha256),
+                        updated_at=?
+                    WHERE id=?
+                    """,
+                    (
+                        audio_value,
+                        str(transcript),
+                        str(resolved_manifest) if resolved_manifest else None,
+                        audio_hash,
+                        utc_now(),
+                        int(existing["id"]),
+                    ),
+                )
             segment_count = int(
                 self.connection.execute(
                     "SELECT COUNT(*) FROM transcript_segments WHERE day_id=?",
@@ -369,8 +400,6 @@ class AnalysisStore:
         if not isinstance(segments, list):
             raise ValueError(f"Transcript has no segment list: {transcript}")
 
-        resolved_audio = Path(audio_path).resolve() if audio_path else None
-        resolved_manifest = Path(manifest_path).resolve() if manifest_path else None
         audio_hash = (
             sha256_file(resolved_audio)
             if resolved_audio is not None and resolved_audio.exists()
@@ -512,11 +541,36 @@ class AnalysisStore:
                 ),
             )
 
-    def get_day(self, feed_id: str, archive_date: date) -> sqlite3.Row | None:
-        return self.connection.execute(
+    def _with_local_day_paths(self, raw: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
+        """Rebase stale absolute paths when a retained library changed hosts."""
+
+        value = dict(raw)
+        feed_id = str(value.get("feed_id") or "")
+        archive_key = str(value.get("archive_date") or "").replace("-", "")
+        if not feed_id or len(archive_key) != 8 or not archive_key.isdigit():
+            return value
+
+        day_directory = self.path.resolve().parent / feed_id / archive_key
+        stem = f"combined_{feed_id}_{archive_key}"
+        candidates = {
+            "audio_path": day_directory / f"{stem}.mp3",
+            "transcript_path": day_directory / "transcripts" / f"{stem}.json",
+            "manifest_path": day_directory / f"{stem}.manifest.json",
+        }
+        for field, candidate in candidates.items():
+            stored = Path(str(value.get(field) or ""))
+            if stored.is_file():
+                value[field] = str(stored.resolve())
+            elif candidate.is_file():
+                value[field] = str(candidate.resolve())
+        return value
+
+    def get_day(self, feed_id: str, archive_date: date) -> dict[str, Any] | None:
+        row = self.connection.execute(
             "SELECT * FROM feed_days WHERE feed_id=? AND archive_date=?",
             (feed_id, archive_date.isoformat()),
         ).fetchone()
+        return self._with_local_day_paths(row) if row is not None else None
 
     def list_days(self, feed_id: str | None = None) -> list[dict[str, Any]]:
         where = "WHERE d.feed_id=?" if feed_id else ""
@@ -545,7 +599,7 @@ class AnalysisStore:
             """,
             parameters,
         ).fetchall()
-        return [dict(row) for row in rows]
+        return [self._with_local_day_paths(row) for row in rows]
 
     def save_feed_catalog(self, feeds: Sequence[dict[str, Any]]) -> None:
         now = utc_now()
@@ -843,7 +897,7 @@ class AnalysisStore:
         ).fetchall()
         values = []
         for row in rows:
-            value = dict(row)
+            value = self._with_local_day_paths(row)
             value["location"] = value.pop("location_text")
             value["evidence"] = json.loads(value.pop("evidence_json"))
             value["attributes"] = json.loads(value.pop("attributes_json"))
@@ -863,7 +917,7 @@ class AnalysisStore:
         ).fetchone()
         if row is None:
             return None
-        value = dict(row)
+        value = self._with_local_day_paths(row)
         value["location"] = value.pop("location_text")
         value["evidence"] = json.loads(value.pop("evidence_json"))
         value["attributes"] = json.loads(value.pop("attributes_json"))
@@ -883,7 +937,7 @@ class AnalysisStore:
         ).fetchall()
         values = []
         for row in rows:
-            value = dict(row)
+            value = self._with_local_day_paths(row)
             value["location"] = value.pop("location_text")
             value["evidence"] = json.loads(value.pop("evidence_json"))
             value["attributes"] = json.loads(value.pop("attributes_json"))
@@ -922,7 +976,7 @@ class AnalysisStore:
         ).fetchall()
         values = []
         for row in rows:
-            value = dict(row)
+            value = self._with_local_day_paths(row)
             value["location"] = value.pop("location_text")
             value["evidence"] = json.loads(value.pop("evidence_json"))
             value["attributes"] = json.loads(value.pop("attributes_json"))

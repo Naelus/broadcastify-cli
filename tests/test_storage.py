@@ -60,6 +60,125 @@ def test_import_is_idempotent_and_searchable(tmp_path: Path) -> None:
         assert "Main and First" in results[0]["text"]
 
 
+def test_idempotent_import_refreshes_paths_after_library_move(
+    tmp_path: Path,
+) -> None:
+    archive_date = date(2026, 7, 12)
+    legacy = tmp_path / "windows-export"
+    old_audio = legacy / "combined_90001_20260712.mp3"
+    old_transcript = legacy / "combined_90001_20260712.json"
+    old_manifest = legacy / "combined_90001_20260712.manifest.json"
+    old_audio.parent.mkdir(parents=True)
+    old_audio.write_bytes(b"retained audio")
+    make_transcript(old_transcript)
+    old_manifest.write_text("{}", encoding="utf-8")
+
+    library = tmp_path / "nas-library"
+    database = library / "broadcastify-analysis.sqlite3"
+    with AnalysisStore(database) as store:
+        first = store.import_transcript(
+            "90001",
+            archive_date,
+            old_transcript,
+            old_audio,
+            old_manifest,
+        )
+
+        day_directory = library / "90001" / "20260712"
+        new_audio = day_directory / "combined_90001_20260712.mp3"
+        new_transcript = (
+            day_directory / "transcripts" / "combined_90001_20260712.json"
+        )
+        new_manifest = day_directory / "combined_90001_20260712.manifest.json"
+        new_audio.parent.mkdir(parents=True)
+        new_transcript.parent.mkdir(parents=True)
+        new_audio.write_bytes(old_audio.read_bytes())
+        new_transcript.write_bytes(old_transcript.read_bytes())
+        new_manifest.write_bytes(old_manifest.read_bytes())
+
+        second = store.import_transcript(
+            "90001",
+            archive_date,
+            new_transcript,
+            new_audio,
+            new_manifest,
+        )
+        raw = store.connection.execute(
+            """
+            SELECT audio_path, transcript_path, manifest_path
+            FROM feed_days WHERE id=?
+            """,
+            (first.day_id,),
+        ).fetchone()
+
+        assert second.day_id == first.day_id
+        assert raw["audio_path"] == str(new_audio.resolve())
+        assert raw["transcript_path"] == str(new_transcript.resolve())
+        assert raw["manifest_path"] == str(new_manifest.resolve())
+        assert store.stats()["transcript_segments"] == 2
+
+
+def test_store_rebases_stale_paths_to_conventional_library_layout(
+    tmp_path: Path,
+) -> None:
+    archive_date = date(2026, 7, 12)
+    legacy = tmp_path / "old-host"
+    old_audio = legacy / "day.mp3"
+    old_transcript = legacy / "day.json"
+    old_audio.parent.mkdir()
+    old_audio.write_bytes(b"retained audio")
+    make_transcript(old_transcript)
+
+    library = tmp_path / "portable-library"
+    database = library / "broadcastify-analysis.sqlite3"
+    with AnalysisStore(database) as store:
+        imported = store.import_transcript(
+            "90001",
+            archive_date,
+            old_transcript,
+            old_audio,
+        )
+        incident_id = store.replace_incidents(
+            imported.day_id,
+            [
+                {
+                    "fingerprint": "portable-path",
+                    "event_type": "shots_fired",
+                    "title": "Reported shots fired",
+                    "summary": "A shots-fired report was retained.",
+                    "location": "Main and First",
+                    "start_seconds": 10.0,
+                    "end_seconds": 15.0,
+                    "priority": 4,
+                    "confidence": 0.9,
+                    "evidence": [],
+                    "attributes": {},
+                }
+            ],
+            model="test-model",
+            prompt_version="test-prompt",
+        )[0]
+
+        day_directory = library / "90001" / "20260712"
+        new_audio = day_directory / "combined_90001_20260712.mp3"
+        new_transcript = (
+            day_directory / "transcripts" / "combined_90001_20260712.json"
+        )
+        new_audio.parent.mkdir(parents=True)
+        new_transcript.parent.mkdir(parents=True)
+        old_audio.replace(new_audio)
+        old_transcript.replace(new_transcript)
+
+        day = store.get_day("90001", archive_date)
+        incident = store.get_incident(incident_id)
+
+        assert day is not None
+        assert incident is not None
+        assert day["audio_path"] == str(new_audio.resolve())
+        assert day["transcript_path"] == str(new_transcript.resolve())
+        assert incident["audio_path"] == str(new_audio.resolve())
+
+
 def test_analysis_window_checkpoint_reuses_exact_window_across_transcript_revisions(
     tmp_path: Path,
 ) -> None:
