@@ -18,7 +18,7 @@ from .audio import AudioClipError, extract_audio_clip
 from .storage import AnalysisStore
 
 
-AREA_PROMPT_VERSION = "police-radio-area-stories-v8-evidence-v9"
+AREA_PROMPT_VERSION = "police-radio-area-stories-v9-evidence-v10"
 MIN_STORY_SCORE = 48
 MAX_STORIES = 30
 EVIDENCE_CONTEXT_BEFORE_SECONDS = 8.0

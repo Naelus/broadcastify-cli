@@ -10,6 +10,8 @@ from broadcastify_cli.analysis import (
     IncidentAnalyzer,
     LlamaCppClient,
     LlamaServerProcess,
+    PROMPT_VERSION,
+    WINDOW_PROMPT_VERSION,
     WeeklySummaryAnalyzer,
     archive_datetime_for_offset,
     build_transcript_windows,
@@ -861,6 +863,223 @@ def test_incident_analysis_requires_valid_evidence(tmp_path: Path) -> None:
     assert all(item["segment_index"] != 999 for item in incidents[0]["evidence"])
     assert resumed["incidents"] == 1
     assert client.calls == first_call_count
+
+
+def test_critical_phrase_fallback_recovers_model_omissions_without_negated_calls(
+    tmp_path: Path,
+) -> None:
+    archive_date = date(2026, 7, 17)
+    transcript = tmp_path / "transcript.json"
+    transcript.write_text(
+        json.dumps(
+            {
+                "model": "base",
+                "duration": 900.0,
+                "segments": [
+                    {
+                        "start": 10.0,
+                        "end": 15.0,
+                        "text": "Example Township Police just had a squad car stolen.",
+                    },
+                    {
+                        "start": 400.0,
+                        "end": 405.0,
+                        "text": "At least one caller in the area reported shots fire.",
+                    },
+                    {
+                        "start": 800.0,
+                        "end": 805.0,
+                        "text": "No shots fired were reported at that address.",
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class OmissionClient:
+        model = "omission-test-model"
+
+        def __init__(self) -> None:
+            self.incident_calls = 0
+
+        def chat_json(
+            self, *_args: object, **kwargs: object
+        ) -> dict[str, object]:
+            if kwargs["schema_name"] == "police_radio_incidents":
+                self.incident_calls += 1
+                return {"incidents": []}
+            return {
+                "summary": "I1 and I2 were reported from retained radio evidence."
+            }
+
+    messages: list[str] = []
+    client = OmissionClient()
+    with AnalysisStore(tmp_path / "analysis.sqlite3") as store:
+        store.import_transcript("90001", archive_date, transcript)
+        result = IncidentAnalyzer(
+            store,
+            client,
+            progress=messages.append,
+        ).analyze_day("90001", archive_date)
+        incidents = store.get_incidents("90001", archive_date, archive_date)
+
+    assert result["incidents"] == 2
+    assert client.incident_calls == 1
+    assert {value["event_type"] for value in incidents} == {
+        "shots_fired",
+        "vehicle_theft",
+    }
+    assert {
+        value["evidence"][0]["segment_index"] for value in incidents
+    } == {0, 1}
+    assert all(
+        "No shots fired" not in value["evidence"][0]["text"]
+        for value in incidents
+    )
+    assert any("exact-phrase critical-event" in value for value in messages)
+
+
+def test_evidence_policy_upgrade_reuses_unchanged_llm_window_checkpoint(
+    tmp_path: Path,
+) -> None:
+    archive_date = date(2026, 7, 17)
+    transcript = tmp_path / "transcript.json"
+    transcript.write_text(
+        json.dumps(
+            {
+                "model": "base",
+                "duration": 300.0,
+                "segments": [
+                    {
+                        "start": 10.0,
+                        "end": 15.0,
+                        "text": "Routine radio check.",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class CountingClient:
+        model = "policy-upgrade-test-model"
+
+        def __init__(self) -> None:
+            self.incident_calls = 0
+
+        def chat_json(
+            self, *_args: object, **kwargs: object
+        ) -> dict[str, object]:
+            if kwargs["schema_name"] == "police_radio_incidents":
+                self.incident_calls += 1
+                return {"incidents": []}
+            return {"summary": "No clearly supported eventful incidents."}
+
+    messages: list[str] = []
+    client = CountingClient()
+    with AnalysisStore(tmp_path / "analysis.sqlite3") as store:
+        store.import_transcript("90001", archive_date, transcript)
+        IncidentAnalyzer(
+            store,
+            client,
+            prompt_version=WINDOW_PROMPT_VERSION,
+        ).analyze_day("90001", archive_date)
+        day = store.get_day("90001", archive_date)
+        assert day is not None
+        with store.transaction() as connection:
+            connection.execute(
+                "DELETE FROM daily_summaries WHERE day_id=?",
+                (int(day["id"]),),
+            )
+        upgraded = IncidentAnalyzer(
+            store,
+            client,
+            prompt_version=PROMPT_VERSION,
+            progress=messages.append,
+        ).analyze_day("90001", archive_date)
+
+        assert store.get_daily_summary(
+            int(day["id"]),
+            client.model,
+            PROMPT_VERSION,
+            str(day["transcript_sha256"]),
+        ) is not None
+
+    assert upgraded["windows"] == 1
+    assert client.incident_calls == 1
+    assert any(
+        value.startswith("Reusing saved analysis window 1/1")
+        for value in messages
+    )
+
+
+def test_evidence_policy_upgrade_migrates_exact_legacy_run_and_adds_fallback(
+    tmp_path: Path,
+) -> None:
+    archive_date = date(2026, 7, 16)
+    transcript = tmp_path / "transcript.json"
+    transcript.write_text(
+        json.dumps(
+            {
+                "model": "base",
+                "duration": 300.0,
+                "segments": [
+                    {
+                        "start": 10.0,
+                        "end": 15.0,
+                        "text": "Example Township Police just had a squad car stolen.",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class CountingClient:
+        model = "policy-migration-test-model"
+
+        def __init__(self) -> None:
+            self.incident_calls = 0
+
+        def chat_json(
+            self, *_args: object, **kwargs: object
+        ) -> dict[str, object]:
+            if kwargs["schema_name"] == "police_radio_incidents":
+                self.incident_calls += 1
+                return {"incidents": []}
+            return {"summary": "Retained radio evidence was reviewed."}
+
+    messages: list[str] = []
+    client = CountingClient()
+    with AnalysisStore(tmp_path / "analysis.sqlite3") as store:
+        store.import_transcript("90001", archive_date, transcript)
+        initial = IncidentAnalyzer(
+            store,
+            client,
+            prompt_version=WINDOW_PROMPT_VERSION,
+        ).analyze_day("90001", archive_date)
+        upgraded = IncidentAnalyzer(
+            store,
+            client,
+            prompt_version=PROMPT_VERSION,
+            progress=messages.append,
+        ).analyze_day("90001", archive_date)
+        incidents = store.get_incidents_for_run(
+            int(store.get_day("90001", archive_date)["id"]),
+            client.model,
+            PROMPT_VERSION,
+        )
+
+    assert initial["incidents"] == 0
+    assert upgraded["incidents"] == 1
+    assert client.incident_calls == 1
+    assert incidents[0]["event_type"] == "vehicle_theft"
+    assert incidents[0]["evidence"][0]["segment_index"] == 0
+    assert any(
+        value.startswith("Reusing 0 saved model incidents")
+        for value in messages
+    )
 
 
 def test_incident_analysis_resumes_after_the_last_completed_model_window(

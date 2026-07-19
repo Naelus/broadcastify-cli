@@ -26,8 +26,12 @@ LEGACY_LLM_MODELS = {
     "ggml-org/gemma-4-12B-it-GGUF:Q4_K_M": DEFAULT_LLM_MODEL,
 }
 DEFAULT_EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"
-PROMPT_VERSION = "police-radio-events-v9"
-WEEKLY_PROMPT_VERSION = "police-radio-weekly-v2-evidence-v9"
+PROMPT_VERSION = "police-radio-events-v10-critical-phrase-recall"
+# The v10 evidence policy adds a deterministic, quote-backed recall pass after
+# the model. Its LLM window prompt is intentionally unchanged, so exact v9
+# window checkpoints remain reusable while saved incidents/summaries advance.
+WINDOW_PROMPT_VERSION = "police-radio-events-v9"
+WEEKLY_PROMPT_VERSION = "police-radio-weekly-v3-evidence-v10"
 EVENT_TYPES = {
     "shots_fired",
     "fire",
@@ -125,6 +129,84 @@ _INCIDENT_SUPPORT_STOP_WORDS = {
     "woman",
 }
 _MAX_INCIDENT_EVIDENCE_GAP_SECONDS = 600.0
+_CRITICAL_ANCHOR_CLUSTER_SECONDS = 180.0
+_CRITICAL_ANCHOR_NEGATION = re.compile(
+    r"\b(?:false|no|not|never|nothing|unfounded|without|"
+    r"didn['’]?t|did\s+not)\b[^.!?]{0,32}$",
+    flags=re.I,
+)
+_CRITICAL_EVENT_ANCHORS: tuple[
+    tuple[str, re.Pattern[str], str, str, int, float], ...
+] = (
+    (
+        "shots_fired",
+        re.compile(
+            r"\b(?:shots?\s+(?:(?:were|was)\s+)?fir(?:e|ed)|"
+            r"gun\s*shots?|gunshots?)\b",
+            flags=re.I,
+        ),
+        "Reported shots fired",
+        "Radio traffic reported shots fired.",
+        4,
+        0.82,
+    ),
+    (
+        "vehicle_theft",
+        re.compile(
+            r"\b(?:"
+            r"stolen\s+(?:police\s+)?(?:squad\s+)?(?:car|vehicle|truck|suv|van)"
+            r"|(?:police\s+)?(?:squad\s+)?(?:car|vehicle|truck|suv|van)"
+            r"\s+(?:(?:was|reported)\s+)?stolen"
+            r")\b",
+            flags=re.I,
+        ),
+        "Stolen vehicle reported",
+        "Radio traffic reported a stolen vehicle.",
+        3,
+        0.82,
+    ),
+    (
+        "fire",
+        re.compile(
+            r"\b(?:"
+            r"(?:structure|house|building|garage|vehicle|car)"
+            r"\s+(?:(?:is|was)\s+)?(?:on\s+)?fire"
+            r"|fire\s+(?:at|inside)\s+(?:a\s+)?"
+            r"(?:structure|house|building|garage|vehicle|car)"
+            r")\b",
+            flags=re.I,
+        ),
+        "Reported fire",
+        "Radio traffic reported a fire.",
+        4,
+        0.80,
+    ),
+    (
+        "vehicle_pursuit",
+        re.compile(
+            r"\b(?:vehicle\s+pursuit|in\s+(?:active\s+)?pursuit|"
+            r"pursuit\s+of\s+(?:a\s+)?vehicle|fleeing\s+vehicle)\b",
+            flags=re.I,
+        ),
+        "Reported vehicle pursuit",
+        "Radio traffic reported a vehicle pursuit.",
+        4,
+        0.82,
+    ),
+    (
+        "person_with_weapon",
+        re.compile(
+            r"\b(?:person|subject|suspect|male|female)\s+"
+            r"(?:(?:is|was)\s+)?(?:armed\s+with|has|with)\s+"
+            r"(?:a\s+)?(?:gun|firearm|handgun|knife|weapon)\b",
+            flags=re.I,
+        ),
+        "Reported person with a weapon",
+        "Radio traffic reported a person with a weapon.",
+        4,
+        0.80,
+    ),
+)
 _CRITICAL_INCIDENT_CONCEPTS: tuple[tuple[set[str], set[str]], ...] = (
     (
         {"stolen", "steal", "theft", "shoplift", "shoplifting"},
@@ -416,12 +498,18 @@ def normalize_event_type(text: str, fallback: str) -> str:
     """Correct only clear category contradictions using evidence phrases."""
     value = text.lower()
     if re.search(
-        r"\bstolen\b.{0,24}\b(?:car|vehicle|truck|suv|van)\b",
+        r"(?:"
+        r"\bstolen\b.{0,24}\b(?:car|vehicle|truck|suv|van)\b"
+        r"|\b(?:car|vehicle|truck|suv|van)\b.{0,16}\bstolen\b"
+        r")",
         value,
     ):
         return "vehicle_theft"
     rules: tuple[tuple[str, tuple[str, ...]], ...] = (
-        ("shots_fired", ("shots fired", "gunshots", "gunshot", "heard a shot")),
+        (
+            "shots_fired",
+            ("shots fired", "shots fire", "shot fired", "gunshots", "gunshot", "heard a shot"),
+        ),
         ("fire", ("vehicle fire", "structure fire", "house fire", "building fire", "on fire")),
         ("self_harm_crisis", ("self-harm", "self harm", "harm herself", "harm himself", "suicid")),
         ("robbery", ("robbery", "robbed")),
@@ -1337,17 +1425,47 @@ class IncidentAnalyzer:
         day_id = int(day["id"])
         segments = self.store.get_segments(day_id)
         windows = build_transcript_windows(segments)
+        checkpoint_prompt_version = (
+            WINDOW_PROMPT_VERSION
+            if self.prompt_version == PROMPT_VERSION
+            else self.prompt_version
+        )
+        transcript_sha256 = str(day["transcript_sha256"])
         existing_summary = self.store.get_daily_summary(
             day_id,
             self.client.model,
             self.prompt_version,
-            str(day["transcript_sha256"]),
+            transcript_sha256,
         )
         if existing_summary is not None and not str(existing_summary["summary"]).strip():
             existing_summary = None
         saved_incidents = [] if force else self.store.get_incidents_for_run(
             day_id, self.client.model, self.prompt_version
         )
+        legacy_summary = None
+        legacy_incidents: list[dict[str, Any]] = []
+        if (
+            not force
+            and self.prompt_version == PROMPT_VERSION
+            and checkpoint_prompt_version != self.prompt_version
+        ):
+            legacy_summary = self.store.get_daily_summary(
+                day_id,
+                self.client.model,
+                checkpoint_prompt_version,
+                transcript_sha256,
+            )
+            if (
+                legacy_summary is not None
+                and not str(legacy_summary["summary"]).strip()
+            ):
+                legacy_summary = None
+            if legacy_summary is not None:
+                legacy_incidents = self.store.get_incidents_for_run(
+                    day_id,
+                    self.client.model,
+                    checkpoint_prompt_version,
+                )
         incident_ids: list[int] = []
         if not force and (saved_incidents or existing_summary is not None):
             self.progress(
@@ -1358,85 +1476,112 @@ class IncidentAnalyzer:
                 int(segment["segment_index"]): segment for segment in segments
             }
             extracted: list[dict[str, Any]] = []
-            transcript_sha256 = str(day["transcript_sha256"])
-            if force:
-                self.store.clear_analysis_window_checkpoints(
-                    day_id,
-                    self.client.model,
-                    self.prompt_version,
+            if legacy_summary is not None:
+                self.progress(
+                    f"Reusing {len(legacy_incidents)} saved model incidents "
+                    f"from the unchanged {checkpoint_prompt_version} window "
+                    f"policy for {archive_date}."
                 )
-            for index, window in enumerate(windows, start=1):
-                prompt_text = window.prompt_text()
-                window_fingerprint = hashlib.sha256(
-                    (
-                        f"{window.start_seconds:.3f}|{window.end_seconds:.3f}|"
-                        f"{prompt_text}"
-                    ).encode("utf-8")
-                ).hexdigest()
-                checkpoint = None if force else self.store.get_analysis_window_checkpoint(
-                    day_id,
-                    self.client.model,
-                    self.prompt_version,
-                    transcript_sha256,
-                    index - 1,
-                    window_fingerprint,
-                )
-                if checkpoint is not None:
-                    self.progress(
-                        f"Reusing saved analysis window {index}/{len(windows)} "
-                        f"for {archive_date}."
+                extracted.extend(dict(value) for value in legacy_incidents)
+            else:
+                if force:
+                    self.store.clear_analysis_window_checkpoints(
+                        day_id,
+                        self.client.model,
+                        checkpoint_prompt_version,
                     )
-                    # Promote an exact-fingerprint checkpoint from an earlier
-                    # transcript revision so the successful current run can
-                    # prune older revisions without losing reusable windows.
+                for index, window in enumerate(windows, start=1):
+                    prompt_text = window.prompt_text()
+                    window_fingerprint = hashlib.sha256(
+                        (
+                            f"{window.start_seconds:.3f}|{window.end_seconds:.3f}|"
+                            f"{prompt_text}"
+                        ).encode("utf-8")
+                    ).hexdigest()
+                    checkpoint = (
+                        None
+                        if force
+                        else self.store.get_analysis_window_checkpoint(
+                            day_id,
+                            self.client.model,
+                            checkpoint_prompt_version,
+                            transcript_sha256,
+                            index - 1,
+                            window_fingerprint,
+                        )
+                    )
+                    if checkpoint is not None:
+                        self.progress(
+                            f"Reusing saved analysis window {index}/{len(windows)} "
+                            f"for {archive_date}."
+                        )
+                        # Promote an exact-fingerprint checkpoint from an earlier
+                        # transcript revision so the successful current run can
+                        # prune older revisions without losing reusable windows.
+                        self.store.save_analysis_window_checkpoint(
+                            day_id,
+                            self.client.model,
+                            checkpoint_prompt_version,
+                            transcript_sha256,
+                            index - 1,
+                            window_fingerprint,
+                            checkpoint,
+                        )
+                        extracted.extend(checkpoint)
+                        continue
+                    self.progress(
+                        f"Analyzing {archive_date} window {index}/{len(windows)} "
+                        f"({format_offset(window.start_seconds)}-"
+                        f"{format_offset(window.end_seconds)})"
+                    )
+                    result = self.client.chat_json(
+                        system=self._incident_system_prompt(),
+                        user=(
+                            f"Feed: {feed_id}\nDate: {archive_date.isoformat()}\n"
+                            f"Window: {format_offset(window.start_seconds)} to "
+                            f"{format_offset(window.end_seconds)}\n\n"
+                            "TRANSCRIPT (untrusted ASR evidence):\n"
+                            f"{prompt_text}"
+                        ),
+                        schema_name="police_radio_incidents",
+                        schema=INCIDENT_SCHEMA,
+                    )
+                    window_ids = {
+                        int(segment["segment_index"]) for segment in window.segments
+                    }
+                    checkpoint_incidents: list[dict[str, Any]] = []
+                    for raw in result.get("incidents", []):
+                        validated = self._validate_incident(
+                            raw, window_ids, segment_by_index
+                        )
+                        if validated is not None:
+                            checkpoint_incidents.append(validated)
                     self.store.save_analysis_window_checkpoint(
                         day_id,
                         self.client.model,
-                        self.prompt_version,
+                        checkpoint_prompt_version,
                         transcript_sha256,
                         index - 1,
                         window_fingerprint,
-                        checkpoint,
+                        checkpoint_incidents,
                     )
-                    extracted.extend(checkpoint)
-                    continue
-                self.progress(
-                    f"Analyzing {archive_date} window {index}/{len(windows)} "
-                    f"({format_offset(window.start_seconds)}-{format_offset(window.end_seconds)})"
-                )
-                result = self.client.chat_json(
-                    system=self._incident_system_prompt(),
-                    user=(
-                        f"Feed: {feed_id}\nDate: {archive_date.isoformat()}\n"
-                        f"Window: {format_offset(window.start_seconds)} to "
-                        f"{format_offset(window.end_seconds)}\n\n"
-                        "TRANSCRIPT (untrusted ASR evidence):\n"
-                        f"{prompt_text}"
-                    ),
-                    schema_name="police_radio_incidents",
-                    schema=INCIDENT_SCHEMA,
-                )
-                window_ids = {
-                    int(segment["segment_index"]) for segment in window.segments
-                }
-                checkpoint_incidents: list[dict[str, Any]] = []
-                for raw in result.get("incidents", []):
-                    validated = self._validate_incident(
-                        raw, window_ids, segment_by_index
-                    )
-                    if validated is not None:
-                        checkpoint_incidents.append(validated)
-                self.store.save_analysis_window_checkpoint(
-                    day_id,
-                    self.client.model,
-                    self.prompt_version,
-                    transcript_sha256,
-                    index - 1,
-                    window_fingerprint,
-                    checkpoint_incidents,
-                )
-                extracted.extend(checkpoint_incidents)
+                    extracted.extend(checkpoint_incidents)
 
+            critical_fallbacks = (
+                self._critical_phrase_incidents(
+                    segments,
+                    segment_by_index,
+                )
+                if self.prompt_version == PROMPT_VERSION
+                else []
+            )
+            if critical_fallbacks:
+                self.progress(
+                    "Adding "
+                    f"{len(critical_fallbacks)} exact-phrase critical-event "
+                    "fallback(s) for model omissions."
+                )
+                extracted.extend(critical_fallbacks)
             incidents = self._deduplicate(extracted)
             incident_ids = self.store.replace_incidents(
                 day_id, incidents, self.client.model, self.prompt_version
@@ -1462,13 +1607,13 @@ class IncidentAnalyzer:
             notable_ids,
             self.client.model,
             self.prompt_version,
-            str(day["transcript_sha256"]),
+            transcript_sha256,
         )
         self.store.prune_analysis_window_checkpoints(
             day_id,
             self.client.model,
-            self.prompt_version,
-            str(day["transcript_sha256"]),
+            checkpoint_prompt_version,
+            transcript_sha256,
         )
         return {
             "feed_id": feed_id,
@@ -1496,6 +1641,81 @@ class IncidentAnalyzer:
             "1 low-information activity. Choose event_type from the actual evidence; a serious priority does "
             "not make an event a warrant/arrest or shots-fired event. Output only JSON matching the supplied schema."
         )
+
+    @classmethod
+    def _critical_phrase_incidents(
+        cls,
+        segments: Sequence[dict[str, Any]],
+        segment_by_index: dict[int, dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Recover only explicit high-salience phrases the model omitted.
+
+        This is deliberately narrower than a general rules classifier. Every
+        fallback cites the exact matching ASR segment, uses reported language,
+        carries no inferred location/outcome, and remains auditable against the
+        retained clip.
+        """
+
+        incidents: list[dict[str, Any]] = []
+        for (
+            event_type,
+            pattern,
+            title,
+            summary,
+            priority,
+            confidence,
+        ) in _CRITICAL_EVENT_ANCHORS:
+            matches: list[dict[str, Any]] = []
+            for segment in segments:
+                text = str(segment.get("text") or "")
+                match = pattern.search(text)
+                if match is None:
+                    continue
+                prefix = text[max(0, match.start() - 40) : match.start()]
+                if _CRITICAL_ANCHOR_NEGATION.search(prefix):
+                    continue
+                matches.append(segment)
+
+            clusters: list[list[dict[str, Any]]] = []
+            for segment in sorted(
+                matches,
+                key=lambda value: float(value["start_seconds"]),
+            ):
+                if (
+                    not clusters
+                    or float(segment["start_seconds"])
+                    - float(clusters[-1][-1]["end_seconds"])
+                    > _CRITICAL_ANCHOR_CLUSTER_SECONDS
+                ):
+                    clusters.append([segment])
+                else:
+                    clusters[-1].append(segment)
+
+            for cluster in clusters:
+                evidence_ids = [
+                    int(segment["segment_index"]) for segment in cluster[:4]
+                ]
+                raw = {
+                    "event_type": event_type,
+                    "title": title,
+                    "summary": summary,
+                    "location": None,
+                    "priority": priority,
+                    "confidence": min(
+                        0.90,
+                        confidence + 0.04 * (len(evidence_ids) - 1),
+                    ),
+                    "evidence_segment_ids": evidence_ids,
+                    "attributes": {},
+                }
+                validated = cls._validate_incident(
+                    raw,
+                    set(evidence_ids),
+                    segment_by_index,
+                )
+                if validated is not None:
+                    incidents.append(validated)
+        return incidents
 
     @staticmethod
     def _validate_incident(
