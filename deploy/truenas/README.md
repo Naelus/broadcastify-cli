@@ -117,13 +117,22 @@ bootstrap, diagnostics, and job API without an SSH tunnel. Diagnostics found
 the Radeon 890M as `Vulkan0`; the installed Automatic profile is Base English
 Q5_1 plus Silero VAD on whisper.cpp/Vulkan, sherpa-onnx speakers on CPU, and
 Gemma through llama.cpp/Vulkan. The final image ID is
-`sha256:2dc313fd54bab2a5abaa04c8dc2aa61ccbbc8dca529b742fec2c17ba6de55a64`
+`sha256:d45d4fd56e072648923c29ca61918fd4262bd4d6e7140654b260df9c5aee7a3e`
 and its OCI revision matches the source commit.
 
-The final TrueNAS-managed update retained all 460 existing feed-90001 files,
-all 11 saved July 17/18 analysis-window checkpoints, and the exact
-10,194,944-byte SQLite store at SHA-256
-`1543f6c51881e0890d11184d9cb0baaa81c0f1aefd98e8f1b34f73be88eaf9b5`.
-The first post-update current-day refresh then added one source block and
-reused 69 of 72 completed diarization chunks from the SHA-256-verified
-unchanged prefix. The Windows originals were copied, not moved or removed.
+Its 2,088,960-byte source archive matched SHA-256
+`3b2ba6b681b8df744407dcc33d98e20f97464e9e75e6a5be7af5e85d984d62e8`
+after transfer. The final TrueNAS-managed update retained all 462 existing
+feed-90001 files and the exact 10,989,568-byte SQLite store at SHA-256
+`bfe6fdf7b64b9e24c4ed2614336e9c2687de94ded1b4b1a1e7ea4da375a285a6`.
+Feed 90001 retained 2,440,783,509 bytes across the deployment. The explicitly
+requested post-update I864 export then added one 101,312-byte evidence clip;
+the database remained byte-for-byte unchanged and passed its integrity check.
+
+Database reads rebase stale absolute Windows/Linux audio, transcript, and
+manifest paths to the conventional library layout beside the database. A
+same-hash reimport persists the new paths without rebuilding derived evidence.
+The live I864 browser action played retained audio and downloaded
+`90001_2026-07-16_I864_64701450-64726650.mp3`; both copies match SHA-256
+`c7ae78be5c68972508fae8eb1f033ed34a54270b27b89c7176654269fb7c4ad9`.
+The Windows originals were copied, not moved or removed.
