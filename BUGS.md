@@ -64,9 +64,9 @@ Use this file for reproducible defects and concrete blockers, not the general ro
 
 ### B-010 — Automatic LAN peer discovery depends on local network policy
 
-- **Observed:** The read-only archive protocol works over an explicit numeric private URL, but UDP broadcast/multicast discovery can be blocked by Windows Firewall, VLAN boundaries, Wi-Fi client isolation, or an Apps/container network. Multiple seed nodes also cannot all bind the same discovery port on one host.
-- **Implemented boundary:** Discovery is best-effort and bounded to one LAN hop. Every UI supports explicit peer URLs as the reliable path; TrueNAS publishes UDP `48765` and advertises its host-reachable TCP URL. A discovery failure never blocks local cache use or the paced website fallback.
-- **Next:** Validate automatic Windows-to-TrueNAS discovery after the managed App update and retain the explicit NAS URL regardless, so acquisition does not depend on multicast behavior.
+- **Observed:** The read-only archive protocol worked over an explicit numeric private URL, but limited broadcast and multicast did not reach the TrueNAS App through Docker port publishing. UDP discovery can also be blocked by Windows Firewall, VLAN boundaries, or Wi-Fi client isolation. Multiple seed nodes cannot all bind the same discovery port on one host.
+- **Implemented boundary:** Exact `historical-validation` adds each interface's real directed IPv4 broadcast without parsing localized command output. The TrueNAS example uses supported host networking for discovery while binding HTTP and its health probe to one selected private address. Exact `historical-validation` was discovered automatically from Windows and served a complete 48-block verified copy. Discovery remains best-effort and bounded to one LAN hop; every UI retains explicit numeric peers, and failure never blocks local cache use or the paced website fallback.
+- **Next:** Retain explicit peers across VLANs/firewalls and validate automatic discovery on a real macOS host.
 
 ## Recently fixed
 

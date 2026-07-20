@@ -152,3 +152,19 @@ The live I864 browser action played retained audio and downloaded
 `90001_2026-07-16_I864_64701450-64726650.mp3`; both copies match SHA-256
 `c7ae78be5c68972508fae8eb1f033ed34a54270b27b89c7176654269fb7c4ad9`.
 The Windows originals were copied, not moved or removed.
+
+On July 20, 2026, exact commit `historical-validation` added the read-only trusted-LAN
+archive node to this managed App. TrueNAS host networking carries one-hop UDP
+discovery while the Web listener and health probe remain bound to the selected
+private address. The healthy image ID is
+`sha256:33f6cc9c5efd94adafb6dbad7ad344e84c7f3007a4fe48cd8cf2f343b3f206c6`;
+its OCI revision matches the source commit.
+
+A Windows client with no configured peer URL discovered the App and copied all
+48 July 16 feed-90001 source blocks, 178,944,000 bytes, with size and SHA-256
+verification, zero conflicts/failures, and no website request. Its repeat run
+reused all 48 local blocks and copied zero bytes. The managed update preserved
+all 463 feed-90001 files and 2,440,884,821 bytes. The 10,989,568-byte SQLite
+store retained SHA-256
+`bfe6fdf7b64b9e24c4ed2614336e9c2687de94ded1b4b1a1e7ea4da375a285a6`
+and passed `PRAGMA integrity_check`.
