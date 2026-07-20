@@ -120,3 +120,14 @@ def test_native_and_web_expose_read_only_lan_archive_reuse() -> None:
         in web_js
     )
     assert "lan_peer_urls: state.settings.lanPeerUrls" in web_js
+
+
+def test_native_releases_media_handles_before_archive_mutation() -> None:
+    native = (
+        ROOT / "BroadcastifyCli.WinUI" / "MainWindow.xaml.cs"
+    ).read_text(encoding="utf-8")
+
+    assert "private async Task ReleaseMediaForArchiveMutationAsync()" in native
+    assert native.count("await ReleaseMediaForArchiveMutationAsync();") == 2
+    assert "_libraryMediaPlayer.Source = null;" in native
+    assert "await Task.Delay(150);" in native

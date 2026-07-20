@@ -7,6 +7,7 @@ import os
 import json
 import re
 import math
+import time
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Iterable, Mapping
@@ -18,6 +19,10 @@ class AudioCombineError(RuntimeError):
 
 class AudioClipError(RuntimeError):
     pass
+
+
+COMBINED_PUBLISH_ATTEMPTS = 20
+COMBINED_PUBLISH_RETRY_SECONDS = 0.1
 
 
 _EVIDENCE_WORD = re.compile(r"[a-z0-9]+")
@@ -343,6 +348,23 @@ def _write_manifest_payload(manifest_path: Path, payload: dict[str, object]) -> 
     os.replace(partial, manifest_path)
 
 
+def _publish_combined_audio(partial: Path, output: Path) -> None:
+    """Atomically publish a refreshed recording after short-lived readers close."""
+
+    for attempt in range(COMBINED_PUBLISH_ATTEMPTS):
+        try:
+            os.replace(partial, output)
+            return
+        except PermissionError as exc:
+            if attempt + 1 >= COMBINED_PUBLISH_ATTEMPTS:
+                raise AudioCombineError(
+                    "The existing combined recording is still open in another "
+                    "player. Stop playback and retry the archive job; the previous "
+                    "recording was preserved."
+                ) from exc
+            time.sleep(COMBINED_PUBLISH_RETRY_SECONDS)
+
+
 def combine_mp3_files(
     directory: str | Path,
     feed_id: str,
@@ -399,6 +421,7 @@ def combine_mp3_files(
         return output
 
     list_path: Path | None = None
+    partial_output: Path | None = None
     try:
         with tempfile.NamedTemporaryFile(
             mode="w", suffix=".ffconcat", delete=False, encoding="utf-8", newline="\n"
@@ -412,6 +435,14 @@ def combine_mp3_files(
                     concat_file.write(f"outpoint {expected_duration:.3f}\n")
                     concat_file.write(f"duration {expected_duration:.3f}\n")
             list_path = Path(concat_file.name)
+
+        with tempfile.NamedTemporaryFile(
+            prefix=f".{output.stem}.",
+            suffix=f".part{output.suffix}",
+            dir=root,
+            delete=False,
+        ) as temporary_output:
+            partial_output = Path(temporary_output.name)
 
         process = subprocess.run(
             [
@@ -442,7 +473,7 @@ def combine_mp3_files(
                 "-b:a",
                 "16k",
                 "-y",
-                str(output),
+                str(partial_output),
             ],
             capture_output=True,
             text=True,
@@ -450,8 +481,10 @@ def combine_mp3_files(
         )
         if process.returncode != 0:
             raise AudioCombineError(process.stderr.strip() or "FFmpeg failed to combine audio.")
-        if not output.exists() or output.stat().st_size == 0:
+        if not partial_output.exists() or partial_output.stat().st_size == 0:
             raise AudioCombineError("FFmpeg did not produce a valid combined MP3.")
+
+        _publish_combined_audio(partial_output, output)
 
         _write_manifest(
             manifest_path,
@@ -473,6 +506,8 @@ def combine_mp3_files(
     finally:
         if list_path and list_path.exists():
             list_path.unlink()
+        if partial_output and partial_output.exists():
+            partial_output.unlink()
 
 
 def extract_audio_clip(

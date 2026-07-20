@@ -1,9 +1,13 @@
 import json
+import os
 from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from broadcastify_cli.audio import (
+    AudioCombineError,
     _winget_ffmpeg_bin_directories,
     combine_mp3_files,
     extract_audio_clip,
@@ -64,6 +68,8 @@ def test_combiner_reencodes_with_continuous_timestamps(monkeypatch, tmp_path: Pa
     assert "16000" in captured
     assert "copy" not in captured
     assert "outpoint 1800.000" in concat_contents
+    assert captured[-1] != str(output)
+    assert not list(tmp_path.glob("*.part.mp3"))
 
     manifest = output.with_suffix(".manifest.json")
     assert manifest.exists()
@@ -81,6 +87,81 @@ def test_combiner_reencodes_with_continuous_timestamps(monkeypatch, tmp_path: Pa
     assert json.loads(manifest.read_text(encoding="utf-8"))["feed_name"] == (
         "Example City Public Safety"
     )
+
+
+def test_combiner_retries_atomic_publish_after_player_releases(
+    monkeypatch, tmp_path: Path
+) -> None:
+    source = tmp_path / "202607120000-1-90001.mp3"
+    source.write_bytes(b"audio")
+    output = tmp_path / "combined_90001_20260712.mp3"
+    output.write_bytes(b"previous combined recording")
+
+    def fake_run(arguments: list[str], **_kwargs: object) -> SimpleNamespace:
+        Path(arguments[-1]).write_bytes(b"refreshed combined recording")
+        return SimpleNamespace(returncode=0, stderr="")
+
+    original_replace = os.replace
+    attempts = 0
+
+    def briefly_locked_replace(source_path: str | Path, destination: str | Path) -> None:
+        nonlocal attempts
+        if Path(destination) == output:
+            attempts += 1
+            if attempts < 3:
+                raise PermissionError("player is releasing the file")
+        original_replace(source_path, destination)
+
+    monkeypatch.setattr("broadcastify_cli.audio.find_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(
+        "broadcastify_cli.audio._probe_audio_duration", lambda *_args: 1_800.0
+    )
+    monkeypatch.setattr("broadcastify_cli.audio.subprocess.run", fake_run)
+    monkeypatch.setattr("broadcastify_cli.audio.os.replace", briefly_locked_replace)
+    monkeypatch.setattr("broadcastify_cli.audio.time.sleep", lambda _seconds: None)
+
+    result = combine_mp3_files(
+        tmp_path, "90001", date(2026, 7, 12), source_files=[source]
+    )
+
+    assert result == output
+    assert attempts == 3
+    assert output.read_bytes() == b"refreshed combined recording"
+    assert not list(tmp_path.glob("*.part.mp3"))
+
+
+def test_combiner_preserves_previous_recording_when_player_stays_open(
+    monkeypatch, tmp_path: Path
+) -> None:
+    source = tmp_path / "202607120000-1-90001.mp3"
+    source.write_bytes(b"audio")
+    output = tmp_path / "combined_90001_20260712.mp3"
+    output.write_bytes(b"previous combined recording")
+
+    def fake_run(arguments: list[str], **_kwargs: object) -> SimpleNamespace:
+        Path(arguments[-1]).write_bytes(b"unpublished refresh")
+        return SimpleNamespace(returncode=0, stderr="")
+
+    def locked_replace(_source: str | Path, destination: str | Path) -> None:
+        if Path(destination) == output:
+            raise PermissionError("player still owns the file")
+        raise AssertionError("No other file should be published in this path.")
+
+    monkeypatch.setattr("broadcastify_cli.audio.find_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(
+        "broadcastify_cli.audio._probe_audio_duration", lambda *_args: 1_800.0
+    )
+    monkeypatch.setattr("broadcastify_cli.audio.subprocess.run", fake_run)
+    monkeypatch.setattr("broadcastify_cli.audio.os.replace", locked_replace)
+    monkeypatch.setattr("broadcastify_cli.audio.time.sleep", lambda _seconds: None)
+
+    with pytest.raises(AudioCombineError, match="still open in another player"):
+        combine_mp3_files(
+            tmp_path, "90001", date(2026, 7, 12), source_files=[source]
+        )
+
+    assert output.read_bytes() == b"previous combined recording"
+    assert not list(tmp_path.glob("*.part.mp3"))
 
 
 def test_combiner_manifest_counts_media_duration_across_feed_gaps(

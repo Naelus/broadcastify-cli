@@ -2701,6 +2701,7 @@ public sealed partial class MainWindow : Window
         {
             return null;
         }
+        await ReleaseMediaForArchiveMutationAsync();
         // Make the local source-block node reachable before the worker decides
         // whether this PC can own the shared LAN acquisition lease.
         await ConfigureLanSharingAsync();
@@ -2708,6 +2709,26 @@ public sealed partial class MainWindow : Window
             request, HandleWorkerMessage, _operationCancellation.Token);
         await AnalyzeCompletedJobAsync(request, jobResult);
         return jobResult;
+    }
+
+    private async Task ReleaseMediaForArchiveMutationAsync()
+    {
+        var hadLibrarySource = _libraryMediaPlayer.Source is not null;
+        _libraryMediaPlayer.Pause();
+        _libraryMediaPlayer.Source = null;
+        _incidentMediaPlayer.Pause();
+        _incidentMediaPlayer.Source = null;
+        _areaStoryMediaPlayer.Pause();
+        _areaStoryMediaPlayer.Source = null;
+        _pendingIncidentClip = null;
+        if (hadLibrarySource)
+        {
+            LibraryAudioStatusText.Text =
+                "Playback released while the archive recording is updated.";
+            // Media Foundation releases its Windows file handle asynchronously.
+            // Give that close a bounded moment before FFmpeg publishes a refresh.
+            await Task.Delay(150);
+        }
     }
 
     private async Task AnalyzeCompletedJobAsync(JobRequest request, JobRunResult? jobResult)
@@ -3917,6 +3938,7 @@ public sealed partial class MainWindow : Window
         JobProgress.Value = 0;
         try
         {
+            await ReleaseMediaForArchiveMutationAsync();
             await ConfigureLanSharingAsync();
             var baseRequest = CreateJobRequest(
                 selected[0].FeedId, startDate, endDate, minimumSpeakers, maximumSpeakers,
