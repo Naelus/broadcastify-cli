@@ -15,6 +15,8 @@ import time
 import uuid
 from collections import OrderedDict
 from collections.abc import Callable, Iterable, Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import AbstractContextManager
 from dataclasses import asdict, dataclass
 from datetime import date
 from pathlib import Path
@@ -32,6 +34,13 @@ MAX_LAN_PEERS = 24
 MAX_BLOCKS_PER_DAY = 128
 MAX_ARCHIVE_BLOCK_BYTES = 256 * 1024 * 1024
 MAX_INVENTORY_BYTES = 1024 * 1024
+MAX_LAN_QUEUE_ENTRIES = 512
+LAN_QUEUE_LEASE_SECONDS = 90.0
+LAN_QUEUE_RESULT_SECONDS = 6 * 60 * 60.0
+LAN_QUEUE_REQUEST_BYTES = 256 * 1024
+LAN_QUEUE_RESPONSE_BYTES = 256 * 1024
+LAN_QUEUE_NODE_PATTERN = re.compile(r"^[A-Za-z0-9_-]{8,80}$")
+LAN_QUEUE_SCOPE_PATTERN = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
 RAW_ARCHIVE_PATTERN = re.compile(
     r"^(?P<stamp>\d{12})-(?P<archive_id>\d+)-(?P<feed_id>\d+)\.mp3$",
     re.IGNORECASE,
@@ -54,6 +63,20 @@ def environment_flag(name: str, default: bool = False) -> bool:
     if normalized in {"0", "false", "no", "off"}:
         return False
     return default
+
+
+def environment_float(
+    name: str,
+    default: float,
+    *,
+    minimum: float,
+    maximum: float,
+) -> float:
+    try:
+        value = float(os.getenv(name) or default)
+    except ValueError:
+        value = default
+    return min(maximum, max(minimum, value))
 
 
 def discovery_port() -> int:
@@ -214,6 +237,336 @@ class LanSyncResult:
         return asdict(self)
 
 
+def merge_lan_sync_results(
+    values: Iterable[LanSyncResult],
+    *,
+    enabled: bool = True,
+) -> LanSyncResult:
+    results = list(values)
+    failures = tuple(
+        dict.fromkeys(
+            failure
+            for result in results
+            for failure in result.failures
+        )
+    )
+    return LanSyncResult(
+        enabled=enabled and any(result.enabled for result in results),
+        peers_considered=max(
+            (result.peers_considered for result in results),
+            default=0,
+        ),
+        peers_reached=max(
+            (result.peers_reached for result in results),
+            default=0,
+        ),
+        blocks_available=max(
+            (result.blocks_available for result in results),
+            default=0,
+        ),
+        blocks_already_local=max(
+            (result.blocks_already_local for result in results),
+            default=0,
+        ),
+        blocks_copied=sum(result.blocks_copied for result in results),
+        bytes_copied=sum(result.bytes_copied for result in results),
+        conflicts=sum(result.conflicts for result in results),
+        failures=failures[:50],
+    )
+
+
+@dataclass(frozen=True)
+class LanDownloadTurn:
+    """One client's role for a shared feed/day archive acquisition."""
+
+    role: str
+    feed_id: str = ""
+    archive_date: str = ""
+    coordinator_url: str = ""
+    producer_url: str = ""
+    owner_node_id: str = ""
+    lease_token: str = ""
+    lease_seconds: float = 0.0
+    block_count: int = 0
+    blocks: tuple[ArchiveBlock, ...] = ()
+    audio_files: tuple[Path, ...] = ()
+    sync_result: LanSyncResult = LanSyncResult(enabled=False)
+    warnings: tuple[str, ...] = ()
+
+    @property
+    def is_leader(self) -> bool:
+        return self.role == "leader"
+
+
+@dataclass
+class _LanQueueEntry:
+    state: str
+    owner_node_id: str
+    producer_url: str
+    lease_token: str
+    expires_at: float
+    block_count: int = 0
+    blocks: tuple[ArchiveBlock, ...] = ()
+
+
+class LanAcquisitionQueue:
+    """A bounded in-memory lease queue; retained MP3s are the durable state."""
+
+    def __init__(
+        self,
+        *,
+        enabled: bool = True,
+        lease_seconds: float = LAN_QUEUE_LEASE_SECONDS,
+        result_seconds: float = LAN_QUEUE_RESULT_SECONDS,
+        maximum_entries: int = MAX_LAN_QUEUE_ENTRIES,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self.enabled = bool(enabled)
+        self.lease_seconds = min(300.0, max(15.0, float(lease_seconds)))
+        self.result_seconds = min(
+            24 * 60 * 60.0,
+            max(60.0, float(result_seconds)),
+        )
+        self.maximum_entries = min(
+            MAX_LAN_QUEUE_ENTRIES,
+            max(16, int(maximum_entries)),
+        )
+        self._clock = clock
+        self._entries: dict[tuple[str, str, str], _LanQueueEntry] = {}
+        self._lock = threading.RLock()
+
+    def status(
+        self,
+        quota_scope: str,
+        feed_id: str,
+        archive_date: date,
+    ) -> dict[str, Any]:
+        scope = self._validate_key(quota_scope, feed_id)
+        key = (scope, feed_id, archive_date.isoformat())
+        with self._lock:
+            now = self._clock()
+            self._cleanup_locked(now)
+            return self._payload_locked(key, now)
+
+    def claim(
+        self,
+        quota_scope: str,
+        feed_id: str,
+        archive_date: date,
+        *,
+        owner_node_id: str,
+        producer_url: str,
+        requester_address: str = "",
+    ) -> dict[str, Any]:
+        scope = self._validate_key(quota_scope, feed_id)
+        owner = self._validate_node_id(owner_node_id)
+        producer = normalize_peer_url(producer_url)
+        self._validate_requester(producer, requester_address)
+        key = (scope, feed_id, archive_date.isoformat())
+        with self._lock:
+            now = self._clock()
+            self._cleanup_locked(now)
+            existing = self._entries.get(key)
+            if existing is not None:
+                value = self._payload_locked(key, now)
+                value["granted"] = False
+                return value
+            if len(self._entries) >= self.maximum_entries:
+                raise LanSyncError(
+                    "The LAN acquisition queue is full; retry after older leases expire."
+                )
+            token = secrets.token_urlsafe(32)
+            self._entries[key] = _LanQueueEntry(
+                state="active",
+                owner_node_id=owner,
+                producer_url=producer,
+                lease_token=token,
+                expires_at=now + self.lease_seconds,
+            )
+            value = self._payload_locked(key, now)
+            value["granted"] = True
+            value["lease_token"] = token
+            return value
+
+    def renew(
+        self,
+        quota_scope: str,
+        feed_id: str,
+        archive_date: date,
+        *,
+        lease_token: str,
+    ) -> dict[str, Any]:
+        scope = self._validate_key(quota_scope, feed_id)
+        key = (scope, feed_id, archive_date.isoformat())
+        with self._lock:
+            now = self._clock()
+            self._cleanup_locked(now)
+            entry = self._authorized_active_entry(key, lease_token)
+            entry.expires_at = now + self.lease_seconds
+            return self._payload_locked(key, now)
+
+    def finish(
+        self,
+        quota_scope: str,
+        feed_id: str,
+        archive_date: date,
+        *,
+        lease_token: str,
+        outcome: str,
+        block_count: int = 0,
+        blocks: Sequence[Mapping[str, Any]] = (),
+    ) -> dict[str, Any]:
+        scope = self._validate_key(quota_scope, feed_id)
+        if outcome not in {"complete", "quota_limited", "failed"}:
+            raise LanSyncError("The LAN acquisition outcome is not valid.")
+        if not 0 <= int(block_count) <= MAX_BLOCKS_PER_DAY:
+            raise LanSyncError("The LAN acquisition block count is not valid.")
+        completion_blocks: tuple[ArchiveBlock, ...] = ()
+        raw_blocks = tuple(blocks)
+        if outcome == "complete":
+            if len(raw_blocks) != int(block_count):
+                raise LanSyncError(
+                    "The completed LAN acquisition manifest does not match "
+                    "its block count."
+                )
+            parsed_blocks: list[ArchiveBlock] = []
+            names: set[str] = set()
+            for value in raw_blocks:
+                if not isinstance(value, Mapping):
+                    raise LanSyncError(
+                        "The completed LAN acquisition manifest is not valid."
+                    )
+                try:
+                    block = ArchiveBlock.from_mapping(
+                        value,
+                        expected_feed_id=feed_id,
+                        expected_date=archive_date,
+                    )
+                except (TypeError, ValueError) as exc:
+                    raise LanSyncError(
+                        "The completed LAN acquisition manifest is not valid."
+                    ) from exc
+                if block.filename in names:
+                    raise LanSyncError(
+                        "The completed LAN acquisition manifest contains "
+                        "a duplicate block."
+                    )
+                names.add(block.filename)
+                parsed_blocks.append(block)
+            completion_blocks = tuple(
+                sorted(parsed_blocks, key=lambda value: value.filename)
+            )
+        elif raw_blocks:
+            raise LanSyncError(
+                "Only a completed LAN acquisition may publish a block manifest."
+            )
+        key = (scope, feed_id, archive_date.isoformat())
+        with self._lock:
+            now = self._clock()
+            self._cleanup_locked(now)
+            entry = self._authorized_active_entry(key, lease_token)
+            if outcome == "failed":
+                del self._entries[key]
+                return self._payload_locked(key, now)
+            entry.state = outcome
+            entry.lease_token = ""
+            entry.block_count = int(block_count)
+            entry.blocks = completion_blocks
+            entry.expires_at = now + self.result_seconds
+            return self._payload_locked(key, now)
+
+    def _authorized_active_entry(
+        self,
+        key: tuple[str, str, str],
+        lease_token: str,
+    ) -> _LanQueueEntry:
+        entry = self._entries.get(key)
+        supplied = str(lease_token or "")
+        if (
+            entry is None
+            or entry.state != "active"
+            or not supplied
+            or not hmac.compare_digest(entry.lease_token, supplied)
+        ):
+            raise PermissionError("The LAN acquisition lease is missing or expired.")
+        return entry
+
+    def _payload_locked(
+        self,
+        key: tuple[str, str, str],
+        now: float,
+    ) -> dict[str, Any]:
+        scope, feed_id, archive_date = key
+        entry = self._entries.get(key)
+        value: dict[str, Any] = {
+            "protocol": LAN_PROTOCOL,
+            "quota_scope": scope,
+            "feed_id": feed_id,
+            "archive_date": archive_date,
+            "state": "available",
+            "producer_url": "",
+            "owner_node_id": "",
+            "lease_seconds": 0.0,
+            "block_count": 0,
+            "blocks": [],
+        }
+        if entry is None:
+            return value
+        value.update(
+            {
+                "state": entry.state,
+                "producer_url": entry.producer_url,
+                "owner_node_id": entry.owner_node_id,
+                "lease_seconds": round(max(0.0, entry.expires_at - now), 3),
+                "block_count": entry.block_count,
+                "blocks": [block.to_dict() for block in entry.blocks],
+            }
+        )
+        return value
+
+    def _cleanup_locked(self, now: float) -> None:
+        expired = [
+            key
+            for key, entry in self._entries.items()
+            if entry.expires_at <= now
+        ]
+        for key in expired:
+            self._entries.pop(key, None)
+
+    @staticmethod
+    def _validate_key(quota_scope: str, feed_id: str) -> str:
+        scope = str(quota_scope or "default").strip()
+        if not LAN_QUEUE_SCOPE_PATTERN.fullmatch(scope):
+            raise LanSyncError("The LAN quota scope is not valid.")
+        if not str(feed_id or "").isdigit():
+            raise LanSyncError("A numeric feed ID is required.")
+        return scope
+
+    @staticmethod
+    def _validate_node_id(value: str) -> str:
+        node_id = str(value or "").strip()
+        if not LAN_QUEUE_NODE_PATTERN.fullmatch(node_id):
+            raise LanSyncError("The LAN producer node identity is not valid.")
+        return node_id
+
+    @staticmethod
+    def _validate_requester(producer_url: str, requester_address: str) -> None:
+        if not requester_address:
+            return
+        try:
+            producer = ipaddress.ip_address(urlparse(producer_url).hostname or "")
+            requester = ipaddress.ip_address(requester_address)
+            if isinstance(requester, ipaddress.IPv6Address) and requester.ipv4_mapped:
+                requester = requester.ipv4_mapped
+        except ValueError as exc:
+            raise LanSyncError("The LAN producer address is not valid.") from exc
+        if producer == requester or (producer.is_loopback and requester.is_loopback):
+            return
+        raise PermissionError(
+            "A LAN client may claim work only for its own reachable producer node."
+        )
+
+
 class ArchiveHashCache:
     """Bounded, thread-safe hash cache keyed by immutable file metadata."""
 
@@ -260,6 +613,8 @@ class LanArchiveCatalog:
         sync_key: str = "",
         peer_urls: Sequence[str] = (),
         node_id: str | None = None,
+        acquisition_queue: LanAcquisitionQueue | None = None,
+        queue_enabled: bool = True,
     ) -> None:
         self.output_dir = Path(output_dir).expanduser().resolve()
         self.enabled = bool(enabled)
@@ -269,6 +624,21 @@ class LanArchiveCatalog:
         self.hashes = ArchiveHashCache()
         self.discovery_available = False
         self.discovery_error = ""
+        self.acquisition_queue = acquisition_queue or LanAcquisitionQueue(
+            enabled=self.enabled and queue_enabled,
+            lease_seconds=environment_float(
+                "BROADCASTIFY_LAN_QUEUE_LEASE_SECONDS",
+                LAN_QUEUE_LEASE_SECONDS,
+                minimum=30.0,
+                maximum=300.0,
+            ),
+            result_seconds=environment_float(
+                "BROADCASTIFY_LAN_QUEUE_RESULT_SECONDS",
+                LAN_QUEUE_RESULT_SECONDS,
+                minimum=5 * 60.0,
+                maximum=24 * 60 * 60.0,
+            ),
+        )
 
     def authorized(self, supplied_key: str) -> bool:
         if not self.sync_key:
@@ -283,6 +653,9 @@ class LanArchiveCatalog:
             "key_required": bool(self.sync_key),
             "peers": list(self.peer_urls),
             "discovery_available": self.discovery_available,
+            "acquisition_queue_available": bool(
+                self.enabled and self.acquisition_queue.enabled
+            ),
         }
 
     def inventory(self, feed_id: str, archive_date: date) -> list[ArchiveBlock]:
@@ -703,7 +1076,7 @@ class LanDiscoveryResponder:
 
 
 class LanArchiveSyncClient:
-    """Copy missing source blocks from a bounded trusted-LAN peer pool."""
+    """Copy blocks and coordinate one upstream downloader across LAN peers."""
 
     def __init__(
         self,
@@ -714,6 +1087,14 @@ class LanArchiveSyncClient:
         sync_key: str = "",
         connect_timeout: float = 2.0,
         read_timeout: float = 120.0,
+        queue_enabled: bool = True,
+        quota_scope: str = "default",
+        producer_url: str = "",
+        producer_port: int = 0,
+        queue_poll_interval: float = 2.0,
+        queue_max_wait: float = 30 * 60.0,
+        queue_consumer_grace: float = 3.0,
+        sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         self.enabled = bool(enabled)
         self.peer_urls = normalize_peer_urls(peer_urls)
@@ -722,6 +1103,33 @@ class LanArchiveSyncClient:
         self.connect_timeout = max(0.1, float(connect_timeout))
         self.read_timeout = max(1.0, float(read_timeout))
         self.hashes = ArchiveHashCache()
+        self.queue_enabled = self.enabled and bool(queue_enabled)
+        self.quota_scope = LanAcquisitionQueue._validate_key(
+            quota_scope,
+            "1",
+        )
+        self.producer_url = (
+            normalize_peer_url(producer_url) if str(producer_url).strip() else ""
+        )
+        self.producer_port = int(producer_port or 0)
+        if self.producer_port and not 1_024 <= self.producer_port <= 65_535:
+            raise ValueError("The LAN producer port must be between 1024 and 65535.")
+        self.queue_poll_interval = min(
+            30.0,
+            max(0.05, float(queue_poll_interval)),
+        )
+        self.queue_max_wait = min(
+            24 * 60 * 60.0,
+            max(0.1, float(queue_max_wait)),
+        )
+        self.queue_consumer_grace = min(
+            30.0,
+            max(0.0, float(queue_consumer_grace)),
+        )
+        self._sleep = sleep
+        self._recent_peers: OrderedDict[str, float] = OrderedDict()
+        self._peer_lock = threading.Lock()
+        self._producer_cache: dict[str, tuple[float, str, str]] = {}
 
     @classmethod
     def from_settings(
@@ -739,11 +1147,45 @@ class LanArchiveSyncClient:
             "BROADCASTIFY_LAN_DISCOVERY_ENABLED",
             default=True,
         )
+        try:
+            producer_port = int(os.getenv("BROADCASTIFY_LAN_SELF_PORT") or 0)
+        except ValueError:
+            producer_port = 0
+
         return cls(
             enabled=enabled and environment_enabled,
             peer_urls=configured_peer_urls(peer_urls),
             discovery_enabled=discovery_enabled and environment_discovery,
             sync_key=os.getenv("BROADCASTIFY_LAN_SYNC_KEY") or "",
+            queue_enabled=environment_flag(
+                "BROADCASTIFY_LAN_QUEUE_ENABLED",
+                default=True,
+            ),
+            quota_scope=os.getenv("BROADCASTIFY_LAN_QUOTA_SCOPE") or "default",
+            producer_url=(
+                os.getenv("BROADCASTIFY_LAN_SELF_URL")
+                or os.getenv("BROADCASTIFY_LAN_ADVERTISE_URL")
+                or ""
+            ),
+            producer_port=producer_port,
+            queue_poll_interval=environment_float(
+                "BROADCASTIFY_LAN_QUEUE_POLL_SECONDS",
+                2.0,
+                minimum=0.25,
+                maximum=30.0,
+            ),
+            queue_max_wait=environment_float(
+                "BROADCASTIFY_LAN_QUEUE_MAX_WAIT_SECONDS",
+                30 * 60.0,
+                minimum=30.0,
+                maximum=24 * 60 * 60.0,
+            ),
+            queue_consumer_grace=environment_float(
+                "BROADCASTIFY_LAN_QUEUE_CONSUMER_GRACE_SECONDS",
+                3.0,
+                minimum=0.0,
+                maximum=30.0,
+            ),
         )
 
     def sync_day(
@@ -753,12 +1195,21 @@ class LanArchiveSyncClient:
         archive_date: date,
         *,
         progress: ProgressCallback | None = None,
+        additional_peer_urls: Sequence[str] = (),
     ) -> LanSyncResult:
         if not self.enabled:
             return LanSyncResult(enabled=False)
         if not feed_id.isdigit():
             raise ValueError("A numeric feed ID is required for LAN archive sync.")
-        seeds = list(self.peer_urls)
+        seeds = list(
+            dict.fromkeys(
+                (
+                    *self.peer_urls,
+                    *normalize_peer_urls(additional_peer_urls, strict=False),
+                    *self._recent_peer_urls(),
+                )
+            )
+        )
         failures: list[str] = []
         if self.discovery_enabled:
             try:
@@ -767,6 +1218,7 @@ class LanArchiveSyncClient:
                 failures.append(f"LAN discovery: {exc}")
         queue = list(dict.fromkeys(seeds))[:MAX_LAN_PEERS]
         considered: list[str] = []
+        reachable: list[str] = []
         reached = 0
         candidates: dict[str, list[tuple[str, ArchiveBlock]]] = {}
         while queue and len(considered) < MAX_LAN_PEERS:
@@ -781,6 +1233,7 @@ class LanArchiveSyncClient:
                     archive_date,
                 )
                 reached += 1
+                reachable.append(peer)
                 for block in blocks:
                     candidates.setdefault(block.filename, []).append((peer, block))
                 for advertised in advertised_peers:
@@ -792,6 +1245,7 @@ class LanArchiveSyncClient:
                         queue.append(advertised)
             except (LanSyncError, requests.RequestException, ValueError) as exc:
                 failures.append(f"{peer}: {exc}")
+        self._remember_peers(reachable)
         if progress and considered:
             progress(
                 f"LAN archive pool reached {reached}/{len(considered)} peer"
@@ -881,6 +1335,671 @@ class LanArchiveSyncClient:
             conflicts=conflicts,
             failures=tuple(failures[:50]),
         )
+
+    def wait_for_download_turn(
+        self,
+        output_dir: str | Path,
+        feed_id: str,
+        archive_date: date,
+        *,
+        progress: ProgressCallback | None = None,
+    ) -> LanDownloadTurn:
+        """Wait behind a producer or claim the one upstream download lease."""
+
+        if not self.queue_enabled:
+            return LanDownloadTurn(role="uncoordinated")
+        selected = self._select_coordinator()
+        if selected is None:
+            return LanDownloadTurn(
+                role="uncoordinated",
+                warnings=("No LAN peer offered acquisition coordination.",),
+            )
+        coordinator, _coordinator_info = selected
+        producer = self._producer_identity(coordinator)
+        started = time.monotonic()
+        grace_deadline = started + self.queue_consumer_grace
+        observed_shared_work = False
+        queue_failures = 0
+        sync_results: list[LanSyncResult] = []
+        latest_sync: LanSyncResult | None = None
+        warnings: list[str] = []
+        last_progress_at = 0.0
+
+        while True:
+            now = time.monotonic()
+            elapsed = now - started
+            if elapsed >= self.queue_max_wait:
+                role = "deferred" if observed_shared_work else "uncoordinated"
+                warnings.append(
+                    "The LAN acquisition wait window ended before a shared "
+                    "producer finished."
+                )
+                return LanDownloadTurn(
+                    role=role,
+                    coordinator_url=coordinator,
+                    sync_result=merge_lan_sync_results(sync_results),
+                    warnings=tuple(dict.fromkeys(warnings)),
+                )
+            try:
+                status = self._queue_status(
+                    coordinator,
+                    feed_id,
+                    archive_date,
+                )
+                queue_failures = 0
+            except (LanSyncError, requests.RequestException, ValueError) as exc:
+                queue_failures += 1
+                warnings.append(f"{coordinator}: {exc}")
+                if queue_failures >= 3:
+                    return LanDownloadTurn(
+                        role=(
+                            "deferred"
+                            if observed_shared_work
+                            else "uncoordinated"
+                        ),
+                        coordinator_url=coordinator,
+                        sync_result=merge_lan_sync_results(sync_results),
+                        warnings=tuple(dict.fromkeys(warnings)),
+                    )
+                self._sleep(self.queue_poll_interval)
+                continue
+
+            state = str(status["state"])
+            producer_url = str(status.get("producer_url") or "")
+            if state == "available":
+                if producer is not None:
+                    producer_url, owner_node_id = producer
+                    try:
+                        claim = self._queue_action(
+                            coordinator,
+                            "claim",
+                            feed_id,
+                            archive_date,
+                            {
+                                "producer_url": producer_url,
+                                "owner_node_id": owner_node_id,
+                            },
+                        )
+                    except (
+                        LanSyncError,
+                        requests.RequestException,
+                        ValueError,
+                    ) as exc:
+                        warnings.append(f"{coordinator}: {exc}")
+                        self._sleep(self.queue_poll_interval)
+                        continue
+                    if bool(claim.get("granted")):
+                        if progress:
+                            progress(
+                                "This client owns the shared LAN acquisition "
+                                f"lease for {archive_date.isoformat()}."
+                            )
+                        return LanDownloadTurn(
+                            role="leader",
+                            feed_id=feed_id,
+                            archive_date=archive_date.isoformat(),
+                            coordinator_url=coordinator,
+                            producer_url=producer_url,
+                            owner_node_id=owner_node_id,
+                            lease_token=str(claim["lease_token"]),
+                            lease_seconds=float(claim["lease_seconds"]),
+                            sync_result=merge_lan_sync_results(sync_results),
+                            warnings=tuple(dict.fromkeys(warnings)),
+                        )
+                    continue
+                if now < grace_deadline:
+                    if progress and last_progress_at == 0:
+                        progress(
+                            "Waiting briefly for a LAN peer that can seed this "
+                            "feed/day to claim the shared download."
+                        )
+                        last_progress_at = now
+                    self._sleep(self.queue_poll_interval)
+                    continue
+                warnings.append(
+                    "This client is not serving original blocks, so it cannot "
+                    "hold a shared upstream lease."
+                )
+                return LanDownloadTurn(
+                    role="uncoordinated",
+                    coordinator_url=coordinator,
+                    sync_result=merge_lan_sync_results(sync_results),
+                    warnings=tuple(dict.fromkeys(warnings)),
+                )
+
+            if state in {"active", "complete", "quota_limited"}:
+                observed_shared_work = True
+                if producer_url:
+                    try:
+                        latest_sync = self.sync_day(
+                            output_dir,
+                            feed_id,
+                            archive_date,
+                            progress=progress,
+                            additional_peer_urls=(producer_url,),
+                        )
+                        sync_results.append(latest_sync)
+                    except (
+                        LanSyncError,
+                        requests.RequestException,
+                        OSError,
+                        ValueError,
+                    ) as exc:
+                        warnings.append(f"{producer_url}: {exc}")
+
+            if state == "complete":
+                block_count = int(status["block_count"])
+                completion_blocks = tuple(status["blocks"])
+                audio_files = self.verified_local_blocks(
+                    output_dir,
+                    feed_id,
+                    archive_date,
+                    completion_blocks,
+                )
+                if len(audio_files) == block_count:
+                    if progress:
+                        progress(
+                            f"LAN producer completed {archive_date.isoformat()}; "
+                            f"{len(audio_files)} verified source blocks are local."
+                        )
+                    return LanDownloadTurn(
+                        role="completed",
+                        coordinator_url=coordinator,
+                        producer_url=producer_url,
+                        owner_node_id=str(status.get("owner_node_id") or ""),
+                        block_count=block_count,
+                        blocks=completion_blocks,
+                        audio_files=tuple(audio_files),
+                        sync_result=merge_lan_sync_results(sync_results),
+                        warnings=tuple(dict.fromkeys(warnings)),
+                    )
+                if progress and now - last_progress_at >= 15.0:
+                    progress(
+                        "The shared download is complete; waiting for its "
+                        f"verified blocks ({len(audio_files)}/{block_count} local)."
+                    )
+                    last_progress_at = now
+                self._sleep(self.queue_poll_interval)
+                continue
+
+            if state == "quota_limited":
+                if progress:
+                    progress(
+                        "A LAN producer reached the shared Broadcastify quota; "
+                        "this client will not repeat those archive requests."
+                    )
+                return LanDownloadTurn(
+                    role="quota_limited",
+                    coordinator_url=coordinator,
+                    producer_url=producer_url,
+                    owner_node_id=str(status.get("owner_node_id") or ""),
+                    block_count=int(status["block_count"]),
+                    audio_files=tuple(
+                        self.local_source_files(
+                            output_dir,
+                            feed_id,
+                            archive_date,
+                        )
+                    ),
+                    sync_result=merge_lan_sync_results(sync_results),
+                    warnings=tuple(dict.fromkeys(warnings)),
+                )
+
+            if state == "active":
+                if progress and now - last_progress_at >= 15.0:
+                    progress(
+                        "Another LAN producer owns this feed/day; pulling "
+                        "completed blocks as they appear instead of contacting "
+                        "Broadcastify."
+                    )
+                    last_progress_at = now
+                remaining = max(0.05, float(status["lease_seconds"]))
+                self._sleep(min(self.queue_poll_interval, remaining))
+                continue
+
+            raise LanSyncError("The LAN coordinator returned an unknown queue state.")
+
+    def maintain_download_lease(
+        self,
+        turn: LanDownloadTurn,
+    ) -> AbstractContextManager["_LanLeaseHeartbeat"]:
+        if not turn.is_leader:
+            raise ValueError("Only the LAN acquisition leader has a renewable lease.")
+        return _LanLeaseHeartbeat(self, turn)
+
+    def finish_download_turn(
+        self,
+        turn: LanDownloadTurn,
+        *,
+        outcome: str,
+        block_count: int = 0,
+        source_files: Sequence[str | Path] = (),
+    ) -> str:
+        if not turn.is_leader:
+            return ""
+        try:
+            blocks = (
+                self.completion_blocks(
+                    source_files,
+                    turn.feed_id,
+                    date.fromisoformat(turn.archive_date),
+                )
+                if outcome == "complete"
+                else ()
+            )
+            if outcome == "complete" and len(blocks) != int(block_count):
+                raise LanSyncError(
+                    "The completed LAN acquisition files do not match "
+                    "the reported block count."
+                )
+            self._queue_action(
+                turn.coordinator_url,
+                "finish",
+                turn.feed_id,
+                date.fromisoformat(turn.archive_date),
+                {
+                    "lease_token": turn.lease_token,
+                    "outcome": outcome,
+                    "block_count": int(block_count),
+                    "blocks": [block.to_dict() for block in blocks],
+                },
+            )
+        except (LanSyncError, requests.RequestException, ValueError) as exc:
+            return f"The LAN acquisition result could not be published: {exc}"
+        return ""
+
+    def _select_coordinator(self) -> tuple[str, dict[str, Any]] | None:
+        seeds = list(dict.fromkeys((*self.peer_urls, *self._recent_peer_urls())))
+        if self.discovery_enabled:
+            try:
+                seeds.extend(discover_lan_peers())
+            except OSError:
+                pass
+        pending = list(dict.fromkeys(seeds))[:MAX_LAN_PEERS]
+        seen: set[str] = set()
+        coordinators: list[tuple[str, str, dict[str, Any]]] = []
+        while pending and len(seen) < MAX_LAN_PEERS:
+            batch: list[str] = []
+            while pending and len(seen) + len(batch) < MAX_LAN_PEERS:
+                peer = pending.pop(0)
+                if peer not in seen and peer not in batch:
+                    batch.append(peer)
+            if not batch:
+                break
+            workers = min(8, len(batch))
+            with ThreadPoolExecutor(max_workers=workers) as executor:
+                futures = {
+                    executor.submit(self._peer_info, peer): peer
+                    for peer in batch
+                }
+                for future in as_completed(futures):
+                    peer = futures[future]
+                    seen.add(peer)
+                    try:
+                        info = future.result()
+                    except (
+                        LanSyncError,
+                        requests.RequestException,
+                        ValueError,
+                    ):
+                        continue
+                    self._remember_peers((peer,))
+                    for advertised in info["peers"]:
+                        if (
+                            advertised not in seen
+                            and advertised not in pending
+                            and len(seen) + len(pending) < MAX_LAN_PEERS
+                        ):
+                            pending.append(advertised)
+                    if info["acquisition_queue_available"]:
+                        coordinators.append((str(info["node_id"]), peer, info))
+        if not coordinators:
+            return None
+        _node_id, peer, info = min(
+            coordinators,
+            key=lambda value: (value[0], value[1]),
+        )
+        return peer, info
+
+    def _producer_identity(self, coordinator: str) -> tuple[str, str] | None:
+        cached = self._producer_cache.get(coordinator)
+        now = time.monotonic()
+        if cached and now - cached[0] <= 30.0:
+            return cached[1], cached[2]
+        producer = self.producer_url
+        if not producer and self.producer_port:
+            parsed = urlparse(coordinator)
+            address = ipaddress.ip_address(parsed.hostname or "")
+            family = socket.AF_INET6 if address.version == 6 else socket.AF_INET
+            with socket.socket(family, socket.SOCK_DGRAM) as route:
+                route.connect((str(address), parsed.port or 80))
+                local_address = str(route.getsockname()[0])
+            display = (
+                f"[{local_address}]" if address.version == 6 else local_address
+            )
+            producer = normalize_peer_url(
+                f"http://{display}:{self.producer_port}"
+            )
+        if not producer:
+            return None
+        try:
+            info = self._peer_info(producer)
+        except (LanSyncError, requests.RequestException, ValueError):
+            return None
+        if not info["sharing"]:
+            return None
+        value = (producer, str(info["node_id"]))
+        self._producer_cache[coordinator] = (now, *value)
+        return value
+
+    def _queue_status(
+        self,
+        coordinator: str,
+        feed_id: str,
+        archive_date: date,
+    ) -> dict[str, Any]:
+        with requests.get(
+            f"{coordinator}/api/lan/v1/acquisition",
+            params={
+                "quota_scope": self.quota_scope,
+                "feed_id": feed_id,
+                "date": archive_date.isoformat(),
+            },
+            headers=self._headers(),
+            timeout=(self.connect_timeout, min(self.read_timeout, 10.0)),
+            allow_redirects=False,
+            stream=True,
+        ) as response:
+            response.raise_for_status()
+            payload = self._bounded_json(response, LAN_QUEUE_RESPONSE_BYTES)
+        return self._validate_queue_payload(
+            payload,
+            feed_id,
+            archive_date,
+        )
+
+    def _queue_action(
+        self,
+        coordinator: str,
+        action: str,
+        feed_id: str,
+        archive_date: date,
+        extra: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        body = {
+            "quota_scope": self.quota_scope,
+            "feed_id": feed_id,
+            "archive_date": archive_date.isoformat(),
+            **dict(extra),
+        }
+        headers = self._headers()
+        headers["Content-Type"] = "application/json"
+        with requests.post(
+            f"{coordinator}/api/lan/v1/acquisition/{quote(action, safe='')}",
+            headers=headers,
+            data=json.dumps(body, separators=(",", ":")).encode("utf-8"),
+            timeout=(self.connect_timeout, min(self.read_timeout, 10.0)),
+            allow_redirects=False,
+            stream=True,
+        ) as response:
+            response.raise_for_status()
+            payload = self._bounded_json(response, LAN_QUEUE_RESPONSE_BYTES)
+        return self._validate_queue_payload(payload, feed_id, archive_date)
+
+    def _peer_info(self, peer: str) -> dict[str, Any]:
+        with requests.get(
+            f"{peer}/api/lan/v1/info",
+            headers=self._headers(),
+            timeout=(min(self.connect_timeout, 1.0), 5.0),
+            allow_redirects=False,
+            stream=True,
+        ) as response:
+            response.raise_for_status()
+            payload = self._bounded_json(response, LAN_QUEUE_RESPONSE_BYTES)
+        if not isinstance(payload, Mapping) or payload.get("protocol") != LAN_PROTOCOL:
+            raise LanSyncError("The peer returned incompatible node information.")
+        node_id = str(payload.get("node_id") or "")
+        if not LAN_QUEUE_NODE_PATTERN.fullmatch(node_id):
+            raise LanSyncError("The peer returned an invalid node identity.")
+        return {
+            "node_id": node_id,
+            "sharing": bool(payload.get("sharing")),
+            "acquisition_queue_available": bool(
+                payload.get("acquisition_queue_available")
+            ),
+            "peers": normalize_peer_urls(payload.get("peers") or (), strict=False),
+        }
+
+    def _validate_queue_payload(
+        self,
+        payload: Any,
+        feed_id: str,
+        archive_date: date,
+    ) -> dict[str, Any]:
+        if (
+            not isinstance(payload, Mapping)
+            or payload.get("protocol") != LAN_PROTOCOL
+            or str(payload.get("quota_scope") or "") != self.quota_scope
+            or str(payload.get("feed_id") or "") != feed_id
+            or str(payload.get("archive_date") or "") != archive_date.isoformat()
+        ):
+            raise LanSyncError("The peer returned an incompatible queue response.")
+        state = str(payload.get("state") or "")
+        if state not in {"available", "active", "complete", "quota_limited"}:
+            raise LanSyncError("The peer returned an invalid queue state.")
+        producer_url = str(payload.get("producer_url") or "")
+        if producer_url:
+            producer_url = normalize_peer_url(producer_url)
+        owner_node_id = str(payload.get("owner_node_id") or "")
+        if owner_node_id and not LAN_QUEUE_NODE_PATTERN.fullmatch(owner_node_id):
+            raise LanSyncError("The peer returned an invalid queue owner.")
+        try:
+            lease_seconds = float(payload.get("lease_seconds") or 0.0)
+            block_count = int(payload.get("block_count") or 0)
+        except (TypeError, ValueError) as exc:
+            raise LanSyncError("The peer returned invalid queue counters.") from exc
+        if (
+            not 0.0 <= lease_seconds <= 24 * 60 * 60.0
+            or not 0 <= block_count <= MAX_BLOCKS_PER_DAY
+        ):
+            raise LanSyncError("The peer returned out-of-range queue counters.")
+        raw_blocks = payload.get("blocks")
+        if not isinstance(raw_blocks, list) or len(raw_blocks) > MAX_BLOCKS_PER_DAY:
+            raise LanSyncError("The peer returned an invalid completion manifest.")
+        if any(not isinstance(value, Mapping) for value in raw_blocks):
+            raise LanSyncError("The peer returned an invalid completion block.")
+        try:
+            blocks = tuple(
+                ArchiveBlock.from_mapping(
+                    value,
+                    expected_feed_id=feed_id,
+                    expected_date=archive_date,
+                )
+                for value in raw_blocks
+            )
+        except (TypeError, ValueError) as exc:
+            raise LanSyncError(
+                "The peer returned an invalid completion block."
+            ) from exc
+        if len({block.filename for block in blocks}) != len(blocks):
+            raise LanSyncError("The peer returned a duplicate completion block.")
+        if (
+            (state == "complete" and len(blocks) != block_count)
+            or (state != "complete" and blocks)
+        ):
+            raise LanSyncError(
+                "The peer completion manifest does not match its queue state."
+            )
+        value = {
+            "protocol": LAN_PROTOCOL,
+            "quota_scope": self.quota_scope,
+            "feed_id": feed_id,
+            "archive_date": archive_date.isoformat(),
+            "state": state,
+            "producer_url": producer_url,
+            "owner_node_id": owner_node_id,
+            "lease_seconds": lease_seconds,
+            "block_count": block_count,
+            "blocks": blocks,
+            "granted": bool(payload.get("granted")),
+        }
+        lease_token = str(payload.get("lease_token") or "")
+        if value["granted"]:
+            if not re.fullmatch(r"[A-Za-z0-9_-]{24,128}", lease_token):
+                raise LanSyncError("The peer returned an invalid acquisition lease.")
+            value["lease_token"] = lease_token
+        return value
+
+    @staticmethod
+    def _bounded_json(response: requests.Response, maximum_bytes: int) -> Any:
+        try:
+            content_length = int(response.headers.get("Content-Length") or 0)
+        except ValueError as exc:
+            raise LanSyncError("The peer returned an invalid response length.") from exc
+        if content_length > maximum_bytes:
+            raise LanSyncError("The peer response exceeded the size limit.")
+        body = bytearray()
+        for chunk in response.iter_content(chunk_size=16 * 1024):
+            body.extend(chunk)
+            if len(body) > maximum_bytes:
+                raise LanSyncError("The peer response exceeded the size limit.")
+        try:
+            return json.loads(body)
+        except (UnicodeDecodeError, ValueError) as exc:
+            raise LanSyncError("The peer response was not valid JSON.") from exc
+
+    @staticmethod
+    def local_source_files(
+        output_dir: str | Path,
+        feed_id: str,
+        archive_date: date,
+    ) -> list[Path]:
+        output_root = Path(output_dir).expanduser().resolve()
+        day_dir = (
+            output_root / feed_id / archive_date.strftime("%Y%m%d")
+        ).resolve()
+        try:
+            day_dir.relative_to(output_root)
+        except ValueError as exc:
+            raise LanSyncError(
+                "The LAN archive day is outside the local library."
+            ) from exc
+        if not day_dir.is_dir():
+            return []
+        values: list[Path] = []
+        for path in sorted(day_dir.glob("*.mp3")):
+            match = RAW_ARCHIVE_PATTERN.fullmatch(path.name)
+            if (
+                match is not None
+                and match.group("feed_id") == feed_id
+                and match.group("stamp")[:8] == archive_date.strftime("%Y%m%d")
+                and not path.is_symlink()
+                and path.is_file()
+                and 0 < path.stat().st_size <= MAX_ARCHIVE_BLOCK_BYTES
+            ):
+                values.append(path.resolve())
+        return values[:MAX_BLOCKS_PER_DAY]
+
+    def completion_blocks(
+        self,
+        source_files: Sequence[str | Path],
+        feed_id: str,
+        archive_date: date,
+    ) -> tuple[ArchiveBlock, ...]:
+        """Build the exact immutable manifest published by a completed leader."""
+
+        blocks: list[ArchiveBlock] = []
+        names: set[str] = set()
+        for source in source_files:
+            path = Path(source)
+            match = RAW_ARCHIVE_PATTERN.fullmatch(path.name)
+            if (
+                match is None
+                or match.group("feed_id") != feed_id
+                or match.group("stamp")[:8] != archive_date.strftime("%Y%m%d")
+                or path.is_symlink()
+                or not path.is_file()
+            ):
+                raise LanSyncError(
+                    "A completed acquisition contains an invalid source block."
+                )
+            resolved = path.resolve()
+            stat = resolved.stat()
+            if not 0 < stat.st_size <= MAX_ARCHIVE_BLOCK_BYTES:
+                raise LanSyncError(
+                    "A completed acquisition source block has an invalid size."
+                )
+            if path.name in names:
+                raise LanSyncError(
+                    "A completed acquisition contains a duplicate source block."
+                )
+            names.add(path.name)
+            blocks.append(
+                ArchiveBlock(
+                    feed_id=feed_id,
+                    archive_date=archive_date.isoformat(),
+                    filename=path.name,
+                    size=stat.st_size,
+                    sha256=self.hashes.sha256(resolved),
+                    modified_ns=stat.st_mtime_ns,
+                )
+            )
+        if len(blocks) > MAX_BLOCKS_PER_DAY:
+            raise LanSyncError("A completed acquisition contains too many blocks.")
+        return tuple(sorted(blocks, key=lambda value: value.filename))
+
+    def verified_local_blocks(
+        self,
+        output_dir: str | Path,
+        feed_id: str,
+        archive_date: date,
+        blocks: Sequence[ArchiveBlock],
+    ) -> list[Path]:
+        """Return files only when every exact completion-manifest block is local."""
+
+        output_root = Path(output_dir).expanduser().resolve()
+        day_dir = (
+            output_root / feed_id / archive_date.strftime("%Y%m%d")
+        ).resolve()
+        try:
+            day_dir.relative_to(output_root)
+        except ValueError as exc:
+            raise LanSyncError(
+                "The LAN archive day is outside the local library."
+            ) from exc
+        verified: list[Path] = []
+        try:
+            for block in blocks:
+                block.validate(
+                    expected_feed_id=feed_id,
+                    expected_date=archive_date,
+                )
+                path = day_dir / block.filename
+                if (
+                    path.is_symlink()
+                    or not path.is_file()
+                    or path.resolve().parent != day_dir
+                    or path.stat().st_size != block.size
+                    or self.hashes.sha256(path) != block.sha256
+                ):
+                    return []
+                verified.append(path.resolve())
+        except (LanSyncError, OSError):
+            return []
+        return verified
+
+    def _remember_peers(self, peers: Iterable[str]) -> None:
+        with self._peer_lock:
+            for peer in peers:
+                normalized = normalize_peer_url(peer)
+                self._recent_peers[normalized] = time.monotonic()
+                self._recent_peers.move_to_end(normalized)
+            while len(self._recent_peers) > MAX_LAN_PEERS:
+                self._recent_peers.popitem(last=False)
+
+    def _recent_peer_urls(self) -> tuple[str, ...]:
+        with self._peer_lock:
+            return tuple(self._recent_peers)
 
     def _headers(self) -> dict[str, str]:
         headers = {
@@ -1019,3 +2138,89 @@ class LanArchiveSyncClient:
                 partial.unlink(missing_ok=True)
             except OSError:
                 pass
+
+
+class _LanLeaseHeartbeat(AbstractContextManager["_LanLeaseHeartbeat"]):
+    def __init__(
+        self,
+        client: LanArchiveSyncClient,
+        turn: LanDownloadTurn,
+    ) -> None:
+        self.client = client
+        self.turn = turn
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._warnings: list[str] = []
+        self._last_success = time.monotonic()
+        self._lost_reason = ""
+        self._state_lock = threading.Lock()
+
+    @property
+    def warnings(self) -> tuple[str, ...]:
+        return tuple(self._warnings)
+
+    def assert_active(self) -> None:
+        with self._state_lock:
+            reason = self._lost_reason
+        if reason:
+            raise LanSyncError(reason)
+
+    def __enter__(self) -> "_LanLeaseHeartbeat":
+        self._thread = threading.Thread(
+            target=self._run,
+            name="radio-archive-lan-lease-heartbeat",
+            daemon=True,
+        )
+        self._thread.start()
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=2.0)
+        self._thread = None
+
+    def _run(self) -> None:
+        interval = min(
+            30.0,
+            max(5.0, float(self.turn.lease_seconds or 30.0) / 3.0),
+        )
+        archive_date = date.fromisoformat(self.turn.archive_date)
+        while not self._stop.wait(interval):
+            try:
+                status = self.client._queue_action(
+                    self.turn.coordinator_url,
+                    "renew",
+                    self.turn.feed_id,
+                    archive_date,
+                    {"lease_token": self.turn.lease_token},
+                )
+                if status["state"] != "active":
+                    reason = "The LAN acquisition lease is no longer active."
+                    with self._state_lock:
+                        self._lost_reason = reason
+                    self._warnings.append(reason)
+                    return
+                with self._state_lock:
+                    self._last_success = time.monotonic()
+            except (
+                LanSyncError,
+                requests.RequestException,
+                ValueError,
+            ) as exc:
+                warning = (
+                    "The LAN acquisition heartbeat could not reach its "
+                    f"coordinator: {exc}"
+                )
+                if len(self._warnings) < 20:
+                    self._warnings.append(warning)
+                with self._state_lock:
+                    elapsed = time.monotonic() - self._last_success
+                    if elapsed >= max(
+                        10.0,
+                        float(self.turn.lease_seconds) * 0.75,
+                    ):
+                        self._lost_reason = (
+                            "The LAN acquisition lease could not be renewed; "
+                            "new upstream archive requests were stopped."
+                        )

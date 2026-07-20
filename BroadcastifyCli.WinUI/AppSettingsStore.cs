@@ -4,7 +4,7 @@ namespace BroadcastifyCli.WinUI;
 
 internal sealed record DesktopSettings
 {
-    public int Version { get; init; } = 4;
+    public int Version { get; init; } = 5;
     public string HardwareProfile { get; init; } = "auto";
     public string WhisperModel { get; init; } = "turbo";
     public string AsrEngine { get; init; } = "auto";
@@ -34,7 +34,7 @@ internal sealed record DesktopSettings
     public bool LanSyncEnabled { get; init; } = true;
     public bool LanDiscoveryEnabled { get; init; } = true;
     public string LanPeerUrls { get; init; } = "";
-    public bool LanShareEnabled { get; init; }
+    public bool LanShareEnabled { get; init; } = true;
     public int LanSharePort { get; init; } = 8766;
     public string LastAreaProfileName { get; init; } = "";
     public string LastReviewFeedId { get; init; } = "";
@@ -81,7 +81,22 @@ internal static class AppSettingsStore
             }
             var settings = JsonSerializer.Deserialize<DesktopSettings>(
                 File.ReadAllText(sourcePath), SerializerOptions) ?? new DesktopSettings();
-            if (!sourcePath.Equals(SettingsPath, StringComparison.OrdinalIgnoreCase))
+            var needsSave = !sourcePath.Equals(
+                SettingsPath,
+                StringComparison.OrdinalIgnoreCase);
+            if (settings.Version < 5)
+            {
+                // Version 5 makes a LAN-reuse client eligible to own the shared
+                // upstream lease. Only original source blocks are served, and
+                // the visible Settings toggle can still turn seeding back off.
+                settings = settings with
+                {
+                    Version = 5,
+                    LanShareEnabled = settings.LanSyncEnabled,
+                };
+                needsSave = true;
+            }
+            if (needsSave)
             {
                 TrySave(settings);
             }

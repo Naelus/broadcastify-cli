@@ -13,6 +13,7 @@ internal sealed class WorkerClient
     private readonly SemaphoreSlim _lanNodeGate = new(1, 1);
     private Process? _lanNodeProcess;
     private string _lanNodeConfiguration = "";
+    private int _lanNodePort;
     private int _lanNodeShutdown;
 
     public string RepositoryRoot { get; }
@@ -64,7 +65,7 @@ internal sealed class WorkerClient
                     _lanNodeConfiguration,
                     StringComparison.OrdinalIgnoreCase))
             {
-                return $"Sharing original archive blocks on trusted LAN port {boundedPort}.";
+                return $"Sharing original archive blocks and eligible for shared upstream leases on trusted LAN port {boundedPort}.";
             }
 
             StopLanNodeCore();
@@ -90,6 +91,7 @@ internal sealed class WorkerClient
             }
             _lanNodeProcess = process;
             _lanNodeConfiguration = configuration;
+            Volatile.Write(ref _lanNodePort, boundedPort);
             if (Volatile.Read(ref _lanNodeShutdown) != 0)
             {
                 StopLanNodeCore();
@@ -135,7 +137,7 @@ internal sealed class WorkerClient
                             "radio-archive-lan/1",
                             StringComparison.Ordinal))
                         {
-                            return $"Sharing original archive blocks on trusted LAN port {boundedPort}.";
+                            return $"Sharing original archive blocks and eligible for shared upstream leases on trusted LAN port {boundedPort}.";
                         }
                     }
                 }
@@ -172,6 +174,7 @@ internal sealed class WorkerClient
     {
         var process = Interlocked.Exchange(ref _lanNodeProcess, null);
         _lanNodeConfiguration = "";
+        Volatile.Write(ref _lanNodePort, 0);
         if (process is null)
         {
             return;
@@ -882,6 +885,13 @@ internal sealed class WorkerClient
         if (HasBundledEnvironment)
         {
             startInfo.Environment["BROADCASTIFY_ENV_FILE"] = BundledEnvironmentPath;
+        }
+        var lanNodePort = Volatile.Read(ref _lanNodePort);
+        if (lanNodePort is >= 1024 and <= 65535)
+        {
+            startInfo.Environment["BROADCASTIFY_LAN_SELF_PORT"] =
+                lanNodePort.ToString(
+                    System.Globalization.CultureInfo.InvariantCulture);
         }
         if (HasBundledWindowsMlHelper
             && (!startInfo.Environment.TryGetValue("WINDOWS_ML_HELPER_PATH", out var configuredHelper)

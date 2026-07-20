@@ -16,7 +16,9 @@ import broadcastify_cli.lan_sync as lan_sync
 from broadcastify_cli.lan_sync import (
     LanArchiveCatalog,
     LanArchiveSyncClient,
+    LanAcquisitionQueue,
     LanDiscoveryResponder,
+    LanDownloadTurn,
     LanSyncResult,
     discovery_destinations,
     discover_lan_peers,
@@ -130,6 +132,348 @@ def test_hash_verified_peer_sync_copies_missing_blocks_without_a_session(
         thread.join(timeout=3)
 
 
+def test_shared_acquisition_queue_grants_one_expiring_producer_lease() -> None:
+    now = [100.0]
+    queue = LanAcquisitionQueue(
+        lease_seconds=15.0,
+        result_seconds=60.0,
+        clock=lambda: now[0],
+    )
+    archive_date = date(2026, 7, 12)
+
+    first = queue.claim(
+        "default",
+        "90001",
+        archive_date,
+        owner_node_id="producer_one",
+        producer_url="http://10.20.30.40:8766",
+        requester_address="10.20.30.40",
+    )
+    second = queue.claim(
+        "default",
+        "90001",
+        archive_date,
+        owner_node_id="producer_two",
+        producer_url="http://10.20.30.41:8766",
+        requester_address="10.20.30.41",
+    )
+
+    assert first["granted"] is True
+    assert first["state"] == "active"
+    assert second["granted"] is False
+    assert second["owner_node_id"] == "producer_one"
+
+    now[0] += 16.0
+    takeover = queue.claim(
+        "default",
+        "90001",
+        archive_date,
+        owner_node_id="producer_two",
+        producer_url="http://10.20.30.41:8766",
+        requester_address="10.20.30.41",
+    )
+    assert takeover["granted"] is True
+    assert takeover["owner_node_id"] == "producer_two"
+
+
+def test_shared_quota_result_prevents_follower_retry_until_it_expires() -> None:
+    now = [200.0]
+    queue = LanAcquisitionQueue(
+        lease_seconds=15.0,
+        result_seconds=60.0,
+        clock=lambda: now[0],
+    )
+    archive_date = date(2026, 7, 12)
+    claim = queue.claim(
+        "premium-account",
+        "90001",
+        archive_date,
+        owner_node_id="producer_one",
+        producer_url="http://10.20.30.40:8766",
+        requester_address="10.20.30.40",
+    )
+    limited = queue.finish(
+        "premium-account",
+        "90001",
+        archive_date,
+        lease_token=str(claim["lease_token"]),
+        outcome="quota_limited",
+        block_count=7,
+    )
+    follower = queue.claim(
+        "premium-account",
+        "90001",
+        archive_date,
+        owner_node_id="producer_two",
+        producer_url="http://10.20.30.41:8766",
+        requester_address="10.20.30.41",
+    )
+
+    assert limited["state"] == "quota_limited"
+    assert limited["block_count"] == 7
+    assert follower["granted"] is False
+    assert follower["state"] == "quota_limited"
+
+    now[0] += 61.0
+    assert queue.status("premium-account", "90001", archive_date)["state"] == (
+        "available"
+    )
+
+
+def test_web_queue_elects_one_producer_and_follower_pulls_completed_blocks(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "producer"
+    source.mkdir()
+    monkeypatch.setenv("BROADCASTIFY_LAN_SHARING", "true")
+    monkeypatch.setenv("BROADCASTIFY_LAN_SYNC_KEY", "queue-test-key")
+    monkeypatch.setenv("BROADCASTIFY_LAN_DISCOVERY_ENABLED", "false")
+    server = create_server(source, port=0, working_dir=tmp_path)
+    server.quiet = True  # type: ignore[attr-defined]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    peer_url = f"http://127.0.0.1:{server.server_port}"
+    archive_date = date(2026, 7, 12)
+    leader = LanArchiveSyncClient(
+        enabled=True,
+        peer_urls=(peer_url,),
+        discovery_enabled=False,
+        sync_key="queue-test-key",
+        producer_url=peer_url,
+        queue_poll_interval=0.05,
+        queue_max_wait=3.0,
+    )
+    follower = LanArchiveSyncClient(
+        enabled=True,
+        peer_urls=(peer_url,),
+        discovery_enabled=False,
+        sync_key="queue-test-key",
+        queue_poll_interval=0.05,
+        queue_max_wait=3.0,
+        queue_consumer_grace=0.05,
+    )
+    follower_result: list[LanDownloadTurn] = []
+    try:
+        leader_turn = leader.wait_for_download_turn(
+            source,
+            "90001",
+            archive_date,
+        )
+        assert leader_turn.role == "leader"
+
+        follower_thread = threading.Thread(
+            target=lambda: follower_result.append(
+                follower.wait_for_download_turn(
+                    tmp_path / "consumer",
+                    "90001",
+                    archive_date,
+                )
+            ),
+            daemon=True,
+        )
+        follower_thread.start()
+        day = source / "90001" / "20260712"
+        day.mkdir(parents=True)
+        block = day / "202607120000-123456-90001.mp3"
+        block.write_bytes(b"completed by the elected producer")
+        assert (
+            leader.finish_download_turn(
+                leader_turn,
+                outcome="complete",
+                block_count=1,
+                source_files=(block,),
+            )
+            == ""
+        )
+        follower_thread.join(timeout=5)
+
+        assert len(follower_result) == 1
+        assert follower_result[0].role == "completed"
+        assert follower_result[0].sync_result.blocks_copied == 1
+        copied = follower_result[0].audio_files
+        assert len(copied) == 1
+        assert copied[0].read_bytes() == block.read_bytes()
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=3)
+
+
+def test_completed_manifest_is_assembled_from_multiple_peer_sources(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest_root = tmp_path / "manifest-source"
+    _day, raw = _raw_day(manifest_root)
+    seed_roots = (tmp_path / "seed-one", tmp_path / "seed-two")
+    for seed_root, source in zip(seed_roots, raw, strict=True):
+        seed_day = seed_root / "90001" / "20260712"
+        seed_day.mkdir(parents=True)
+        (seed_day / source.name).write_bytes(source.read_bytes())
+
+    monkeypatch.setenv("BROADCASTIFY_LAN_QUEUE_ENABLED", "false")
+    seeds = [
+        create_lan_node_server(
+            seed_root,
+            host="127.0.0.1",
+            port=0,
+            sync_key="multi-source-key",
+            discovery_enabled=False,
+        )
+        for seed_root in seed_roots
+    ]
+    seed_threads = [
+        threading.Thread(target=server.serve_forever, daemon=True)
+        for server in seeds
+    ]
+    for server, thread in zip(seeds, seed_threads, strict=True):
+        server.quiet = True  # type: ignore[attr-defined]
+        thread.start()
+    seed_urls = tuple(
+        f"http://127.0.0.1:{server.server_port}" for server in seeds
+    )
+
+    monkeypatch.setenv("BROADCASTIFY_LAN_QUEUE_ENABLED", "true")
+    monkeypatch.setenv("BROADCASTIFY_LAN_SHARING", "true")
+    monkeypatch.setenv("BROADCASTIFY_LAN_SYNC_KEY", "multi-source-key")
+    monkeypatch.setenv("BROADCASTIFY_LAN_DISCOVERY_ENABLED", "false")
+    monkeypatch.setenv("BROADCASTIFY_LAN_PEERS", " ".join(seed_urls))
+    coordinator_root = tmp_path / "coordinator"
+    coordinator_root.mkdir()
+    coordinator = create_server(
+        coordinator_root,
+        port=0,
+        working_dir=tmp_path,
+    )
+    coordinator.quiet = True  # type: ignore[attr-defined]
+    coordinator_thread = threading.Thread(
+        target=coordinator.serve_forever,
+        daemon=True,
+    )
+    coordinator_thread.start()
+    coordinator_url = f"http://127.0.0.1:{coordinator.server_port}"
+    archive_date = date(2026, 7, 12)
+    leader = LanArchiveSyncClient(
+        enabled=True,
+        peer_urls=(coordinator_url,),
+        discovery_enabled=False,
+        sync_key="multi-source-key",
+        producer_url=seed_urls[0],
+        queue_poll_interval=0.05,
+        queue_max_wait=2.0,
+    )
+    follower = LanArchiveSyncClient(
+        enabled=True,
+        peer_urls=(coordinator_url,),
+        discovery_enabled=False,
+        sync_key="multi-source-key",
+        queue_poll_interval=0.05,
+        queue_max_wait=2.0,
+    )
+    try:
+        turn = leader.wait_for_download_turn(
+            manifest_root,
+            "90001",
+            archive_date,
+        )
+        assert turn.role == "leader"
+        assert (
+            leader.finish_download_turn(
+                turn,
+                outcome="complete",
+                block_count=2,
+                source_files=raw,
+            )
+            == ""
+        )
+
+        completed = follower.wait_for_download_turn(
+            tmp_path / "assembled",
+            "90001",
+            archive_date,
+        )
+
+        assert completed.role == "completed"
+        assert completed.sync_result.blocks_copied == 2
+        assert completed.sync_result.peers_reached >= 3
+        assert [path.read_bytes() for path in completed.audio_files] == [
+            path.read_bytes() for path in raw
+        ]
+    finally:
+        coordinator.shutdown()
+        coordinator.server_close()
+        coordinator_thread.join(timeout=3)
+        for server, thread in zip(seeds, seed_threads, strict=True):
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
+
+
+def test_queue_completion_never_accepts_a_conflicting_local_block(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "producer"
+    day = source / "90001" / "20260712"
+    day.mkdir(parents=True)
+    block = day / "202607120000-123456-90001.mp3"
+    block.write_bytes(b"verified producer bytes")
+    monkeypatch.setenv("BROADCASTIFY_LAN_SHARING", "true")
+    monkeypatch.setenv("BROADCASTIFY_LAN_DISCOVERY_ENABLED", "false")
+    server = create_server(source, port=0, working_dir=tmp_path)
+    server.quiet = True  # type: ignore[attr-defined]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    peer_url = f"http://127.0.0.1:{server.server_port}"
+    archive_date = date(2026, 7, 12)
+    leader = LanArchiveSyncClient(
+        enabled=True,
+        peer_urls=(peer_url,),
+        discovery_enabled=False,
+        producer_url=peer_url,
+        queue_poll_interval=0.05,
+        queue_max_wait=1.0,
+    )
+    target = tmp_path / "consumer"
+    target_day = target / "90001" / "20260712"
+    target_day.mkdir(parents=True)
+    (target_day / block.name).write_bytes(b"different local bytes")
+    follower = LanArchiveSyncClient(
+        enabled=True,
+        peer_urls=(peer_url,),
+        discovery_enabled=False,
+        queue_poll_interval=0.05,
+        queue_max_wait=0.25,
+    )
+    try:
+        turn = leader.wait_for_download_turn(source, "90001", archive_date)
+        assert turn.role == "leader"
+        assert (
+            leader.finish_download_turn(
+                turn,
+                outcome="complete",
+                block_count=1,
+                source_files=(block,),
+            )
+            == ""
+        )
+
+        result = follower.wait_for_download_turn(
+            target,
+            "90001",
+            archive_date,
+        )
+
+        assert result.role == "deferred"
+        assert result.sync_result.conflicts > 0
+        assert (target_day / block.name).read_bytes() == b"different local bytes"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=3)
+
+
 def test_disabled_web_peer_does_not_expose_an_inventory(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -190,6 +534,70 @@ def test_minimal_native_lan_node_seeds_blocks_without_web_app_data(
         assert [path.read_bytes() for path in copied] == [
             path.read_bytes() for path in raw
         ]
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=3)
+
+
+def test_native_lan_node_coordinates_one_producer_lease(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "native-queue"
+    source.mkdir()
+    server = create_lan_node_server(
+        source,
+        host="127.0.0.1",
+        port=0,
+        sync_key="native-queue-key",
+        discovery_enabled=False,
+    )
+    server.quiet = True  # type: ignore[attr-defined]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    peer_url = f"http://127.0.0.1:{server.server_port}"
+    archive_date = date(2026, 7, 12)
+    producer = LanArchiveSyncClient(
+        enabled=True,
+        peer_urls=(peer_url,),
+        discovery_enabled=False,
+        sync_key="native-queue-key",
+        producer_url=peer_url,
+        queue_poll_interval=0.05,
+        queue_max_wait=1.0,
+    )
+    follower = LanArchiveSyncClient(
+        enabled=True,
+        peer_urls=(peer_url,),
+        discovery_enabled=False,
+        sync_key="native-queue-key",
+        producer_url=peer_url,
+        queue_poll_interval=0.05,
+        queue_max_wait=0.15,
+    )
+    try:
+        first = producer.wait_for_download_turn(
+            source,
+            "90001",
+            archive_date,
+        )
+        second = follower.wait_for_download_turn(
+            tmp_path / "native-follower",
+            "90001",
+            archive_date,
+        )
+
+        assert first.role == "leader"
+        assert second.role == "deferred"
+        assert producer.finish_download_turn(first, outcome="failed") == ""
+
+        takeover = follower.wait_for_download_turn(
+            tmp_path / "native-follower",
+            "90001",
+            archive_date,
+        )
+        assert takeover.role == "leader"
+        assert follower.finish_download_turn(takeover, outcome="failed") == ""
     finally:
         server.shutdown()
         server.server_close()

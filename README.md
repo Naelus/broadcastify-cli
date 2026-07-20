@@ -19,7 +19,7 @@ This fork uses Broadcastify's website login and the same private web endpoints a
 - Diarization-only continuation for existing transcripts, so adding or improving speaker labels does not rerun Whisper
 - Inclusive single-day or date-range archive jobs that acquire the range before starting GPU processing
 - Paced archive downloads with timezone-aware cache reuse, shared 429 cooldown, `Retry-After` support, and automatic one-at-a-time fallback
-- Trusted-LAN archive reuse before website login/download, with optional one-hop discovery, explicit private peers, read-only Windows/Web/TrueNAS seed nodes, SHA-256 verification, and atomic local publication
+- A trusted-LAN archive pool before website login/download: deterministic feed/day coordination elects one renewable upstream producer, followers pull SHA-256-verified blocks from any peer as they appear, expired leases permit takeover, and shared quota-limit state prevents retry storms
 - Optional daily MP3 combination with safe source cleanup
 - GPU-accelerated `faster-whisper` transcription
 - Local pyannote Community-1 accuracy-default diarization plus an opt-in public-model sherpa-onnx fast CPU preview

@@ -4,7 +4,7 @@ from pathlib import Path
 from broadcastify_cli.jobs import JobRunner
 from broadcastify_cli.broadcastify import DownloadLimitExceeded
 from broadcastify_cli.models import JobRequest
-from broadcastify_cli.lan_sync import LanSyncResult
+from broadcastify_cli.lan_sync import LanDownloadTurn, LanSyncResult
 
 
 class FakeClient:
@@ -181,3 +181,156 @@ def test_lan_source_reuse_runs_before_any_broadcastify_request(
 
     assert calls == ["lan", "authenticate", "website"]
     assert result["lan_sync"]["blocks_copied"] == 1
+
+
+def test_completed_lan_queue_day_skips_every_broadcastify_request(
+    tmp_path: Path,
+) -> None:
+    archive_date = date(2026, 7, 12)
+    day = tmp_path / "90001" / "20260712"
+    day.mkdir(parents=True)
+    source = day / "202607120000-123456-90001.mp3"
+    source.write_bytes(b"peer-completed audio")
+
+    class CompletedLanQueue:
+        enabled = True
+
+        def sync_day(self, *_args: object, **_kwargs: object) -> LanSyncResult:
+            return LanSyncResult(enabled=True, peers_reached=1)
+
+        def wait_for_download_turn(
+            self,
+            *_args: object,
+            **_kwargs: object,
+        ) -> LanDownloadTurn:
+            return LanDownloadTurn(
+                role="completed",
+                feed_id="90001",
+                archive_date=archive_date.isoformat(),
+                block_count=1,
+                audio_files=(source,),
+            )
+
+    class ForbiddenWebsiteClient:
+        def authenticate(self) -> None:
+            raise AssertionError("A follower must not authenticate.")
+
+        def download_day(self, *_args: object, **_kwargs: object) -> list[Path]:
+            raise AssertionError("A follower must not use archive endpoints.")
+
+    request = JobRequest(
+        feed_id="90001",
+        start_date=archive_date,
+        end_date=archive_date,
+        output_dir=tmp_path,
+        lan_sync_enabled=True,
+    )
+    result = JobRunner(
+        request,
+        client=ForbiddenWebsiteClient(),  # type: ignore[arg-type]
+        lan_sync=CompletedLanQueue(),  # type: ignore[arg-type]
+    ).run()
+
+    assert result["days"][0]["audio_files"] == [str(source)]
+    assert result["lan_sync"]["acquisition_queue"]["completed"] == 1
+
+
+def test_lan_queue_leader_publishes_completion_after_one_upstream_download(
+    tmp_path: Path,
+) -> None:
+    archive_date = date(2026, 7, 12)
+    calls: list[str] = []
+
+    class Heartbeat:
+        warnings: tuple[str, ...] = ()
+
+        def __enter__(self) -> "Heartbeat":
+            calls.append("heartbeat:start")
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            calls.append("heartbeat:stop")
+
+        def assert_active(self) -> None:
+            calls.append("heartbeat:active")
+
+    class LeaderLanQueue:
+        enabled = True
+
+        def sync_day(self, *_args: object, **_kwargs: object) -> LanSyncResult:
+            calls.append("sync")
+            return LanSyncResult(enabled=True, peers_reached=1)
+
+        def wait_for_download_turn(
+            self,
+            *_args: object,
+            **_kwargs: object,
+        ) -> LanDownloadTurn:
+            calls.append("claim")
+            return LanDownloadTurn(
+                role="leader",
+                feed_id="90001",
+                archive_date=archive_date.isoformat(),
+                coordinator_url="http://127.0.0.1:8765",
+                producer_url="http://127.0.0.1:8766",
+                owner_node_id="producer_one",
+                lease_token="lease_token_value_that_is_long_enough",
+                lease_seconds=90.0,
+            )
+
+        def maintain_download_lease(self, _turn: LanDownloadTurn) -> Heartbeat:
+            return Heartbeat()
+
+        def finish_download_turn(
+            self,
+            _turn: LanDownloadTurn,
+            *,
+            outcome: str,
+            block_count: int = 0,
+            source_files: tuple[Path, ...] | list[Path] = (),
+        ) -> str:
+            if outcome == "complete":
+                assert len(source_files) == block_count
+            calls.append(f"finish:{outcome}:{block_count}")
+            return ""
+
+    class UpstreamClient:
+        def authenticate(self) -> None:
+            calls.append("authenticate")
+
+        def download_day(
+            self,
+            feed_id: str,
+            requested_date: date,
+            output_dir: Path,
+            **_kwargs: object,
+        ) -> list[Path]:
+            calls.append("download")
+            day = output_dir / feed_id / requested_date.strftime("%Y%m%d")
+            day.mkdir(parents=True)
+            source = day / "202607120000-123456-90001.mp3"
+            source.write_bytes(b"one upstream response")
+            return [source]
+
+    request = JobRequest(
+        feed_id="90001",
+        start_date=archive_date,
+        end_date=archive_date,
+        output_dir=tmp_path,
+        lan_sync_enabled=True,
+    )
+    JobRunner(
+        request,
+        client=UpstreamClient(),  # type: ignore[arg-type]
+        lan_sync=LeaderLanQueue(),  # type: ignore[arg-type]
+    ).run()
+
+    assert calls == [
+        "sync",
+        "claim",
+        "heartbeat:start",
+        "authenticate",
+        "download",
+        "finish:complete:1",
+        "heartbeat:stop",
+    ]

@@ -96,7 +96,7 @@ def test_native_and_web_expose_read_only_lan_archive_reuse() -> None:
 
     assert names["LanSyncToggle"].attrib["IsOn"] == "True"
     assert names["LanDiscoveryToggle"].attrib["IsOn"] == "True"
-    assert names["LanShareToggle"].attrib["IsOn"] == "False"
+    assert names["LanShareToggle"].attrib["IsOn"] == "True"
     assert names["LanSharePortBox"].attrib["Value"] == "8766"
 
     native_worker = (

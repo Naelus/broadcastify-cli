@@ -154,7 +154,7 @@ public sealed partial class MainWindow : Window
                 ? InfoBarSeverity.Success
                 : InfoBarSeverity.Informational;
             LanShareInfoBar.Title = LanShareToggle.IsOn
-                ? "Read-only LAN peer is active"
+                ? "LAN peer and queue producer are active"
                 : "This Windows client is not seeding";
             LanShareInfoBar.Message = status;
         }
@@ -2701,6 +2701,9 @@ public sealed partial class MainWindow : Window
         {
             return null;
         }
+        // Make the local source-block node reachable before the worker decides
+        // whether this PC can own the shared LAN acquisition lease.
+        await ConfigureLanSharingAsync();
         var jobResult = await _worker.RunJobAsync(
             request, HandleWorkerMessage, _operationCancellation.Token);
         await AnalyzeCompletedJobAsync(request, jobResult);
@@ -3914,6 +3917,7 @@ public sealed partial class MainWindow : Window
         JobProgress.Value = 0;
         try
         {
+            await ConfigureLanSharingAsync();
             var baseRequest = CreateJobRequest(
                 selected[0].FeedId, startDate, endDate, minimumSpeakers, maximumSpeakers,
                 selected[0].Name);

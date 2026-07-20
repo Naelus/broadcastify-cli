@@ -74,7 +74,8 @@ The account had only one user-initiated archive download immediately before the 
 
 ## Implemented policy
 
-- Before website login or archive access, ask enabled trusted-LAN peers for the exact feed/date source-block inventory. Reuse only size- and SHA-256-verified blocks, publish them atomically, and send the paced website downloader only what remains missing. This avoids duplicate requests among the user's own clients; it does not evade, expand, predict, or reset the account quota.
+- Before website login or archive access, ask enabled trusted-LAN peers for the exact feed/date source-block inventory. Reuse only size- and SHA-256-verified blocks and publish them atomically.
+- Coordinate each quota-scope/feed/day through a renewable LAN lease. One eligible producer may issue upstream archive-media requests; followers pull blocks from any peer as they appear and skip Broadcastify entirely after assembling the producer's exact filename/size/SHA-256 completion manifest. Expired leases permit takeover, while a shared explicit quota result suppresses follower retries for a bounded period.
 - Default to one download worker and space real archive requests by at least five seconds.
 - Reuse cached MP3s with an exact key derived from the archive `startTs` and the feed's published IANA timezone.
 - Continue exponential backoff for genuinely transient 429/5xx/network failures.
@@ -85,8 +86,10 @@ The account had only one user-initiated archive download immediately before the 
 - The cross-platform Web UI enforces the same policy at its service boundary: it overwrites single-feed and area jobs to one download worker, preserves source blocks, allows only one heavy job at a time, and cannot bypass the downloader's explicit quota stop through parallel browser actions.
 - Archive progress uses **Ready (cached or downloaded)**. A cache hit advances completion but is not counted or described as a new network download.
 
-The LAN protocol is deliberately read-only and limited to original archive
-MP3s. It does not share credentials, transcripts, analysis data, combined
-audio, or evidence clips. See [Trusted-LAN archive reuse](lan-archive-sync.md).
+The LAN data plane is deliberately read-only and limited to original archive
+MP3s. Its only mutation is bounded transient acquisition-lease state; it has no
+archive upload or remote-job endpoint and does not share credentials,
+transcripts, analysis data, combined audio, or evidence clips. See
+[Trusted-LAN archive reuse](lan-archive-sync.md).
 
 Probe logs are runtime artifacts under `archives/` and are ignored by Git.

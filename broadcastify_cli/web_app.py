@@ -869,6 +869,11 @@ def create_server(
         peer_urls=normalize_peer_urls(
             readiness_values.get("BROADCASTIFY_LAN_PEERS"),
         ),
+        queue_enabled=_environment_flag(
+            readiness_values,
+            "BROADCASTIFY_LAN_QUEUE_ENABLED",
+            default=True,
+        ),
     )
     state = WebAppState(
         output_dir=root,
@@ -903,6 +908,11 @@ def create_server(
 
         def do_POST(self) -> None:  # noqa: N802
             try:
+                parsed = urlparse(self.path)
+                if parsed.path.startswith("/api/lan/v1/acquisition/"):
+                    self._require_lan_access()
+                    self._post_lan_acquisition(parsed.path)
+                    return
                 self._require_session(write=True)
                 self._post()
             except WebRequestError as exc:
@@ -943,6 +953,31 @@ def create_server(
                         "peers": list(state.lan_catalog.peer_urls),
                     },
                 )
+                return
+            if parsed.path == "/api/lan/v1/acquisition":
+                self._require_lan_access()
+                if not state.lan_catalog.acquisition_queue.enabled:
+                    raise WebRequestError(
+                        HTTPStatus.NOT_FOUND,
+                        "LAN acquisition coordination is not enabled.",
+                    )
+                query = parse_qs(parsed.query)
+                feed_id, archive_date = self._feed_date(query)
+                quota_scope = str(
+                    (query.get("quota_scope") or ["default"])[0]
+                ).strip()
+                try:
+                    value = state.lan_catalog.acquisition_queue.status(
+                        quota_scope,
+                        feed_id,
+                        archive_date,
+                    )
+                except LanSyncError as exc:
+                    raise WebRequestError(
+                        HTTPStatus.BAD_REQUEST,
+                        str(exc),
+                    ) from exc
+                self._json(HTTPStatus.OK, value)
                 return
             if parsed.path.startswith("/api/lan/v1/blocks/"):
                 self._require_lan_access()
@@ -1035,6 +1070,9 @@ def create_server(
                                 ),
                                 "discovery_error": (
                                     state.lan_catalog.discovery_error
+                                ),
+                                "acquisition_queue_available": bool(
+                                    state.lan_catalog.acquisition_queue.enabled
                                 ),
                             },
                             **_runtime_readiness(state),
@@ -1134,6 +1172,62 @@ def create_server(
                 self._json(HTTPStatus.OK, state.jobs.cancel(job_id))
                 return
             raise WebRequestError(HTTPStatus.NOT_FOUND, "Page not found.")
+
+        def _post_lan_acquisition(self, path: str) -> None:
+            if not state.lan_catalog.acquisition_queue.enabled:
+                raise WebRequestError(
+                    HTTPStatus.NOT_FOUND,
+                    "LAN acquisition coordination is not enabled.",
+                )
+            action = path.removeprefix("/api/lan/v1/acquisition/")
+            body = self._body()
+            feed_id = str(body.get("feed_id") or "").strip()
+            if not FEED_ID_PATTERN.fullmatch(feed_id):
+                raise WebRequestError(
+                    HTTPStatus.BAD_REQUEST,
+                    "A numeric feed ID is required.",
+                )
+            archive_date = self._date_value(
+                str(body.get("archive_date") or "")
+            )
+            quota_scope = str(body.get("quota_scope") or "default").strip()
+            try:
+                if action == "claim":
+                    value = state.lan_catalog.acquisition_queue.claim(
+                        quota_scope,
+                        feed_id,
+                        archive_date,
+                        owner_node_id=str(body.get("owner_node_id") or ""),
+                        producer_url=str(body.get("producer_url") or ""),
+                        requester_address=str(self.client_address[0]),
+                    )
+                elif action == "renew":
+                    value = state.lan_catalog.acquisition_queue.renew(
+                        quota_scope,
+                        feed_id,
+                        archive_date,
+                        lease_token=str(body.get("lease_token") or ""),
+                    )
+                elif action == "finish":
+                    value = state.lan_catalog.acquisition_queue.finish(
+                        quota_scope,
+                        feed_id,
+                        archive_date,
+                        lease_token=str(body.get("lease_token") or ""),
+                        outcome=str(body.get("outcome") or ""),
+                        block_count=int(body.get("block_count") or 0),
+                        blocks=body.get("blocks") or (),  # type: ignore[arg-type]
+                    )
+                else:
+                    raise WebRequestError(
+                        HTTPStatus.NOT_FOUND,
+                        "LAN acquisition action not found.",
+                    )
+            except PermissionError as exc:
+                raise WebRequestError(HTTPStatus.FORBIDDEN, str(exc)) from exc
+            except (LanSyncError, TypeError, ValueError) as exc:
+                raise WebRequestError(HTTPStatus.BAD_REQUEST, str(exc)) from exc
+            self._json(HTTPStatus.OK, value)
 
         def _require_session(self, write: bool) -> None:
             cookie = SimpleCookie(self.headers.get("Cookie", ""))

@@ -905,9 +905,9 @@
                                                               Header="Find archive peers automatically on this LAN" />
                                                 <Grid ColumnSpacing="12">
                                                     <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="180" /></Grid.ColumnDefinitions>
-                                                    <ToggleSwitch x:Name="LanShareToggle" IsOn="False"
-                                                                  Header="Seed this PC’s original blocks to trusted-LAN clients"
-                                                                  OffContent="Off (opt in)" OnContent="Read-only peer" />
+                                                    <ToggleSwitch x:Name="LanShareToggle" IsOn="True"
+                                                                  Header="Seed original blocks and join the shared LAN download queue"
+                                                                  OffContent="Consumer only" OnContent="Peer producer" />
                                                     <NumberBox x:Name="LanSharePortBox" Grid.Column="1"
                                                                Header="LAN peer port" Value="8766" Minimum="1024" Maximum="65535"
                                                                SpinButtonPlacementMode="Compact" />
@@ -916,10 +916,10 @@
                                                          Header="Optional trusted-LAN peer app URLs"
                                                          PlaceholderText="http://10.0.0.25:8765"
                                                          AcceptsReturn="True" TextWrapping="Wrap" MinHeight="72"
-                                                         Description="One numeric private-address app URL per line. Only raw source blocks are exchanged and every transfer is SHA-256 verified." />
+                                                         Description="One numeric private-address app URL per line. Feed/day leases elect one upstream downloader; raw blocks can come from any peer and every transfer is SHA-256 verified." />
                                                 <InfoBar x:Name="LanShareInfoBar" IsOpen="True" IsClosable="False"
-                                                         Severity="Informational" Title="This Windows client is not seeding"
-                                                         Message="It can still copy missing blocks from the NAS or another peer before using website quota." />
+                                                         Severity="Informational" Title="Checking shared LAN queue"
+                                                         Message="Only original source blocks participate; credentials, transcripts, and analysis remain local." />
                                                 <TextBlock Text="These non-secret processing choices are saved for this Windows account when the app closes. Secrets stay in .env or this session unless you explicitly choose Windows Credential Locker."
                                                            TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
                                             </StackPanel>

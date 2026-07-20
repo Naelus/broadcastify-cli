@@ -16,6 +16,7 @@ from dotenv import load_dotenv
 
 from .lan_sync import (
     LAN_PROTOCOL,
+    LAN_QUEUE_REQUEST_BYTES,
     LanArchiveCatalog,
     LanDiscoveryResponder,
     LanSyncError,
@@ -84,6 +85,10 @@ def create_lan_node_server(
             if peer_urls is not None
             else os.getenv("BROADCASTIFY_LAN_PEERS")
         ),
+        queue_enabled=environment_flag(
+            "BROADCASTIFY_LAN_QUEUE_ENABLED",
+            default=True,
+        ),
     )
 
     class Handler(BaseHTTPRequestHandler):
@@ -109,6 +114,24 @@ def create_lan_node_server(
                 self._json(
                     HTTPStatus.INTERNAL_SERVER_ERROR,
                     {"error": "The read-only LAN archive node hit an unexpected error."},
+                )
+
+        def do_POST(self) -> None:  # noqa: N802
+            try:
+                self._authorize()
+                self._post()
+            except PermissionError as exc:
+                self._json(HTTPStatus.FORBIDDEN, {"error": str(exc)})
+            except FileNotFoundError:
+                self._json(HTTPStatus.NOT_FOUND, {"error": "LAN queue not found."})
+            except (LanSyncError, ValueError) as exc:
+                self._json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+            except (BrokenPipeError, ConnectionResetError):
+                return
+            except Exception:
+                self._json(
+                    HTTPStatus.INTERNAL_SERVER_ERROR,
+                    {"error": "The LAN acquisition coordinator hit an unexpected error."},
                 )
 
         def _get(self) -> None:
@@ -146,6 +169,26 @@ def create_lan_node_server(
                     },
                 )
                 return
+            if parsed.path == "/api/lan/v1/acquisition":
+                if not catalog.acquisition_queue.enabled:
+                    raise FileNotFoundError
+                query = parse_qs(parsed.query)
+                feed_id = str((query.get("feed_id") or [""])[0]).strip()
+                archive_date = _date_value(
+                    str((query.get("date") or [""])[0]).strip()
+                )
+                quota_scope = str(
+                    (query.get("quota_scope") or ["default"])[0]
+                ).strip()
+                self._json(
+                    HTTPStatus.OK,
+                    catalog.acquisition_queue.status(
+                        quota_scope,
+                        feed_id,
+                        archive_date,
+                    ),
+                )
+                return
             if parsed.path.startswith("/api/lan/v1/blocks/"):
                 parts = parsed.path.removeprefix("/api/lan/v1/blocks/").split("/")
                 if len(parts) != 3:
@@ -160,6 +203,51 @@ def create_lan_node_server(
                 return
             raise FileNotFoundError
 
+        def _post(self) -> None:
+            parsed = urlparse(self.path)
+            prefix = "/api/lan/v1/acquisition/"
+            if (
+                not catalog.acquisition_queue.enabled
+                or not parsed.path.startswith(prefix)
+            ):
+                raise FileNotFoundError
+            action = parsed.path.removeprefix(prefix)
+            body = self._body()
+            feed_id = str(body.get("feed_id") or "").strip()
+            archive_date = _date_value(
+                str(body.get("archive_date") or "").strip()
+            )
+            quota_scope = str(body.get("quota_scope") or "default").strip()
+            if action == "claim":
+                value = catalog.acquisition_queue.claim(
+                    quota_scope,
+                    feed_id,
+                    archive_date,
+                    owner_node_id=str(body.get("owner_node_id") or ""),
+                    producer_url=str(body.get("producer_url") or ""),
+                    requester_address=str(self.client_address[0]),
+                )
+            elif action == "renew":
+                value = catalog.acquisition_queue.renew(
+                    quota_scope,
+                    feed_id,
+                    archive_date,
+                    lease_token=str(body.get("lease_token") or ""),
+                )
+            elif action == "finish":
+                value = catalog.acquisition_queue.finish(
+                    quota_scope,
+                    feed_id,
+                    archive_date,
+                    lease_token=str(body.get("lease_token") or ""),
+                    outcome=str(body.get("outcome") or ""),
+                    block_count=int(body.get("block_count") or 0),
+                    blocks=body.get("blocks") or (),  # type: ignore[arg-type]
+                )
+            else:
+                raise FileNotFoundError
+            self._json(HTTPStatus.OK, value)
+
         def _authorize(self) -> None:
             supplied = self.headers.get("X-Radio-Archive-LAN-Key", "")
             if catalog.sync_key and not hmac.compare_digest(
@@ -167,6 +255,29 @@ def create_lan_node_server(
                 supplied,
             ):
                 raise PermissionError("The LAN archive key is missing or invalid.")
+
+        def _body(self) -> dict[str, object]:
+            content_type = (
+                self.headers.get("Content-Type", "")
+                .split(";", 1)[0]
+                .strip()
+                .lower()
+            )
+            if content_type != "application/json":
+                raise LanSyncError("LAN queue actions require application/json.")
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+            except ValueError as exc:
+                raise LanSyncError("The LAN queue request length is invalid.") from exc
+            if not 1 <= length <= LAN_QUEUE_REQUEST_BYTES:
+                raise LanSyncError("The LAN queue request is too large.")
+            try:
+                value = json.loads(self.rfile.read(length))
+            except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+                raise LanSyncError("The LAN queue request is not valid JSON.") from exc
+            if not isinstance(value, dict):
+                raise LanSyncError("The LAN queue request must be a JSON object.")
+            return value
 
         def _json(self, status: int, value: dict[str, object]) -> None:
             body = json.dumps(

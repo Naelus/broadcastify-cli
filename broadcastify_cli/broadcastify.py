@@ -589,6 +589,7 @@ class BroadcastifyClient:
         output_dir: str | Path,
         jobs: int = 1,
         progress: ProgressCallback | None = None,
+        admit_download: Callable[[], None] | None = None,
     ) -> list[Path]:
         self.authenticate()
         archive_ids = self.get_archive_ids(feed_id, archive_date)
@@ -634,6 +635,7 @@ class BroadcastifyClient:
                 allow_reauthenticate=True,
                 throttle=throttle,
                 notice=retry_notice,
+                admit_download=admit_download,
             )
         ]
         successful = 1
@@ -662,6 +664,7 @@ class BroadcastifyClient:
                     False,
                     throttle,
                     retry_notice,
+                    admit_download,
                 ): archive_id
                 for archive_id in remaining_ids
             }
@@ -743,6 +746,7 @@ class BroadcastifyClient:
         allow_reauthenticate: bool = True,
         throttle: _DownloadThrottle | None = None,
         notice: Callable[[str], None] | None = None,
+        admit_download: Callable[[], None] | None = None,
     ) -> Path:
         existing = self._existing_archive(
             day_dir,
@@ -758,6 +762,8 @@ class BroadcastifyClient:
         )
         reauthentication_available = allow_reauthenticate
         for attempt in range(1, self.download_attempts + 1):
+            if admit_download is not None:
+                admit_download()
             request_throttle.acquire()
             try:
                 try:

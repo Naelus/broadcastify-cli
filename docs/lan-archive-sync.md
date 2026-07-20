@@ -6,16 +6,27 @@ before login or any Broadcastify archive request, so a household or newsroom
 does not spend the same account download allowance fetching the same block on
 several machines.
 
-This is a small pull-based archive swarm, not a public peer-to-peer network:
+This is a small pull-based archive pool with a shared acquisition queue, not a
+public peer-to-peer network:
 
 1. a client asks its configured and discovered LAN peers for one feed/date
    inventory;
 2. it copies only blocks missing from its own library;
-3. it verifies the advertised byte length and SHA-256 while streaming to a
+3. all reachable queue-capable peers are considered and the same deterministic
+   coordinator is selected, independent of which peer supplied a block;
+4. one eligible producer receives a renewable 90-second feed/date lease and is
+   the only client allowed to start new upstream archive-media requests;
+5. followers wait, poll the pool, and copy completed blocks from any peer as
+   they appear;
+6. every copy verifies the advertised byte length and SHA-256 while streaming to a
    unique temporary file;
-4. it atomically publishes the file only after verification succeeds;
-5. the normal cache-aware Broadcastify downloader requests anything still
-   missing.
+7. the leader atomically publishes each file and reports the exact completed
+   filename/size/SHA-256 manifest; followers assemble and verify that manifest
+   from any combination of peers, then process the day without contacting
+   Broadcastify;
+8. a crashed producer loses its lease and another producer can take over. A
+   shared quota-limit result suppresses follower retries for six hours by
+   default.
 
 Peers may introduce other explicitly configured private peers, up to a bounded
 pool of 24 nodes. A filename conflict or disagreement between peers is reported
@@ -39,15 +50,23 @@ It does **not** expose or synchronize:
 - incidents, summaries, embeddings, SQLite data, or evidence clips;
 - model files or runtime caches.
 
-There is no upload, delete, mutation, or remote-job endpoint in the LAN
-protocol. Each enabled node seeds the original blocks it already owns. Normal
-Library processing detects copied blocks like any other retained source and can
-finish combination, transcription, diarization, and analysis locally.
+There is no archive upload, delete, or remote-job endpoint in the LAN protocol.
+Each enabled node seeds only original blocks it already owns. The coordinator
+stores bounded, transient lease/result metadata: quota scope, feed, date,
+producer node/URL, state, expiry, and the completed source-block manifest. The
+opaque lease token is returned only to its owner. A lease does not expose
+credentials or cause a remote machine to start work; it coordinates jobs users
+already started.
+
+Normal Library processing detects copied blocks like any other retained source
+and can finish combination, transcription, diarization, and analysis locally.
 
 ## Windows app
 
-Archive reuse and one-hop discovery are enabled by default for acquisition.
-They do nothing when no peer answers and do not prevent website fallback.
+Archive reuse, one-hop discovery, and original-block seeding are enabled by
+default for the trusted-LAN Windows workflow. Version-4 settings migrate to
+producer mode when LAN reuse was enabled. The visible toggle can return a
+machine to consumer-only mode.
 
 In **Local Library → Downloads and LAN reuse**:
 
@@ -56,9 +75,10 @@ In **Local Library → Downloads and LAN reuse**:
   policy permits UDP discovery;
 - add one or more explicit numeric private URLs for reliable access, such as
   `http://10.200.1.227:8765`;
-- opt into **Let this PC share original archive blocks** only on a trusted
-  network. The native read-only node defaults to TCP port `8766` and is owned
-  by the desktop app process.
+- leave **Seed original blocks and join the shared LAN download queue** enabled
+  when this PC should be eligible to own an upstream lease. The native
+  archive/coordination node defaults to TCP port `8766` and is owned by the
+  desktop app process.
 
 Windows may request a firewall allowance the first time sharing or discovery
 is enabled. An explicit peer URL is recommended even when discovery works,
@@ -74,6 +94,8 @@ BROADCASTIFY_LAN_SYNC_ENABLED="true"
 BROADCASTIFY_LAN_DISCOVERY_ENABLED="true"
 BROADCASTIFY_LAN_PEERS="http://10.200.1.227:8765 http://192.168.1.44:8766"
 BROADCASTIFY_LAN_SHARING="true"
+BROADCASTIFY_LAN_QUEUE_ENABLED="true"
+BROADCASTIFY_LAN_QUOTA_SCOPE="default"
 BROADCASTIFY_LAN_ADVERTISE_URL="http://10.200.1.227:8765"
 BROADCASTIFY_LAN_DISCOVERY_PORT="48765"
 ```
@@ -87,6 +109,20 @@ address, its discovery responder listens on UDP `48765`, and read-only sharing
 is enabled. The persistent `/data/archives` dataset remains the source;
 redeploying the App does not copy, move, or delete retained data.
 
+`BROADCASTIFY_LAN_QUOTA_SCOPE` is a non-secret label. Clients that share one
+Broadcastify allowance should use the same value. Give genuinely independent
+accounts different scope names. Optional expert timing controls are:
+
+```dotenv
+BROADCASTIFY_LAN_QUEUE_LEASE_SECONDS="90"
+BROADCASTIFY_LAN_QUEUE_RESULT_SECONDS="21600"
+BROADCASTIFY_LAN_QUEUE_MAX_WAIT_SECONDS="1800"
+```
+
+Active leases renew in the background. If renewal can no longer be proven,
+the downloader stops admitting new archive-media requests before the lease can
+be reassigned. Completed MP3s—not the transient queue—remain the durable state.
+
 For an ordinary headless machine that should share blocks without exposing the
 complete browser UI:
 
@@ -95,7 +131,8 @@ radio-archive-lan-node --host 0.0.0.0 --port 8766 --output-dir archives
 ```
 
 The node refuses public or multicast bind addresses. It provides only
-`/health` and the versioned read-only archive protocol.
+`/health`, the versioned read-only archive protocol, and transient acquisition
+coordination.
 
 ## Optional shared key
 
@@ -122,7 +159,9 @@ broadcastify-cli download --feed-id 90001 --range 2026-07-18:2026-07-19 \
 ```
 
 Use `--no-lan-sync` to skip peer checks or `--no-lan-discovery` with one or
-more `--lan-peer` values for deterministic explicit-peer operation. LAN reuse
-does not increase, predict, evade, or reset Broadcastify's account quota; it
-only avoids redundant downloads of blocks already retained on the user's own
-trusted network.
+more `--lan-peer` values for deterministic explicit-peer operation. A
+standalone CLI process is a queue consumer unless a reachable seed node is
+also identified through `BROADCASTIFY_LAN_SELF_URL` or
+`BROADCASTIFY_LAN_SELF_PORT`. LAN reuse does not increase, predict, evade, or
+reset Broadcastify's account quota; it avoids duplicate requests among the
+user's own trusted-LAN clients.

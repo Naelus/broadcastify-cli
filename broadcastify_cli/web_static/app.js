@@ -722,12 +722,13 @@ function renderRuntime() {
   const lanNotice = byId("lanSyncNotice");
   if (lanNotice) {
     const serving = Boolean(lan.sharing_enabled);
+    const coordinating = Boolean(lan.acquisition_queue_available);
     lanNotice.className = `notice ${serving ? "success" : ""}`.trim();
     lanNotice.querySelector("strong").textContent = serving
-      ? "This app is a LAN archive peer"
+      ? "This app is a LAN archive peer and queue coordinator"
       : "LAN reuse is client-side only here";
     lanNotice.querySelector("span").textContent = serving
-      ? `Original source blocks are available to trusted-LAN clients${lan.key_required ? " that have the shared key" : ""}. ${lan.discovery_available ? "Automatic discovery is active." : "Use this app URL as an explicit peer."}`
+      ? `Original source blocks are available to trusted-LAN clients${lan.key_required ? " that have the shared key" : ""}. ${coordinating ? "Feed/day leases prevent duplicate upstream downloads. " : ""}${lan.discovery_available ? "Automatic discovery is active." : "Use this app URL as an explicit peer."}`
       : "This client can still reuse blocks from discovered or configured peers. Serving local blocks requires BROADCASTIFY_LAN_SHARING=true when the app starts.";
   }
   renderHardwareProfiles();

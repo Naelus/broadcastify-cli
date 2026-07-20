@@ -92,9 +92,12 @@ The example also makes this App a read-only archive seed. It listens for
 one-hop discovery on UDP `48765`, advertises the reachable
 `http://TRUENAS_LAN_IP:8765` address, and serves only original source blocks
 from the persistent dataset. Other app instances ask this node before using a
-Broadcastify archive request. Explicitly configuring the NAS URL in each
-client remains the reliable fallback across firewalls, VLANs, or Wi-Fi client
-isolation.
+Broadcastify archive request. It also coordinates one renewable upstream
+producer per quota-scope/feed/day; followers can copy blocks from any peer as
+they appear and verify the completed producer manifest. Queue state is
+transient and cannot upload archives or start remote jobs. Explicitly
+configuring the NAS URL in each client remains the reliable fallback across
+firewalls, VLANs, or Wi-Fi client isolation.
 
 To limit archive reuse to clients with the same private value, add
 `BROADCASTIFY_LAN_SYNC_KEY` to the dataset `.env` and every participating

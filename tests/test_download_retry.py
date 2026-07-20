@@ -163,6 +163,36 @@ def test_serialized_throttle_is_reused_across_days_in_one_job() -> None:
     assert second_day.serialized
 
 
+def test_download_archive_requires_live_shared_lease_before_media_request(
+    tmp_path: Path,
+) -> None:
+    client = BroadcastifyClient()
+    day = tmp_path / "90001" / "20260712"
+    day.mkdir(parents=True)
+    requests_made = 0
+
+    def forbidden_get(*_args: object, **_kwargs: object) -> None:
+        nonlocal requests_made
+        requests_made += 1
+        raise AssertionError("The archive request must not start.")
+
+    def lost_lease() -> None:
+        raise RuntimeError("lease lost")
+
+    client.session.get = forbidden_get  # type: ignore[method-assign]
+
+    with pytest.raises(RuntimeError, match="lease lost"):
+        client.download_archive(
+            "90001",
+            date(2026, 7, 12),
+            "123456",
+            day,
+            admit_download=lost_lease,
+        )
+
+    assert requests_made == 0
+
+
 def test_download_day_does_not_count_failed_archives_as_downloaded(
     tmp_path: Path,
 ) -> None:
