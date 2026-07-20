@@ -70,6 +70,29 @@ Use this file for reproducible defects and concrete blockers, not the general ro
 
 ## Recently fixed
 
+### F-036 — A completed current-day queue result could hide newer tracks
+
+The archive API returns a newest-first snapshot, but the LAN coordinator
+previously retained every successful feed/day completion for six hours. A job
+could therefore finish early in the day, publish an exact but partial manifest,
+and cause later clients to reuse it as though the growing day were terminal.
+The downloader also began with only one newest item before scheduling older
+backlog, so the immediately previous track was not guaranteed to be ready
+first.
+
+Exact `historical-validation` saves the newest completed and immediately previous entries
+sequentially before older backlog, records the feed's published timezone, and
+refreshes a feed-local current-day listing once before returning. Successful
+today/yesterday queue manifests are now explicitly marked `rolling` and expire
+after five minutes; old completed days retain the ordinary six-hour result,
+and an explicit quota-limit result always retains the full cooldown.
+
+The real feed-90001 proof retained both July 20 tracks / 7,456,000 bytes with
+no 429. The exact TrueNAS App then published that two-block rolling manifest,
+and a fresh Windows follower copied and hash-verified both files with zero
+website requests. All 273 tests pass, including ordering, current-list refresh,
+rolling expiry, and full quota-cooldown regressions.
+
 ### F-035 — Several LAN clients could spend the same upstream archive quota
 
 The original read-only LAN swarm safely reused blocks that another machine had

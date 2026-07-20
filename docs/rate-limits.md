@@ -1,6 +1,6 @@
 # Broadcastify archive limits and measured behavior
 
-Last checked: July 17, 2026.
+Last checked: July 20, 2026.
 
 ## Public information
 
@@ -72,10 +72,31 @@ A later guarded run acquired the two latest complete Example City Public Safety 
 
 The account had only one user-initiated archive download immediately before the earlier development work. This result is therefore another lower-bound observation, not evidence of a fixed 97-request allowance. Together, the measured 55-success/exhausted, 97-success/not-exhausted, and roughly 192-success/exhausted windows are consistent only with an unknown dynamic, rolling, shared, or policy-dependent budget. The application must continue to react to the server response rather than predict a reset or preallocate a numeric quota.
 
+### July 20 current-tail follow-up
+
+Feed `90001` was checked through the saved premium website login under the
+normal shared `default` LAN acquisition lease. Its newest two completed
+archive entries were requested sequentially at the normal five-second pace:
+
+- current completed entry `90001-1784534106` became
+  `202607200255-866789-90001.mp3`, 3,728,000 bytes;
+- immediately previous entry `90001-1784532316` became
+  `202607200225-389928-90001.mp3`, 3,728,000 bytes;
+- both requests succeeded, with no HTTP 429 or explicit quota response.
+
+This two-request success says nothing new about quota size. It does prove the
+live-tail path and leaves both exact blocks durable on the NAS. Exact
+`historical-validation` now always acquires those newest two entries before older backlog,
+refreshes the feed-local current-day listing once at the end, and treats a
+successful today/yesterday LAN manifest as a five-minute rolling snapshot.
+The six-hour explicit-quota suppression remains unchanged.
+
 ## Implemented policy
 
 - Before website login or archive access, ask enabled trusted-LAN peers for the exact feed/date source-block inventory. Reuse only size- and SHA-256-verified blocks and publish them atomically.
 - Coordinate each quota-scope/feed/day through a renewable LAN lease. One eligible producer may issue upstream archive-media requests; followers pull blocks from any peer as they appear and skip Broadcastify entirely after assembling the producer's exact filename/size/SHA-256 completion manifest. Expired leases permit takeover, while a shared explicit quota result suppresses follower retries for a bounded period.
+- Within each archive listing, acquire the newest completed track and the immediately previous track before older backlog. Refresh a feed-local current-day listing once after acquisition so a track finalized during the job is included.
+- Treat a successful today/yesterday LAN completion as a five-minute rolling snapshot, then allow one new producer to check for a later block. Keep old completed days and every explicit quota result on the full shared result interval.
 - Default to one download worker and space real archive requests by at least five seconds.
 - Reuse cached MP3s with an exact key derived from the archive `startTs` and the feed's published IANA timezone.
 - Continue exponential backoff for genuinely transient 429/5xx/network failures.

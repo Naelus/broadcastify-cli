@@ -4,6 +4,50 @@ This is the dated verification and delivery log for `GOAL.md`. Keep forward-look
 
 ## July 20, 2026
 
+### Current and previous rolling archive tail
+
+- A metadata-only feed-90001 query confirmed that the authenticated archive API
+  returns newest-first entries and the feed timezone `America/Chicago`. Under
+  the normal shared `default` lease, the NAS then acquired exactly the newest
+  completed entry `90001-1784534106` and its immediate predecessor
+  `90001-1784532316` at serial five-second pacing. They were retained as
+  `202607200255-866789-90001.mp3` and
+  `202607200225-389928-90001.mp3`, 3,728,000 bytes each / 7,456,000 bytes
+  total. Neither request returned 429.
+- Exact `historical-validation` makes that ordering durable: the newest completed and previous
+  tracks are acquired sequentially before older backlog, the listing timezone
+  is retained, and a feed-local current-day listing is refreshed once after
+  acquisition to catch a track finalized during the job. A successful
+  today/yesterday LAN manifest is labeled as a rolling snapshot and expires
+  after five minutes. Old completed days and every explicit quota result keep
+  the full six-hour interval.
+- All **273 tests passed in 17.82 seconds**; the focused downloader/LAN/job suite
+  passed **37 tests**, Python compilation passed, and Git whitespace checks
+  passed. Regressions prove newest-two ordering, end-of-run current-day
+  refresh, rolling expiry, and unchanged full cooldown after a current-day
+  quota response.
+- The exact 2,314,240-byte source archive matched SHA-256
+  `6ef1ffe5047c147395e4ec82202c5f68cdbea4d382cebab8dd2cd5b4d2f77129`
+  after transfer. The supported TrueNAS Apps update now runs image
+  `radio-archive-intelligence:historical-validation`, image ID
+  `sha256:f171e853c84ef5c755cc6088519a0564a21857f84b1b3c214b7d736f87b9082a`,
+  matching OCI revision, explicit 300-second rolling setting, healthy
+  trusted-LAN service, zero restarts, and no OOM kill.
+- Under isolated scope `rolling-proof-historical-validation`, the NAS published the exact two
+  retained July 20 blocks without contacting Broadcastify. A fresh Windows
+  follower copied and SHA-256-verified both blocks / **7,456,000 bytes** with
+  zero conflicts, zero failures, and zero website requests. Queue status
+  reported `complete`, `rolling=true`, two exact manifest entries, and about
+  283 seconds remaining immediately after the copy.
+- The rollout retained feed 90001 at exactly **465 files / 2,448,340,821
+  bytes**. The two track hashes are
+  `453ae08a646a5cdbe19196cbf648565be7ad03ff1ae1ebe6cb6af0cb8e5c85df`
+  and
+  `8545374b216dd025e0a78a203391756b377e6a71b1c8e60a3e94e6252d4ee433`.
+  The SQLite store remains **10,989,568 bytes** at SHA-256
+  `bfe6fdf7b64b9e24c4ed2614336e9c2687de94ded1b4b1a1e7ea4da375a285a6`
+  with `PRAGMA integrity_check = ok`.
+
 ### LAN-wide single-producer acquisition queue
 
 - Exact `historical-validation` turns the existing raw-block swarm into a commodity-style

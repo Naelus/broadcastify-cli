@@ -24,9 +24,15 @@ public peer-to-peer network:
    filename/size/SHA-256 manifest; followers assemble and verify that manifest
    from any combination of peers, then process the day without contacting
    Broadcastify;
-8. a crashed producer loses its lease and another producer can take over. A
-   shared quota-limit result suppresses follower retries for six hours by
-   default.
+8. the producer acquires the newest completed track and the immediately
+   previous track before older backlog, then refreshes a feed-local current-day
+   listing once before publishing its manifest;
+9. today/yesterday completion manifests are rolling snapshots retained for
+   five minutes by default. A later job can elect one new producer to check for
+   another finalized track while all followers reuse the exact snapshot;
+10. a crashed producer loses its lease and another producer can take over. A
+    shared quota-limit result suppresses follower retries for six hours by
+    default, including on a rolling day.
 
 Peers may introduce other explicitly configured private peers, up to a bounded
 pool of 24 nodes. A filename conflict or disagreement between peers is reported
@@ -116,12 +122,17 @@ accounts different scope names. Optional expert timing controls are:
 ```dotenv
 BROADCASTIFY_LAN_QUEUE_LEASE_SECONDS="90"
 BROADCASTIFY_LAN_QUEUE_RESULT_SECONDS="21600"
+BROADCASTIFY_LAN_QUEUE_ROLLING_RESULT_SECONDS="300"
 BROADCASTIFY_LAN_QUEUE_MAX_WAIT_SECONDS="1800"
 ```
 
 Active leases renew in the background. If renewal can no longer be proven,
 the downloader stops admitting new archive-media requests before the lease can
-be reassigned. Completed MP3s—not the transient queue—remain the durable state.
+be reassigned. `BROADCASTIFY_LAN_QUEUE_RESULT_SECONDS` applies to old completed
+days and explicit quota results. The rolling value applies only to successful
+today/yesterday manifests; it does not cause another media request when the
+exact new block is already present on any peer. Completed MP3s—not the
+transient queue—remain the durable state.
 
 For an ordinary headless machine that should share blocks without exposing the
 complete browser UI:

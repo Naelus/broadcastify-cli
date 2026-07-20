@@ -171,3 +171,18 @@ all 463 feed-90001 files and 2,440,884,821 bytes. The 10,989,568-byte SQLite
 store retained SHA-256
 `bfe6fdf7b64b9e24c4ed2614336e9c2687de94ded1b4b1a1e7ea4da375a285a6`
 and passed `PRAGMA integrity_check`.
+
+Exact commit `historical-validation` then made current-day manifests rolling and prioritized
+the newest completed plus immediately previous archive tracks. The managed App
+runs image ID
+`sha256:f171e853c84ef5c755cc6088519a0564a21857f84b1b3c214b7d736f87b9082a`
+with matching OCI revision, zero restarts, no OOM kill, and the explicit
+300-second rolling-result setting. A media-free live proof published the two
+retained July 20 blocks under an isolated quota scope; a fresh Windows follower
+copied and SHA-256-verified both blocks / 7,456,000 bytes, reported
+`rolling=true`, and made zero website requests.
+
+The rollout retained all 465 feed-90001 files / 2,448,340,821 bytes. The
+10,989,568-byte SQLite store remained byte-for-byte identical at SHA-256
+`bfe6fdf7b64b9e24c4ed2614336e9c2687de94ded1b4b1a1e7ea4da375a285a6`
+and still reports `PRAGMA integrity_check = ok`.
