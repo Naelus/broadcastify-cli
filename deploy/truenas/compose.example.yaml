@@ -13,6 +13,7 @@ services:
       - /dev/dri/renderD128:/dev/dri/renderD128
     ports:
       - "TRUENAS_LAN_IP:8765:8765"
+      - "TRUENAS_LAN_IP:48765:48765/udp"
     command:
       - --host
       - 0.0.0.0
@@ -42,6 +43,9 @@ services:
       BROADCASTIFY_DEFAULT_DIARIZATION_ENGINE: sherpa-onnx
       BROADCASTIFY_DEFAULT_DIARIZATION_DEVICE: cpu
       BROADCASTIFY_DEFAULT_BATCH_SIZE: "8"
+      BROADCASTIFY_LAN_SHARING: "true"
+      BROADCASTIFY_LAN_DISCOVERY_ENABLED: "true"
+      BROADCASTIFY_LAN_ADVERTISE_URL: "http://TRUENAS_LAN_IP:8765"
       LLAMA_SERVER_PATH: /app/llama-server
       ANALYSIS_PROVIDER: local
       ANALYSIS_MODEL: /data/models/llama/gemma-3-1b-it-q4_k_m.gguf

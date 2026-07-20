@@ -1,6 +1,6 @@
 # Known bugs and gaps
 
-Last updated: July 18, 2026
+Last updated: July 20, 2026
 
 Use this file for reproducible defects and concrete blockers, not the general roadmap. Remove an entry only after its fix and verification are recorded in `PROGRESS.md`.
 
@@ -61,6 +61,12 @@ Use this file for reproducible defects and concrete blockers, not the general ro
 - **Observed:** Broadcastify publishes no numeric archive-download quota or reset timestamp. One measured window allowed roughly 192 successful archive redirects, the July 16 availability follow-up allowed only 55 before the explicit limit response, and a later Example City window allowed 97 consecutive new media responses with no 429.
 - **Control:** Sequential pacing, exact cache reuse, and immediate stop on explicit exhaustion.
 - **Next:** Ask Broadcastify support for authoritative details and prioritize future regional acquisition by user distance/importance rather than a guessed quota size.
+
+### B-010 — Automatic LAN peer discovery depends on local network policy
+
+- **Observed:** The read-only archive protocol works over an explicit numeric private URL, but UDP broadcast/multicast discovery can be blocked by Windows Firewall, VLAN boundaries, Wi-Fi client isolation, or an Apps/container network. Multiple seed nodes also cannot all bind the same discovery port on one host.
+- **Implemented boundary:** Discovery is best-effort and bounded to one LAN hop. Every UI supports explicit peer URLs as the reliable path; TrueNAS publishes UDP `48765` and advertises its host-reachable TCP URL. A discovery failure never blocks local cache use or the paced website fallback.
+- **Next:** Validate automatic Windows-to-TrueNAS discovery after the managed App update and retain the explicit NAS URL regardless, so acquisition does not depend on multicast behavior.
 
 ## Recently fixed
 

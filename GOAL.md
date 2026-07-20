@@ -1,6 +1,6 @@
 # Project goal
 
-Last updated: July 18, 2026
+Last updated: July 20, 2026
 
 Build a dependable, evidence-first radio archive intelligence application that is pleasant for an ordinary user on Windows and has a credible path to the same core workflow on Linux and macOS.
 
@@ -11,7 +11,7 @@ The tested Windows experience remains the reference behavior. A user should be a
 1. **Pipeline parity:** CUDA, CPU, Vulkan, OpenVINO, and Windows ML profiles must each report stage-by-stage readiness honestly. A profile is called ready only after real transcription, diarization/fallback, and local-analysis checks appropriate to that profile pass.
 2. **Resumability:** downloads, combination, transcription, diarization, embeddings, incident extraction, and summaries persist independently. Incident extraction checkpoints every completed model window, and the portable speaker preview atomically checkpoints every completed audio chunk. Its checkpoint remains until the final diarization cache is safely committed, so an interruption resumes inside either long-running stage instead of discarding earlier work. A retry starts at the first missing or invalid stage; an evidence-rule upgrade reuses retained audio/transcripts while withholding older claims until local reanalysis finishes.
 3. **Evidence:** every surfaced event can be traced to timestamped transcript text and a playable/exportable local clip. Display serializers must apply the same bounded citation window and deterministic public-text redaction instead of returning raw SQLite evidence. Missing coverage is never described as inactivity.
-4. **Quota safety:** archive acquisition is sequential by default, paced, cache-aware, responsive to `Retry-After`, and stops all further media requests after the explicit Broadcastify download-limit response.
+4. **Quota safety:** archive acquisition first reuses exact verified source blocks available from the user's trusted-LAN peers, then remains sequential, paced, cache-aware, responsive to `Retry-After`, and stops all further website media requests after the explicit Broadcastify download-limit response.
 5. **Usable UI:** primary workflows use clear navigation and master/detail views rather than one long page. Common actions fit at the reference 1240x900 window size; advanced hardware controls stay optional.
 6. **Portable providers:** local engines remain the default, with explicit provider contracts for supported OpenAI-compatible APIs or an authenticated Codex CLI harness. Secrets must not be persisted in ordinary settings or committed.
 7. **Cross-platform direction:** the Python service and browser UI expose the same library/review/action contract on Windows, Linux, and macOS. Loopback remains the default; explicit trusted-LAN hosting and a persistent TrueNAS App provide the headless/NAS surface, while the native WinUI app remains the polished Windows shell. Real-machine Linux full-model, LAN-hosted TrueNAS Apps, and visual/accessibility validation are complete; real macOS validation and non-developer packaging are required before calling portability complete.

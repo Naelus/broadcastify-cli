@@ -10,6 +10,10 @@ internal sealed class WorkerClient
         new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
 
     private readonly PythonCommand _python;
+    private readonly SemaphoreSlim _lanNodeGate = new(1, 1);
+    private Process? _lanNodeProcess;
+    private string _lanNodeConfiguration = "";
+    private int _lanNodeShutdown;
 
     public string RepositoryRoot { get; }
     public string PythonDisplayName => _python.DisplayName;
@@ -27,6 +31,167 @@ internal sealed class WorkerClient
             AppContext.BaseDirectory,
             "windowsml",
             "BroadcastifyCli.WindowsML.exe");
+    }
+
+    public async Task<string> ConfigureLanNodeAsync(
+        bool enabled,
+        string outputDirectory,
+        int port)
+    {
+        await _lanNodeGate.WaitAsync();
+        try
+        {
+            if (Volatile.Read(ref _lanNodeShutdown) != 0)
+            {
+                StopLanNodeCore();
+                return "LAN archive sharing stopped with the desktop app.";
+            }
+            if (!enabled)
+            {
+                StopLanNodeCore();
+                return "LAN archive sharing is off.";
+            }
+            var output = Path.GetFullPath(
+                string.IsNullOrWhiteSpace(outputDirectory)
+                    ? Path.Combine(RepositoryRoot, "archives")
+                    : Path.IsPathRooted(outputDirectory)
+                        ? outputDirectory
+                        : Path.Combine(RepositoryRoot, outputDirectory));
+            var boundedPort = Math.Clamp(port, 1024, 65535);
+            var configuration = $"{output}|{boundedPort}";
+            if (_lanNodeProcess is { HasExited: false }
+                && configuration.Equals(
+                    _lanNodeConfiguration,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return $"Sharing original archive blocks on trusted LAN port {boundedPort}.";
+            }
+
+            StopLanNodeCore();
+            var startInfo = CreateStartInfo(
+                [
+                    "-m", "broadcastify_cli.lan_node",
+                    "--host", "0.0.0.0",
+                    "--port", boundedPort.ToString(
+                        System.Globalization.CultureInfo.InvariantCulture),
+                    "--output-dir", output,
+                ],
+                redirectStreams: false);
+            var process = new Process
+            {
+                StartInfo = startInfo,
+                EnableRaisingEvents = true,
+            };
+            if (!process.Start())
+            {
+                process.Dispose();
+                throw new InvalidOperationException(
+                    "Unable to start the read-only LAN archive node.");
+            }
+            _lanNodeProcess = process;
+            _lanNodeConfiguration = configuration;
+            if (Volatile.Read(ref _lanNodeShutdown) != 0)
+            {
+                StopLanNodeCore();
+                return "LAN archive sharing stopped with the desktop app.";
+            }
+
+            using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(1) };
+            var health = new Uri($"http://127.0.0.1:{boundedPort}/health");
+            for (var attempt = 0; attempt < 20; attempt++)
+            {
+                if (Volatile.Read(ref _lanNodeShutdown) != 0)
+                {
+                    StopLanNodeCore();
+                    return "LAN archive sharing stopped with the desktop app.";
+                }
+                int? exitCode = null;
+                try
+                {
+                    if (process.HasExited)
+                    {
+                        exitCode = process.ExitCode;
+                    }
+                }
+                catch (InvalidOperationException)
+                    when (Volatile.Read(ref _lanNodeShutdown) != 0)
+                {
+                    return "LAN archive sharing stopped with the desktop app.";
+                }
+                if (exitCode is not null)
+                {
+                    StopLanNodeCore();
+                    throw new InvalidOperationException(
+                        $"The LAN archive node exited during startup (code {exitCode}). "
+                        + "Choose another port or review the local firewall/runtime.");
+                }
+                try
+                {
+                    using var response = await client.GetAsync(health);
+                    if (response.IsSuccessStatusCode)
+                    {
+                        var body = await response.Content.ReadAsStringAsync();
+                        if (body.Contains(
+                            "radio-archive-lan/1",
+                            StringComparison.Ordinal))
+                        {
+                            return $"Sharing original archive blocks on trusted LAN port {boundedPort}.";
+                        }
+                    }
+                }
+                catch (HttpRequestException)
+                {
+                    // The process is still starting.
+                }
+                catch (TaskCanceledException)
+                {
+                    // Retry within the bounded startup window.
+                }
+                await Task.Delay(150);
+            }
+            StopLanNodeCore();
+            throw new InvalidOperationException(
+                "The LAN archive node did not become healthy within three seconds.");
+        }
+        finally
+        {
+            _lanNodeGate.Release();
+        }
+    }
+
+    public void StopLanNode()
+    {
+        // Window close is synchronous. Do not wait on an async startup
+        // continuation that may need the UI thread; terminate the owned child
+        // immediately and let an in-flight configuration unwind.
+        Interlocked.Exchange(ref _lanNodeShutdown, 1);
+        StopLanNodeCore();
+    }
+
+    private void StopLanNodeCore()
+    {
+        var process = Interlocked.Exchange(ref _lanNodeProcess, null);
+        _lanNodeConfiguration = "";
+        if (process is null)
+        {
+            return;
+        }
+        try
+        {
+            if (!process.HasExited)
+            {
+                process.Kill(entireProcessTree: true);
+                process.WaitForExit(2_000);
+            }
+        }
+        catch (InvalidOperationException)
+        {
+            // It exited between the state check and stop request.
+        }
+        finally
+        {
+            process.Dispose();
+        }
     }
 
     public async Task<IReadOnlyList<FeedSearchResult>> SearchFeedsAsync(
@@ -689,7 +854,8 @@ internal sealed class WorkerClient
 
     private ProcessStartInfo CreateStartInfo(
         IReadOnlyList<string> arguments,
-        IReadOnlyDictionary<string, string>? environment = null)
+        IReadOnlyDictionary<string, string>? environment = null,
+        bool redirectStreams = true)
     {
         var startInfo = new ProcessStartInfo
         {
@@ -697,13 +863,16 @@ internal sealed class WorkerClient
             WorkingDirectory = RepositoryRoot,
             UseShellExecute = false,
             CreateNoWindow = true,
-            RedirectStandardInput = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            StandardInputEncoding = Utf8WithoutBom,
-            StandardOutputEncoding = Utf8WithoutBom,
-            StandardErrorEncoding = Utf8WithoutBom,
+            RedirectStandardInput = redirectStreams,
+            RedirectStandardOutput = redirectStreams,
+            RedirectStandardError = redirectStreams,
         };
+        if (redirectStreams)
+        {
+            startInfo.StandardInputEncoding = Utf8WithoutBom;
+            startInfo.StandardOutputEncoding = Utf8WithoutBom;
+            startInfo.StandardErrorEncoding = Utf8WithoutBom;
+        }
         startInfo.Environment["PYTHONIOENCODING"] = "utf-8";
         startInfo.Environment["PYTHONUTF8"] = "1";
         foreach (var argument in _python.PrefixArguments.Concat(arguments))

@@ -45,6 +45,7 @@ ENV PATH="/opt/radio-archive-venv/bin:/app/build/bin:/app:${PATH}" \
     LLAMA_SERVER_PATH=/app/llama-server
 
 EXPOSE 8765
+EXPOSE 48765/udp
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
     CMD ["/opt/radio-archive-venv/bin/python", "-c", "import json, urllib.request; value=json.load(urllib.request.urlopen('http://127.0.0.1:8765/health', timeout=3)); assert value == {'status': 'ok', 'scope': 'trusted-lan'}"]

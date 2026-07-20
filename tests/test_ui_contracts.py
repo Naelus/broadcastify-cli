@@ -82,3 +82,41 @@ def test_setup_copy_does_not_assume_every_transcription_engine_is_whisper() -> N
     assert "Detecting the selected Whisper engine and accelerator." not in native
     assert "choose a local transcription path" in web
     assert "choose a Whisper path" not in web
+
+
+def test_native_and_web_expose_read_only_lan_archive_reuse() -> None:
+    root = ElementTree.parse(
+        ROOT / "BroadcastifyCli.WinUI" / "MainWindow.xaml"
+    ).getroot()
+    names = {
+        element.attrib.get(XAML_NAME): element
+        for element in root.iter()
+        if element.attrib.get(XAML_NAME)
+    }
+
+    assert names["LanSyncToggle"].attrib["IsOn"] == "True"
+    assert names["LanDiscoveryToggle"].attrib["IsOn"] == "True"
+    assert names["LanShareToggle"].attrib["IsOn"] == "False"
+    assert names["LanSharePortBox"].attrib["Value"] == "8766"
+
+    native_worker = (
+        ROOT / "BroadcastifyCli.WinUI" / "WorkerClient.cs"
+    ).read_text(encoding="utf-8")
+    assert '"-m", "broadcastify_cli.lan_node"' in native_worker
+    assert '"--host", "0.0.0.0"' in native_worker
+
+    web_html = (
+        ROOT / "broadcastify_cli" / "web_static" / "index.html"
+    ).read_text(encoding="utf-8")
+    web_js = (
+        ROOT / "broadcastify_cli" / "web_static" / "app.js"
+    ).read_text(encoding="utf-8")
+    assert 'id="settingLanSyncEnabled" type="checkbox" checked' in web_html
+    assert 'id="settingLanDiscoveryEnabled" type="checkbox" checked' in web_html
+    assert 'id="settingLanPeerUrls"' in web_html
+    assert "lan_sync_enabled: Boolean(state.settings.lanSyncEnabled)" in web_js
+    assert (
+        "lan_discovery_enabled: Boolean(state.settings.lanDiscoveryEnabled)"
+        in web_js
+    )
+    assert "lan_peer_urls: state.settings.lanPeerUrls" in web_js

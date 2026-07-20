@@ -1,6 +1,6 @@
 # Feature inventory
 
-Last updated: July 18, 2026
+Last updated: July 20, 2026
 
 Status labels: **Validated**, **Implemented**, **Foundation**, or **Planned**.
 
@@ -13,6 +13,7 @@ Status labels: **Validated**, **Implemented**, **Foundation**, or **Planned**.
 | Radius and ordered-ZIP area profiles | Validated | Census ZCTA centroid expansion, live opt-out public-safety filter, explicit feed review, and persisted approximate distance/priority; discovery makes no archive requests. |
 | Persisted nearest-first acquisition cascade | Validated | Shared native/Web queue skips completed feeds, recovers interrupted items, and stops all lower priorities on explicit quota exhaustion. |
 | Sequential cache-aware archive acquisition | Validated | Five-second minimum pacing, retries, shared cooldown, exact timezone cache keys. |
+| Trusted-LAN archive reuse | Implemented | Native/Web/TrueNAS nodes expose only original source blocks through a bounded read-only protocol. Acquisition checks discovered or explicit private peers before website login, rejects conflicts, verifies length/SHA-256, publishes atomically, and safely falls back for missing blocks. |
 | Explicit quota exhaustion stop | Validated | Stops new media requests and preserves all completed work. |
 
 ## Processing and persistence

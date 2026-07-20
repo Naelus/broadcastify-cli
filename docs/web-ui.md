@@ -50,6 +50,7 @@ The payload is never included in the returned job snapshot. Still treat payload 
 - priority-first incident cards with quotes, timestamps, play-at-time, and exact clip preparation
 - paged/searchable speaker-labeled transcript viewing
 - website-backed feed search and guarded inclusive archive jobs
+- trusted-LAN source-block reuse before website access, with optional discovery or explicit private peer URLs
 - automatic analysis queue for newly completed transcripts
 - evidence-grounded range Q&A and persisted seven-day briefs with missing dates
 - center/radius or ordered-ZIP discovery, explicit area profiles, persisted nearest-first stop/resume queues, and retained regional story-lead briefs with coverage gaps
@@ -74,6 +75,15 @@ proxy, or use a public tunnel without a separate authentication/TLS layer.
 Static transcript, incident, feed, and model text is HTML-escaped before rendering. A restrictive content-security policy allows scripts, styles, media, and connections only from the local origin. Media paths must resolve beneath the configured archive root; absolute paths and traversal are rejected.
 
 Only one worker job may be queued/running at once. Archive job payloads are overwritten to `download_jobs=1` and `keep_originals=true`; diarization also forces daily combination and transcription. Cancel sends an interrupt to the worker process group before using a bounded forced stop, giving model/server contexts an opportunity to clean up.
+
+An independently versioned, read-only LAN archive surface is available only
+when `BROADCASTIFY_LAN_SHARING=true`. Its inventory and block routes do not use
+the browser session because native/headless peers do not have one; they expose
+only strictly named original MP3 blocks and can require
+`BROADCASTIFY_LAN_SYNC_KEY`. The browser bootstrap reports only non-secret
+sharing/discovery status. See [Trusted-LAN archive reuse](lan-archive-sync.md)
+for integrity checks, explicit peer configuration, and the trusted-network
+boundary.
 
 ## Secrets and persistence
 

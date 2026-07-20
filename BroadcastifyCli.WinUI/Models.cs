@@ -469,6 +469,15 @@ internal sealed record JobRequest
 
     [JsonPropertyName("huggingface_token")]
     public string? HuggingFaceToken { get; init; }
+
+    [JsonPropertyName("lan_sync_enabled")]
+    public bool LanSyncEnabled { get; init; } = true;
+
+    [JsonPropertyName("lan_discovery_enabled")]
+    public bool LanDiscoveryEnabled { get; init; } = true;
+
+    [JsonPropertyName("lan_peer_urls")]
+    public List<string> LanPeerUrls { get; init; } = [];
 }
 
 internal sealed record AsrSelfTestRequest

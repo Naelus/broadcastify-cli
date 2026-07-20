@@ -79,12 +79,27 @@ through **Apps → Discover Apps → more menu → Install via YAML**. Use:
 - the host `render` group ID and `/dev/dri/renderD128` for AMD Vulkan;
 - one IP shown by TrueNAS under app IP choices;
 - an unused host port;
+- UDP port `48765` on the same selected LAN address when one-hop peer discovery
+  is wanted;
 - the absolute dataset mount path.
 
 The container listens on `0.0.0.0` only inside its private app network. The
 published port is constrained to the chosen TrueNAS LAN address. The container
 runs without added Linux capabilities, with `no-new-privileges`, a read-only
 root filesystem, and only `/data` writable.
+
+The example also makes this App a read-only archive seed. It publishes UDP
+discovery port `48765`, advertises the reachable
+`http://TRUENAS_LAN_IP:8765` address, and serves only original source blocks
+from the persistent dataset. Other app instances ask this node before using a
+Broadcastify archive request. Explicitly configuring the NAS URL in each client
+is more reliable than UDP discovery across firewalls, VLANs, or App networking.
+
+To limit archive reuse to clients with the same private value, add
+`BROADCASTIFY_LAN_SYNC_KEY` to the dataset `.env` and every participating
+client. This is an optional LAN access check, not encrypted transport. Do not
+expose the service publicly. The complete protocol and data boundary are in
+[Trusted-LAN archive reuse](../../docs/lan-archive-sync.md).
 
 ## Trusted-LAN boundary
 

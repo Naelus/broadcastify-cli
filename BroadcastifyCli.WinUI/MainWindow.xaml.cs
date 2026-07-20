@@ -123,6 +123,7 @@ public sealed partial class MainWindow : Window
             AppendLog(_worker.HasBundledWindowsMlHelper
                 ? "Windows ML helper: bundled runtime"
                 : "Windows ML helper: repository/runtime discovery");
+            _ = ConfigureLanSharingAsync();
             _ = InitializeAsync();
         }
         catch (Exception exception)
@@ -132,6 +133,37 @@ public sealed partial class MainWindow : Window
             SearchButton.IsEnabled = false;
             StartButton.IsEnabled = false;
             RefreshLibraryButton.IsEnabled = false;
+        }
+    }
+
+    private async Task ConfigureLanSharingAsync()
+    {
+        if (_loadingSettings || _worker is null || LanShareInfoBar is null)
+        {
+            return;
+        }
+        try
+        {
+            var status = await _worker.ConfigureLanNodeAsync(
+                LanShareToggle.IsOn,
+                string.IsNullOrWhiteSpace(OutputFolderBox.Text)
+                    ? "archives"
+                    : OutputFolderBox.Text.Trim(),
+                RequiredInteger(LanSharePortBox.Value, 8766));
+            LanShareInfoBar.Severity = LanShareToggle.IsOn
+                ? InfoBarSeverity.Success
+                : InfoBarSeverity.Informational;
+            LanShareInfoBar.Title = LanShareToggle.IsOn
+                ? "Read-only LAN peer is active"
+                : "This Windows client is not seeding";
+            LanShareInfoBar.Message = status;
+        }
+        catch (Exception exception)
+        {
+            LanShareInfoBar.Severity = InfoBarSeverity.Warning;
+            LanShareInfoBar.Title = "LAN archive sharing needs attention";
+            LanShareInfoBar.Message = exception.Message;
+            AppendLog(exception.Message);
         }
     }
 
@@ -315,6 +347,11 @@ public sealed partial class MainWindow : Window
             : settings.AnalysisApiKeyEnvironment;
         CodexCliPathBox.Text = settings.CodexCliPath;
         AllowExternalAnalysisToggle.IsOn = settings.AllowExternalAnalysis;
+        LanSyncToggle.IsOn = settings.LanSyncEnabled;
+        LanDiscoveryToggle.IsOn = settings.LanDiscoveryEnabled;
+        LanPeerUrlsBox.Text = settings.LanPeerUrls;
+        LanShareToggle.IsOn = settings.LanShareEnabled;
+        LanSharePortBox.Value = Math.Clamp(settings.LanSharePort, 1024, 65535);
         var savedAnalysisKey = CredentialStore.TryLoadAnalysisKey();
         if (savedAnalysisKey is not null)
         {
@@ -337,6 +374,7 @@ public sealed partial class MainWindow : Window
         _settingsSaveTimer?.Stop();
         PersistUserSettings(logFailure: true);
         PersistAnalysisCredentialPreference();
+        _worker?.StopLanNode();
     }
 
     private DesktopSettings CaptureUserSettings() =>
@@ -372,6 +410,11 @@ public sealed partial class MainWindow : Window
             CodexCliPath = CodexCliPathBox.Text.Trim(),
             AllowExternalAnalysis = AllowExternalAnalysisToggle.IsOn,
             RememberAnalysisApiKey = RememberAnalysisApiKeyCheckBox.IsChecked == true,
+            LanSyncEnabled = LanSyncToggle.IsOn,
+            LanDiscoveryEnabled = LanDiscoveryToggle.IsOn,
+            LanPeerUrls = LanPeerUrlsBox.Text.Trim(),
+            LanShareEnabled = LanShareToggle.IsOn,
+            LanSharePort = RequiredInteger(LanSharePortBox.Value, 8766),
             LastAreaProfileName = _lastAreaProfileName,
             LastReviewFeedId = _lastReviewFeedId,
             LastReviewDate = _lastReviewDate,
@@ -407,7 +450,11 @@ public sealed partial class MainWindow : Window
         _settingsSaveTimer = DispatcherQueue.CreateTimer();
         _settingsSaveTimer.Interval = TimeSpan.FromMilliseconds(750);
         _settingsSaveTimer.IsRepeating = false;
-        _settingsSaveTimer.Tick += (_, _) => PersistUserSettings();
+        _settingsSaveTimer.Tick += async (_, _) =>
+        {
+            PersistUserSettings();
+            await ConfigureLanSharingAsync();
+        };
 
         foreach (var comboBox in new[]
                  {
@@ -431,6 +478,7 @@ public sealed partial class MainWindow : Window
                      AnalysisEndpointBox,
                      AnalysisApiKeyEnvironmentBox,
                      CodexCliPathBox,
+                     LanPeerUrlsBox,
                      AnalysisFeedBox,
                  })
         {
@@ -443,6 +491,7 @@ public sealed partial class MainWindow : Window
                      MinimumSpeakersBox,
                      MaximumSpeakersBox,
                      DownloadJobsBox,
+                     LanSharePortBox,
                  })
         {
             numberBox.ValueChanged += (_, _) => ScheduleSettingsSave();
@@ -452,6 +501,9 @@ public sealed partial class MainWindow : Window
                      CombineToggle,
                      KeepOriginalsToggle,
                      AllowExternalAnalysisToggle,
+                     LanSyncToggle,
+                     LanDiscoveryToggle,
+                     LanShareToggle,
                  })
         {
             toggle.Toggled += (_, _) => ScheduleSettingsSave();
@@ -2633,6 +2685,14 @@ public sealed partial class MainWindow : Window
         HuggingFaceToken = string.IsNullOrWhiteSpace(HuggingFaceTokenBox.Password)
             ? null
             : HuggingFaceTokenBox.Password,
+        LanSyncEnabled = LanSyncToggle.IsOn,
+        LanDiscoveryEnabled = LanDiscoveryToggle.IsOn,
+        LanPeerUrls = LanPeerUrlsBox.Text
+            .Split(
+                new[] { '\r', '\n', ',', ';', ' ', '\t' },
+                StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList(),
     };
 
     private async Task<JobRunResult?> RunAndAnalyzeJobAsync(JobRequest request)

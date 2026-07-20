@@ -19,6 +19,7 @@ This fork uses Broadcastify's website login and the same private web endpoints a
 - Diarization-only continuation for existing transcripts, so adding or improving speaker labels does not rerun Whisper
 - Inclusive single-day or date-range archive jobs that acquire the range before starting GPU processing
 - Paced archive downloads with timezone-aware cache reuse, shared 429 cooldown, `Retry-After` support, and automatic one-at-a-time fallback
+- Trusted-LAN archive reuse before website login/download, with optional one-hop discovery, explicit private peers, read-only Windows/Web/TrueNAS seed nodes, SHA-256 verification, and atomic local publication
 - Optional daily MP3 combination with safe source cleanup
 - GPU-accelerated `faster-whisper` transcription
 - Local pyannote Community-1 accuracy-default diarization plus an opt-in public-model sherpa-onnx fast CPU preview
@@ -49,7 +50,7 @@ The saved Broadcastify session is stored in the ignored `cookies.json` file. Use
 
 The durable project objective, feature matrix, known blockers, and dated validation log live in [GOAL.md](GOAL.md), [FEATURES.md](FEATURES.md), [BUGS.md](BUGS.md), and [PROGRESS.md](PROGRESS.md). Update those files with material backend or UX work so an installed runtime is never confused with an actually validated workflow.
 
-Broadcastify's published terms restrict commercial use and AI/ML use without a license. Personal experimentation and a commercial newsroom product are not the same authorization; obtain written licensing from Broadcastify before deploying this workflow commercially. See [docs/rate-limits.md](docs/rate-limits.md) for the public guidance and measured archive-quota behavior used by the downloader.
+Broadcastify's published terms restrict commercial use and AI/ML use without a license. Personal experimentation and a commercial newsroom product are not the same authorization; obtain written licensing from Broadcastify before deploying this workflow commercially. See [docs/rate-limits.md](docs/rate-limits.md) for the public guidance and measured archive-quota behavior used by the downloader, and [docs/lan-archive-sync.md](docs/lan-archive-sync.md) for the trusted-LAN reuse boundary.
 
 ## Why WinUI 3 on Windows
 

@@ -2,6 +2,15 @@
 
 This is the dated verification and delivery log for `GOAL.md`. Keep forward-looking capabilities in `FEATURES.md` and unresolved defects in `BUGS.md`.
 
+## July 20, 2026
+
+### Read-only trusted-LAN archive swarm
+
+- Exact core commit `historical-validation` makes acquisition check a bounded pool of explicit and one-hop-discovered private peers before authenticating with Broadcastify. Peers exchange only original feed/date MP3 inventories; credentials, transcripts, combined audio, analysis records, evidence clips, and model data remain outside the protocol.
+- A copy streams into a unique partial file, enforces the advertised maximum/length, verifies SHA-256, fsyncs, and atomically publishes only if no local file appeared. Invalid addresses, redirects, traversal, symlinks, malformed identities, peer disagreement, and local conflicts fail closed; missing blocks continue through the existing sequential quota-safe website path.
+- The browser/TrueNAS service can opt into read-only seeding on its existing port, the native Windows app can own an opt-in minimal seed node on port 8766, and all acquisition surfaces support explicit numeric private peer URLs plus best-effort UDP discovery on port 48765. An optional shared `.env` key protects the non-browser endpoints without leaking it in status.
+- Focused protocol tests cover real HTTP copy, shared-key rejection, corrupt-body cleanup, raw-only inventory, disabled sharing, minimal native seeding, public-address rejection, one-hop UDP discovery, request validation, and pre-authentication ordering. The complete suite passes **257 tests in 14.45 seconds**, Python compilation, bundled-Node JavaScript parsing, Git whitespace checks, and the WinUI Release build with zero warnings/errors. Live managed-App results are recorded after deployment.
+
 ## July 18, 2026
 
 ### Host-portable evidence paths and final Example Township clip

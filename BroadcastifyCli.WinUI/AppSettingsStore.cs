@@ -4,7 +4,7 @@ namespace BroadcastifyCli.WinUI;
 
 internal sealed record DesktopSettings
 {
-    public int Version { get; init; } = 3;
+    public int Version { get; init; } = 4;
     public string HardwareProfile { get; init; } = "auto";
     public string WhisperModel { get; init; } = "turbo";
     public string AsrEngine { get; init; } = "auto";
@@ -31,6 +31,11 @@ internal sealed record DesktopSettings
     public string CodexCliPath { get; init; } = "";
     public bool AllowExternalAnalysis { get; init; }
     public bool RememberAnalysisApiKey { get; init; }
+    public bool LanSyncEnabled { get; init; } = true;
+    public bool LanDiscoveryEnabled { get; init; } = true;
+    public string LanPeerUrls { get; init; } = "";
+    public bool LanShareEnabled { get; init; }
+    public int LanSharePort { get; init; } = 8766;
     public string LastAreaProfileName { get; init; } = "";
     public string LastReviewFeedId { get; init; } = "";
     public string LastReviewDate { get; init; } = "";
