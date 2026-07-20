@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ctypes
 import hashlib
 import hmac
 import ipaddress
@@ -8,6 +9,7 @@ import os
 import re
 import secrets
 import socket
+import sys
 import threading
 import time
 import uuid
@@ -370,11 +372,168 @@ _discovery_cache_lock = threading.Lock()
 _discovery_cache: tuple[float, tuple[str, ...]] = (0.0, ())
 
 
+def _usable_directed_broadcast(
+    address: ipaddress.IPv4Address,
+    broadcast: ipaddress.IPv4Address,
+) -> bool:
+    return (
+        address != broadcast
+        and not address.is_loopback
+        and not address.is_unspecified
+        and not address.is_multicast
+        and not broadcast.is_loopback
+        and not broadcast.is_unspecified
+        and not broadcast.is_multicast
+        and (address.is_private or address.is_link_local)
+    )
+
+
+def _windows_directed_broadcasts() -> tuple[str, ...]:
+    """Read IPv4 interface masks without parsing localized command output."""
+
+    class MibIpAddressRow(ctypes.Structure):
+        _fields_ = [
+            ("address", ctypes.c_uint32),
+            ("interface_index", ctypes.c_uint32),
+            ("mask", ctypes.c_uint32),
+            ("broadcast_flag", ctypes.c_uint32),
+            ("reassembly_size", ctypes.c_uint32),
+            ("unused", ctypes.c_uint16),
+            ("address_type", ctypes.c_uint16),
+        ]
+
+    try:
+        get_table = ctypes.WinDLL("iphlpapi").GetIpAddrTable
+    except (AttributeError, OSError):
+        return ()
+    get_table.argtypes = [
+        ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_ulong),
+        ctypes.c_int,
+    ]
+    get_table.restype = ctypes.c_ulong
+    size = ctypes.c_ulong(0)
+    result = int(get_table(None, ctypes.byref(size), 0))
+    if result not in {0, 122} or size.value < ctypes.sizeof(ctypes.c_uint32):
+        return ()
+    buffer = ctypes.create_string_buffer(size.value)
+    if int(get_table(buffer, ctypes.byref(size), 0)) != 0:
+        return ()
+    count = int(ctypes.c_uint32.from_buffer_copy(buffer.raw[:4]).value)
+    row_size = ctypes.sizeof(MibIpAddressRow)
+    broadcasts: list[str] = []
+    for index in range(min(count, 256)):
+        offset = 4 + (index * row_size)
+        if offset + row_size > size.value:
+            break
+        row = MibIpAddressRow.from_buffer_copy(buffer.raw[offset : offset + row_size])
+        try:
+            address = ipaddress.IPv4Address(
+                int(row.address).to_bytes(4, byteorder="little")
+            )
+            mask = ipaddress.IPv4Address(
+                int(row.mask).to_bytes(4, byteorder="little")
+            )
+            network = ipaddress.IPv4Network(f"{address}/{mask}", strict=False)
+            broadcast = network.broadcast_address
+        except (ipaddress.AddressValueError, ipaddress.NetmaskValueError, ValueError):
+            continue
+        if _usable_directed_broadcast(address, broadcast):
+            broadcasts.append(str(broadcast))
+    return tuple(dict.fromkeys(broadcasts))
+
+
+def _posix_directed_broadcasts() -> tuple[str, ...]:
+    """Read getifaddrs broadcast addresses on Linux, macOS, and BSD."""
+
+    class IfAddrs(ctypes.Structure):
+        pass
+
+    IfAddrsPointer = ctypes.POINTER(IfAddrs)
+    IfAddrs._fields_ = [
+        ("next", IfAddrsPointer),
+        ("name", ctypes.c_char_p),
+        ("flags", ctypes.c_uint),
+        ("address", ctypes.c_void_p),
+        ("netmask", ctypes.c_void_p),
+        ("broadcast_or_destination", ctypes.c_void_p),
+        ("data", ctypes.c_void_p),
+    ]
+    try:
+        libc = ctypes.CDLL(None, use_errno=True)
+        getifaddrs = libc.getifaddrs
+        freeifaddrs = libc.freeifaddrs
+    except (AttributeError, OSError):
+        return ()
+    getifaddrs.argtypes = [ctypes.POINTER(IfAddrsPointer)]
+    getifaddrs.restype = ctypes.c_int
+    freeifaddrs.argtypes = [IfAddrsPointer]
+    head = IfAddrsPointer()
+    if getifaddrs(ctypes.byref(head)) != 0:
+        return ()
+    broadcasts: list[str] = []
+    try:
+        current = head
+        for _index in range(2_048):
+            if not current:
+                break
+            entry = current.contents
+            current = entry.next
+            if (
+                not entry.address
+                or not entry.broadcast_or_destination
+                or not (entry.flags & 0x2)  # IFF_BROADCAST
+            ):
+                continue
+            address_bytes = ctypes.string_at(entry.address, 16)
+            broadcast_bytes = ctypes.string_at(entry.broadcast_or_destination, 16)
+            if sys.platform.startswith(("darwin", "freebsd", "openbsd", "netbsd")):
+                family = address_bytes[1]
+                broadcast_family = broadcast_bytes[1]
+            else:
+                family = int.from_bytes(address_bytes[:2], byteorder=sys.byteorder)
+                broadcast_family = int.from_bytes(
+                    broadcast_bytes[:2],
+                    byteorder=sys.byteorder,
+                )
+            if family != socket.AF_INET or broadcast_family != socket.AF_INET:
+                continue
+            address = ipaddress.IPv4Address(address_bytes[4:8])
+            broadcast = ipaddress.IPv4Address(broadcast_bytes[4:8])
+            if _usable_directed_broadcast(address, broadcast):
+                broadcasts.append(str(broadcast))
+    finally:
+        freeifaddrs(head)
+    return tuple(dict.fromkeys(broadcasts))
+
+
+def local_ipv4_broadcasts() -> tuple[str, ...]:
+    """Return real interface-directed broadcasts for one-hop discovery."""
+
+    if os.name == "nt":
+        return _windows_directed_broadcasts()
+    if os.name == "posix":
+        return _posix_directed_broadcasts()
+    return ()
+
+
+def discovery_destinations() -> tuple[str, ...]:
+    return tuple(
+        dict.fromkeys(
+            (
+                "255.255.255.255",
+                LAN_MULTICAST_ADDRESS,
+                *local_ipv4_broadcasts(),
+            )
+        )
+    )
+
+
 def discover_lan_peers(
     *,
     timeout: float = 0.45,
     port: int | None = None,
-    destinations: Iterable[str] = ("255.255.255.255", LAN_MULTICAST_ADDRESS),
+    destinations: Iterable[str] | None = None,
     cache_ttl: float = 60.0,
 ) -> tuple[str, ...]:
     """Best-effort, one-hop discovery with a short process-wide cache."""
@@ -395,7 +554,10 @@ def discover_lan_peers(
         sock.bind(("", 0))
         sock.settimeout(max(0.05, timeout))
         target_port = port or discovery_port()
-        for destination in destinations:
+        probe_destinations = (
+            discovery_destinations() if destinations is None else destinations
+        )
+        for destination in probe_destinations:
             try:
                 sock.sendto(request, (destination, target_port))
             except OSError:

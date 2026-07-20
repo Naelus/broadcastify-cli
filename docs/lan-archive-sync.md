@@ -62,7 +62,7 @@ In **Local Library → Downloads and LAN reuse**:
 
 Windows may request a firewall allowance the first time sharing or discovery
 is enabled. An explicit peer URL is recommended even when discovery works,
-especially across VLANs or an App/container network.
+especially across VLANs, Wi-Fi client isolation, or restrictive firewalls.
 
 ## Browser UI, Linux, and TrueNAS
 
@@ -80,10 +80,12 @@ BROADCASTIFY_LAN_DISCOVERY_PORT="48765"
 
 `BROADCASTIFY_LAN_ADVERTISE_URL` is important behind TrueNAS Apps or another
 NAT/port-publishing boundary: it must be the numeric private URL other LAN
-clients can actually reach. The TrueNAS example publishes TCP `8765` plus UDP
-`48765` on the selected NAS address and enables read-only sharing. The
-persistent `/data/archives` dataset remains the source; redeploying the App
-does not copy, move, or delete retained data.
+clients can actually reach. The TrueNAS example uses host networking because
+Docker port publishing does not reliably forward broadcast/multicast discovery
+traffic into the App. Its HTTP server still binds only the selected private NAS
+address, its discovery responder listens on UDP `48765`, and read-only sharing
+is enabled. The persistent `/data/archives` dataset remains the source;
+redeploying the App does not copy, move, or delete retained data.
 
 For an ordinary headless machine that should share blocks without exposing the
 complete browser UI:

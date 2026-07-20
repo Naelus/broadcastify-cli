@@ -11,12 +11,13 @@ services:
       - "RENDER_GID"
     devices:
       - /dev/dri/renderD128:/dev/dri/renderD128
-    ports:
-      - "TRUENAS_LAN_IP:8765:8765"
-      - "TRUENAS_LAN_IP:48765:48765/udp"
+    # Host networking is intentional: Docker's normal port-publishing boundary
+    # does not deliver LAN broadcast/multicast discovery packets to the app.
+    # The HTTP server still binds only the selected private TrueNAS address.
+    network_mode: host
     command:
       - --host
-      - 0.0.0.0
+      - TRUENAS_LAN_IP
       - --port
       - "8765"
       - --working-dir

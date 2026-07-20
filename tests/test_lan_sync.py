@@ -12,11 +12,13 @@ from pathlib import Path
 
 import pytest
 
+import broadcastify_cli.lan_sync as lan_sync
 from broadcastify_cli.lan_sync import (
     LanArchiveCatalog,
     LanArchiveSyncClient,
     LanDiscoveryResponder,
     LanSyncResult,
+    discovery_destinations,
     discover_lan_peers,
     normalize_peer_url,
     normalize_peer_urls,
@@ -287,6 +289,23 @@ def test_one_hop_discovery_finds_a_read_only_lan_peer(tmp_path: Path) -> None:
         assert found == ("http://127.0.0.1:8766",)
     finally:
         responder.close()
+
+
+def test_discovery_includes_real_interface_directed_broadcasts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        lan_sync,
+        "local_ipv4_broadcasts",
+        lambda: ("10.20.31.255", "192.168.50.255", "10.20.31.255"),
+    )
+
+    assert discovery_destinations() == (
+        "255.255.255.255",
+        "239.255.77.77",
+        "10.20.31.255",
+        "192.168.50.255",
+    )
 
 
 def test_job_request_rejects_public_peer_urls() -> None:

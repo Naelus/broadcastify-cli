@@ -77,23 +77,24 @@ through **Apps → Discover Apps → more menu → Install via YAML**. Use:
 - the exact commit tag from the image build;
 - the numeric app UID/GID that owns the host-path dataset;
 - the host `render` group ID and `/dev/dri/renderD128` for AMD Vulkan;
-- one IP shown by TrueNAS under app IP choices;
+- one private IP assigned to the TrueNAS host;
 - an unused host port;
-- UDP port `48765` on the same selected LAN address when one-hop peer discovery
-  is wanted;
 - the absolute dataset mount path.
 
-The container listens on `0.0.0.0` only inside its private app network. The
-published port is constrained to the chosen TrueNAS LAN address. The container
-runs without added Linux capabilities, with `no-new-privileges`, a read-only
-root filesystem, and only `/data` writable.
+The example uses TrueNAS-supported host networking so one-hop UDP
+broadcast/multicast discovery reaches the App. Docker port mapping cannot
+reliably deliver those packets into a private App network. The HTTP server
+still binds only the selected private TrueNAS address; discovery alone listens
+on UDP `48765`. The container runs without added Linux capabilities, with
+`no-new-privileges`, a read-only root filesystem, and only `/data` writable.
 
-The example also makes this App a read-only archive seed. It publishes UDP
-discovery port `48765`, advertises the reachable
+The example also makes this App a read-only archive seed. It listens for
+one-hop discovery on UDP `48765`, advertises the reachable
 `http://TRUENAS_LAN_IP:8765` address, and serves only original source blocks
 from the persistent dataset. Other app instances ask this node before using a
-Broadcastify archive request. Explicitly configuring the NAS URL in each client
-is more reliable than UDP discovery across firewalls, VLANs, or App networking.
+Broadcastify archive request. Explicitly configuring the NAS URL in each
+client remains the reliable fallback across firewalls, VLANs, or Wi-Fi client
+isolation.
 
 To limit archive reuse to clients with the same private value, add
 `BROADCASTIFY_LAN_SYNC_KEY` to the dataset `.env` and every participating
