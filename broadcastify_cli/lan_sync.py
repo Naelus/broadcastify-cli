@@ -357,11 +357,16 @@ class LanAcquisitionQueue:
         owner_node_id: str,
         producer_url: str,
         requester_address: str = "",
+        allow_multihomed_self: bool = False,
     ) -> dict[str, Any]:
         scope = self._validate_key(quota_scope, feed_id)
         owner = self._validate_node_id(owner_node_id)
         producer = normalize_peer_url(producer_url)
-        self._validate_requester(producer, requester_address)
+        self._validate_requester(
+            producer,
+            requester_address,
+            allow_multihomed_self=allow_multihomed_self,
+        )
         key = (scope, feed_id, archive_date.isoformat())
         with self._lock:
             now = self._clock()
@@ -550,7 +555,12 @@ class LanAcquisitionQueue:
         return node_id
 
     @staticmethod
-    def _validate_requester(producer_url: str, requester_address: str) -> None:
+    def _validate_requester(
+        producer_url: str,
+        requester_address: str,
+        *,
+        allow_multihomed_self: bool = False,
+    ) -> None:
         if not requester_address:
             return
         try:
@@ -561,6 +571,12 @@ class LanAcquisitionQueue:
         except ValueError as exc:
             raise LanSyncError("The LAN producer address is not valid.") from exc
         if producer == requester or (producer.is_loopback and requester.is_loopback):
+            return
+        if allow_multihomed_self and (
+            requester.is_private
+            or requester.is_link_local
+            or requester.is_loopback
+        ):
             return
         raise PermissionError(
             "A LAN client may claim work only for its own reachable producer node."

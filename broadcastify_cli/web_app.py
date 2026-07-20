@@ -858,6 +858,13 @@ def create_server(
     static_dir = Path(__file__).with_name("web_static").resolve()
     token = secrets.token_urlsafe(32)
     readiness_values, _environment_file = _readiness_environment(work)
+    configured_advertisement = str(
+        readiness_values.get("BROADCASTIFY_LAN_ADVERTISE_URL") or ""
+    ).strip()
+    if configured_advertisement:
+        configured_advertisement = normalize_peer_url(
+            configured_advertisement
+        )
     lan_catalog = LanArchiveCatalog(
         root,
         enabled=_environment_flag(
@@ -1193,13 +1200,21 @@ def create_server(
             quota_scope = str(body.get("quota_scope") or "default").strip()
             try:
                 if action == "claim":
+                    owner_node_id = str(body.get("owner_node_id") or "")
+                    producer_url = str(body.get("producer_url") or "")
                     value = state.lan_catalog.acquisition_queue.claim(
                         quota_scope,
                         feed_id,
                         archive_date,
-                        owner_node_id=str(body.get("owner_node_id") or ""),
-                        producer_url=str(body.get("producer_url") or ""),
+                        owner_node_id=owner_node_id,
+                        producer_url=producer_url,
                         requester_address=str(self.client_address[0]),
+                        allow_multihomed_self=bool(
+                            configured_advertisement
+                            and owner_node_id == state.lan_catalog.node_id
+                            and normalize_peer_url(producer_url)
+                            == configured_advertisement
+                        ),
                     )
                 elif action == "renew":
                     value = state.lan_catalog.acquisition_queue.renew(
@@ -1420,14 +1435,6 @@ def create_server(
         "BROADCASTIFY_LAN_DISCOVERY_ENABLED",
         default=True,
     ):
-        configured_advertisement = str(
-            readiness_values.get("BROADCASTIFY_LAN_ADVERTISE_URL") or ""
-        ).strip()
-        if configured_advertisement:
-            configured_advertisement = normalize_peer_url(
-                configured_advertisement
-            )
-
         def advertised_url(remote_address: str) -> str:
             if configured_advertisement:
                 return configured_advertisement

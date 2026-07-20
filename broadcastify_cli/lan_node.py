@@ -219,13 +219,21 @@ def create_lan_node_server(
             )
             quota_scope = str(body.get("quota_scope") or "default").strip()
             if action == "claim":
+                owner_node_id = str(body.get("owner_node_id") or "")
+                producer_url = str(body.get("producer_url") or "")
                 value = catalog.acquisition_queue.claim(
                     quota_scope,
                     feed_id,
                     archive_date,
-                    owner_node_id=str(body.get("owner_node_id") or ""),
-                    producer_url=str(body.get("producer_url") or ""),
+                    owner_node_id=owner_node_id,
+                    producer_url=producer_url,
                     requester_address=str(self.client_address[0]),
+                    allow_multihomed_self=bool(
+                        configured_advertisement
+                        and owner_node_id == catalog.node_id
+                        and normalize_peer_url(producer_url)
+                        == configured_advertisement
+                    ),
                 )
             elif action == "renew":
                 value = catalog.acquisition_queue.renew(

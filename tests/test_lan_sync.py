@@ -190,6 +190,32 @@ def test_shared_acquisition_queue_grants_one_expiring_producer_lease() -> None:
     assert takeover["owner_node_id"] == "producer_two"
 
 
+def test_multihomed_self_claim_requires_an_explicit_private_exception() -> None:
+    queue = LanAcquisitionQueue()
+    archive_date = date(2026, 7, 12)
+
+    with pytest.raises(PermissionError, match="own reachable producer"):
+        queue.claim(
+            "default",
+            "90001",
+            archive_date,
+            owner_node_id="producer_one",
+            producer_url="http://10.200.1.227:8765",
+            requester_address="10.200.1.99",
+        )
+
+    claim = queue.claim(
+        "default",
+        "90001",
+        archive_date,
+        owner_node_id="producer_one",
+        producer_url="http://10.200.1.227:8765",
+        requester_address="10.200.1.99",
+        allow_multihomed_self=True,
+    )
+    assert claim["granted"] is True
+
+
 def test_shared_quota_result_prevents_follower_retry_until_it_expires() -> None:
     now = [200.0]
     queue = LanAcquisitionQueue(
@@ -513,6 +539,62 @@ def test_disabled_web_peer_does_not_expose_an_inventory(
         payload = json.loads(response.read())
         assert response.status == 404
         assert "not enabled" in payload["error"].lower()
+    finally:
+        connection.close()
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=3)
+
+
+def test_web_queue_allows_only_its_exact_multihomed_advertised_self(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    advertised_url = "http://10.200.1.227:8765"
+    monkeypatch.setenv("BROADCASTIFY_LAN_SHARING", "true")
+    monkeypatch.setenv("BROADCASTIFY_LAN_DISCOVERY_ENABLED", "false")
+    monkeypatch.setenv("BROADCASTIFY_LAN_ADVERTISE_URL", advertised_url)
+    server = create_server(tmp_path, port=0, working_dir=tmp_path)
+    server.quiet = True  # type: ignore[attr-defined]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    connection = http.client.HTTPConnection(
+        "127.0.0.1",
+        server.server_port,
+        timeout=5,
+    )
+
+    def claim(archive_date: str, producer_url: str) -> tuple[int, dict[str, object]]:
+        body = json.dumps(
+            {
+                "quota_scope": "multihomed-test",
+                "feed_id": "90001",
+                "archive_date": archive_date,
+                "owner_node_id": server.state.lan_catalog.node_id,  # type: ignore[attr-defined]
+                "producer_url": producer_url,
+            }
+        )
+        connection.request(
+            "POST",
+            "/api/lan/v1/acquisition/claim",
+            body=body,
+            headers={"Content-Type": "application/json"},
+        )
+        response = connection.getresponse()
+        return response.status, json.loads(response.read())
+
+    try:
+        status, payload = claim("2026-07-12", advertised_url)
+        assert status == 200
+        assert payload["granted"] is True
+        assert payload["producer_url"] == advertised_url
+
+        rejected_status, rejected = claim(
+            "2026-07-13",
+            "http://10.200.1.228:8765",
+        )
+        assert rejected_status == 403
+        assert "own reachable producer" in str(rejected["error"])
     finally:
         connection.close()
         server.shutdown()

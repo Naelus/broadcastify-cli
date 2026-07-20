@@ -152,7 +152,10 @@ port-forward either the browser service or native seed node.
 LAN inventory, block, and lease requests explicitly ignore `HTTP_PROXY`,
 `HTTPS_PROXY`, and related environment proxy settings. This preserves
 source-address lease validation and keeps the optional LAN key and opaque lease
-token on the trusted network.
+token on the trusted network. A multihomed coordinator may claim its own lease
+from another private interface only when both its node ID and producer URL
+exactly match the coordinator's configured advertised URL; other producers
+retain strict source-address matching.
 
 ## CLI acquisition
 
