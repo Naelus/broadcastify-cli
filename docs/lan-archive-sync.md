@@ -149,6 +149,11 @@ copying source blocks, but plain HTTP does not encrypt it or the audio. This
 feature is for a trusted LAN; it is not internet authentication or TLS. Never
 port-forward either the browser service or native seed node.
 
+LAN inventory, block, and lease requests explicitly ignore `HTTP_PROXY`,
+`HTTPS_PROXY`, and related environment proxy settings. This preserves
+source-address lease validation and keeps the optional LAN key and opaque lease
+token on the trusted network.
+
 ## CLI acquisition
 
 LAN reuse is on by default for the archive CLI and can be controlled explicitly:

@@ -44,6 +44,20 @@ def _raw_day(root: Path) -> tuple[Path, list[Path]]:
     return day, raw
 
 
+def _force_unusable_system_proxy(monkeypatch: pytest.MonkeyPatch) -> None:
+    for name in (
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "ALL_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "all_proxy",
+    ):
+        monkeypatch.setenv(name, "http://127.0.0.1:1")
+    monkeypatch.setenv("NO_PROXY", "")
+    monkeypatch.setenv("no_proxy", "")
+
+
 def test_peer_urls_are_limited_to_numeric_private_addresses() -> None:
     assert normalize_peer_url("http://10.20.30.40:8765/") == (
         "http://10.20.30.40:8765"
@@ -229,6 +243,7 @@ def test_web_queue_elects_one_producer_and_follower_pulls_completed_blocks(
     monkeypatch.setenv("BROADCASTIFY_LAN_SHARING", "true")
     monkeypatch.setenv("BROADCASTIFY_LAN_SYNC_KEY", "queue-test-key")
     monkeypatch.setenv("BROADCASTIFY_LAN_DISCOVERY_ENABLED", "false")
+    _force_unusable_system_proxy(monkeypatch)
     server = create_server(source, port=0, working_dir=tmp_path)
     server.quiet = True  # type: ignore[attr-defined]
     thread = threading.Thread(target=server.serve_forever, daemon=True)

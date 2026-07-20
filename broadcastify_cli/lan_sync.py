@@ -1698,20 +1698,21 @@ class LanArchiveSyncClient:
         feed_id: str,
         archive_date: date,
     ) -> dict[str, Any]:
-        with requests.get(
-            f"{coordinator}/api/lan/v1/acquisition",
-            params={
-                "quota_scope": self.quota_scope,
-                "feed_id": feed_id,
-                "date": archive_date.isoformat(),
-            },
-            headers=self._headers(),
-            timeout=(self.connect_timeout, min(self.read_timeout, 10.0)),
-            allow_redirects=False,
-            stream=True,
-        ) as response:
-            response.raise_for_status()
-            payload = self._bounded_json(response, LAN_QUEUE_RESPONSE_BYTES)
+        with self._lan_session() as session:
+            with session.get(
+                f"{coordinator}/api/lan/v1/acquisition",
+                params={
+                    "quota_scope": self.quota_scope,
+                    "feed_id": feed_id,
+                    "date": archive_date.isoformat(),
+                },
+                headers=self._headers(),
+                timeout=(self.connect_timeout, min(self.read_timeout, 10.0)),
+                allow_redirects=False,
+                stream=True,
+            ) as response:
+                response.raise_for_status()
+                payload = self._bounded_json(response, LAN_QUEUE_RESPONSE_BYTES)
         return self._validate_queue_payload(
             payload,
             feed_id,
@@ -1734,28 +1735,30 @@ class LanArchiveSyncClient:
         }
         headers = self._headers()
         headers["Content-Type"] = "application/json"
-        with requests.post(
-            f"{coordinator}/api/lan/v1/acquisition/{quote(action, safe='')}",
-            headers=headers,
-            data=json.dumps(body, separators=(",", ":")).encode("utf-8"),
-            timeout=(self.connect_timeout, min(self.read_timeout, 10.0)),
-            allow_redirects=False,
-            stream=True,
-        ) as response:
-            response.raise_for_status()
-            payload = self._bounded_json(response, LAN_QUEUE_RESPONSE_BYTES)
+        with self._lan_session() as session:
+            with session.post(
+                f"{coordinator}/api/lan/v1/acquisition/{quote(action, safe='')}",
+                headers=headers,
+                data=json.dumps(body, separators=(",", ":")).encode("utf-8"),
+                timeout=(self.connect_timeout, min(self.read_timeout, 10.0)),
+                allow_redirects=False,
+                stream=True,
+            ) as response:
+                response.raise_for_status()
+                payload = self._bounded_json(response, LAN_QUEUE_RESPONSE_BYTES)
         return self._validate_queue_payload(payload, feed_id, archive_date)
 
     def _peer_info(self, peer: str) -> dict[str, Any]:
-        with requests.get(
-            f"{peer}/api/lan/v1/info",
-            headers=self._headers(),
-            timeout=(min(self.connect_timeout, 1.0), 5.0),
-            allow_redirects=False,
-            stream=True,
-        ) as response:
-            response.raise_for_status()
-            payload = self._bounded_json(response, LAN_QUEUE_RESPONSE_BYTES)
+        with self._lan_session() as session:
+            with session.get(
+                f"{peer}/api/lan/v1/info",
+                headers=self._headers(),
+                timeout=(min(self.connect_timeout, 1.0), 5.0),
+                allow_redirects=False,
+                stream=True,
+            ) as response:
+                response.raise_for_status()
+                payload = self._bounded_json(response, LAN_QUEUE_RESPONSE_BYTES)
         if not isinstance(payload, Mapping) or payload.get("protocol") != LAN_PROTOCOL:
             raise LanSyncError("The peer returned incompatible node information.")
         node_id = str(payload.get("node_id") or "")
@@ -2011,34 +2014,48 @@ class LanArchiveSyncClient:
             headers["X-Radio-Archive-LAN-Key"] = self.sync_key
         return headers
 
+    @staticmethod
+    def _lan_session() -> requests.Session:
+        # LAN control/data traffic must never inherit HTTP(S)_PROXY. Besides
+        # breaking source-address lease validation, a proxy would receive the
+        # optional LAN key and opaque lease token.
+        session = requests.Session()
+        session.trust_env = False
+        return session
+
     def _inventory(
         self,
         peer: str,
         feed_id: str,
         archive_date: date,
     ) -> tuple[list[ArchiveBlock], tuple[str, ...]]:
-        with requests.get(
-            f"{peer}/api/lan/v1/blocks",
-            params={"feed_id": feed_id, "date": archive_date.isoformat()},
-            headers=self._headers(),
-            timeout=(self.connect_timeout, min(self.read_timeout, 30.0)),
-            allow_redirects=False,
-            stream=True,
-        ) as response:
-            response.raise_for_status()
-            try:
-                content_length = int(response.headers.get("Content-Length") or 0)
-            except ValueError as exc:
-                raise LanSyncError(
-                    "The peer returned an invalid inventory length."
-                ) from exc
-            if content_length > MAX_INVENTORY_BYTES:
-                raise LanSyncError("The peer inventory exceeded the size limit.")
-            inventory = bytearray()
-            for chunk in response.iter_content(chunk_size=64 * 1024):
-                inventory.extend(chunk)
-                if len(inventory) > MAX_INVENTORY_BYTES:
+        with self._lan_session() as session:
+            with session.get(
+                f"{peer}/api/lan/v1/blocks",
+                params={"feed_id": feed_id, "date": archive_date.isoformat()},
+                headers=self._headers(),
+                timeout=(self.connect_timeout, min(self.read_timeout, 30.0)),
+                allow_redirects=False,
+                stream=True,
+            ) as response:
+                response.raise_for_status()
+                try:
+                    content_length = int(
+                        response.headers.get("Content-Length") or 0
+                    )
+                except ValueError as exc:
+                    raise LanSyncError(
+                        "The peer returned an invalid inventory length."
+                    ) from exc
+                if content_length > MAX_INVENTORY_BYTES:
                     raise LanSyncError("The peer inventory exceeded the size limit.")
+                inventory = bytearray()
+                for chunk in response.iter_content(chunk_size=64 * 1024):
+                    inventory.extend(chunk)
+                    if len(inventory) > MAX_INVENTORY_BYTES:
+                        raise LanSyncError(
+                            "The peer inventory exceeded the size limit."
+                        )
         try:
             payload = json.loads(inventory)
         except (UnicodeDecodeError, ValueError) as exc:
@@ -2084,36 +2101,47 @@ class LanArchiveSyncClient:
         digest = hashlib.sha256()
         received = 0
         try:
-            with requests.get(
-                endpoint,
-                headers=headers,
-                stream=True,
-                timeout=(self.connect_timeout, self.read_timeout),
-                allow_redirects=False,
-            ) as response:
-                response.raise_for_status()
-                response_hash = str(
-                    response.headers.get("X-Radio-Archive-SHA256") or ""
-                ).lower()
-                if response_hash != block.sha256:
-                    raise LanSyncError("The peer response hash changed after inventory.")
-                try:
-                    content_length = int(response.headers.get("Content-Length") or 0)
-                except ValueError as exc:
-                    raise LanSyncError("The peer returned an invalid block length.") from exc
-                if content_length != block.size:
-                    raise LanSyncError("The peer response size changed after inventory.")
-                with partial.open("xb") as handle:
-                    for chunk in response.iter_content(chunk_size=1024 * 256):
-                        if not chunk:
-                            continue
-                        received += len(chunk)
-                        if received > block.size:
-                            raise LanSyncError("The peer sent more data than advertised.")
-                        digest.update(chunk)
-                        handle.write(chunk)
-                    handle.flush()
-                    os.fsync(handle.fileno())
+            with self._lan_session() as session:
+                with session.get(
+                    endpoint,
+                    headers=headers,
+                    stream=True,
+                    timeout=(self.connect_timeout, self.read_timeout),
+                    allow_redirects=False,
+                ) as response:
+                    response.raise_for_status()
+                    response_hash = str(
+                        response.headers.get("X-Radio-Archive-SHA256") or ""
+                    ).lower()
+                    if response_hash != block.sha256:
+                        raise LanSyncError(
+                            "The peer response hash changed after inventory."
+                        )
+                    try:
+                        content_length = int(
+                            response.headers.get("Content-Length") or 0
+                        )
+                    except ValueError as exc:
+                        raise LanSyncError(
+                            "The peer returned an invalid block length."
+                        ) from exc
+                    if content_length != block.size:
+                        raise LanSyncError(
+                            "The peer response size changed after inventory."
+                        )
+                    with partial.open("xb") as handle:
+                        for chunk in response.iter_content(chunk_size=1024 * 256):
+                            if not chunk:
+                                continue
+                            received += len(chunk)
+                            if received > block.size:
+                                raise LanSyncError(
+                                    "The peer sent more data than advertised."
+                                )
+                            digest.update(chunk)
+                            handle.write(chunk)
+                        handle.flush()
+                        os.fsync(handle.fileno())
             if received != block.size:
                 raise LanSyncError("The peer transfer ended before the block was complete.")
             if digest.hexdigest() != block.sha256:
