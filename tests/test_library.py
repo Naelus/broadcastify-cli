@@ -89,6 +89,51 @@ def test_library_discovers_partial_and_analyzed_days(tmp_path: Path) -> None:
     assert incomplete["primary_action"] == "resume_download"
 
 
+def test_library_does_not_present_older_combined_timeline_as_current(
+    tmp_path: Path,
+) -> None:
+    day = _day(tmp_path, "90001", "2026-07-20")
+    first = day / "202607200000-1-90001.mp3"
+    newer = day / "202607200030-2-90001.mp3"
+    first.write_bytes(b"first")
+    combined = day / "combined_90001_20260720.mp3"
+    combined.write_bytes(b"older combined audio")
+    manifest = combined.with_suffix(".manifest.json")
+    manifest.write_text(
+        json.dumps({"sources": [{"source_file": first.name}]}),
+        encoding="utf-8",
+    )
+    newer.write_bytes(b"newer")
+    transcript = day / "transcripts" / "combined_90001_20260720.json"
+    transcript.parent.mkdir()
+    transcript.write_text(
+        json.dumps(
+            {
+                "segments": [{"start": 0.0, "end": 1.0, "text": "old"}],
+                "diarization_completed": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    state = scan_local_library(tmp_path)[0]
+
+    assert state["raw_file_count"] == 2
+    assert state["has_stale_combined"] is True
+    assert state["has_combined"] is False
+    assert state["has_transcript"] is False
+    assert state["has_diarization"] is False
+    assert state["has_analysis"] is False
+    assert state["can_open_review"] is False
+    assert state["is_complete"] is False
+    assert state["pipeline_percent"] == 20
+    assert state["combined_path"] == ""
+    assert state["status"] == "New audio pending combine"
+    assert state["next_step"] == "Refresh archive day"
+    assert state["primary_action"] == "resume_download"
+    assert state["needs_network"] is True
+
+
 def test_library_marks_older_analysis_for_local_evidence_update(tmp_path: Path) -> None:
     ready = _day(tmp_path, "90001", "2026-07-11")
     audio = ready / "combined_90001_20260711.mp3"

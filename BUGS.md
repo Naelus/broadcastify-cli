@@ -70,6 +70,22 @@ Use this file for reproducible defects and concrete blockers, not the general ro
 
 ## Recently fixed
 
+### F-037 — New source blocks could leave an older combined day looking complete
+
+The native Library player retained a Windows media handle as soon as a combined
+recording was selected. If a later archive run added source blocks to that day,
+FFmpeg could not overwrite the selected MP3 and failed with `Permission denied`.
+The older combined file, transcript, and analysis then still existed, so the
+Library presented them as though they covered the newly enlarged source set.
+Native archive and area jobs now pause and clear every media source before the
+worker starts. The combiner writes a unique sibling partial, validates it, and
+retries an atomic replace; if another process keeps the destination locked, it
+reports a recovery-oriented error and preserves the prior recording. Library
+completion now requires the combined manifest to match the exact retained raw
+file set and their modification times. A stale timeline is labeled **New audio
+pending combine**, and its obsolete transcript/review state is withheld until a
+guarded archive resume refreshes the day.
+
 ### F-036 — A completed current-day queue result could hide newer tracks
 
 The archive API returns a newest-first snapshot, but the LAN coordinator

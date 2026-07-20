@@ -88,7 +88,7 @@ Embeddings do not replace the generative model. They cheaply retrieve and cluste
 
 Local Gemma remains the Windows default. API and Codex modes are explicit alternatives for users who prefer a hosted model or an existing Codex subscription login; they never activate merely because a key or login exists. Choose them in **Settings → Analysis & AI**. External providers remain blocked until the transcript-sharing switch is enabled, and **Check provider** verifies configuration without sending transcript text or starting a paid OpenAI model request. See [docs/model-providers.md](docs/model-providers.md) for supported contracts, privacy controls, CLI examples, and validation status.
 
-For a combined daily job, the downloader now concatenates the archive blocks **before** transcription and diarization. This is important: the old order diarized each 30-minute file separately, causing speaker labels and timestamps to restart at every boundary.
+For a combined daily job, the downloader now concatenates the archive blocks **before** transcription and diarization. This is important: the old order diarized each 30-minute file separately, causing speaker labels and timestamps to restart at every boundary. Refreshing a growing day releases native playback handles first and publishes the new combined recording through a validated sibling partial plus atomic replace. The Library calls a day combined only when its manifest matches the exact retained source set; an interrupted refresh preserves the older files but labels them **New audio pending combine** instead of exposing stale transcript or review results as current.
 
 ## Requirements
 

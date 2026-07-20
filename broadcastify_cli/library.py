@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .analysis import PROMPT_VERSION
+from .audio import combined_output_is_current
 from .portable_diarization import (
     COMMUNITY_DIARIZATION_ENGINE,
     COMMUNITY_DIARIZATION_QUALITY,
@@ -153,8 +154,21 @@ def _state_for_day(
             for path in day_directory.glob("*.mp3")
             if RAW_ARCHIVE_PATTERN.match(path.name)
         )
-    has_combined = combined.is_file() and combined.stat().st_size > 0
-    has_transcript = transcript.is_file() and transcript.stat().st_size > 0
+    has_combined_file = combined.is_file() and combined.stat().st_size > 0
+    # Imported/legacy combined recordings may legitimately have no retained raw
+    # blocks.  When raw blocks are present, however, the manifest must describe
+    # that exact set.  Otherwise an interrupted refresh can leave an older MP3,
+    # transcript, and analysis that look complete even though newer blocks are
+    # waiting to be combined.
+    has_stale_combined = bool(
+        has_combined_file
+        and raw_files
+        and not combined_output_is_current(combined, manifest, raw_files)
+    )
+    has_combined = has_combined_file and not has_stale_combined
+    has_transcript = bool(
+        has_combined and transcript.is_file() and transcript.stat().st_size > 0
+    )
     has_diarization = has_transcript and (
         transcript_has_diarization(transcript)
         or bool(stored and stored.get("has_diarization"))
@@ -169,12 +183,27 @@ def _state_for_day(
     analysis_prompt_version = (
         str(stored.get("summary_prompt_version") or "") if stored else ""
     )
-    has_analysis = has_saved_analysis and analysis_prompt_version == PROMPT_VERSION
-    has_stale_analysis = has_saved_analysis and not has_analysis
+    has_analysis = bool(
+        has_transcript
+        and has_saved_analysis
+        and analysis_prompt_version == PROMPT_VERSION
+    )
+    has_stale_analysis = bool(
+        has_transcript and has_saved_analysis and not has_analysis
+    )
     incident_count = int(stored.get("incident_count") or 0) if stored else 0
     segment_count = int(stored.get("segment_count") or 0) if stored else 0
 
-    if not has_combined:
+    if has_stale_combined:
+        next_step = "Refresh archive day"
+        action = "resume_download"
+        status = "New audio pending combine"
+        status_detail = (
+            f"{len(raw_files)} retained source segment"
+            f"{'s' if len(raw_files) != 1 else ''} do not match the older "
+            "combined timeline; the older recording is preserved"
+        )
+    elif not has_combined:
         next_step = "Resume archive download"
         action = "resume_download"
         status = "Needs download"
@@ -242,6 +271,7 @@ def _state_for_day(
         "transcript_path": str(transcript.resolve()) if has_transcript else "",
         "manifest_path": str(manifest.resolve()) if manifest.is_file() else "",
         "has_combined": has_combined,
+        "has_stale_combined": has_stale_combined,
         "has_transcript": has_transcript,
         "has_diarization": has_diarization,
         "diarization_engine": diarization_engine,

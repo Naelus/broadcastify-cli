@@ -4,6 +4,31 @@ This is the dated verification and delivery log for `GOAL.md`. Keep forward-look
 
 ## July 20, 2026
 
+### Safe refresh of an already combined day
+
+- The production Activity Log captured the exact failure for feed 90001 on
+  July 20: all **36/36** archive blocks became ready, then FFmpeg received
+  `Permission denied` opening the existing combined MP3. The native Library had
+  selected that file in its media player and retained an exclusive Windows
+  handle even while playback was stopped. No archive block was lost.
+- Exact `historical-validation` clears the Library, incident, and area-story media sources
+  before either native job surface mutates archive output. Combining now writes
+  and validates a unique same-directory partial recording, retries transient
+  Windows publish locks, atomically replaces the destination, and writes the
+  manifest only after publication. A persistent external lock leaves the old
+  recording and manifest intact and returns an actionable error.
+- The follow-up viewer guard compares the exact raw source filenames and
+  modification times against the combined manifest. The retained production
+  state proves the interrupted-refresh case: **36 raw MP3s** exist while the
+  older manifest names **19**. It now renders **New audio pending combine**,
+  withholds the obsolete transcript/analysis/review state, and offers **Refresh
+  archive day**; the retained files remain available for cache reuse.
+- A real Windows exclusive-handle probe proved both paths: the protected old
+  recording survived a persistent lock, then the refreshed recording published
+  successfully after handle release with no partial left behind. The complete
+  suite passed **277 tests in 17.40 seconds**, Python compilation passed, and
+  the WinUI Release build completed with **0 warnings and 0 errors**.
+
 ### Current and previous rolling archive tail
 
 - A metadata-only feed-90001 query confirmed that the authenticated archive API
