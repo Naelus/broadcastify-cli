@@ -4,6 +4,63 @@ This is the dated verification and delivery log for `GOAL.md`. Keep forward-look
 
 ## July 20, 2026
 
+### LAN-wide single-producer acquisition queue
+
+- Exact `historical-validation` turns the existing raw-block swarm into a commodity-style
+  acquisition pool. All reachable queue-capable peers participate in
+  deterministic coordinator selection, one seed-capable client receives a
+  renewable 90-second quota-scope/feed/day lease, and followers pull completed
+  blocks from any source instead of contacting Broadcastify. A leader publishes
+  the exact filename/size/SHA-256 completion manifest, so a follower may
+  reconstruct it across several peers without accepting a stale same-day set.
+  Lease expiry permits takeover; explicit shared quota state suppresses retry
+  storms for six hours by default.
+- The leader heartbeat stops admitting new archive-media requests if renewal
+  cannot be proven. Queue state is bounded and transient; retained MP3s remain
+  durable. Sessionless coordination uses the same optional LAN key but has no
+  archive upload/delete or remote-job action and exposes no credentials,
+  transcripts, combined audio, analysis, or evidence clips. WinUI starts its
+  native source node before a network job, defaults trusted-LAN seeding on with
+  a visible consumer-only opt-out, and the Web/TrueNAS surfaces report
+  coordinator readiness.
+- The first live attempt safely failed before website access because the NAS
+  inherited an HTTP proxy and the strict producer-source check saw that proxy.
+  Exact `historical-validation` forces every private LAN info/inventory/block/lease request
+  through a proxy-free session, with a regression that sets unusable upper- and
+  lower-case proxy variables. The direct request then revealed the NAS's
+  legitimate multihomed topology: jobs originate from `10.200.1.99`, while the
+  App binds and advertises `10.200.1.227`. Exact `historical-validation` allows that mismatch
+  only for the coordinator's own node ID and exact configured advertised URL;
+  all other claims still require their producer source address. Neither
+  diagnostic contacted Broadcastify.
+- The exact 2,304,000-byte `historical-validation` source archive matched SHA-256
+  `10e1c9410bf1ad21b194cc323b21f3ea313ed12ce6263a9ee69b4a8f82bc1d74`
+  after transfer. The managed TrueNAS App runs image
+  `radio-archive-intelligence:historical-validation`, image ID
+  `sha256:6f06a12460ec958086818f980fc298b4df4851c08a790296fe5090a5d7b892ea`,
+  with OCI revision `historical-validation`, healthy trusted-LAN service, zero restarts, and
+  no OOM kill.
+- Under isolated scope `live-proof-historical-validation`, the NAS became the sole leader and
+  published the exact 48-block manifest for feed 90001 on July 16 without a
+  website request. A Windows follower copied and SHA-256-verified all **48
+  blocks / 178,944,000 bytes** from the NAS in about two seconds, reported zero
+  conflicts and zero failures, and returned the completed role. The repeat
+  follower run verified all 48 local blocks, copied zero bytes, and again made
+  zero website requests. Live queue status reports `complete`, 48 manifest
+  entries, and no exposed lease token.
+- The rollout and proof did not mutate retained NAS evidence. Feed 90001 remains
+  exactly **463 files / 2,440,884,821 bytes**. The SQLite store remains
+  **10,989,568 bytes** at SHA-256
+  `bfe6fdf7b64b9e24c4ed2614336e9c2687de94ded1b4b1a1e7ea4da375a285a6`
+  with `PRAGMA integrity_check = ok`. Unit/integration coverage includes
+  one-owner and expiry takeover, shared quota suppression, proxy exclusion,
+  strict/multihomed claim validation, Web and native coordinators, follower
+  no-auth/no-download behavior, corrupt/conflicting block rejection, exact
+  multi-source manifest assembly, and lease-loss admission. The complete suite
+  passes **269 tests in 18.31 seconds**, Python compilation, bundled-Node
+  JavaScript parsing, Git whitespace checks, and the WinUI Release build with
+  zero warnings/errors.
+
 ### Read-only trusted-LAN archive swarm
 
 - Exact core commit `historical-validation` makes acquisition check a bounded pool of explicit and one-hop-discovered private peers before authenticating with Broadcastify. Peers exchange only original feed/date MP3 inventories; credentials, transcripts, combined audio, analysis records, evidence clips, and model data remain outside the protocol.

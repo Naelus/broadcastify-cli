@@ -59,7 +59,7 @@ Use this file for reproducible defects and concrete blockers, not the general ro
 
 - **Severity:** Operational.
 - **Observed:** Broadcastify publishes no numeric archive-download quota or reset timestamp. One measured window allowed roughly 192 successful archive redirects, the July 16 availability follow-up allowed only 55 before the explicit limit response, and a later Example City window allowed 97 consecutive new media responses with no 429.
-- **Control:** Sequential pacing, exact cache reuse, and immediate stop on explicit exhaustion.
+- **Control:** Sequential pacing, exact cache reuse, one renewable trusted-LAN producer lease per quota-scope/feed/day, follower reconstruction of the exact completion manifest, and immediate shared stop on explicit exhaustion.
 - **Next:** Ask Broadcastify support for authoritative details and prioritize future regional acquisition by user distance/importance rather than a guessed quota size.
 
 ### B-010 — Automatic LAN peer discovery depends on local network policy
@@ -69,6 +69,41 @@ Use this file for reproducible defects and concrete blockers, not the general ro
 - **Next:** Retain explicit peers across VLANs/firewalls and validate automatic discovery on a real macOS host.
 
 ## Recently fixed
+
+### F-035 — Several LAN clients could spend the same upstream archive quota
+
+The original read-only LAN swarm safely reused blocks that another machine had
+already retained, but it did not establish ownership while two user-started
+jobs were running at the same time. Both clients could therefore decide that a
+missing feed/day needed website acquisition. A completed result also carried
+only a count, which was insufficient to prove that blocks assembled from
+several sources were exactly the leader's set.
+
+Exact `historical-validation` adds deterministic coordinator election and a bounded
+quota-scope/feed/day lease queue. One seed-capable producer owns a renewable
+90-second lease; followers continuously pull blocks from any reachable peer,
+and a completed result includes the exact filename/size/SHA-256 manifest.
+Lease loss stops admission of new media requests before takeover, a crashed
+producer expires, and an explicit quota result suppresses follower retries for
+six hours by default. The data plane remains raw-source-only and read-only;
+there is no credential, transcript, analysis, archive-upload, delete, or
+remote-job route.
+
+The first TrueNAS proof exposed two deployment boundaries without contacting
+Broadcastify. Exact `historical-validation` makes all LAN control/data requests ignore system
+proxy variables so the optional LAN key and lease token stay local. Exact
+`historical-validation` permits only the coordinator's own node ID plus exact configured
+advertised URL to cross its private multihomed addresses; every other producer
+retains strict source-address validation. The managed App now runs that exact
+revision healthy with zero restarts/OOM kills. It published a 48-block July 16
+manifest, a Windows follower copied and verified all 178,944,000 bytes with
+zero conflicts/failures and zero website requests, and the repeat run reused
+all 48 locally with zero copied bytes. The deployment preserved feed 90001 at
+463 files / 2,440,884,821 bytes and preserved the 10,989,568-byte SQLite store
+at SHA-256
+`bfe6fdf7b64b9e24c4ed2614336e9c2687de94ded1b4b1a1e7ea4da375a285a6`;
+`PRAGMA integrity_check` remains `ok`. The complete suite passes all **269
+tests**.
 
 ### F-034 — Evidence clips failed after a retained library moved from Windows to TrueNAS
 
