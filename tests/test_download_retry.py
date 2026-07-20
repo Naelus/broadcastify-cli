@@ -268,3 +268,91 @@ def test_download_day_deduplicates_shared_quota_failure(tmp_path: Path) -> None:
         client.download_day("90003", date(2026, 7, 3), tmp_path, jobs=2)
 
     assert str(raised.value).count("archive quota exhausted") == 1
+
+
+def test_download_day_acquires_current_and_previous_before_older_backlog(
+    tmp_path: Path,
+) -> None:
+    client = BroadcastifyClient(download_request_interval=0)
+    client.authenticate = lambda force=False: None  # type: ignore[method-assign]
+    client.get_archive_ids = lambda feed_id, archive_date: [  # type: ignore[method-assign]
+        "current",
+        "previous",
+        "older-one",
+        "older-two",
+    ]
+    calls: list[str] = []
+
+    def fake_download(
+        feed_id: str,
+        archive_date: date,
+        archive_id: str,
+        day_dir: Path,
+        *_: object,
+        **__: object,
+    ) -> Path:
+        calls.append(archive_id)
+        result = day_dir / f"{archive_id}.mp3"
+        result.write_bytes(b"audio")
+        return result
+
+    client.download_archive = fake_download  # type: ignore[method-assign]
+
+    client.download_day(
+        "90001",
+        date(2026, 7, 12),
+        tmp_path,
+        jobs=2,
+    )
+
+    assert calls[:2] == ["current", "previous"]
+    assert set(calls[2:]) == {"older-one", "older-two"}
+
+
+def test_download_day_refreshes_a_growing_current_day_once(
+    tmp_path: Path,
+) -> None:
+    client = BroadcastifyClient(download_request_interval=0)
+    client.authenticate = lambda force=False: None  # type: ignore[method-assign]
+    listings = iter(
+        (
+            ["current", "previous"],
+            ["new-current", "current", "previous"],
+        )
+    )
+    client.get_archive_ids = (  # type: ignore[method-assign]
+        lambda feed_id, archive_date: next(listings)
+    )
+    client._is_current_archive_date = (  # type: ignore[method-assign]
+        lambda feed_id, archive_date: True
+    )
+    calls: list[str] = []
+
+    def fake_download(
+        feed_id: str,
+        archive_date: date,
+        archive_id: str,
+        day_dir: Path,
+        *_: object,
+        **__: object,
+    ) -> Path:
+        calls.append(archive_id)
+        result = day_dir / f"{archive_id}.mp3"
+        result.write_bytes(b"audio")
+        return result
+
+    client.download_archive = fake_download  # type: ignore[method-assign]
+
+    downloaded = client.download_day(
+        "90001",
+        date(2026, 7, 20),
+        tmp_path,
+        jobs=2,
+    )
+
+    assert calls == ["current", "previous", "new-current"]
+    assert {path.stem for path in downloaded} == {
+        "current",
+        "previous",
+        "new-current",
+    }

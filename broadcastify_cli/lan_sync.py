@@ -18,7 +18,7 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import AbstractContextManager
 from dataclasses import asdict, dataclass
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote, urlparse, urlunparse
@@ -37,6 +37,7 @@ MAX_INVENTORY_BYTES = 1024 * 1024
 MAX_LAN_QUEUE_ENTRIES = 512
 LAN_QUEUE_LEASE_SECONDS = 90.0
 LAN_QUEUE_RESULT_SECONDS = 6 * 60 * 60.0
+LAN_QUEUE_ROLLING_RESULT_SECONDS = 5 * 60.0
 LAN_QUEUE_REQUEST_BYTES = 256 * 1024
 LAN_QUEUE_RESPONSE_BYTES = 256 * 1024
 LAN_QUEUE_NODE_PATTERN = re.compile(r"^[A-Za-z0-9_-]{8,80}$")
@@ -288,6 +289,7 @@ class LanDownloadTurn:
     lease_token: str = ""
     lease_seconds: float = 0.0
     block_count: int = 0
+    rolling: bool = False
     blocks: tuple[ArchiveBlock, ...] = ()
     audio_files: tuple[Path, ...] = ()
     sync_result: LanSyncResult = LanSyncResult(enabled=False)
@@ -306,6 +308,7 @@ class _LanQueueEntry:
     lease_token: str
     expires_at: float
     block_count: int = 0
+    rolling: bool = False
     blocks: tuple[ArchiveBlock, ...] = ()
 
 
@@ -318,8 +321,10 @@ class LanAcquisitionQueue:
         enabled: bool = True,
         lease_seconds: float = LAN_QUEUE_LEASE_SECONDS,
         result_seconds: float = LAN_QUEUE_RESULT_SECONDS,
+        rolling_result_seconds: float = LAN_QUEUE_ROLLING_RESULT_SECONDS,
         maximum_entries: int = MAX_LAN_QUEUE_ENTRIES,
         clock: Callable[[], float] = time.monotonic,
+        today: Callable[[], date] = date.today,
     ) -> None:
         self.enabled = bool(enabled)
         self.lease_seconds = min(300.0, max(15.0, float(lease_seconds)))
@@ -327,11 +332,16 @@ class LanAcquisitionQueue:
             24 * 60 * 60.0,
             max(60.0, float(result_seconds)),
         )
+        self.rolling_result_seconds = min(
+            30 * 60.0,
+            max(30.0, float(rolling_result_seconds)),
+        )
         self.maximum_entries = min(
             MAX_LAN_QUEUE_ENTRIES,
             max(16, int(maximum_entries)),
         )
         self._clock = clock
+        self._today = today
         self._entries: dict[tuple[str, str, str], _LanQueueEntry] = {}
         self._lock = threading.RLock()
 
@@ -476,8 +486,19 @@ class LanAcquisitionQueue:
             entry.state = outcome
             entry.lease_token = ""
             entry.block_count = int(block_count)
+            current_date = self._today()
+            entry.rolling = bool(
+                outcome == "complete"
+                and current_date - timedelta(days=1)
+                <= archive_date
+                <= current_date
+            )
             entry.blocks = completion_blocks
-            entry.expires_at = now + self.result_seconds
+            entry.expires_at = now + (
+                self.rolling_result_seconds
+                if entry.rolling
+                else self.result_seconds
+            )
             return self._payload_locked(key, now)
 
     def _authorized_active_entry(
@@ -513,6 +534,7 @@ class LanAcquisitionQueue:
             "owner_node_id": "",
             "lease_seconds": 0.0,
             "block_count": 0,
+            "rolling": False,
             "blocks": [],
         }
         if entry is None:
@@ -524,6 +546,7 @@ class LanAcquisitionQueue:
                 "owner_node_id": entry.owner_node_id,
                 "lease_seconds": round(max(0.0, entry.expires_at - now), 3),
                 "block_count": entry.block_count,
+                "rolling": entry.rolling,
                 "blocks": [block.to_dict() for block in entry.blocks],
             }
         )
@@ -653,6 +676,12 @@ class LanArchiveCatalog:
                 LAN_QUEUE_RESULT_SECONDS,
                 minimum=5 * 60.0,
                 maximum=24 * 60 * 60.0,
+            ),
+            rolling_result_seconds=environment_float(
+                "BROADCASTIFY_LAN_QUEUE_ROLLING_RESULT_SECONDS",
+                LAN_QUEUE_ROLLING_RESULT_SECONDS,
+                minimum=30.0,
+                maximum=30 * 60.0,
             ),
         )
 
@@ -1524,6 +1553,7 @@ class LanArchiveSyncClient:
                         producer_url=producer_url,
                         owner_node_id=str(status.get("owner_node_id") or ""),
                         block_count=block_count,
+                        rolling=bool(status["rolling"]),
                         blocks=completion_blocks,
                         audio_files=tuple(audio_files),
                         sync_result=merge_lan_sync_results(sync_results),
@@ -1859,6 +1889,7 @@ class LanArchiveSyncClient:
             "owner_node_id": owner_node_id,
             "lease_seconds": lease_seconds,
             "block_count": block_count,
+            "rolling": bool(payload.get("rolling")),
             "blocks": blocks,
             "granted": bool(payload.get("granted")),
         }

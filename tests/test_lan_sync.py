@@ -260,6 +260,95 @@ def test_shared_quota_result_prevents_follower_retry_until_it_expires() -> None:
     )
 
 
+def test_recent_completed_day_is_a_short_lived_rolling_snapshot() -> None:
+    now = [300.0]
+    today = date(2026, 7, 20)
+    queue = LanAcquisitionQueue(
+        lease_seconds=15.0,
+        result_seconds=3600.0,
+        rolling_result_seconds=300.0,
+        clock=lambda: now[0],
+        today=lambda: today,
+    )
+
+    current_claim = queue.claim(
+        "premium-account",
+        "90001",
+        today,
+        owner_node_id="producer_one",
+        producer_url="http://10.20.30.40:8766",
+        requester_address="10.20.30.40",
+    )
+    current = queue.finish(
+        "premium-account",
+        "90001",
+        today,
+        lease_token=str(current_claim["lease_token"]),
+        outcome="complete",
+    )
+
+    assert current["state"] == "complete"
+    assert current["rolling"] is True
+    assert current["lease_seconds"] == 300.0
+
+    now[0] += 301.0
+    assert queue.status("premium-account", "90001", today)["state"] == "available"
+
+    old_date = date(2026, 7, 18)
+    old_claim = queue.claim(
+        "premium-account",
+        "90001",
+        old_date,
+        owner_node_id="producer_one",
+        producer_url="http://10.20.30.40:8766",
+        requester_address="10.20.30.40",
+    )
+    old = queue.finish(
+        "premium-account",
+        "90001",
+        old_date,
+        lease_token=str(old_claim["lease_token"]),
+        outcome="complete",
+    )
+
+    assert old["rolling"] is False
+    assert old["lease_seconds"] == 3600.0
+
+    now[0] += 301.0
+    assert queue.status("premium-account", "90001", old_date)["state"] == "complete"
+
+
+def test_recent_quota_limit_keeps_the_full_shared_cooldown() -> None:
+    now = [400.0]
+    today = date(2026, 7, 20)
+    queue = LanAcquisitionQueue(
+        result_seconds=3600.0,
+        rolling_result_seconds=300.0,
+        clock=lambda: now[0],
+        today=lambda: today,
+    )
+    claim = queue.claim(
+        "premium-account",
+        "90001",
+        today,
+        owner_node_id="producer_one",
+        producer_url="http://10.20.30.40:8766",
+        requester_address="10.20.30.40",
+    )
+
+    limited = queue.finish(
+        "premium-account",
+        "90001",
+        today,
+        lease_token=str(claim["lease_token"]),
+        outcome="quota_limited",
+        block_count=2,
+    )
+
+    assert limited["rolling"] is False
+    assert limited["lease_seconds"] == 3600.0
+
+
 def test_web_queue_elects_one_producer_and_follower_pulls_completed_blocks(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

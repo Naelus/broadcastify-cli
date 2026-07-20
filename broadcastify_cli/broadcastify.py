@@ -161,6 +161,7 @@ class BroadcastifyClient:
         self._download_throttle: _DownloadThrottle | None = None
         self._download_throttle_lock = threading.Lock()
         self._archive_filename_prefixes: dict[str, str] = {}
+        self._archive_timezones: dict[str, ZoneInfo] = {}
         self._county_feed_cache: dict[str, list[FeedSearchResult]] = {}
 
     def close(self) -> None:
@@ -523,6 +524,12 @@ class BroadcastifyClient:
         response.raise_for_status()
         try:
             payload = response.json()
+            timezone_name = payload.get("timezone")
+            if isinstance(timezone_name, str):
+                try:
+                    self._archive_timezones[feed_id] = ZoneInfo(timezone_name)
+                except (ZoneInfoNotFoundError, ValueError):
+                    pass
             self._archive_filename_prefixes.update(
                 self.parse_archive_filename_prefixes(payload)
             )
@@ -623,79 +630,85 @@ class BroadcastifyClient:
                 f"apart (up to {per_minute:.0f}/minute)."
             )
 
-        # Download one file before starting the pool. Besides producing clearer
-        # login errors, this refreshes an expired cached cookie before concurrent
-        # requests begin.
-        downloaded: list[Path] = [
-            self.download_archive(
-                feed_id,
-                archive_date,
-                archive_ids[0],
-                day_dir,
-                allow_reauthenticate=True,
-                throttle=throttle,
-                notice=retry_notice,
-                admit_download=admit_download,
-            )
-        ]
-        successful = 1
+        # Acquire both ends of the live player window before older backlog:
+        # the archive API is newest-first, so entries 0 and 1 are the current
+        # completed track and the immediately previous track. Besides making
+        # current-feed runs useful quickly, the first request refreshes an
+        # expired cached cookie before concurrent older requests begin.
+        priority_ids = archive_ids[:2]
+        downloaded: list[Path] = []
         failures: list[str] = []
         failure_keys: set[tuple[type[Exception], str]] = set()
         limit_failure: DownloadLimitExceeded | None = None
-        remaining_ids = archive_ids[1:]
-        if progress:
-            progress(
-                1,
-                len(archive_ids),
-                f"Ready 1/{len(archive_ids)} (cached or downloaded)",
-            )
-        if not remaining_ids:
-            return downloaded
-
-        workers = max(1, min(jobs, len(remaining_ids)))
-        with ThreadPoolExecutor(max_workers=workers) as executor:
-            futures = {
-                executor.submit(
-                    self.download_archive,
+        for priority_index, archive_id in enumerate(priority_ids):
+            downloaded.append(
+                self.download_archive(
                     feed_id,
                     archive_date,
                     archive_id,
                     day_dir,
-                    False,
-                    throttle,
-                    retry_notice,
-                    admit_download,
-                ): archive_id
-                for archive_id in remaining_ids
-            }
-            for future in as_completed(futures):
-                archive_id = futures[future]
-                try:
-                    downloaded.append(future.result())
-                    with progress_lock:
-                        successful += 1
-                        if progress:
-                            progress(
-                                successful,
-                                len(archive_ids),
-                                f"Ready {successful}/{len(archive_ids)} (cached or downloaded)",
-                            )
-                except Exception as exc:  # reported after remaining downloads finish
-                    if isinstance(exc, DownloadLimitExceeded):
-                        limit_failure = exc
-                    failure_key = (type(exc), str(exc))
-                    is_new_failure = failure_key not in failure_keys
-                    failure_keys.add(failure_key)
-                    if is_new_failure:
-                        failures.append(f"{archive_id}: {exc}")
-                    if progress and is_new_failure:
+                    allow_reauthenticate=priority_index == 0,
+                    throttle=throttle,
+                    notice=retry_notice,
+                    admit_download=admit_download,
+                )
+            )
+            successful += 1
+            if progress:
+                progress(
+                    successful,
+                    len(archive_ids),
+                    f"Ready {successful}/{len(archive_ids)} "
+                    "(cached or downloaded)",
+                )
+
+        remaining_ids = archive_ids[len(priority_ids) :]
+        if remaining_ids:
+            workers = max(1, min(jobs, len(remaining_ids)))
+            with ThreadPoolExecutor(max_workers=workers) as executor:
+                futures = {
+                    executor.submit(
+                        self.download_archive,
+                        feed_id,
+                        archive_date,
+                        archive_id,
+                        day_dir,
+                        False,
+                        throttle,
+                        retry_notice,
+                        admit_download,
+                    ): archive_id
+                    for archive_id in remaining_ids
+                }
+                for future in as_completed(futures):
+                    archive_id = futures[future]
+                    try:
+                        downloaded.append(future.result())
                         with progress_lock:
-                            progress(
-                                successful,
-                                len(archive_ids),
-                                f"Archive {archive_id} failed after retries; "
-                                f"{successful}/{len(archive_ids)} ready.",
-                            )
+                            successful += 1
+                            if progress:
+                                progress(
+                                    successful,
+                                    len(archive_ids),
+                                    f"Ready {successful}/{len(archive_ids)} "
+                                    "(cached or downloaded)",
+                                )
+                    except Exception as exc:  # reported after active work drains
+                        if isinstance(exc, DownloadLimitExceeded):
+                            limit_failure = exc
+                        failure_key = (type(exc), str(exc))
+                        is_new_failure = failure_key not in failure_keys
+                        failure_keys.add(failure_key)
+                        if is_new_failure:
+                            failures.append(f"{archive_id}: {exc}")
+                        if progress and is_new_failure:
+                            with progress_lock:
+                                progress(
+                                    successful,
+                                    len(archive_ids),
+                                    f"Archive {archive_id} failed after retries; "
+                                    f"{successful}/{len(archive_ids)} ready.",
+                                )
 
         if limit_failure is not None:
             # Preserve the specific exception so a range job can stop issuing
@@ -706,7 +719,54 @@ class BroadcastifyClient:
             raise BroadcastifyError(
                 "One or more archive downloads failed:\n" + "\n".join(failures)
             )
+
+        # Today's archive list grows in 30-minute tracks. Refresh once after the
+        # initial snapshot so a track finalized while an older backlog was
+        # downloading is not omitted from the completed manifest.
+        if self._is_current_archive_date(feed_id, archive_date):
+            refreshed_ids = self.get_archive_ids(feed_id, archive_date)
+            known_ids = set(archive_ids)
+            new_ids = [
+                archive_id
+                for archive_id in refreshed_ids
+                if archive_id not in known_ids
+            ]
+            refreshed_total = len(archive_ids) + len(new_ids)
+            for archive_id in new_ids:
+                downloaded.append(
+                    self.download_archive(
+                        feed_id,
+                        archive_date,
+                        archive_id,
+                        day_dir,
+                        allow_reauthenticate=False,
+                        throttle=throttle,
+                        notice=retry_notice,
+                        admit_download=admit_download,
+                    )
+                )
+                successful += 1
+                if progress:
+                    progress(
+                        successful,
+                        refreshed_total,
+                        f"Ready {successful}/{refreshed_total} "
+                        "(current-day listing refreshed)",
+                    )
         return sorted(downloaded)
+
+    def _is_current_archive_date(
+        self,
+        feed_id: str,
+        archive_date: date,
+    ) -> bool:
+        feed_timezone = self._archive_timezones.get(feed_id)
+        today = (
+            datetime.now(feed_timezone).date()
+            if feed_timezone is not None
+            else date.today()
+        )
+        return archive_date == today
 
     def cached_day(
         self,

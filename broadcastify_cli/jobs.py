@@ -233,12 +233,17 @@ class JobRunner:
                 )
             if turn.role == "completed":
                 downloaded_days.append((archive_date, list(turn.audio_files)))
+                completion_kind = (
+                    "rolling current-day snapshot"
+                    if turn.rolling
+                    else "LAN acquisition"
+                )
                 self.emit(
                     {
                         "type": "log",
                         "stage": "lan_queue",
                         "message": (
-                            f"Reused the completed LAN acquisition for {day_label} "
+                            f"Reused the completed {completion_kind} for {day_label} "
                             f"({len(turn.audio_files)} verified source blocks); "
                             "Broadcastify was not contacted for this day."
                         ),
