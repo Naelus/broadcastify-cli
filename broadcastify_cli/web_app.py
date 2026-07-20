@@ -31,6 +31,14 @@ from dotenv import dotenv_values
 from .analysis import PROMPT_VERSION, WEEKLY_PROMPT_VERSION
 from .area_watch import AREA_PROMPT_VERSION, _public_quote
 from .audio import select_incident_evidence_window
+from .lan_sync import (
+    LAN_PROTOCOL,
+    LanArchiveCatalog,
+    LanDiscoveryResponder,
+    LanSyncError,
+    normalize_peer_url,
+    normalize_peer_urls,
+)
 from .library import scan_local_library
 from .storage import AnalysisStore
 
@@ -185,6 +193,22 @@ def _processing_defaults(values: dict[str, str]) -> dict[str, Any]:
         if 1 <= batch_size <= 128:
             defaults["batch_size"] = batch_size
     return defaults if defaults.get("hardware_profile") else {}
+
+
+def _environment_flag(
+    values: dict[str, str],
+    name: str,
+    *,
+    default: bool = False,
+) -> bool:
+    raw = str(values.get(name) or "").strip().lower()
+    if not raw:
+        return default
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    return default
 
 
 def _apply_automatic_processing_defaults(
@@ -607,9 +631,12 @@ class JobManager:
             payload["output_dir"] = str(self.output_dir)
         if command == "run":
             # Broadcastify's numeric limit is unknown and shared. The browser UI
-            # deliberately keeps a single downloader and preserves source blocks.
+            # deliberately keeps a single downloader, preserves source blocks,
+            # and asks trusted-LAN peers before any website archive download.
             payload["download_jobs"] = 1
             payload["keep_originals"] = True
+            payload.setdefault("lan_sync_enabled", True)
+            payload.setdefault("lan_discovery_enabled", True)
             if payload.get("diarize"):
                 payload["combine"] = True
                 payload["transcribe"] = True
@@ -623,6 +650,8 @@ class JobManager:
             job_payload["output_dir"] = str(self.output_dir)
             job_payload["download_jobs"] = 1
             job_payload["keep_originals"] = True
+            job_payload.setdefault("lan_sync_enabled", True)
+            job_payload.setdefault("lan_discovery_enabled", True)
             if job_payload.get("diarize"):
                 job_payload["combine"] = True
                 job_payload["transcribe"] = True
@@ -641,6 +670,7 @@ class WebAppState:
     bind_host: str
     access_scope: str
     loopback_only: bool
+    lan_catalog: LanArchiveCatalog
 
 
 def _safe_media_path(state: WebAppState, relative_value: str) -> Path:
@@ -827,6 +857,19 @@ def create_server(
     work = Path(working_dir or Path.cwd()).resolve()
     static_dir = Path(__file__).with_name("web_static").resolve()
     token = secrets.token_urlsafe(32)
+    readiness_values, _environment_file = _readiness_environment(work)
+    lan_catalog = LanArchiveCatalog(
+        root,
+        enabled=_environment_flag(
+            readiness_values,
+            "BROADCASTIFY_LAN_SHARING",
+            default=False,
+        ),
+        sync_key=str(readiness_values.get("BROADCASTIFY_LAN_SYNC_KEY") or ""),
+        peer_urls=normalize_peer_urls(
+            readiness_values.get("BROADCASTIFY_LAN_PEERS"),
+        ),
+    )
     state = WebAppState(
         output_dir=root,
         database_path=database,
@@ -837,6 +880,7 @@ def create_server(
         bind_host=host,
         access_scope=access_scope,
         loopback_only=loopback_only,
+        lan_catalog=lan_catalog,
     )
 
     class Handler(BaseHTTPRequestHandler):
@@ -875,6 +919,60 @@ def create_server(
                     HTTPStatus.OK,
                     {"status": "ok", "scope": state.access_scope},
                 )
+                return
+            if parsed.path == "/api/lan/v1/info":
+                self._require_lan_access()
+                self._json(HTTPStatus.OK, state.lan_catalog.info())
+                return
+            if parsed.path == "/api/lan/v1/blocks":
+                self._require_lan_access()
+                query = parse_qs(parsed.query)
+                feed_id, archive_date = self._feed_date(query)
+                try:
+                    blocks = state.lan_catalog.inventory(feed_id, archive_date)
+                except LanSyncError as exc:
+                    raise WebRequestError(HTTPStatus.BAD_REQUEST, str(exc)) from exc
+                self._json(
+                    HTTPStatus.OK,
+                    {
+                        "protocol": LAN_PROTOCOL,
+                        "node_id": state.lan_catalog.node_id,
+                        "feed_id": feed_id,
+                        "archive_date": archive_date.isoformat(),
+                        "blocks": [block.to_dict() for block in blocks],
+                        "peers": list(state.lan_catalog.peer_urls),
+                    },
+                )
+                return
+            if parsed.path.startswith("/api/lan/v1/blocks/"):
+                self._require_lan_access()
+                parts = parsed.path.removeprefix("/api/lan/v1/blocks/").split("/")
+                if len(parts) != 3:
+                    raise WebRequestError(
+                        HTTPStatus.NOT_FOUND,
+                        "Archive block not found.",
+                    )
+                feed_id, date_value, filename = (unquote(value) for value in parts)
+                if not FEED_ID_PATTERN.fullmatch(feed_id):
+                    raise WebRequestError(
+                        HTTPStatus.BAD_REQUEST,
+                        "A numeric feed ID is required.",
+                    )
+                archive_date = self._date_value(date_value)
+                try:
+                    path, block = state.lan_catalog.resolve_block(
+                        feed_id,
+                        archive_date,
+                        filename,
+                    )
+                except FileNotFoundError:
+                    raise WebRequestError(
+                        HTTPStatus.NOT_FOUND,
+                        "Archive block not found.",
+                    ) from None
+                except LanSyncError as exc:
+                    raise WebRequestError(HTTPStatus.BAD_REQUEST, str(exc)) from exc
+                self._lan_block(path, block.sha256)
                 return
             if parsed.path == "/":
                 index_path = state.static_dir / "index.html"
@@ -926,6 +1024,19 @@ def create_server(
                             "processing_defaults": _processing_defaults(
                                 readiness_values
                             ),
+                            "lan_sync": {
+                                "sharing_enabled": state.lan_catalog.enabled,
+                                "key_required": bool(state.lan_catalog.sync_key),
+                                "configured_peer_count": len(
+                                    state.lan_catalog.peer_urls
+                                ),
+                                "discovery_available": (
+                                    state.lan_catalog.discovery_available
+                                ),
+                                "discovery_error": (
+                                    state.lan_catalog.discovery_error
+                                ),
+                            },
                             **_runtime_readiness(state),
                         },
                     },
@@ -1042,6 +1153,19 @@ def create_server(
             }
             if origin and origin not in expected_origins:
                 raise WebRequestError(HTTPStatus.FORBIDDEN, "Cross-origin local actions are blocked.")
+
+        def _require_lan_access(self) -> None:
+            if not state.lan_catalog.enabled:
+                raise WebRequestError(
+                    HTTPStatus.NOT_FOUND,
+                    "LAN archive sharing is not enabled on this app.",
+                )
+            supplied_key = self.headers.get("X-Radio-Archive-LAN-Key", "")
+            if not state.lan_catalog.authorized(supplied_key):
+                raise WebRequestError(
+                    HTTPStatus.FORBIDDEN,
+                    "The LAN archive key is missing or invalid.",
+                )
 
         def _body(self) -> dict[str, Any]:
             content_type = self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
@@ -1164,6 +1288,21 @@ def create_server(
                     self.wfile.write(chunk)
                     remaining -= len(chunk)
 
+        def _lan_block(self, path: Path, sha256: str) -> None:
+            size = path.stat().st_size
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", "audio/mpeg")
+            self.send_header("Content-Length", str(size))
+            self.send_header("X-Radio-Archive-Protocol", LAN_PROTOCOL)
+            self.send_header("X-Radio-Archive-SHA256", sha256)
+            self.send_header("Cache-Control", "private, no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Cross-Origin-Resource-Policy", "same-origin")
+            self.end_headers()
+            with path.open("rb") as handle:
+                for chunk in iter(lambda: handle.read(256 * 1024), b""):
+                    self.wfile.write(chunk)
+
     class LocalThreadingHTTPServer(ThreadingHTTPServer):
         address_family = (
             socket.AF_INET6
@@ -1172,9 +1311,50 @@ def create_server(
         )
         daemon_threads = True
 
+        def server_close(self) -> None:
+            responder = getattr(self, "lan_discovery", None)
+            if responder is not None:
+                responder.close()
+            super().server_close()
+
     server = LocalThreadingHTTPServer((host, port), Handler)
     server.state = state  # type: ignore[attr-defined]
     server.quiet = False  # type: ignore[attr-defined]
+    server.lan_discovery = None  # type: ignore[attr-defined]
+    if state.lan_catalog.enabled and _environment_flag(
+        readiness_values,
+        "BROADCASTIFY_LAN_DISCOVERY_ENABLED",
+        default=True,
+    ):
+        configured_advertisement = str(
+            readiness_values.get("BROADCASTIFY_LAN_ADVERTISE_URL") or ""
+        ).strip()
+        if configured_advertisement:
+            configured_advertisement = normalize_peer_url(
+                configured_advertisement
+            )
+
+        def advertised_url(remote_address: str) -> str:
+            if configured_advertisement:
+                return configured_advertisement
+            if host not in {"0.0.0.0", "::", "localhost"}:
+                return format_web_url(host, server.server_port).rstrip("/")
+            if host == "localhost" or bind_is_loopback(host):
+                return format_web_url("127.0.0.1", server.server_port).rstrip("/")
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as route:
+                route.connect((remote_address, 9))
+                local_address = str(route.getsockname()[0])
+            return format_web_url(
+                local_address,
+                server.server_port,
+            ).rstrip("/")
+
+        responder = LanDiscoveryResponder(
+            state.lan_catalog,
+            advertised_url,
+        )
+        responder.start()
+        server.lan_discovery = responder  # type: ignore[attr-defined]
     return server
 
 

@@ -69,6 +69,7 @@ dev = [
 broadcastify-cli = "broadcastify_cli.broadcastify_cli:cli"
 broadcastify-analysis = "broadcastify_cli.analysis_cli:cli"
 broadcastify-web = "broadcastify_cli.web_app:main"
+radio-archive-lan-node = "broadcastify_cli.lan_node:main"
 radio-archive-service = "broadcastify_cli.linux_service:main"
 
 [project.urls]

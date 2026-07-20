@@ -251,6 +251,15 @@
                 <div class="notice" id="asrSelfTestNotice"><strong>Not tested this session</strong><span>The engine check decodes generated silence and may download a managed model. It proves local execution, not radio-word accuracy.</span></div>
                 <div class="notice" id="diarizationSelfTestNotice"><strong>Speakers not tested this session</strong><span>The explicit test runs the selected local engine on generated audio. A first explicit test may download its pinned model.</span></div>
               </div>
+              <div class="card padded">
+                <div class="section-heading"><div><h2>Trusted-LAN archive reuse</h2><p>Copy missing original source blocks from nearby app instances before using Broadcastify download quota.</p></div></div>
+                <div class="form-stack">
+                  <label class="check-row"><input id="settingLanSyncEnabled" type="checkbox" checked><span><strong>Reuse archive blocks from trusted-LAN peers</strong><small>Only the requested feed and dates are queried. Transcripts, summaries, credentials, and combined files are never copied.</small></span></label>
+                  <label class="check-row"><input id="settingLanDiscoveryEnabled" type="checkbox" checked><span><strong>Find peers automatically on this LAN</strong><small>Uses a one-hop discovery probe. Explicit peers below remain the reliable fallback across container or firewall boundaries.</small></span></label>
+                  <label><span>Optional peer app URLs</span><textarea id="settingLanPeerUrls" rows="3" placeholder="http://10.0.0.25:8765"></textarea><small>One numeric private-address app URL per line, or separate URLs with commas. A shared key, when used, stays in .env.</small></label>
+                </div>
+                <div class="notice" id="lanSyncNotice"><strong>Checking LAN sharing</strong><span>Loading this app instance’s peer status.</span></div>
+              </div>
             </div>
           </section>
           <section class="settings-panel" id="settingsPanelAnalysis" role="tabpanel" aria-labelledby="settingsTabAnalysis" data-settings-panel="analysis" hidden>
@@ -304,6 +313,6 @@
   </aside>
 
   <div class="toast-region" id="toastRegion" aria-live="polite"></div>
-  <script src="/static/app.js?v=28" defer></script>
+  <script src="/static/app.js?v=29" defer></script>
 </body>
 </html>

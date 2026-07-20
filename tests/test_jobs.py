@@ -4,6 +4,7 @@ from pathlib import Path
 from broadcastify_cli.jobs import JobRunner
 from broadcastify_cli.broadcastify import DownloadLimitExceeded
 from broadcastify_cli.models import JobRequest
+from broadcastify_cli.lan_sync import LanSyncResult
 
 
 class FakeClient:
@@ -123,3 +124,60 @@ def test_quota_stops_new_requests_but_keeps_complete_cached_days(tmp_path: Path)
     assert f"download:{third_day}" not in calls
     assert f"cache:{third_day}" in calls
     assert "Completed 2/3 requested days" in str(events[-1]["message"])
+
+
+def test_lan_source_reuse_runs_before_any_broadcastify_request(
+    tmp_path: Path,
+) -> None:
+    calls: list[str] = []
+    archive_date = date(2026, 7, 12)
+
+    class FakeLanSync:
+        enabled = True
+
+        def sync_day(
+            self,
+            output_dir: Path,
+            feed_id: str,
+            requested_date: date,
+            **_kwargs: object,
+        ) -> LanSyncResult:
+            calls.append("lan")
+            day = output_dir / feed_id / requested_date.strftime("%Y%m%d")
+            day.mkdir(parents=True)
+            (day / "202607120000-123456-90001.mp3").write_bytes(b"peer audio")
+            return LanSyncResult(enabled=True, peers_reached=1, blocks_copied=1)
+
+    class OrderedClient:
+        def authenticate(self) -> None:
+            calls.append("authenticate")
+
+        def download_day(
+            self,
+            feed_id: str,
+            requested_date: date,
+            output_dir: Path,
+            **_kwargs: object,
+        ) -> list[Path]:
+            calls.append("website")
+            return sorted(
+                (output_dir / feed_id / requested_date.strftime("%Y%m%d")).glob(
+                    "*.mp3"
+                )
+            )
+
+    request = JobRequest(
+        feed_id="90001",
+        start_date=archive_date,
+        end_date=archive_date,
+        output_dir=tmp_path,
+        lan_sync_enabled=True,
+    )
+    result = JobRunner(
+        request,
+        client=OrderedClient(),  # type: ignore[arg-type]
+        lan_sync=FakeLanSync(),  # type: ignore[arg-type]
+    ).run()
+
+    assert calls == ["lan", "authenticate", "website"]
+    assert result["lan_sync"]["blocks_copied"] == 1

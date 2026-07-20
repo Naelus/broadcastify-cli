@@ -32,6 +32,9 @@ PERSISTED_JOB_FIELDS = {
     "batch_size",
     "min_speakers",
     "max_speakers",
+    "lan_sync_enabled",
+    "lan_discovery_enabled",
+    "lan_peer_urls",
 }
 
 

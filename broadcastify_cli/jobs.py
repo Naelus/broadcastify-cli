@@ -7,6 +7,7 @@ from typing import Any
 
 from .audio import combine_mp3_files
 from .broadcastify import BroadcastifyClient, DownloadLimitExceeded
+from .lan_sync import LanArchiveSyncClient, LanSyncResult
 from .models import JobRequest
 from .transcription import LocalTranscriber
 
@@ -20,17 +21,121 @@ class JobRunner:
         request: JobRequest,
         emit: EventCallback | None = None,
         client: BroadcastifyClient | None = None,
+        lan_sync: LanArchiveSyncClient | None = None,
     ) -> None:
         request.validate()
         self.request = request
         self.emit = emit or (lambda _: None)
         self.client = client or BroadcastifyClient()
+        self.lan_sync = lan_sync or LanArchiveSyncClient.from_settings(
+            enabled=request.lan_sync_enabled,
+            peer_urls=request.lan_peer_urls,
+            discovery_enabled=request.lan_discovery_enabled,
+        )
 
     def run(self) -> dict[str, Any]:
+        dates = list(self.request.dates())
+        lan_results: dict[str, LanSyncResult] = {}
+        if self.lan_sync.enabled:
+            self.emit(
+                {
+                    "type": "stage",
+                    "stage": "lan_sync",
+                    "message": (
+                        "Checking the trusted LAN for retained archive blocks "
+                        "before contacting Broadcastify"
+                    ),
+                }
+            )
+            for day_number, archive_date in enumerate(dates, start=1):
+                day_label = archive_date.isoformat()
+
+                def lan_progress(message: str) -> None:
+                    self.emit(
+                        {
+                            "type": "progress",
+                            "stage": "lan_sync",
+                            "current": day_number,
+                            "total": len(dates),
+                            "message": message,
+                        }
+                    )
+
+                try:
+                    sync_result = self.lan_sync.sync_day(
+                        self.request.output_dir,
+                        self.request.feed_id,
+                        archive_date,
+                        progress=lan_progress,
+                    )
+                except Exception as exc:
+                    sync_result = LanSyncResult(
+                        enabled=True,
+                        failures=(str(exc),),
+                    )
+                lan_results[day_label] = sync_result
+            copied = sum(value.blocks_copied for value in lan_results.values())
+            copied_bytes = sum(value.bytes_copied for value in lan_results.values())
+            failures = [
+                failure
+                for value in lan_results.values()
+                for failure in value.failures
+            ]
+            reached = max(
+                (value.peers_reached for value in lan_results.values()),
+                default=0,
+            )
+            if copied:
+                self.emit(
+                    {
+                        "type": "log",
+                        "stage": "lan_sync",
+                        "message": (
+                            f"LAN archive reuse supplied {copied} source block"
+                            f"{'s' if copied != 1 else ''} "
+                            f"({copied_bytes / (1024 * 1024):.1f} MiB). "
+                            "Those blocks will not consume Broadcastify download quota."
+                        ),
+                    }
+                )
+            elif reached:
+                self.emit(
+                    {
+                        "type": "log",
+                        "stage": "lan_sync",
+                        "message": (
+                            "Trusted-LAN peers were reachable, but they had no missing "
+                            "source blocks for this request."
+                        ),
+                    }
+                )
+            else:
+                self.emit(
+                    {
+                        "type": "log",
+                        "stage": "lan_sync",
+                        "message": (
+                            "No trusted-LAN archive peer answered; continuing with the "
+                            "local cache and quota-safe website fallback."
+                        ),
+                    }
+                )
+            if failures:
+                self.emit(
+                    {
+                        "type": "log",
+                        "stage": "lan_sync",
+                        "message": (
+                            f"LAN reuse reported {len(failures)} peer warning"
+                            f"{'s' if len(failures) != 1 else ''}; website fallback "
+                            f"remains available. First warning: {failures[0]}"
+                        ),
+                    }
+                )
+
         self.emit({"type": "log", "message": "Authenticating with Broadcastify..."})
         self.client.authenticate()
 
-        dates = list(self.request.dates())
         downloaded_days: list[tuple[Any, list[Path]]] = []
         quota_message: str | None = None
         for day_number, archive_date in enumerate(dates, start=1):
@@ -224,6 +329,18 @@ class JobRunner:
                 for value in dates
                 if value not in {day for day, _files in downloaded_days}
             ],
+            "lan_sync": {
+                "enabled": self.lan_sync.enabled,
+                "blocks_copied": sum(
+                    value.blocks_copied for value in lan_results.values()
+                ),
+                "bytes_copied": sum(
+                    value.bytes_copied for value in lan_results.values()
+                ),
+                "days": {
+                    day: value.to_dict() for day, value in lan_results.items()
+                },
+            },
         }
         if quota_message is None:
             message = "All operations completed."

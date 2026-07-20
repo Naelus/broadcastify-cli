@@ -131,6 +131,24 @@ def search(query: str) -> None:
 @click.option("--batch-size", type=click.IntRange(min=1, max=64), default=8, show_default=True)
 @click.option("--min-speakers", type=click.IntRange(min=1), help="Minimum diarization speakers")
 @click.option("--max-speakers", type=click.IntRange(min=1), help="Maximum diarization speakers")
+@click.option(
+    "--lan-sync/--no-lan-sync",
+    default=True,
+    show_default=True,
+    help="Reuse retained source blocks from trusted-LAN peers before website downloads",
+)
+@click.option(
+    "--lan-discovery/--no-lan-discovery",
+    default=True,
+    show_default=True,
+    help="Discover trusted-LAN archive peers automatically",
+)
+@click.option(
+    "--lan-peer",
+    "lan_peer_urls",
+    multiple=True,
+    help="Explicit private-address peer app URL; may be repeated",
+)
 @click.option("--output-dir", "-o", type=click.Path(path_type=Path, file_okay=False), default=Path("archives"), show_default=True)
 def download(
     feed_id: str,
@@ -153,6 +171,9 @@ def download(
     batch_size: int,
     min_speakers: int | None,
     max_speakers: int | None,
+    lan_sync: bool,
+    lan_discovery: bool,
+    lan_peer_urls: tuple[str, ...],
     output_dir: Path,
 ) -> None:
     today = dt.date.today()
@@ -188,6 +209,9 @@ def download(
         batch_size=batch_size,
         min_speakers=min_speakers,
         max_speakers=max_speakers,
+        lan_sync_enabled=lan_sync,
+        lan_discovery_enabled=lan_discovery,
+        lan_peer_urls=lan_peer_urls,
     )
 
     def show_event(event: dict[str, object]) -> None:

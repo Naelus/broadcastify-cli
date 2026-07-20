@@ -5,6 +5,7 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Any, Iterator
 
+from .lan_sync import normalize_peer_urls
 from .portable_diarization import (
     COMMUNITY_DIARIZATION_ENGINE,
     normalize_diarization_engine,
@@ -49,6 +50,9 @@ class JobRequest:
     min_speakers: int | None = None
     max_speakers: int | None = None
     huggingface_token: str | None = None
+    lan_sync_enabled: bool = False
+    lan_discovery_enabled: bool = True
+    lan_peer_urls: tuple[str, ...] = ()
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "JobRequest":
@@ -96,6 +100,11 @@ class JobRequest:
                 if value.get("huggingface_token")
                 else None
             ),
+            lan_sync_enabled=bool(value.get("lan_sync_enabled", False)),
+            lan_discovery_enabled=bool(
+                value.get("lan_discovery_enabled", True)
+            ),
+            lan_peer_urls=normalize_peer_urls(value.get("lan_peer_urls")),
         )
         request.validate()
         return request
@@ -163,6 +172,7 @@ class JobRequest:
             and self.min_speakers > self.max_speakers
         ):
             raise ValueError("Minimum speakers cannot exceed maximum speakers.")
+        normalize_peer_urls(self.lan_peer_urls)
 
     def dates(self) -> Iterator[date]:
         current = self.start_date

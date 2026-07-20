@@ -25,6 +25,9 @@ const DEFAULT_SETTINGS = {
   apiKeyEnvironment: "OPENAI_API_KEY",
   codexPath: "",
   allowExternal: false,
+  lanSyncEnabled: true,
+  lanDiscoveryEnabled: true,
+  lanPeerUrls: "",
 };
 
 const SETTINGS_SECTIONS = {
@@ -111,6 +114,9 @@ function readSettingsForm() {
     apiKeyEnvironment: byId("settingApiKeyEnvironment").value.trim() || "OPENAI_API_KEY",
     codexPath: byId("settingCodexPath").value.trim(),
     allowExternal: byId("settingAllowExternal").checked,
+    lanSyncEnabled: byId("settingLanSyncEnabled").checked,
+    lanDiscoveryEnabled: byId("settingLanDiscoveryEnabled").checked,
+    lanPeerUrls: byId("settingLanPeerUrls").value.trim(),
   };
   updateHardwareProfileDescription();
   updateProviderNotice();
@@ -142,6 +148,9 @@ function applySettingsForm() {
   byId("settingApiKeyEnvironment").value = state.settings.apiKeyEnvironment;
   byId("settingCodexPath").value = state.settings.codexPath;
   byId("settingAllowExternal").checked = Boolean(state.settings.allowExternal);
+  byId("settingLanSyncEnabled").checked = Boolean(state.settings.lanSyncEnabled);
+  byId("settingLanDiscoveryEnabled").checked = Boolean(state.settings.lanDiscoveryEnabled);
+  byId("settingLanPeerUrls").value = state.settings.lanPeerUrls;
   updateHardwareProfileDescription();
   updateProviderNotice();
   updateAsrModelPreparationUi();
@@ -301,6 +310,12 @@ function processingPayload() {
     diarization_device: state.settings.diarizationDevice,
     batch_size: state.settings.batchSize,
     huggingface_token: huggingFaceToken || undefined,
+    lan_sync_enabled: Boolean(state.settings.lanSyncEnabled),
+    lan_discovery_enabled: Boolean(state.settings.lanDiscoveryEnabled),
+    lan_peer_urls: state.settings.lanPeerUrls
+      .split(/[\s,;]+/)
+      .map((value) => value.trim())
+      .filter(Boolean),
   };
 }
 
@@ -703,6 +718,18 @@ function renderRuntime() {
     ["Evidence database", runtime.database_path || ""],
     ["Default behavior", runtime.platform === "Windows" ? "Tested Windows automatic profile" : "Portable automatic detection"],
   ].map(([label, value]) => `<div class="runtime-fact"><span>${html(label)}</span><strong>${html(value)}</strong></div>`).join("");
+  const lan = runtime.lan_sync || {};
+  const lanNotice = byId("lanSyncNotice");
+  if (lanNotice) {
+    const serving = Boolean(lan.sharing_enabled);
+    lanNotice.className = `notice ${serving ? "success" : ""}`.trim();
+    lanNotice.querySelector("strong").textContent = serving
+      ? "This app is a LAN archive peer"
+      : "LAN reuse is client-side only here";
+    lanNotice.querySelector("span").textContent = serving
+      ? `Original source blocks are available to trusted-LAN clients${lan.key_required ? " that have the shared key" : ""}. ${lan.discovery_available ? "Automatic discovery is active." : "Use this app URL as an explicit peer."}`
+      : "This client can still reuse blocks from discovered or configured peers. Serving local blocks requires BROADCASTIFY_LAN_SHARING=true when the app starts.";
+  }
   renderHardwareProfiles();
   renderSetupReadiness();
 }

@@ -127,7 +127,7 @@ def test_loopback_web_app_serves_library_transcript_and_media(tmp_path: Path) ->
         assert cookie.startswith("radio_archive_session=")
         assert token_match is not None
         assert b'id="areaPublicSafetyOnly"' in body
-        assert b'/static/app.js?v=28' in body
+        assert b'/static/app.js?v=29' in body
         assert b'id="accessScopeStatus"' in body
         assert b'value="qwen3-asr"' in body
         assert b'qwen3-asr-0.6b-int8' in body
@@ -139,6 +139,9 @@ def test_loopback_web_app_serves_library_transcript_and_media(tmp_path: Path) ->
         assert b'id="profileSelfTestNotice"' in body
         assert b'id="settingsSectionTabs"' in body
         assert b'data-settings-panel="processing"' in body
+        assert b'id="settingLanSyncEnabled"' in body
+        assert b'id="settingLanDiscoveryEnabled"' in body
+        assert b'id="settingLanPeerUrls"' in body
         assert b'role="tabpanel"' in body
         assert b'/static/favicon.svg' in body
         token = token_match.group(1).decode()
@@ -148,7 +151,7 @@ def test_loopback_web_app_serves_library_transcript_and_media(tmp_path: Path) ->
         assert response.getheader("Content-Type") == "image/svg+xml"
         assert b"<svg" in body
 
-        response, body = _request(connection, "GET", "/static/app.js?v=27")
+        response, body = _request(connection, "GET", "/static/app.js?v=29")
         assert response.status == 200
         assert b"areaSelectedStoryIndex" in body
         assert b"data-area-story-index" in body
@@ -185,6 +188,8 @@ def test_loopback_web_app_serves_library_transcript_and_media(tmp_path: Path) ->
         assert b'window.addEventListener("hashchange", setViewFromLocation)' in body
         assert b'radioArchiveSettingsSection' in body
         assert b'setSettingsSection("processing")' in body
+        assert b"lan_sync_enabled: Boolean(state.settings.lanSyncEnabled)" in body
+        assert b"lan_peer_urls: state.settings.lanPeerUrls" in body
 
         response, body = _request(connection, "GET", "/static/app.css?v=20")
         assert response.status == 200
@@ -203,6 +208,7 @@ def test_loopback_web_app_serves_library_transcript_and_media(tmp_path: Path) ->
         assert bootstrap["runtime"]["processing_defaults"] == {}
         assert bootstrap["runtime"]["storage_ready"] is True
         assert isinstance(bootstrap["runtime"]["account"]["configured"], bool)
+        assert bootstrap["runtime"]["lan_sync"]["sharing_enabled"] is False
 
         response, body = _request(
             connection,
@@ -408,6 +414,8 @@ def test_web_jobs_force_quota_safe_archive_defaults(tmp_path: Path) -> None:
     assert payload["combine"] is True
     assert payload["transcribe"] is True
     assert payload["output_dir"] == str(tmp_path)
+    assert payload["lan_sync_enabled"] is True
+    assert payload["lan_discovery_enabled"] is True
 
 
 def test_web_jobs_resolve_automatic_against_the_installed_deployment(
@@ -501,6 +509,8 @@ def test_web_area_jobs_force_the_same_quota_boundary(tmp_path: Path) -> None:
     assert payload["job"]["combine"] is True
     assert payload["job"]["transcribe"] is True
     assert payload["job"]["output_dir"] == str(tmp_path)
+    assert payload["job"]["lan_sync_enabled"] is True
+    assert payload["job"]["lan_discovery_enabled"] is True
 
 
 def test_web_area_story_packages_use_safe_media_urls_without_local_paths(
