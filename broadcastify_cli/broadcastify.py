@@ -640,34 +640,61 @@ class BroadcastifyClient:
         failures: list[str] = []
         failure_keys: set[tuple[type[Exception], str]] = set()
         limit_failure: DownloadLimitExceeded | None = None
+
+        def was_cached(archive_id: str) -> bool:
+            return self._existing_archive(
+                day_dir,
+                feed_id,
+                archive_id,
+                self._archive_filename_prefixes.get(archive_id),
+            ) is not None
+
+        def ready_message(
+            path: Path,
+            *,
+            cached: bool,
+            current: int,
+            total: int,
+            refreshed: bool = False,
+        ) -> str:
+            source = "cached locally" if cached else "downloaded from Broadcastify"
+            suffix = " (current-day refresh)" if refreshed else ""
+            return f"Ready {current}/{total} — {source}: {path.name}{suffix}"
+
         for priority_index, archive_id in enumerate(priority_ids):
-            downloaded.append(
-                self.download_archive(
-                    feed_id,
-                    archive_date,
-                    archive_id,
-                    day_dir,
-                    allow_reauthenticate=priority_index == 0,
-                    throttle=throttle,
-                    notice=retry_notice,
-                    admit_download=admit_download,
-                )
+            cached = was_cached(archive_id)
+            path = self.download_archive(
+                feed_id,
+                archive_date,
+                archive_id,
+                day_dir,
+                allow_reauthenticate=priority_index == 0,
+                throttle=throttle,
+                notice=retry_notice,
+                admit_download=admit_download,
             )
+            downloaded.append(path)
             successful += 1
             if progress:
                 progress(
                     successful,
                     len(archive_ids),
-                    f"Ready {successful}/{len(archive_ids)} "
-                    "(cached or downloaded)",
+                    ready_message(
+                        path,
+                        cached=cached,
+                        current=successful,
+                        total=len(archive_ids),
+                    ),
                 )
 
         remaining_ids = archive_ids[len(priority_ids) :]
         if remaining_ids:
             workers = max(1, min(jobs, len(remaining_ids)))
             with ThreadPoolExecutor(max_workers=workers) as executor:
-                futures = {
-                    executor.submit(
+                futures = {}
+                for archive_id in remaining_ids:
+                    cached = was_cached(archive_id)
+                    future = executor.submit(
                         self.download_archive,
                         feed_id,
                         archive_date,
@@ -677,21 +704,25 @@ class BroadcastifyClient:
                         throttle,
                         retry_notice,
                         admit_download,
-                    ): archive_id
-                    for archive_id in remaining_ids
-                }
+                    )
+                    futures[future] = (archive_id, cached)
                 for future in as_completed(futures):
-                    archive_id = futures[future]
+                    archive_id, cached = futures[future]
                     try:
-                        downloaded.append(future.result())
+                        path = future.result()
+                        downloaded.append(path)
                         with progress_lock:
                             successful += 1
                             if progress:
                                 progress(
                                     successful,
                                     len(archive_ids),
-                                    f"Ready {successful}/{len(archive_ids)} "
-                                    "(cached or downloaded)",
+                                    ready_message(
+                                        path,
+                                        cached=cached,
+                                        current=successful,
+                                        total=len(archive_ids),
+                                    ),
                                 )
                     except Exception as exc:  # reported after active work drains
                         if isinstance(exc, DownloadLimitExceeded):
@@ -733,25 +764,30 @@ class BroadcastifyClient:
             ]
             refreshed_total = len(archive_ids) + len(new_ids)
             for archive_id in new_ids:
-                downloaded.append(
-                    self.download_archive(
-                        feed_id,
-                        archive_date,
-                        archive_id,
-                        day_dir,
-                        allow_reauthenticate=False,
-                        throttle=throttle,
-                        notice=retry_notice,
-                        admit_download=admit_download,
-                    )
+                cached = was_cached(archive_id)
+                path = self.download_archive(
+                    feed_id,
+                    archive_date,
+                    archive_id,
+                    day_dir,
+                    allow_reauthenticate=False,
+                    throttle=throttle,
+                    notice=retry_notice,
+                    admit_download=admit_download,
                 )
+                downloaded.append(path)
                 successful += 1
                 if progress:
                     progress(
                         successful,
                         refreshed_total,
-                        f"Ready {successful}/{refreshed_total} "
-                        "(current-day listing refreshed)",
+                        ready_message(
+                            path,
+                            cached=cached,
+                            current=successful,
+                            total=refreshed_total,
+                            refreshed=True,
+                        ),
                     )
         return sorted(downloaded)
 

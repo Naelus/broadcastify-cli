@@ -270,6 +270,47 @@ def test_download_day_deduplicates_shared_quota_failure(tmp_path: Path) -> None:
     assert str(raised.value).count("archive quota exhausted") == 1
 
 
+def test_download_day_progress_distinguishes_cache_from_website_download(
+    tmp_path: Path,
+) -> None:
+    client = BroadcastifyClient(download_request_interval=0)
+    client.authenticate = lambda force=False: None  # type: ignore[method-assign]
+    client.get_archive_ids = lambda feed_id, archive_date: [  # type: ignore[method-assign]
+        "cached",
+        "fresh",
+    ]
+    day_dir = tmp_path / "90001" / "20260712"
+    day_dir.mkdir(parents=True)
+    (day_dir / "cached.mp3").write_bytes(b"cached audio")
+
+    def fake_download(
+        feed_id: str,
+        archive_date: date,
+        archive_id: str,
+        target: Path,
+        *_: object,
+        **__: object,
+    ) -> Path:
+        result = target / f"{archive_id}.mp3"
+        if not result.exists():
+            result.write_bytes(b"downloaded audio")
+        return result
+
+    client.download_archive = fake_download  # type: ignore[method-assign]
+    messages: list[str] = []
+
+    client.download_day(
+        "90001",
+        date(2026, 7, 12),
+        tmp_path,
+        progress=lambda _current, _total, message: messages.append(message),
+    )
+
+    assert "Ready 1/2 — cached locally: cached.mp3" in messages
+    assert "Ready 2/2 — downloaded from Broadcastify: fresh.mp3" in messages
+    assert not any("cached or downloaded" in message for message in messages)
+
+
 def test_download_day_acquires_current_and_previous_before_older_backlog(
     tmp_path: Path,
 ) -> None:

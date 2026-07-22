@@ -1360,9 +1360,9 @@ class LanArchiveSyncClient:
                     copied_from_peer = True
                     if progress:
                         progress(
-                            f"Copied {copied} missing archive block"
-                            f"{'s' if copied != 1 else ''} from the LAN "
-                            f"({copied_bytes / (1024 * 1024):.1f} MiB)."
+                            f"Copied archive block {filename} from LAN peer "
+                            f"({copied} copied, "
+                            f"{copied_bytes / (1024 * 1024):.1f} MiB total)."
                         )
                     break
                 except (LanSyncError, requests.RequestException, OSError) as exc:
