@@ -2,6 +2,28 @@
 
 This is the dated verification and delivery log for `GOAL.md`. Keep forward-looking capabilities in `FEATURES.md` and unresolved defects in `BUGS.md`.
 
+## July 22, 2026
+
+### Preserve cited names in private-use analysis
+
+- Traced name masking to the derived incident/report policy rather than
+  transcription or diarization. All **36 retained transcript JSON files** were
+  scanned and none contained `[private person]`, `[phone redacted]`, or
+  `[identifier redacted]`; the original ASR, word/segment timing, anonymous
+  speaker labels, combined recordings, and archive blocks were not altered.
+- Incident extraction now asks the model to preserve explicitly spoken names
+  supported by cited evidence and explicitly forbids guessed, corrected, or
+  normalized identities. Post-validation, exact-clip quotes, native/Web day
+  reports, daily and weekly summaries, Q&A, and regional story leads follow the
+  same private-use contract. Phone numbers, dates of birth, email addresses,
+  and long numeric identifiers remain masked in derived/display text.
+- Advanced the incident window, saved-day, weekly, and area prompt contracts so
+  older name-omitting incidents and briefs cannot appear current. Local
+  reanalysis reuses the existing transcript and diarization caches and makes no
+  Broadcastify request. The complete suite passed **278 tests in 16.85
+  seconds**, Python compilation passed, and the WinUI Release build completed
+  with **0 warnings and 0 errors**.
+
 ## July 20, 2026
 
 ### Safe refresh of an already combined day

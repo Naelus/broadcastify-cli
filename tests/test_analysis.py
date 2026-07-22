@@ -470,7 +470,8 @@ def test_clear_evidence_corrects_category_and_routine_priority() -> None:
 
 def test_public_text_redacts_contextual_private_names_and_identifiers() -> None:
     text, changed = redact_public_text(
-        "Trouble with Logan Spangler; caller 309-555-0123, DOB 1/2/1980."
+        "Trouble with Logan Spangler; caller 309-555-0123, DOB 1/2/1980.",
+        redact_private_names=True,
     )
 
     assert changed is True
@@ -481,7 +482,8 @@ def test_public_text_redacts_contextual_private_names_and_identifiers() -> None:
 
     radio_text, radio_changed = redact_public_text(
         "Collar, Nick Schieber. Latina Johnson, black female, "
-        "date of birth 3, 2587."
+        "date of birth 3, 2587.",
+        redact_private_names=True,
     )
     assert radio_changed is True
     assert "Nick Schieber" not in radio_text
@@ -489,13 +491,14 @@ def test_public_text_redacts_contextual_private_names_and_identifiers() -> None:
     assert "2587" not in radio_text
 
     single_name, single_changed = redact_public_text(
-        "Amiel was threatening to come to the location."
+        "Amiel was threatening to come to the location.",
+        redact_private_names=True,
     )
     assert single_changed is True
     assert "Amiel" not in single_name
 
 
-def test_incident_validation_redacts_names_from_public_fields_but_keeps_evidence() -> None:
+def test_incident_validation_preserves_spoken_names_and_keeps_evidence() -> None:
     incident = IncidentAnalyzer._validate_incident(  # noqa: SLF001
         {
             "event_type": "trespassing",
@@ -521,10 +524,21 @@ def test_incident_validation_redacts_names_from_public_fields_but_keeps_evidence
 
     assert incident is not None
     assert incident["event_type"] == "trespassing"
-    assert "Logan Spangler" not in incident["title"]
-    assert "Logan Spangler" not in incident["summary"]
-    assert incident["attributes"]["subject_name"] == "[private person]"
+    assert "Logan Spangler" in incident["title"]
+    assert "Logan Spangler" in incident["summary"]
+    assert incident["attributes"]["subject_name"] == "Logan Spangler"
     assert "Logan Spangler" in incident["evidence"][0]["text"]
+
+
+def test_public_text_preserves_names_by_default_but_masks_high_risk_identifiers() -> None:
+    text, changed = redact_public_text(
+        "Trouble with Logan Spangler; caller 309-555-0123, DOB 1/2/1980."
+    )
+
+    assert changed is True
+    assert "Logan Spangler" in text
+    assert "309-555-0123" not in text
+    assert "1/2/1980" not in text
 
 
 def test_incident_validation_caps_medical_priority_and_removes_uncertain_welfare_suffix() -> None:

@@ -221,9 +221,9 @@ def test_loopback_web_app_serves_library_transcript_and_media(tmp_path: Path) ->
         assert detail["summary"] == "One retained dispatch call."
         assert detail["audio_url"].startswith("/media?path=")
         assert len(detail["incidents"]) == 1
-        assert detail["incidents"][0]["quote_redacted"] is True
+        assert detail["incidents"][0]["quote_redacted"] is False
         assert detail["incidents"][0]["quote"] == (
-            "Check the welfare of [private person] at the retained location."
+            "Check the welfare of Jordan Example at the retained location."
         )
 
         response, body = _request(
@@ -540,8 +540,8 @@ def test_web_area_story_packages_use_safe_media_urls_without_local_paths(
 
     assert reference["media_url"] == "/media?path=90001/20260716/evidence-clips/I694.mp3"
     assert reference["filename"] == "I694.mp3"
-    assert reference["quote"] == "9805, [private person], and for a theft report."
-    assert reference["quote_redacted"] is True
+    assert reference["quote"] == "9805, Jordan Example, and for a theft report."
+    assert reference["quote_redacted"] is False
     assert "clip_path" not in reference
     assert "source_audio_path" not in reference
     assert "Jordan Example" in stories[0]["incident_references"][0]["quote"]

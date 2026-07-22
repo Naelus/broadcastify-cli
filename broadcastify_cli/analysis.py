@@ -26,12 +26,12 @@ LEGACY_LLM_MODELS = {
     "ggml-org/gemma-4-12B-it-GGUF:Q4_K_M": DEFAULT_LLM_MODEL,
 }
 DEFAULT_EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"
-PROMPT_VERSION = "police-radio-events-v10-critical-phrase-recall"
+PROMPT_VERSION = "police-radio-events-v11-preserve-spoken-names"
 # The v10 evidence policy adds a deterministic, quote-backed recall pass after
 # the model. Its LLM window prompt is intentionally unchanged, so exact v9
 # window checkpoints remain reusable while saved incidents/summaries advance.
-WINDOW_PROMPT_VERSION = "police-radio-events-v9"
-WEEKLY_PROMPT_VERSION = "police-radio-weekly-v3-evidence-v10"
+WINDOW_PROMPT_VERSION = "police-radio-events-window-v10-preserve-spoken-names"
+WEEKLY_PROMPT_VERSION = "police-radio-weekly-v4-preserve-spoken-names"
 EVENT_TYPES = {
     "shots_fired",
     "fire",
@@ -350,22 +350,26 @@ def redact_public_text(
     value: object,
     *,
     additional_private_names: Iterable[str] = (),
+    redact_private_names: bool = False,
 ) -> tuple[str, bool]:
-    """Redact obvious identifiers from model output or displayed ASR text."""
+    """Redact high-risk identifiers, with private-name masking opt-in."""
 
     text = re.sub(r"\s+", " ", str(value or "")).strip()
     original = text
-    names = set(private_person_names(text))
-    names.update(
-        str(name).strip() for name in additional_private_names if str(name).strip()
-    )
-    for name in sorted(names, key=lambda item: (-len(item), item.lower())):
-        text = re.sub(
-            rf"(?<![A-Za-z]){re.escape(name)}(?![A-Za-z])",
-            "[private person]",
-            text,
-            flags=re.I,
+    if redact_private_names:
+        names = set(private_person_names(text))
+        names.update(
+            str(name).strip()
+            for name in additional_private_names
+            if str(name).strip()
         )
+        for name in sorted(names, key=lambda item: (-len(item), item.lower())):
+            text = re.sub(
+                rf"(?<![A-Za-z]){re.escape(name)}(?![A-Za-z])",
+                "[private person]",
+                text,
+                flags=re.I,
+            )
     text = re.sub(
         r"\b(?:DOB|date of birth)\s*:?\s*"
         r"(?:\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d[\d\s,./-]{2,20})",
@@ -393,11 +397,14 @@ def _redact_public_value(
     value: object,
     *,
     additional_private_names: Iterable[str],
+    redact_private_names: bool = False,
 ) -> object:
     if isinstance(value, Mapping):
         return {
             str(key): _redact_public_value(
-                item, additional_private_names=additional_private_names
+                item,
+                additional_private_names=additional_private_names,
+                redact_private_names=redact_private_names,
             )
             for key, item in value.items()
         }
@@ -406,13 +413,17 @@ def _redact_public_value(
     ):
         return [
             _redact_public_value(
-                item, additional_private_names=additional_private_names
+                item,
+                additional_private_names=additional_private_names,
+                redact_private_names=redact_private_names,
             )
             for item in value
         ]
     if isinstance(value, str):
         return redact_public_text(
-            value, additional_private_names=additional_private_names
+            value,
+            additional_private_names=additional_private_names,
+            redact_private_names=redact_private_names,
         )[0]
     return value
 
@@ -1633,8 +1644,10 @@ class IncidentAnalyzer:
             "Report only concrete dispatches or operational activity supported by cited S-number lines. "
             "Do not infer guilt, identities, outcomes, or facts not spoken. Merge lines that clearly refer "
             "to one incident. Return no incident for routine acknowledgements or unintelligible chatter. "
-            "Use lower confidence for ambiguous ASR. Preserve useful street/cross-street/landmark locations, "
-            "but omit private names, phone numbers, dates of birth, driver's-license numbers, and license plates. "
+            "Use lower confidence for ambiguous ASR. Preserve explicitly spoken person names and useful "
+            "street/cross-street/landmark locations when supported by the cited evidence, but never infer, "
+            "correct, or normalize an identity. Omit phone numbers, dates of birth, driver's-license numbers, "
+            "and license plates. "
             "Do not interpret a stray state or city word in garbled ASR as part of a location unless the "
             "location is clearly spoken or repeated. "
             "Priority 5 means imminent life safety; 4 serious active response; 3 notable event; 2 routine response; "
@@ -1789,26 +1802,12 @@ class IncidentAnalyzer:
             evidence_segments,
         ):
             return None
-        private_names = {
-            name
-            for segment in evidence_segments
-            for name in private_person_names(segment.get("text"))
-        }
-        title = redact_public_text(
-            title, additional_private_names=private_names
-        )[0][:160]
-        summary = redact_public_text(
-            summary, additional_private_names=private_names
-        )[0][:1_000]
+        title = redact_public_text(title)[0][:160]
+        summary = redact_public_text(summary)[0][:1_000]
         if location is not None:
-            location = (
-                redact_public_text(
-                    location, additional_private_names=private_names
-                )[0]
-                or None
-            )
+            location = redact_public_text(location)[0] or None
         attributes = _redact_public_value(
-            attributes, additional_private_names=private_names
+            attributes, additional_private_names=()
         )
         title = _clean_model_public_claim(title)[:160]
         summary = _clean_model_public_claim(summary)[:1_000]
@@ -1966,8 +1965,10 @@ class IncidentAnalyzer:
             "structured incidents. Lead with priority 4-5 events, then notable patterns. Distinguish "
             "reported calls from confirmed outcomes and mention ASR/dispatch uncertainty. Never say an "
             "event was confirmed, determined, identified, resolved, or cleared unless the supplied incident "
-            "uses that exact outcome language for the same fact. Omit private "
-            "personal identifiers. The summary must be non-empty and under 250 words. Output JSON only."
+            "uses that exact outcome language for the same fact. Preserve person names already present in "
+            "the supplied incidents, but never infer an identity. Omit phone numbers, dates of birth, "
+            "driver's-license numbers, and license plates. The summary must be non-empty and under 250 words. "
+            "Output JSON only."
         )
         user = (
             f"Feed {feed_id}, date {archive_date.isoformat()} incidents:\n"
@@ -2295,7 +2296,9 @@ class WeeklySummaryAnalyzer:
             "and structured incidents. Organize it into readable sections covering coverage, the most "
             "serious reported events, recurring categories or locations, a concise day-by-day view, and "
             "limitations. Distinguish calls/reports from confirmed outcomes. Never infer a crime trend from "
-            "one week, and never treat missing dates as days with no activity. Omit private identifiers. "
+            "one week, and never treat missing dates as days with no activity. Preserve person names already "
+            "present in the supplied incidents, but never infer an identity. Omit phone numbers, dates of "
+            "birth, driver's-license numbers, and license plates. "
             "Do not include I-numbers or invent category rankings; incident IDs are displayed separately, "
             "and category patterns must follow the exact supplied counts. Keep the summary under 250 words. "
             "Use plain-text section labels and paragraphs without Markdown symbols. Return only the brief text."
@@ -2589,8 +2592,9 @@ class RangeQuestionAnswerer:
                 "Answer questions about a police-radio archive using only supplied evidence. The evidence "
                 "is noisy ASR and may be inaccurate. Never infer guilt, identity, or an outcome. Cite every "
                 "material claim with E or I identifiers in the answer. If evidence is insufficient, say so. "
-                "Do not repeat phone numbers, license plates, dates of birth, driver's-license numbers, or "
-                "private-person names. Output JSON only."
+                "Preserve explicitly spoken person names when relevant to the question and cited evidence, but "
+                "never infer or normalize an identity. Do not repeat phone numbers, license plates, dates of "
+                "birth, or driver's-license numbers. Output JSON only."
             ),
             user=(
                 f"Feed: {feed_id}\nRange: {start_date} through {end_date}\n"

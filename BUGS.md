@@ -70,6 +70,21 @@ Use this file for reproducible defects and concrete blockers, not the general ro
 
 ## Recently fixed
 
+### F-038 — Private-use review hid names that remained in retained transcripts
+
+An earlier public-news output policy told the incident model to omit person names
+and then applied a second context-based name sanitizer to incident fields and
+daily/area viewer quotes. This was a derived-analysis policy, not an ASR or
+diarization behavior: an audit of all 36 retained transcript JSON files found
+zero redaction placeholders. Private-use incident extraction, daily/weekly
+briefs, archive Q&A, regional leads, and both viewer serializers now preserve a
+person name only when it is explicitly present in cited radio evidence. Prompts
+still forbid inferring, correcting, or normalizing identities, and deterministic
+masking remains for phone numbers, dates of birth, email addresses, and long
+numeric identifiers. Incident-window, daily, weekly, and area prompt versions
+all advanced so older name-omitting derived results stay hidden until local
+reanalysis; audio, ASR, timestamps, speaker labels, and downloads are reused.
+
 ### F-037 — New source blocks could leave an older combined day looking complete
 
 The native Library player retained a Windows media handle as soon as a combined

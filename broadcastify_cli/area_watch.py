@@ -18,7 +18,7 @@ from .audio import AudioClipError, extract_audio_clip
 from .storage import AnalysisStore
 
 
-AREA_PROMPT_VERSION = "police-radio-area-stories-v9-evidence-v10"
+AREA_PROMPT_VERSION = "police-radio-area-stories-v10-preserve-spoken-names"
 MIN_STORY_SCORE = 48
 MAX_STORIES = 30
 EVIDENCE_CONTEXT_BEFORE_SECONDS = 8.0
@@ -100,37 +100,10 @@ def _incident_time(value: dict[str, Any]) -> datetime:
 
 
 def _public_quote(value: str, *, location: str = "") -> tuple[str, bool]:
-    """Redact obvious identifiers while preserving a locally auditable ASR quote."""
+    """Preserve spoken names while masking high-risk identifiers in an ASR quote."""
 
-    additional_private_names: list[str] = []
-    normalized_location = re.sub(r"\s+", " ", str(location or "")).strip()
-    if normalized_location:
-        # Dispatch lines often use "<known incident location>, First Last"
-        # either at the end or before a clause such as ", for an alarm".
-        # The location is useful public context; the private name is not.
-        location_prefix = rf"(?i:{re.escape(normalized_location)})\s*,?\s*"
-        name = (
-            r"(?P<name>[A-Z][A-Za-z'’-]{1,30}"
-            r"(?:\s+[A-Z][A-Za-z'’-]{1,30})?)"
-        )
-        for pattern in (
-            location_prefix + name + r"\s*[.!?]?\s*$",
-            location_prefix
-            + name
-            + r"(?=\s*,\s*(?i:(?:and\s+)?for|regarding|about|who|caller|complainant|"
-            r"subject|resident|owner|reports?|reporting|alarm|welfare)\b)",
-            location_prefix
-            + name
-            + r"(?=\s+(?i:on|at|who|caller|complainant|subject|resident|"
-            r"owner|reports?|reporting)\b)",
-        ):
-            match = re.search(pattern, value)
-            if match:
-                additional_private_names.append(match.group("name"))
-    quote, changed = redact_public_text(
-        value,
-        additional_private_names=additional_private_names,
-    )
+    del location  # Retained for compatibility with existing callers.
+    quote, changed = redact_public_text(value)
     if len(quote) > 800:
         quote = quote[:797].rstrip() + "…"
         changed = True
@@ -624,7 +597,9 @@ class AreaStoryAnalyzer:
             "Write a concise local-news assignment brief from structured police-radio story leads. "
             "Use only supplied facts. Treat every item as an unconfirmed dispatch report, never as a proven crime or outcome. "
             "Prioritize public impact and cross-feed overlap, but state that feeds can rebroadcast the same traffic. "
-            "Do not include private identifiers. Do not restate archive/feed coverage counts; the application adds "
+            "Preserve person names present in supplied leads, but never infer or normalize an identity. Omit "
+            "phone numbers, dates of birth, driver's-license numbers, and license plates. Do not restate "
+            "archive/feed coverage counts; the application adds "
             "its exact SQLite-derived coverage line. A ZIP identifies the feed-discovery center, not an incident "
             "geofence; do not say events occurred within a ZIP unless a supplied story says so. "
             "Use plain text, under 250 words, with short section labels."
