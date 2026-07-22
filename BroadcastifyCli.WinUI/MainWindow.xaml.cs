@@ -3469,7 +3469,7 @@ public sealed partial class MainWindow : Window
         AreaRadiusBox.IsEnabled = radiusMode;
         AreaMaxZipCodesBox.IsEnabled = radiusMode;
         AreaZipCodesBox.Header = radiusMode ? "Center ZIP" : "ZIPs in priority order";
-        AreaZipCodesBox.PlaceholderText = radiusMode ? "12345" : "12345, 12346, 12347";
+        AreaZipCodesBox.PlaceholderText = radiusMode ? "5-digit ZIP" : "Comma-separated ZIPs";
         if (DiscoverAreaFeedsButton is not null)
         {
             DiscoverAreaFeedsButton.Content = radiusMode ? "Discover nearest" : "Discover feeds";

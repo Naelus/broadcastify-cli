@@ -275,7 +275,7 @@
                                     <TextBlock Text="Find a feed" Style="{StaticResource SubtitleTextBlockStyle}" />
                                     <Grid Grid.Row="1" ColumnSpacing="8">
                                         <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                        <AutoSuggestBox x:Name="SearchBox" PlaceholderText="Example City, agency, county, or ZIP" QueryIcon="Find"
+                                        <AutoSuggestBox x:Name="SearchBox" PlaceholderText="City, agency, county, or ZIP" QueryIcon="Find"
                                                         QuerySubmitted="Search_QuerySubmitted" />
                                         <Button x:Name="SearchButton" Grid.Column="1" Content="Search" Click="Search_Click" />
                                     </Grid>
@@ -345,7 +345,7 @@
                             <Border Style="{StaticResource CardBorderStyle}">
                                 <Grid RowSpacing="10">
                                     <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
-                                    <TextBox x:Name="AnalysisFeedBox" Header="Feed ID" PlaceholderText="90001" />
+                                    <TextBox x:Name="AnalysisFeedBox" Header="Feed ID" PlaceholderText="Numeric feed ID" />
                                     <Button x:Name="RefreshAnalysisButton" Grid.Row="1" Content="Refresh saved days" Click="RefreshAnalysis_Click" />
                                     <ListView x:Name="AnalysisDaysList" Grid.Row="2" SelectionMode="Single" SelectionChanged="AnalysisDays_SelectionChanged">
                                         <ListView.ItemTemplate>
@@ -383,7 +383,7 @@
                                                 <ComboBoxItem Content="All incidents" Tag="1" />
                                             </ComboBox>
                                             <TextBox x:Name="IncidentSearchBox" Grid.Column="1"
-                                                     PlaceholderText="Search every priority: Example Township, stolen car, street…"
+                                                     PlaceholderText="Search every priority: shots fired, vehicle description, street…"
                                                      TextChanged="IncidentSearch_TextChanged" />
                                         </Grid>
                                         <ListView x:Name="IncidentList" Grid.Row="2" SelectionMode="None">
@@ -473,7 +473,7 @@
                                                     <ComboBoxItem Content="Radius from ZIP" Tag="radius" />
                                                     <ComboBoxItem Content="Ordered ZIP list" Tag="zip-list" />
                                                 </ComboBox>
-                                                <TextBox x:Name="AreaZipCodesBox" Grid.Column="1" Header="Center ZIP" PlaceholderText="12345" />
+                                                <TextBox x:Name="AreaZipCodesBox" Grid.Column="1" Header="Center ZIP" PlaceholderText="5-digit ZIP" />
                                                 <Button x:Name="DiscoverAreaFeedsButton" Grid.Column="2" Content="Discover nearest" VerticalAlignment="Bottom" Click="DiscoverAreaFeeds_Click" />
                                             </Grid>
                                             <Grid Grid.Row="2" ColumnSpacing="8">

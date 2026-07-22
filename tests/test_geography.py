@@ -11,7 +11,7 @@ def _gazetteer(path: Path) -> None:
     rows = (
         "GEOID|GEOIDFQ|ALAND|AWATER|ALAND_SQMI|AWATER_SQMI|INTPTLAT|INTPTLONG\n"
         "12345|860Z200US12345|1|0|1|0|39.0000|-77.0000\n"
-        "12346|860Z200US12346|1|0|1|0|39.0400|-76.9500\n"
+        "12346|860Z200US12346|1|0|1|0|39.0500|-76.9500\n"
         "12358|860Z200US12358|1|0|1|0|40.0000|-78.0000\n"
     )
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
@@ -19,7 +19,7 @@ def _gazetteer(path: Path) -> None:
 
 
 def test_haversine_returns_reasonable_distance() -> None:
-    distance = haversine_miles(39.0000, -77.0000, 39.0400, -76.9500)
+    distance = haversine_miles(39.0000, -77.0000, 39.0500, -76.9500)
     assert 4 < distance < 5
 
 

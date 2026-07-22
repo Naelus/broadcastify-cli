@@ -124,8 +124,7 @@ Relevant TrueNAS guidance:
 
 ## Validated reference deployment
 
-On July 18, 2026, exact commit
-`historical-validation` was built from pinned official
+On July 18, 2026, a retained validation revision was built from pinned official
 whisper.cpp/llama.cpp Vulkan image digests and installed through the TrueNAS
 25.04 Apps API as `radio-archive-intelligence`. The App runs as numeric user
 950 with only render group 107/device `renderD128`, publishes
@@ -156,7 +155,7 @@ The live I864 browser action played retained audio and downloaded
 `c7ae78be5c68972508fae8eb1f033ed34a54270b27b89c7176654269fb7c4ad9`.
 The Windows originals were copied, not moved or removed.
 
-On July 20, 2026, exact commit `historical-validation` added the read-only trusted-LAN
+On July 20, 2026, a retained validation revision added the read-only trusted-LAN
 archive node to this managed App. TrueNAS host networking carries one-hop UDP
 discovery while the Web listener and health probe remain bound to the selected
 private address. The healthy image ID is
@@ -172,7 +171,7 @@ store retained SHA-256
 `bfe6fdf7b64b9e24c4ed2614336e9c2687de94ded1b4b1a1e7ea4da375a285a6`
 and passed `PRAGMA integrity_check`.
 
-Exact commit `historical-validation` then made current-day manifests rolling and prioritized
+A retained validation revision then made current-day manifests rolling and prioritized
 the newest completed plus immediately previous archive tracks. The managed App
 runs image ID
 `sha256:f171e853c84ef5c755cc6088519a0564a21857f84b1b3c214b7d736f87b9082a`

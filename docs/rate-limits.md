@@ -85,8 +85,7 @@ archive entries were requested sequentially at the normal five-second pace:
 - both requests succeeded, with no HTTP 429 or explicit quota response.
 
 This two-request success says nothing new about quota size. It does prove the
-live-tail path and leaves both exact blocks durable on the NAS. Exact
-`historical-validation` now always acquires those newest two entries before older backlog,
+live-tail path and leaves both exact blocks durable on the NAS. A retained validation revision now always acquires those newest two entries before older backlog,
 refreshes the feed-local current-day listing once at the end, and treats a
 successful today/yesterday LAN manifest as a five-minute rolling snapshot.
 The six-hour explicit-quota suppression remains unchanged.

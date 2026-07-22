@@ -148,7 +148,7 @@ multicast numeric addresses are rejected.
 
 ## Validation boundary
 
-Exact commit `historical-validation` was installed from its
+A retained validation revision was installed from its
 hash-verified 0.4.0 wheel on systemd 252 under an ordinary TrueNAS user. The
 generated unit passed `systemd-analyze`, started on loopback, served the
 cookie/token-protected bootstrap, restarted after a deliberate process failure,
@@ -157,8 +157,8 @@ listener, and uninstalled while preserving every user-data path. No host
 package, system service, Broadcastify request, or model download was used in
 that launcher test.
 
-Exact `historical-validation` added the explicit trusted-LAN contract and regression coverage
+A retained validation revision added the explicit trusted-LAN contract and regression coverage
 without changing the loopback default. The separately managed TrueNAS Apps
-deployment is validated from exact `historical-validation`; it should be preferred on that
+deployment is validated from a retained validation revision; it should be preferred on that
 appliance because TrueNAS owns its lifecycle, LAN port, GPU device mapping, and
 persistent host-path storage.

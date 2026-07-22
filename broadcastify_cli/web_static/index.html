@@ -81,7 +81,7 @@
           <div class="card padded">
             <div class="section-heading"><div><h2>1. Find a feed</h2><p>Agency, city, county, state, ZIP, or feed ID.</p></div></div>
             <form id="feedSearchForm" class="inline-form">
-              <label class="grow"><span>Search</span><input id="feedSearchInput" required maxlength="160" placeholder="Example City"></label>
+              <label class="grow"><span>Search</span><input id="feedSearchInput" required maxlength="160" placeholder="City, agency, county, or ZIP"></label>
               <button class="button primary" type="submit">Search feeds</button>
             </form>
             <div id="feedSearchResults" class="result-list"><div class="empty-compact">Search results will appear here.</div></div>
@@ -160,7 +160,7 @@
             <form id="areaSearchForm" class="form-stack">
               <div class="form-grid two">
                 <label><span>Coverage mode</span><select id="areaCoverageMode"><option value="radius">Radius from ZIP</option><option value="zip-list">Ordered ZIP list</option></select></label>
-                <label><span id="areaZipLabel">Center ZIP</span><input id="areaZipCodes" placeholder="12345" required></label>
+                <label><span id="areaZipLabel">Center ZIP</span><input id="areaZipCodes" placeholder="5-digit ZIP" required></label>
                 <label><span>Radius (miles)</span><input id="areaRadiusMiles" type="number" min="1" max="100" value="25"></label>
                 <label><span>ZIP search cap</span><input id="areaMaxZipCodes" type="number" min="1" max="20" value="12"></label>
               </div>

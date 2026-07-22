@@ -1183,7 +1183,7 @@ function updateAreaCoverageControls() {
   byId("areaRadiusMiles").disabled = !radiusMode;
   byId("areaMaxZipCodes").disabled = !radiusMode;
   byId("areaZipLabel").textContent = radiusMode ? "Center ZIP" : "ZIPs in priority order";
-  byId("areaZipCodes").placeholder = radiusMode ? "12345" : "12345, 12346, 12347";
+  byId("areaZipCodes").placeholder = radiusMode ? "5-digit ZIP" : "Comma-separated ZIPs";
   byId("areaSearchForm").querySelector('button[type="submit"]').textContent = radiusMode ? "Discover nearest feeds" : "Discover feeds";
 }
 

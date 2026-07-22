@@ -41,7 +41,7 @@ EXAMPLE_SEARCH_HTML = """
   <a href="/listen/ctid/999">ST-Example County</a>
   <table><tbody><tr>
     <td><span title="Online"></span></td><td>ST-Example County</td>
-    <td><a href="/listen/feed/90004">Example City Fire Dispatch</a></td>
+    <td><a href="/listen/feed/90004">Example County Fire Dispatch</a></td>
     <td>Public Safety</td><td>5</td>
   </tr></tbody></table>
 </main>
