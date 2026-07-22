@@ -191,6 +191,8 @@ cython_debug/
 
 # custom
 .env
+GOAL.md
+PROGRESS.md
 archives/
 .archives
 *.mp3

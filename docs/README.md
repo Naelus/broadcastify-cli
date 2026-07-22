@@ -37,14 +37,14 @@ start.
 - [Archive rate limits](rate-limits.md)
 - [Retained-corpus validation](validation/retained-corpus.md)
 
-## Project records
+## Development records
 
-- [`GOAL.md`](../GOAL.md) defines acceptance targets.
-- [`FEATURES.md`](../FEATURES.md) is the status matrix.
-- [`BUGS.md`](../BUGS.md) tracks reproducible defects and blockers.
-- [`PROGRESS.md`](../PROGRESS.md) records dated implementation and validation
-  evidence.
+- [`FEATURES.md`](../FEATURES.md) is the durable capability/status matrix.
+- [GitHub Issues](https://github.com/Naelus/broadcastify-cli/issues) tracks
+  reproducible defects and actionable enhancements.
+- Local ignored `GOAL.md` and `PROGRESS.md` files are temporary working notes,
+  not project history.
 
-Detailed benchmark output belongs in the validation documents or
-`PROGRESS.md`, not in the root README. Forward-looking work belongs in
-`GOAL.md`/`FEATURES.md`; unresolved defects belong in `BUGS.md`.
+Detailed benchmark output belongs in the validation documents, not the root
+README. Completed work remains discoverable through focused documentation and
+Git history rather than an ever-growing progress ledger.

@@ -1,0 +1,53 @@
+name: Bug report
+description: Report a reproducible problem in the application.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form for behavior that is broken or differs from the documented contract. Use an enhancement issue for planned work, research, or benchmark gaps.
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: List the smallest reliable sequence that triggers the problem.
+      placeholder: |
+        1. Open …
+        2. Select …
+        3. Observe …
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Include OS, app commit/build, selected ASR/diarization/analysis profiles, and relevant hardware.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Remove passwords, tokens, private radio identifiers, and unrelated transcript content before posting.
+      render: text
+  - type: checkboxes
+    id: data_safety
+    attributes:
+      label: Data safety
+      options:
+        - label: I checked that this report contains no credentials or unnecessary private transcript/audio data.
+          required: true

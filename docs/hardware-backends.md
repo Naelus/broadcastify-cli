@@ -206,7 +206,10 @@ The isolated Linux validation used an AMD Radeon 890M (RADV GFX1150), the offici
 
 The separate llama.cpp b9637 Vulkan run used public `ggml-org/gemma-3-1b-it-GGUF:Q4_K_M`: all 27 layers offloaded, the Q4_K model occupied about 762 MiB of Vulkan memory, prompt evaluation reached about 320 tokens/second, and generation reached about 105 tokens/second. These are compatibility measurements, not promises for a 12B production model or other hardware.
 
-No packages, services, or storage configuration were changed on the appliance host. Image/model hashes and the remaining limitations are recorded in `PROGRESS.md` and `BUGS.md`.
+No packages, services, or storage configuration were changed on the appliance
+host. Image/model hashes and retained limitations are recorded in this document
+and the [retained-corpus validation](validation/retained-corpus.md); actionable
+follow-up belongs in [GitHub Issues](https://github.com/Naelus/broadcastify-cli/issues).
 
 ### AMD ROCm decision
 

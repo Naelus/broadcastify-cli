@@ -62,4 +62,5 @@ port-forwarded or publicly proxied without real authentication and TLS. See
 
 Real Windows, Linux, and TrueNAS paths are validated. Apple Metal support is
 implemented but awaits a real Mac workflow. Cross-platform keychain integration
-and non-developer packaging remain open; see B-005 in [`BUGS.md`](../../BUGS.md).
+and non-developer packaging remain open in
+[GitHub Issues](https://github.com/Naelus/broadcastify-cli/issues).

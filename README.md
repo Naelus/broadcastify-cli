@@ -102,12 +102,13 @@ Useful starting points:
 - [Hardware backends and measured limits](docs/hardware-backends.md)
 - [TrueNAS Apps deployment](deploy/truenas/README.md)
 
-## Project records
+## Development tracking
 
-- [GOAL.md](GOAL.md): product objective and acceptance targets
-- [FEATURES.md](FEATURES.md): concise capability/status matrix
-- [BUGS.md](BUGS.md): active blockers and fixed-defect ledger
-- [PROGRESS.md](PROGRESS.md): dated implementation and validation evidence
+- [FEATURES.md](FEATURES.md) is the durable capability/status matrix.
+- [GitHub Issues](https://github.com/Naelus/broadcastify-cli/issues) tracks
+  reproducible defects and actionable enhancements.
+- Local `GOAL.md` and `PROGRESS.md` files may be used as temporary working notes
+  during active development; they are intentionally ignored by Git.
 
 Run the complete test suite with:
 

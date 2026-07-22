@@ -1,8 +1,8 @@
 # Retained-corpus validation
 
-This page summarizes representative real-radio validations. Exact dated runs,
-commits, hashes, and regressions remain in [`PROGRESS.md`](../../PROGRESS.md);
-open limitations remain in [`BUGS.md`](../../BUGS.md).
+This page summarizes representative real-radio validations. Exact implementation
+history remains available through Git commits, while actionable follow-up is
+tracked in [GitHub Issues](https://github.com/Naelus/broadcastify-cli/issues).
 
 ## reference feed workflow
 

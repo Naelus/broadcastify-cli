@@ -91,7 +91,10 @@ explicit peer configuration, and the trusted-network boundary.
 
 Non-secret model/provider choices use browser-local storage. API keys and Hugging Face tokens are never written there; they remain in the active tab and travel only over the same-origin Web service to the selected child worker. A Hugging Face read token is needed for the first gated Community-1 download, but a complete cache can later run offline without one. Broadcastify login fields are sent to the website-auth worker and the password field is immediately cleared. For repeat launches, prefer the ignored `.env` variables documented in `.env-example`.
 
-WinUI can additionally use Windows Credential Locker. A portable OS-keychain adapter is still pending and is tracked in `BUGS.md`; the browser UI must not imply that ordinary local storage is a safe replacement.
+WinUI can additionally use Windows Credential Locker. A portable OS-keychain
+adapter is still pending and is tracked in
+[GitHub Issues](https://github.com/Naelus/broadcastify-cli/issues); the browser
+UI must not imply that ordinary local storage is a safe replacement.
 
 ## Current validation boundary
 

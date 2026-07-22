@@ -1,0 +1,34 @@
+name: Enhancement or validation work
+description: Propose an actionable feature, portability task, research gate, or benchmark.
+title: "[Enhancement]: "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome
+      description: Describe the user-visible result or decision this work should produce.
+    validations:
+      required: true
+  - type: textarea
+    id: rationale
+    attributes:
+      label: Why it matters
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Prefer measurable completion and retained-radio validation criteria.
+      placeholder: |
+        - [ ] …
+        - [ ] …
+    validations:
+      required: true
+  - type: textarea
+    id: constraints
+    attributes:
+      label: Constraints and evidence policy
+      description: Record quota, privacy, licensing, hardware, and source-audio evidence boundaries that apply.

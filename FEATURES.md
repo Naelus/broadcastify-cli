@@ -3,8 +3,9 @@
 Last updated: July 22, 2026
 
 Status labels: **Validated**, **Implemented**, **Evaluated**, **Foundation**, or
-**Planned**. Detailed behavior belongs in [`docs/`](docs/README.md); dated proof
-belongs in [`PROGRESS.md`](PROGRESS.md).
+**Planned**. Detailed behavior and retained validation evidence belong in
+[`docs/`](docs/README.md). Actionable work is tracked in
+[GitHub Issues](https://github.com/Naelus/broadcastify-cli/issues).
 
 ## Acquisition and discovery
 
@@ -62,6 +63,7 @@ See [evidence analysis](docs/features/evidence-analysis.md),
 | Native WinUI 3 shell | Validated | Task navigation for Library, New Archive, Review & Ask, Area Watch, and Settings. |
 | Local Library | Validated | Five-stage timeline, playback, transcript preview, exact resume/upgrade/review action. |
 | Area Watch | Validated | Profile discovery, queue, coverage-aware ranked leads, selected evidence, clips and exports. |
+| Neighborhood subscription delivery | Foundation | Story eligibility and neighborhood/topic tags exist; opt-in delivery, consent, unsubscribe, and licensing work remain. |
 | Cross-platform browser UI | Validated | Windows/Linux desktop and mobile validation; loopback default and explicit trusted-LAN mode. |
 | Saved Windows login | Implemented | Windows Credential Locker plus ignored session cookie. |
 | First-run/profile verifier | Validated | Real generated-input execution across ASR, speakers, and analysis without archive quota. |

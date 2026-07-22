@@ -76,4 +76,5 @@ unsegmented sparse radio; the tested forced aligner timestamps supplied wrong
 words without a mismatch confidence. Neither replaces source audio as evidence.
 
 Detailed versions, commands, and measurements belong in
-[hardware-backends.md](../hardware-backends.md) and [`PROGRESS.md`](../../PROGRESS.md).
+[hardware-backends.md](../hardware-backends.md) and
+[retained-corpus validation](../validation/retained-corpus.md).
