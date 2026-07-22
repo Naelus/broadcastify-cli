@@ -220,6 +220,47 @@ def test_llama_json_reports_oversized_context_without_schema_retry(monkeypatch) 
     assert calls == 1
 
 
+def test_llama_json_reaches_full_length_retry_ceiling(monkeypatch) -> None:
+    requested_tokens: list[int] = []
+
+    def fake_post(_url: str, *, json: dict[str, object], timeout: float) -> FakeResponse:
+        requested_tokens.append(int(json["max_tokens"]))
+        if len(requested_tokens) < 4:
+            return FakeResponse(
+                200,
+                {
+                    "choices": [
+                        {
+                            "message": {"content": '{"incidents": ['},
+                            "finish_reason": "length",
+                        }
+                    ]
+                },
+            )
+        return FakeResponse(
+            200,
+            {
+                "choices": [
+                    {
+                        "message": {"content": '{"incidents": []}'},
+                        "finish_reason": "stop",
+                    }
+                ]
+            },
+        )
+
+    monkeypatch.setattr("broadcastify_cli.analysis.requests.post", fake_post)
+    result = LlamaCppClient().chat_json(
+        system="Return JSON.",
+        user="Extract all incidents.",
+        schema_name="incidents",
+        schema={"type": "object"},
+    )
+
+    assert result == {"incidents": []}
+    assert requested_tokens == [2_048, 4_096, 8_192, 16_384]
+
+
 def test_daily_summary_schema_avoids_large_llama_grammar_repeat() -> None:
     captured: dict[str, object] = {}
 
@@ -1203,6 +1244,128 @@ def test_incident_analysis_resumes_after_the_last_completed_model_window(
     assert resumed["incidents"] == 2
     assert len(incidents) == 2
     assert client.incident_calls == 3
+
+
+def test_incident_analysis_subdivides_length_limited_window_and_checkpoints_parent(
+    tmp_path: Path,
+) -> None:
+    archive_date = date(2026, 7, 12)
+    transcript = tmp_path / "transcript.json"
+    transcript.write_text(
+        json.dumps(
+            {
+                "model": "turbo",
+                "duration": 300.0,
+                "segments": [
+                    {
+                        "start": float(index * 30),
+                        "end": float(index * 30 + 10),
+                        "text": f"Routine retained radio segment {index}.",
+                    }
+                    for index in range(4)
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class LengthLimitedClient:
+        model = "length-limited-test-model"
+
+        def __init__(self) -> None:
+            self.incident_calls = 0
+
+        def chat_json(
+            self, *_args: object, **kwargs: object
+        ) -> dict[str, object]:
+            if kwargs["schema_name"] == "police_radio_incidents":
+                self.incident_calls += 1
+                if self.incident_calls == 1:
+                    raise LlamaServerError(
+                        "Local model returned invalid JSON (finish_reason=length)"
+                    )
+                return {"incidents": []}
+            return {"summary": "No clearly supported eventful incidents."}
+
+    messages: list[str] = []
+    client = LengthLimitedClient()
+    with AnalysisStore(tmp_path / "analysis.sqlite3") as store:
+        store.import_transcript("90001", archive_date, transcript)
+        analyzer = IncidentAnalyzer(store, client, progress=messages.append)
+        result = analyzer.analyze_day("90001", archive_date)
+        first_call_count = client.incident_calls
+        resumed = analyzer.analyze_day("90001", archive_date)
+        checkpoint_count = store.stats()["analysis_window_checkpoints"]
+
+    assert result["windows"] == 1
+    assert resumed["windows"] == 1
+    assert first_call_count == 3
+    assert client.incident_calls == first_call_count
+    assert checkpoint_count == 1
+    assert any("subdividing" in message for message in messages)
+
+
+def test_incident_analysis_subdivides_first_unfinished_window_on_resume(
+    tmp_path: Path,
+) -> None:
+    archive_date = date(2026, 7, 12)
+    transcript = tmp_path / "transcript.json"
+    transcript.write_text(
+        json.dumps(
+            {
+                "model": "turbo",
+                "duration": 10_020.0,
+                "segments": [
+                    {"start": 10.0, "end": 15.0, "text": "First window."},
+                    *[
+                        {
+                            "start": float(8_000 + index * 30),
+                            "end": float(8_010 + index * 30),
+                            "text": f"Second-window segment {index}.",
+                        }
+                        for index in range(4)
+                    ],
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class InterruptedDenseClient:
+        model = "interrupted-dense-test-model"
+
+        def __init__(self) -> None:
+            self.incident_calls = 0
+            self.segment_counts: list[int] = []
+
+        def chat_json(
+            self, *_args: object, **kwargs: object
+        ) -> dict[str, object]:
+            if kwargs["schema_name"] == "police_radio_incidents":
+                self.incident_calls += 1
+                self.segment_counts.append(
+                    sum(
+                        line.startswith("S")
+                        for line in str(kwargs["user"]).splitlines()
+                    )
+                )
+                if self.incident_calls == 2:
+                    raise RuntimeError("simulated interruption in dense window")
+                return {"incidents": []}
+            return {"summary": "No clearly supported eventful incidents."}
+
+    messages: list[str] = []
+    client = InterruptedDenseClient()
+    with AnalysisStore(tmp_path / "analysis.sqlite3") as store:
+        store.import_transcript("90001", archive_date, transcript)
+        analyzer = IncidentAnalyzer(store, client, progress=messages.append)
+        with pytest.raises(RuntimeError, match="simulated interruption"):
+            analyzer.analyze_day("90001", archive_date)
+        result = analyzer.analyze_day("90001", archive_date)
+
+    assert result["windows"] == 2
+    assert client.segment_counts == [1, 4, 2, 2]
+    assert any("first unfinished" in message for message in messages)
 
 
 def test_incident_analysis_reuses_unchanged_windows_after_append(

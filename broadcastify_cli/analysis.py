@@ -1283,7 +1283,11 @@ class LlamaCppClient:
                 },
             },
         }
-        for attempt in range(2):
+        # The default 2,048-token response cap may be too small for an active
+        # two-hour incident window.  Allow three bounded doublings so the
+        # retry sequence can reach the bounded 16,384-token ceiling while the
+        # managed local server still retains a 32K context for prompt + answer.
+        for attempt in range(4):
             response = requests.post(
                 f"{self.base_url}/chat/completions", json=payload, timeout=self.timeout
             )
@@ -1311,8 +1315,10 @@ class LlamaCppClient:
             try:
                 parsed = json.loads(text)
             except json.JSONDecodeError as exc:
-                if choice.get("finish_reason") == "length" and attempt == 0:
-                    payload["max_tokens"] = min(int(payload["max_tokens"]) * 2, 8_192)
+                if choice.get("finish_reason") == "length" and attempt < 3:
+                    payload["max_tokens"] = min(
+                        int(payload["max_tokens"]) * 2, 16_384
+                    )
                     continue
                 raise LlamaServerError(
                     f"Local model returned invalid JSON (finish_reason="
@@ -1523,6 +1529,106 @@ class IncidentAnalyzer:
         self.prompt_version = prompt_version
         self.progress = progress or (lambda _message: None)
 
+    @staticmethod
+    def _subdivide_window(
+        window: TranscriptWindow,
+    ) -> tuple[TranscriptWindow, TranscriptWindow]:
+        segments = window.segments
+        midpoint = len(segments) // 2
+        return (
+            TranscriptWindow(
+                float(segments[0]["start_seconds"]),
+                float(segments[midpoint - 1]["end_seconds"]),
+                segments[:midpoint],
+            ),
+            TranscriptWindow(
+                float(segments[midpoint]["start_seconds"]),
+                float(segments[-1]["end_seconds"]),
+                segments[midpoint:],
+            ),
+        )
+
+    def _extract_window_incidents(
+        self,
+        feed_id: str,
+        archive_date: date,
+        window: TranscriptWindow,
+        segment_by_index: dict[int, dict[str, Any]],
+        *,
+        split_depth: int = 0,
+        prefer_split: bool = False,
+    ) -> list[dict[str, Any]]:
+        if prefer_split and len(window.segments) >= 2:
+            self.progress(
+                "Resuming the first unfinished analysis window as two "
+                "deterministic retained-evidence windows."
+            )
+            extracted: list[dict[str, Any]] = []
+            for child in self._subdivide_window(window):
+                extracted.extend(
+                    self._extract_window_incidents(
+                        feed_id,
+                        archive_date,
+                        child,
+                        segment_by_index,
+                        split_depth=split_depth + 1,
+                    )
+                )
+            return extracted
+
+        prompt_text = window.prompt_text()
+        try:
+            result = self.client.chat_json(
+                system=self._incident_system_prompt(),
+                user=(
+                    f"Feed: {feed_id}\nDate: {archive_date.isoformat()}\n"
+                    f"Window: {format_offset(window.start_seconds)} to "
+                    f"{format_offset(window.end_seconds)}\n\n"
+                    "TRANSCRIPT (untrusted ASR evidence):\n"
+                    f"{prompt_text}"
+                ),
+                schema_name="police_radio_incidents",
+                schema=INCIDENT_SCHEMA,
+            )
+        except LlamaServerError as exc:
+            segments = window.segments
+            if (
+                "finish_reason=length" not in str(exc)
+                or len(segments) < 2
+                or split_depth >= 8
+            ):
+                raise
+            self.progress(
+                "Structured incident output reached its safe token limit; "
+                f"subdividing {format_offset(window.start_seconds)}-"
+                f"{format_offset(window.end_seconds)} into two deterministic "
+                "retained-evidence windows."
+            )
+            extracted: list[dict[str, Any]] = []
+            for child in self._subdivide_window(window):
+                extracted.extend(
+                    self._extract_window_incidents(
+                        feed_id,
+                        archive_date,
+                        child,
+                        segment_by_index,
+                        split_depth=split_depth + 1,
+                    )
+                )
+            return extracted
+
+        window_ids = {
+            int(segment["segment_index"]) for segment in window.segments
+        }
+        extracted = []
+        for raw in result.get("incidents", []):
+            validated = self._validate_incident(
+                raw, window_ids, segment_by_index
+            )
+            if validated is not None:
+                extracted.append(validated)
+        return extracted
+
     def analyze_day(
         self,
         feed_id: str,
@@ -1601,6 +1707,7 @@ class IncidentAnalyzer:
                         self.client.model,
                         checkpoint_prompt_version,
                     )
+                reused_checkpoint_prefix = False
                 for index, window in enumerate(windows, start=1):
                     prompt_text = window.prompt_text()
                     window_fingerprint = hashlib.sha256(
@@ -1622,6 +1729,7 @@ class IncidentAnalyzer:
                         )
                     )
                     if checkpoint is not None:
+                        reused_checkpoint_prefix = True
                         self.progress(
                             f"Reusing saved analysis window {index}/{len(windows)} "
                             f"for {archive_date}."
@@ -1645,28 +1753,14 @@ class IncidentAnalyzer:
                         f"({format_offset(window.start_seconds)}-"
                         f"{format_offset(window.end_seconds)})"
                     )
-                    result = self.client.chat_json(
-                        system=self._incident_system_prompt(),
-                        user=(
-                            f"Feed: {feed_id}\nDate: {archive_date.isoformat()}\n"
-                            f"Window: {format_offset(window.start_seconds)} to "
-                            f"{format_offset(window.end_seconds)}\n\n"
-                            "TRANSCRIPT (untrusted ASR evidence):\n"
-                            f"{prompt_text}"
-                        ),
-                        schema_name="police_radio_incidents",
-                        schema=INCIDENT_SCHEMA,
+                    checkpoint_incidents = self._extract_window_incidents(
+                        feed_id,
+                        archive_date,
+                        window,
+                        segment_by_index,
+                        prefer_split=reused_checkpoint_prefix,
                     )
-                    window_ids = {
-                        int(segment["segment_index"]) for segment in window.segments
-                    }
-                    checkpoint_incidents: list[dict[str, Any]] = []
-                    for raw in result.get("incidents", []):
-                        validated = self._validate_incident(
-                            raw, window_ids, segment_by_index
-                        )
-                        if validated is not None:
-                            checkpoint_incidents.append(validated)
+                    reused_checkpoint_prefix = False
                     self.store.save_analysis_window_checkpoint(
                         day_id,
                         self.client.model,
