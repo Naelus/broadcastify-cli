@@ -13,7 +13,7 @@ Status labels: **Validated**, **Implemented**, **Evaluated**, **Foundation**, or
 |---|---|---|
 | Website-login feed search | Validated | Agency/place/ZIP search through Broadcastify website endpoints, not the official API. |
 | Radius and ordered-ZIP profiles | Validated | Approximate ZCTA radius expansion, county-directory parsing, public-safety filter, explicit feed review. |
-| Cache-aware archive acquisition | Validated | Sequential pacing, timezone identity, newest/previous priority, current-day refresh, retry/backoff, explicit quota stop. |
+| Cache-aware archive acquisition | Validated | Sequential pacing, timezone identity, newest/previous priority, current-day refresh, process-safe 240-of-250 rolling ledger, and immediate 429 stop. |
 | Source-specific progress | Validated | Each ready block reports local cache versus Broadcastify download; LAN copies name the exact peer-sourced block. |
 | Nearest-first area queue | Validated | Persists stop points, skips complete feeds, resumes partial work, stops lower priorities on quota exhaustion. |
 | Trusted-LAN archive pool | Validated | One upstream producer lease; followers hash-verify raw blocks from any peer; no credentials/transcripts/analysis shared. |

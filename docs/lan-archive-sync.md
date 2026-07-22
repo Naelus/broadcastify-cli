@@ -31,7 +31,7 @@ public peer-to-peer network:
    five minutes by default. A later job can elect one new producer to check for
    another finalized track while all followers reuse the exact snapshot;
 10. a crashed producer loses its lease and another producer can take over. A
-    shared quota-limit result suppresses follower retries for six hours by
+    shared quota-limit result suppresses follower retries for 24 hours by
     default, including on a rolling day.
 
 Peers may introduce other explicitly configured private peers, up to a bounded
@@ -115,13 +115,14 @@ address, its discovery responder listens on UDP `48765`, and read-only sharing
 is enabled. The persistent `/data/archives` dataset remains the source;
 redeploying the App does not copy, move, or delete retained data.
 
-`BROADCASTIFY_LAN_QUOTA_SCOPE` is a non-secret label. Clients that share one
-Broadcastify allowance should use the same value. Give genuinely independent
-accounts different scope names. Optional expert timing controls are:
+`BROADCASTIFY_LAN_QUOTA_SCOPE` is a non-secret coordination label. Peers in one
+cache/lease pool should use the same value. It does not merge installation
+request ledgers or create another provider allowance. Optional expert timing
+controls are:
 
 ```dotenv
 BROADCASTIFY_LAN_QUEUE_LEASE_SECONDS="90"
-BROADCASTIFY_LAN_QUEUE_RESULT_SECONDS="21600"
+BROADCASTIFY_LAN_QUEUE_RESULT_SECONDS="86400"
 BROADCASTIFY_LAN_QUEUE_ROLLING_RESULT_SECONDS="300"
 BROADCASTIFY_LAN_QUEUE_MAX_WAIT_SECONDS="1800"
 ```
@@ -183,4 +184,6 @@ standalone CLI process is a queue consumer unless a reachable seed node is
 also identified through `BROADCASTIFY_LAN_SELF_URL` or
 `BROADCASTIFY_LAN_SELF_PORT`. LAN reuse does not increase, predict, evade, or
 reset Broadcastify's account quota; it avoids duplicate requests among the
-user's own trusted-LAN clients.
+user's own trusted-LAN clients. Each installed app/service still keeps its own
+240-request ledger, so clients using the same provider account must not run
+acquisition concurrently.

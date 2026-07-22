@@ -50,6 +50,8 @@ The payload is never included in the returned job snapshot. Still treat payload 
 - priority-first incident cards with quotes, timestamps, play-at-time, and exact clip preparation
 - paged/searchable speaker-labeled transcript viewing
 - website-backed feed search and guarded inclusive archive jobs
+- visible installation-local 240-of-250 rolling request status with a
+  10-request manual reserve and next-safe time
 - trusted-LAN source-block pooling before website access, with optional discovery or explicit private peer URLs and one renewable upstream producer lease per quota-scope/feed/day
 - automatic analysis queue for newly completed transcripts
 - evidence-grounded range Q&A and persisted seven-day briefs with missing dates
@@ -74,7 +76,7 @@ proxy, or use a public tunnel without a separate authentication/TLS layer.
 
 Static transcript, incident, feed, and model text is HTML-escaped before rendering. A restrictive content-security policy allows scripts, styles, media, and connections only from the local origin. Media paths must resolve beneath the configured archive root; absolute paths and traversal are rejected.
 
-Only one worker job may be queued/running at once. Archive job payloads are overwritten to `download_jobs=1` and `keep_originals=true`; diarization also forces daily combination and transcription. Cancel sends an interrupt to the worker process group before using a bounded forced stop, giving model/server contexts an opportunity to clean up.
+Only one worker job may be queued/running at once. Archive job payloads are overwritten to `download_jobs=1` and `keep_originals=true`; diarization also forces daily combination and transcription. Every child worker uses the Web installation's durable request ledger. Cancel sends an interrupt to the worker process group before using a bounded forced stop, giving model/server contexts an opportunity to clean up.
 
 An independently versioned, read-only LAN archive data surface is available only
 when `BROADCASTIFY_LAN_SHARING=true`. Its inventory and block routes do not use

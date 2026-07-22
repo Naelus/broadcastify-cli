@@ -35,15 +35,20 @@ visible without mistaking cache reuse for a new request.
 
 ## Quota behavior
 
-Normal media requests start at least five seconds apart. Transient 429 responses
-honor `Retry-After` or use bounded exponential delay. Broadcastify's explicit
-`Download limit exceeded` response is treated as account/IP quota exhaustion:
-the current job and all lower-priority area feeds stop immediately, while every
-completed file remains resumable.
+Operational account guidance describes a 250-request rolling 24-hour allowance
+that counts archive play and download requests. Each installation mints a stable
+local ledger identity and admits at most 240 automated archive requests in its
+own rolling 24-hour window, leaving 10 unspent for manual review.
 
-The numeric quota and reset schedule are not public and measured windows have
-varied. See [rate-limits.md](../rate-limits.md) for observed behavior and the
-operational policy.
+The ledger is reserved immediately before every archive-media request. Network
+and 5xx retries therefore consume another entry, just as they do upstream.
+Cached local or LAN blocks and local processing consume none. Any HTTP 429 stops
+without retry and conservatively pauses that installation for 24 hours.
+
+The ledger cannot observe manual website activity, requests made before it was
+created, or another installation. Do not run separate desktop/NAS instances
+against the same provider allowance concurrently. See
+[rate-limits.md](../rate-limits.md) for the exact boundary and current terms.
 
 ## Trusted-LAN pool
 

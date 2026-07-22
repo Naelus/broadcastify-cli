@@ -14,12 +14,16 @@ Native Windows state:
 - settings: `%LOCALAPPDATA%\Broadcastify Desktop\settings.json`
 - activity log: `%LOCALAPPDATA%\Broadcastify Desktop\activity.log`
 - exception log: `%LOCALAPPDATA%\Broadcastify Desktop\exceptions.log`
+- archive request ledger: `%LOCALAPPDATA%\Broadcastify Desktop\archive-quota.sqlite3`
 - managed model root: the app's per-user model directory reported in Settings
 
 Linux service defaults:
 
 - data/working directory: `~/.local/share/radio-archive`
 - configuration: `~/.config/radio-archive`
+- archive request ledger: `.broadcastify-archive-quota.sqlite3` in the service
+  working directory unless `BROADCASTIFY_QUOTA_LEDGER` selects another durable
+  installation-local path
 
 The Linux and TrueNAS layouts are configurable so an existing library can be
 adopted without moving it.
@@ -64,6 +68,11 @@ The persistent database stores:
 
 SQLite is derived from retained transcripts/audio but is worth backing up with
 the archive tree because it also contains review and queue state.
+
+The archive request ledger is separate from the evidence database. Back it up
+with the installation state and never delete or clone it to obtain more request
+capacity. Each installation mints its own stable ledger identity; ledgers are
+not synchronized over LAN.
 
 ## Stage identities
 

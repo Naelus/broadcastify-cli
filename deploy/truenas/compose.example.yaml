@@ -45,6 +45,7 @@ services:
       LLAMA_CACHE: /data/models/llama-cache
       BROADCASTIFY_RUNTIME_DIR: /data/runtime
       BROADCASTIFY_MODEL_DIR: /data/models
+      BROADCASTIFY_QUOTA_LEDGER: /data/archive-quota.sqlite3
       FFMPEG_PATH: /usr/bin/ffmpeg
       WHISPER_CPP_PATH: /app/build/bin/whisper-cli
       WHISPER_CPP_MODEL_PATH: /data/models/whisper.cpp/ggml-base.en-q5_1.bin

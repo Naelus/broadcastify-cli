@@ -10,16 +10,19 @@ a browser UI for Windows, Linux, macOS, and TrueNAS, plus command-line tools.
 
 > This project signs in through Broadcastify's website and uses the same private
 > web endpoints as its archive page. It does not use the official Broadcastify
-> API. Use your own premium account, expect those endpoints to change, and follow
-> Broadcastify's terms. Commercial or public-news deployment requires separate
-> written authorization.
+> API. The current [Broadcastify Terms and
+> Conditions](https://www.broadcastify.com/terms/) require a separate advance
+> license for programmatic/automated access and AI/ML processing, regardless of
+> scale or personal motive; Premium service alone is not that license. Use this
+> software only with authorization that covers the intended workflow.
 
 ## What it does
 
 - Searches feeds by agency, place, or ZIP and builds explicit radius-based area
   profiles.
 - Downloads archive blocks conservatively with cache reuse, sequential pacing,
-  resumable jobs, quota backoff, and optional trusted-LAN sharing.
+  resumable jobs, a durable 240-of-250 rolling-window guard, and optional
+  trusted-LAN sharing.
 - Combines each feed-day into one continuous timeline before transcription and
   speaker labeling.
 - Runs local Whisper-family ASR, Community-1 or a fast CPU speaker preview, BGE

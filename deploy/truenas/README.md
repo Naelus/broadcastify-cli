@@ -22,6 +22,7 @@ UID/GID modify access. Its intended layout is:
 ```text
 /mnt/ssd_pool/radio-archive/
   .env                         # optional, mode 0600; never put in the image
+  archive-quota.sqlite3        # installation-local rolling request ledger
   archives/
   models/
     llama/
@@ -32,6 +33,8 @@ UID/GID modify access. Its intended layout is:
 
 The Web app creates missing subdirectories but never deletes retained archives
 when it starts. Snapshot or replicate this dataset like other important data.
+The request ledger remains with this App across image replacement and mints one
+stable installation identity; do not share or copy it to another installation.
 
 ## 2. Build or publish the immutable image
 
