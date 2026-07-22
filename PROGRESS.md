@@ -23,6 +23,18 @@ This is the dated verification and delivery log for `GOAL.md`. Keep forward-look
   Broadcastify request. The complete suite passed **278 tests in 16.85
   seconds**, Python compilation passed, and the WinUI Release build completed
   with **0 warnings and 0 errors**.
+- Rebuilt all **12/12** retained analyzed feed-90001 days from their existing
+  transcripts through **146** newly versioned local Gemma windows, without
+  downloading, transcribing, or diarizing again. The rebuilt corpus contains
+  **389 current incidents**; 37 have detectable cited-name fields and zero
+  current incident or daily-summary fields contain `[private person]`.
+- Regenerated both retained weekly briefs under the new contract: the week
+  ending July 12 covers 2/7 days and 70 incidents, while the week ending July
+  16 covers 4/7 days and 142 incidents. Regenerated all three saved regional
+  digests as **90 ranked leads** total. The current weekly and area records also
+  contain zero private-person placeholders. Historical versioned rows remain
+  available in SQLite for audit, while all 12 rebuilt days render **Ready to
+  review**.
 
 ## July 20, 2026
 
