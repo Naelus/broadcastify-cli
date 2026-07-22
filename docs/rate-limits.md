@@ -105,7 +105,10 @@ The six-hour explicit-quota suppression remains unchanged.
 - Keep a backend-only JSONL probe at `scripts/download_rate_probe.py` for auditable, credential-free response timing/status telemetry.
 - Never use a guessed numeric quota to pre-spend a range. Radius profiles persist an approximate nearest-first feed order from Census ZCTA/county-directory matches. The shared profile runner spends in that order, persists each item, and stops all lower-priority feeds on the server's explicit limit response.
 - The cross-platform Web UI enforces the same policy at its service boundary: it overwrites single-feed and area jobs to one download worker, preserves source blocks, allows only one heavy job at a time, and cannot bypass the downloader's explicit quota stop through parallel browser actions.
-- Archive progress uses **Ready (cached or downloaded)**. A cache hit advances completion but is not counted or described as a new network download.
+- Archive progress identifies every completed block as **cached locally** or
+  **downloaded from Broadcastify** and includes its retained filename. A LAN
+  transfer is logged separately with the exact peer-sourced block. Cache hits
+  advance completion but do not consume or claim a new website media request.
 
 The LAN data plane is deliberately read-only and limited to original archive
 MP3s. Its only mutation is bounded transient acquisition-lease state; it has no

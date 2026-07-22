@@ -1,8 +1,9 @@
 # Known bugs and gaps
 
-Last updated: July 20, 2026
+Last updated: July 22, 2026
 
 Use this file for reproducible defects and concrete blockers, not the general roadmap. Remove an entry only after its fix and verification are recorded in `PROGRESS.md`.
+Feature explanations and design rationale live under [`docs/`](docs/README.md).
 
 ## Active
 
@@ -69,6 +70,40 @@ Use this file for reproducible defects and concrete blockers, not the general ro
 - **Next:** Retain explicit peers across VLANs/firewalls and validate automatic discovery on a real macOS host.
 
 ## Recently fixed
+
+### F-041 — A valid final LAN archive block was rejected after midnight
+
+Feed 90002's July 20 website archive contained 48 valid source blocks, but the
+final block's drifting source label was `202607210031` even though it belonged
+to the July 20 archive page and directory. The completion-manifest validator
+required the filename's calendar date to match the requested day exactly, so it
+reported `A completed acquisition contains an invalid source block` after the
+local work had succeeded. LAN inventory, serving, copying, and completion now
+accept source timestamps from the requested midnight through 30 hours later,
+which covers the observed rollover while rejecting unrelated later files.
+
+### F-040 — Dense transcript overflowed llama.cpp midrun
+
+Feed 90002's retained July 20 transcript placed 1,574 segments / 111,878 prompt
+characters in one two-hour analysis window. Gemma tokenized the request to
+66,558 tokens, exceeding the managed llama.cpp context of 32,768; the client
+misread the HTTP 400 as a schema-compatibility failure, retried the same request,
+and the native shell titled the dialog `Broadcastify error`. Extraction windows
+are now bounded by both time and 40,000 prompt characters with a small evidence
+overlap, oversized-context errors are not schema-retried and include the server
+detail, and the shell identifies processing failures while promising reuse of
+completed downloads, audio, transcripts, and diarization.
+
+### F-039 — Archive progress hid whether quota was actually consumed
+
+Per-block progress previously said `Ready (cached or downloaded)`. That wording
+avoided falsely calling a cache hit a download, but it still forced the user to
+guess whether the current item consumed a Broadcastify media request. Each block
+now reports either **cached locally** or **downloaded from Broadcastify** and
+includes the retained filename. LAN synchronization separately names each block
+copied from a peer before the normal local-cache pass reports it ready. The
+aggregate ready count remains unchanged, failures still do not count, and no
+additional website request is made for classification.
 
 ### F-038 — Private-use review hid names that remained in retained transcripts
 

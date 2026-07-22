@@ -4,6 +4,57 @@ This is the dated verification and delivery log for `GOAL.md`. Keep forward-look
 
 ## July 22, 2026
 
+### Dense-analysis and midnight LAN recovery
+
+- Diagnosed the feed-90002 July 20 native failure from the durable activity and
+  llama.cpp logs. Acquisition, combination, 1,829-segment transcription, and
+  Community-1 diarization had completed; the first two-hour incident prompt was
+  111,878 characters / 66,558 Gemma tokens against a 32,768-token context. The
+  generic HTTP 400 dialog therefore did not indicate a Broadcastify failure.
+- Incident extraction now caps each time window at 40,000 transcript-prompt
+  characters, retains a small segment overlap for boundary context, and versions
+  the changed checkpoint policy. The retained day became four windows of
+  39,919, 39,913, 36,006, and 31,051 characters. llama.cpp measured their input
+  prompts at 24,113, 23,919, 20,966, and 18,084 tokens, all safely below the
+  configured context. Every one of the 1,829 segments remained covered.
+- A recovery run reused the existing transcript and speaker labels without any
+  Broadcastify request. It completed in **117.5 seconds**, saved each extraction
+  checkpoint, retained **13 evidence-supported incidents**, generated the daily
+  summary, and indexed **41 new passages**. HTTP failures now include bounded
+  llama.cpp detail, context overflow does not trigger the schema fallback, and
+  the native dialog says **Processing error** with explicit cache-reuse guidance.
+- The same run exposed a separate LAN completion warning: the 48th valid July 20
+  block was labeled `202607210031` because the website track sequence drifted
+  across midnight. The trusted-LAN manifest path now accepts requested-day
+  source labels up to 30 hours after midnight consistently in inventory,
+  resolution, copying, and completion, while rejecting later unrelated files.
+- The complete suite passed **282 tests in 17.23 seconds**. The WinUI Release
+  build completed with **0 warnings and 0 errors**.
+
+### Documentation hierarchy and source-specific archive progress
+
+- Replaced the 416-line root README with a concise product overview, Windows
+  quick start, interface chooser, local-data summary, and documentation map.
+  Added a `docs/README.md` index plus focused guide, feature, decision,
+  reference, and validation pages. Hardware, Web, deployment, quota, LAN, and
+  provider documents remain canonical rather than being duplicated in the root.
+- Reworked `FEATURES.md` into a compact capability/status matrix with direct
+  links to the focused explanations. Updated `GOAL.md` for the current cited-name
+  private-use evidence policy, and made the roles of `GOAL.md`, `FEATURES.md`,
+  `BUGS.md`, and `PROGRESS.md` explicit.
+- Replaced ambiguous per-block `Ready (cached or downloaded)` messages with
+  exact **cached locally** or **downloaded from Broadcastify** messages including
+  the retained filename. LAN progress now names the exact block copied from a
+  peer. Source classification checks the local cache before submitting a request
+  and therefore creates no extra website traffic. The focused acquisition/LAN/job
+  suite passed **38 tests**.
+- Before the later dense-analysis regressions were added, the complete
+  documentation and progress-source pass had **279 tests pass in 17.58
+  seconds**, Python compilation passed, and the WinUI Release
+  build completed with **0 warnings and 0 errors**. A local-link audit checked
+  all 35 project Markdown files and found zero broken targets; Git whitespace
+  checks also passed.
+
 ### Preserve cited names in private-use analysis
 
 - Traced name masking to the derived incident/report policy rather than
