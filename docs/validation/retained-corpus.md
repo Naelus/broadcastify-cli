@@ -87,4 +87,5 @@ media, accessibility, and no-overflow checks on Linux. The per-user Linux servic
 and TrueNAS App have passed start, health, restart, graceful-stop, and
 data-preserving update/uninstall boundaries.
 
-Real macOS/Metal workflow validation remains open.
+Real macOS/Metal workflow validation has not been performed and is not a current
+priority.

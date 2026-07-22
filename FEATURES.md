@@ -29,10 +29,10 @@ See [archive acquisition](docs/features/archive-acquisition.md),
 | faster-whisper CUDA/CPU | Validated | CUDA is the Windows reference; CPU is available as a slower fallback. |
 | whisper.cpp Vulkan/Metal/CPU | Validated/Implemented | Vulkan is real-machine validated; Metal is implemented but awaits a real Mac run. |
 | OpenVINO Whisper | Validated | Real decode with honest recorded CPU fallback when an accelerator rejects the model. |
-| Windows ML Whisper | Validated | Packaged helper and real CPU Base decode; DML/TensorRT acceleration remains gated. |
-| Qwen3-ASR CPU preview | Implemented | Fast bounded-region preview with no fabricated word timing; longer-corpus/default gates remain. |
+| Windows ML Whisper | Validated | Packaged helper and real CPU Base decode; GPU validation is scoped to the future packaged app in [#4](https://github.com/Naelus/broadcastify-cli/issues/4). |
+| Qwen3-ASR CPU preview | Implemented | Fast bounded-region preview with no fabricated word timing; retained full-day quality evaluation is tracked in [#2](https://github.com/Naelus/broadcastify-cli/issues/2). |
 | Community-1 diarization | Validated | Accuracy default on CUDA/CPU; can improve an existing transcript without repeating ASR. |
-| Portable CPU speaker preview | Validated | Checksum-managed sherpa-onnx models, bounded chunks, atomic resume, chunk-scoped anonymous labels. |
+| Portable CPU speaker preview | Validated | Checksum-managed sherpa-onnx models, bounded chunks, atomic resume, and chunk-scoped anonymous labels; human scoring and supported accelerator research are tracked in [#3](https://github.com/Naelus/broadcastify-cli/issues/3). |
 | Persistent evidence store | Validated | SQLite/FTS, embeddings, incidents, summaries, Q&A, profiles/queues, prompt/source versioning and checkpoints. |
 
 See [audio processing](docs/features/audio-processing.md),
@@ -63,15 +63,14 @@ See [evidence analysis](docs/features/evidence-analysis.md),
 | Native WinUI 3 shell | Validated | Task navigation for Library, New Archive, Review & Ask, Area Watch, and Settings. |
 | Local Library | Validated | Five-stage timeline, playback, transcript preview, exact resume/upgrade/review action. |
 | Area Watch | Validated | Profile discovery, queue, coverage-aware ranked leads, selected evidence, clips and exports. |
-| Neighborhood subscription delivery | Foundation | Story eligibility and neighborhood/topic tags exist; opt-in delivery, consent, unsubscribe, and licensing work remain. |
+| Neighborhood subscription delivery | Foundation | Story eligibility and neighborhood/topic tags exist; opt-in delivery is explicitly low priority in [#5](https://github.com/Naelus/broadcastify-cli/issues/5). |
 | Cross-platform browser UI | Validated | Windows/Linux desktop and mobile validation; loopback default and explicit trusted-LAN mode. |
 | Saved Windows login | Implemented | Windows Credential Locker plus ignored session cookie. |
 | First-run/profile verifier | Validated | Real generated-input execution across ASR, speakers, and analysis without archive quota. |
 | Linux user service | Validated | Install/start/stop/status/log/restart and data-preserving uninstall. |
 | TrueNAS App | Validated | Persistent host-path data, trusted-LAN UI, AMD Vulkan, unprivileged/read-only container boundary. |
 | Verified Windows publish | Validated | WinUI resources, namespaced Windows ML helper, normal/private environment isolation. |
-| Standalone installer/model manager | Foundation | Verified publish exists; source-tree Python and non-developer packaging remain. |
-| Real macOS validation/keychain | Planned | Metal profile exists; real hardware and platform-keychain work remain. |
+| Standalone installer/model manager | Foundation | Verified publish exists; the remaining non-developer packaging and managed-model work is tracked in [#1](https://github.com/Naelus/broadcastify-cli/issues/1). |
 
 See [Library and Review](docs/features/library-and-review.md),
 [Area Watch](docs/features/area-watch.md),
