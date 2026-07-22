@@ -40,6 +40,7 @@ from .lan_sync import (
     normalize_peer_urls,
 )
 from .library import scan_local_library
+from .quota import ArchiveRequestLedger
 from .storage import AnalysisStore
 
 
@@ -1063,6 +1064,9 @@ def create_server(
                             "loopback_only": state.loopback_only,
                             "access_scope": state.access_scope,
                             "bind_host": state.bind_host,
+                            "archive_quota": ArchiveRequestLedger(
+                                base_dir=state.working_dir
+                            ).status(),
                             "processing_defaults": _processing_defaults(
                                 readiness_values
                             ),

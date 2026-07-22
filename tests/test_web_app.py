@@ -110,7 +110,14 @@ def _retained_day(
         store.save_feed_catalog([{"feed_id": "90001", "name": "Example City Public Safety"}])
 
 
-def test_loopback_web_app_serves_library_transcript_and_media(tmp_path: Path) -> None:
+def test_loopback_web_app_serves_library_transcript_and_media(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(
+        "BROADCASTIFY_QUOTA_LEDGER",
+        str(tmp_path / "archive-quota.sqlite3"),
+    )
     output = tmp_path / "archives"
     database = output / "broadcastify-analysis.sqlite3"
     _retained_day(output, database)
@@ -127,7 +134,8 @@ def test_loopback_web_app_serves_library_transcript_and_media(tmp_path: Path) ->
         assert cookie.startswith("radio_archive_session=")
         assert token_match is not None
         assert b'id="areaPublicSafetyOnly"' in body
-        assert b'/static/app.js?v=30' in body
+        assert b'/static/app.js?v=31' in body
+        assert b'id="archiveQuotaNotice"' in body
         assert b'id="accessScopeStatus"' in body
         assert b'value="qwen3-asr"' in body
         assert b'qwen3-asr-0.6b-int8' in body
@@ -151,7 +159,7 @@ def test_loopback_web_app_serves_library_transcript_and_media(tmp_path: Path) ->
         assert response.getheader("Content-Type") == "image/svg+xml"
         assert b"<svg" in body
 
-        response, body = _request(connection, "GET", "/static/app.js?v=30")
+        response, body = _request(connection, "GET", "/static/app.js?v=31")
         assert response.status == 200
         assert b"areaSelectedStoryIndex" in body
         assert b"data-area-story-index" in body
@@ -190,6 +198,7 @@ def test_loopback_web_app_serves_library_transcript_and_media(tmp_path: Path) ->
         assert b'setSettingsSection("processing")' in body
         assert b"lan_sync_enabled: Boolean(state.settings.lanSyncEnabled)" in body
         assert b"lan_peer_urls: state.settings.lanPeerUrls" in body
+        assert b"function renderArchiveQuota" in body
 
         response, body = _request(connection, "GET", "/static/app.css?v=20")
         assert response.status == 200
@@ -209,6 +218,10 @@ def test_loopback_web_app_serves_library_transcript_and_media(tmp_path: Path) ->
         assert bootstrap["runtime"]["storage_ready"] is True
         assert isinstance(bootstrap["runtime"]["account"]["configured"], bool)
         assert bootstrap["runtime"]["lan_sync"]["sharing_enabled"] is False
+        assert bootstrap["runtime"]["archive_quota"]["provider_limit"] == 250
+        assert bootstrap["runtime"]["archive_quota"]["automated_limit"] == 240
+        assert bootstrap["runtime"]["archive_quota"]["user_reserve"] == 10
+        assert bootstrap["runtime"]["archive_quota"]["remaining"] == 240
 
         response, body = _request(
             connection,

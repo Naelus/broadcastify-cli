@@ -315,8 +315,9 @@
                                         <CheckBox x:Name="TranscribeCheckBox" Content="Transcribe locally" IsChecked="True" />
                                         <CheckBox x:Name="DiarizeCheckBox" Content="Add speaker diarization" IsChecked="True" />
                                         <CheckBox x:Name="AnalyzeAfterJobCheckBox" Content="Extract incidents, summarize, and index" IsChecked="True" />
-                                        <InfoBar IsOpen="True" IsClosable="False" Severity="Informational" Title="Quota-safe acquisition"
-                                                 Message="Downloads run sequentially by default. Explicit quota exhaustion stops all new archive requests while complete cached days continue locally." />
+                                        <InfoBar x:Name="ArchiveQuotaInfoBar" IsOpen="True" IsClosable="False" Severity="Informational"
+                                                 Title="Checking this installation's archive budget"
+                                                 Message="Cached audio and local processing do not consume archive requests." />
                                         <Button x:Name="StartButton" Content="Start archive job" HorizontalAlignment="Stretch"
                                                 Style="{StaticResource AccentButtonStyle}" Click="Start_Click" />
                                         <TextBlock Text="Model, device, speaker, storage, and credential options are in Settings."

@@ -7,7 +7,7 @@
   <meta name="color-scheme" content="light dark">
   <title>Radio Archive Intelligence</title>
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/static/app.css?v=20">
+  <link rel="stylesheet" href="/static/app.css?v=21">
 </head>
 <body>
   <div class="app-shell">
@@ -100,7 +100,7 @@
                 <label class="check-row"><input id="archiveDiarize" type="checkbox" checked><span><strong>Add speaker labels</strong><small>Runs after daily combination</small></span></label>
                 <label class="check-row"><input id="archiveAnalyze" type="checkbox" checked><span><strong>Extract incidents</strong><small>Uses the Analysis &amp; AI provider</small></span></label>
               </div>
-              <div class="notice warning"><strong>Shared limit is unknown.</strong><span>This app starts one request at a time, reuses every cached block, and stops on Broadcastify’s explicit download-limit response.</span></div>
+              <div class="notice" id="archiveQuotaNotice"><strong>Checking this installation’s archive budget…</strong><span>Cached audio and local processing do not use archive requests.</span></div>
               <button class="button primary wide" type="submit">Start guarded archive job</button>
             </form>
           </div>
@@ -313,6 +313,6 @@
   </aside>
 
   <div class="toast-region" id="toastRegion" aria-live="polite"></div>
-  <script src="/static/app.js?v=30" defer></script>
+  <script src="/static/app.js?v=31" defer></script>
 </body>
 </html>

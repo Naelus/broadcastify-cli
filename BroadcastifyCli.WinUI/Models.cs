@@ -1306,3 +1306,39 @@ public sealed record ArchiveAnswer
         ? ""
         : "Limitations: " + string.Join("; ", Limitations);
 }
+
+public sealed record ArchiveQuotaStatus
+{
+    [JsonPropertyName("instance_id")]
+    public string InstanceId { get; init; } = "";
+
+    [JsonPropertyName("provider_limit")]
+    public int ProviderLimit { get; init; }
+
+    [JsonPropertyName("automated_limit")]
+    public int AutomatedLimit { get; init; }
+
+    [JsonPropertyName("user_reserve")]
+    public int UserReserve { get; init; }
+
+    [JsonPropertyName("used")]
+    public int Used { get; init; }
+
+    [JsonPropertyName("remaining")]
+    public int Remaining { get; init; }
+
+    [JsonPropertyName("available")]
+    public bool Available { get; init; }
+
+    [JsonPropertyName("blocked")]
+    public bool Blocked { get; init; }
+
+    [JsonPropertyName("blocked_reason")]
+    public string BlockedReason { get; init; } = "";
+
+    [JsonPropertyName("blocked_until")]
+    public string BlockedUntil { get; init; } = "";
+
+    [JsonPropertyName("next_request_at")]
+    public string NextRequestAt { get; init; } = "";
+}

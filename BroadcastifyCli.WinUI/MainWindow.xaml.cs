@@ -170,6 +170,7 @@ public sealed partial class MainWindow : Window
     private async Task InitializeAsync()
     {
         RefreshStorageReadiness();
+        await RefreshArchiveQuotaStatusAsync();
         await TryAutoSignInAsync();
         await LoadDiagnosticsAndDaysAsync();
         await RefreshLibraryAsync();
@@ -192,6 +193,50 @@ public sealed partial class MainWindow : Window
         ReviewPage.Visibility = page == "review" ? Visibility.Visible : Visibility.Collapsed;
         AreaPage.Visibility = page == "area" ? Visibility.Visible : Visibility.Collapsed;
         SettingsPage.Visibility = page == "settings" ? Visibility.Visible : Visibility.Collapsed;
+        if (page == "archive")
+        {
+            _ = RefreshArchiveQuotaStatusAsync();
+        }
+    }
+
+    private async Task RefreshArchiveQuotaStatusAsync()
+    {
+        if (_worker is null || ArchiveQuotaInfoBar is null)
+        {
+            return;
+        }
+        try
+        {
+            var status = await _worker.GetArchiveQuotaStatusAsync(CancellationToken.None);
+            if (status is null)
+            {
+                throw new InvalidOperationException("The quota ledger returned no status.");
+            }
+            var instance = status.InstanceId.Length > 8
+                ? status.InstanceId[..8]
+                : status.InstanceId;
+            ArchiveQuotaInfoBar.Severity = status.Available
+                ? InfoBarSeverity.Success
+                : InfoBarSeverity.Warning;
+            ArchiveQuotaInfoBar.Title = status.Available
+                ? $"{status.Remaining} of {status.AutomatedLimit} automated archive requests available"
+                : "Archive requests are paused for this installation";
+            var next = DateTimeOffset.TryParse(status.NextRequestAt, out var nextRequest)
+                ? $" Next safe request: {nextRequest.ToLocalTime():g}."
+                : "";
+            ArchiveQuotaInfoBar.Message =
+                $"Rolling 24 hours · {status.Used} used · {status.UserReserve} held for manual use · instance {instance}."
+                + next
+                + (status.Blocked && !string.IsNullOrWhiteSpace(status.BlockedReason)
+                    ? $" {status.BlockedReason}"
+                    : " Cached audio and local processing do not use this budget.");
+        }
+        catch (Exception exception)
+        {
+            ArchiveQuotaInfoBar.Severity = InfoBarSeverity.Warning;
+            ArchiveQuotaInfoBar.Title = "Archive budget status unavailable";
+            ArchiveQuotaInfoBar.Message = exception.Message;
+        }
     }
 
     private void NavigateTo(NavigationViewItem item)
@@ -2318,6 +2363,7 @@ public sealed partial class MainWindow : Window
             JobProgress.IsIndeterminate = false;
             SetBusy(false);
             await RefreshLibraryAsync();
+            await RefreshArchiveQuotaStatusAsync();
         }
     }
 

@@ -653,6 +653,26 @@ internal sealed class WorkerClient
         return diagnostics;
     }
 
+    public async Task<ArchiveQuotaStatus?> GetArchiveQuotaStatusAsync(
+        CancellationToken cancellationToken)
+    {
+        ArchiveQuotaStatus? status = null;
+        await RunWorkerAsync(
+            ["-m", "broadcastify_cli.worker", "quota-status"],
+            null,
+            message =>
+            {
+                if (message.TryGetProperty("type", out var type)
+                    && type.GetString() == "archive_quota_status"
+                    && message.TryGetProperty("status", out var value))
+                {
+                    status = value.Deserialize<ArchiveQuotaStatus>(JsonOptions);
+                }
+            },
+            cancellationToken);
+        return status;
+    }
+
     public async Task<AsrSelfTestStatus?> RunAsrSelfTestAsync(
         AsrSelfTestRequest request,
         Action<JsonElement> onMessage,
@@ -878,6 +898,10 @@ internal sealed class WorkerClient
         }
         startInfo.Environment["PYTHONIOENCODING"] = "utf-8";
         startInfo.Environment["PYTHONUTF8"] = "1";
+        Directory.CreateDirectory(AppSettingsStore.LocalDataDirectory);
+        startInfo.Environment["BROADCASTIFY_QUOTA_LEDGER"] = Path.Combine(
+            AppSettingsStore.LocalDataDirectory,
+            "archive-quota.sqlite3");
         foreach (var argument in _python.PrefixArguments.Concat(arguments))
         {
             startInfo.ArgumentList.Add(argument);

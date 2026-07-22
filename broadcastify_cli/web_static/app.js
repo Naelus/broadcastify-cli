@@ -512,6 +512,7 @@ async function refreshBootstrap({ preserveSelection = true } = {}) {
     renderLibrary();
     renderProfiles();
     renderRuntime();
+    renderArchiveQuota();
     if (preserveSelection && state.selectedDay) {
       const replacement = state.bootstrap.days.find((value) => value.feed_id === state.selectedDay.feed_id && value.archive_date === state.selectedDay.archive_date);
       if (replacement) await selectDay(replacement, false);
@@ -521,6 +522,29 @@ async function refreshBootstrap({ preserveSelection = true } = {}) {
     setBusyLabel("Service error");
     toast(error.message, true);
   }
+}
+
+function renderArchiveQuota() {
+  const notice = byId("archiveQuotaNotice");
+  if (!notice) return;
+  const quota = state.bootstrap.runtime?.archive_quota;
+  if (!quota) {
+    notice.className = "notice warning";
+    notice.querySelector("strong").textContent = "Archive budget status unavailable";
+    notice.querySelector("span").textContent = "Do not start unattended acquisition until the installation ledger is available.";
+    return;
+  }
+  const available = Boolean(quota.available);
+  notice.className = available ? "notice success" : "notice warning";
+  notice.querySelector("strong").textContent = available
+    ? `${quota.remaining} of ${quota.automated_limit} automated archive requests available`
+    : "Archive requests are paused for this installation";
+  const instance = String(quota.instance_id || "").slice(0, 8);
+  const next = quota.next_request_at
+    ? ` Next safe request: ${new Date(quota.next_request_at).toLocaleString()}.`
+    : "";
+  const reason = quota.blocked_reason ? ` ${quota.blocked_reason}` : "";
+  notice.querySelector("span").textContent = `Rolling 24 hours · ${quota.used} used · ${quota.user_reserve} held for manual use · instance ${instance}.${next}${reason}`;
 }
 
 function renderMetrics() {
