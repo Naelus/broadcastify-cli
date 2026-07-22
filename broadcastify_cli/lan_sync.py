@@ -18,7 +18,7 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import AbstractContextManager
 from dataclasses import asdict, dataclass
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote, urlparse, urlunparse
@@ -46,6 +46,17 @@ RAW_ARCHIVE_PATTERN = re.compile(
     r"^(?P<stamp>\d{12})-(?P<archive_id>\d+)-(?P<feed_id>\d+)\.mp3$",
     re.IGNORECASE,
 )
+
+
+def _archive_stamp_matches_day(stamp: str, archive_date: date) -> bool:
+    """Accept the final website block when its drifting label crosses midnight."""
+
+    try:
+        timestamp = datetime.strptime(stamp, "%Y%m%d%H%M")
+    except ValueError:
+        return False
+    day_start = datetime.combine(archive_date, datetime.min.time())
+    return timedelta(0) <= timestamp - day_start < timedelta(hours=30)
 
 ProgressCallback = Callable[[str], None]
 
@@ -210,7 +221,7 @@ class ArchiveBlock:
             or self.archive_date != expected_date_value
             or match is None
             or match.group("feed_id") != expected_feed_id
-            or match.group("stamp")[:8] != expected_date.strftime("%Y%m%d")
+            or not _archive_stamp_matches_day(match.group("stamp"), expected_date)
         ):
             raise LanSyncError("A LAN peer advertised an invalid archive block name.")
         if not 0 < self.size <= MAX_ARCHIVE_BLOCK_BYTES:
@@ -715,7 +726,7 @@ class LanArchiveCatalog:
             if (
                 match is None
                 or match.group("feed_id") != feed_id
-                or match.group("stamp")[:8] != archive_date.strftime("%Y%m%d")
+                or not _archive_stamp_matches_day(match.group("stamp"), archive_date)
                 or path.is_symlink()
             ):
                 continue
@@ -752,7 +763,7 @@ class LanArchiveCatalog:
             not feed_id.isdigit()
             or match is None
             or match.group("feed_id") != feed_id
-            or match.group("stamp")[:8] != archive_date.strftime("%Y%m%d")
+            or not _archive_stamp_matches_day(match.group("stamp"), archive_date)
         ):
             raise LanSyncError("The archive block does not match that feed and date.")
         day_dir = self._day_directory(feed_id, archive_date)
@@ -1942,7 +1953,7 @@ class LanArchiveSyncClient:
             if (
                 match is not None
                 and match.group("feed_id") == feed_id
-                and match.group("stamp")[:8] == archive_date.strftime("%Y%m%d")
+                and _archive_stamp_matches_day(match.group("stamp"), archive_date)
                 and not path.is_symlink()
                 and path.is_file()
                 and 0 < path.stat().st_size <= MAX_ARCHIVE_BLOCK_BYTES
@@ -1966,7 +1977,7 @@ class LanArchiveSyncClient:
             if (
                 match is None
                 or match.group("feed_id") != feed_id
-                or match.group("stamp")[:8] != archive_date.strftime("%Y%m%d")
+                or not _archive_stamp_matches_day(match.group("stamp"), archive_date)
                 or path.is_symlink()
                 or not path.is_file()
             ):

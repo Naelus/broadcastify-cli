@@ -93,6 +93,34 @@ def test_catalog_exposes_only_original_blocks_for_the_requested_day(
     assert catalog.inventory("90001", date(2026, 7, 13)) == []
 
 
+def test_catalog_keeps_drifted_final_block_that_crosses_midnight(
+    tmp_path: Path,
+) -> None:
+    archive_date = date(2026, 7, 12)
+    day = tmp_path / "90001" / "20260712"
+    day.mkdir(parents=True)
+    final_block = day / "202607130031-777777-90001.mp3"
+    final_block.write_bytes(b"last block from the requested website archive day")
+    too_late = day / "202607130700-888888-90001.mp3"
+    too_late.write_bytes(b"not part of the requested archive day")
+    catalog = LanArchiveCatalog(tmp_path, enabled=True)
+
+    blocks = catalog.inventory("90001", archive_date)
+
+    assert [block.filename for block in blocks] == [final_block.name]
+    resolved, block = catalog.resolve_block("90001", archive_date, final_block.name)
+    assert resolved == final_block.resolve()
+    assert block.filename == final_block.name
+    with pytest.raises(lan_sync.LanSyncError, match="does not match"):
+        catalog.resolve_block("90001", archive_date, too_late.name)
+
+    client = LanArchiveSyncClient(enabled=True, discovery_enabled=False)
+    completion = client.completion_blocks(
+        [final_block], "90001", archive_date
+    )
+    assert [value.filename for value in completion] == [final_block.name]
+
+
 def test_hash_verified_peer_sync_copies_missing_blocks_without_a_session(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

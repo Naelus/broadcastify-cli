@@ -2750,15 +2750,27 @@ public sealed partial class MainWindow : Window
         {
             _operationCancellation.Token.ThrowIfCancellationRequested();
             AppendLog($"Analyzing feed {request.FeedId} for {day.ArchiveDate}…");
-            latestReport = await _worker.AnalyzeDayAsync(
-                ApplyAnalysisProvider(new AnalysisRequest
-                {
-                    FeedId = request.FeedId,
-                    ArchiveDate = day.ArchiveDate,
-                    OutputDirectory = request.OutputDirectory,
-                }),
-                HandleWorkerMessage,
-                _operationCancellation.Token);
+            try
+            {
+                latestReport = await _worker.AnalyzeDayAsync(
+                    ApplyAnalysisProvider(new AnalysisRequest
+                    {
+                        FeedId = request.FeedId,
+                        ArchiveDate = day.ArchiveDate,
+                        OutputDirectory = request.OutputDirectory,
+                    }),
+                    HandleWorkerMessage,
+                    _operationCancellation.Token);
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                throw new InvalidOperationException(
+                    $"Local incident analysis failed for feed {request.FeedId} on "
+                    + $"{day.ArchiveDate}. Its downloads, combined audio, transcript, "
+                    + "and diarization remain saved and will be reused when you retry. "
+                    + exception.Message,
+                    exception);
+            }
         }
         if (transcriptDays.Count == 0)
         {
@@ -4150,7 +4162,7 @@ public sealed partial class MainWindow : Window
     {
         StatusText.Text = "Error";
         AppendLog($"ERROR: {exception.Message}");
-        await ShowMessageAsync("Broadcastify error", exception.Message);
+        await ShowMessageAsync("Processing error", exception.Message);
     }
 
     private async Task ShowMessageAsync(string title, string message)

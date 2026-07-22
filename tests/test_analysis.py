@@ -5,10 +5,12 @@ from datetime import date
 from pathlib import Path
 
 import pytest
+import requests
 
 from broadcastify_cli.analysis import (
     IncidentAnalyzer,
     LlamaCppClient,
+    LlamaServerError,
     LlamaServerProcess,
     PROMPT_VERSION,
     WINDOW_PROMPT_VERSION,
@@ -180,6 +182,38 @@ def test_llama_json_does_not_hide_unrelated_server_500(monkeypatch) -> None:
         LlamaCppClient().chat_json(
             system="Return JSON.",
             user="Summarize.",
+            schema_name="summary",
+            schema={"type": "object"},
+        )
+    assert calls == 1
+
+
+def test_llama_json_reports_oversized_context_without_schema_retry(monkeypatch) -> None:
+    calls = 0
+    response = requests.Response()
+    response.status_code = 400
+    response.url = "http://127.0.0.1:8088/v1/chat/completions"
+    response._content = json.dumps(
+        {
+            "error": {
+                "message": (
+                    "request (66558 tokens) exceeds the available context size "
+                    "(32768 tokens)"
+                )
+            }
+        }
+    ).encode()
+
+    def fake_post(_url: str, *, json: dict[str, object], timeout: float) -> requests.Response:
+        nonlocal calls
+        calls += 1
+        return response
+
+    monkeypatch.setattr("broadcastify_cli.analysis.requests.post", fake_post)
+    with pytest.raises(LlamaServerError, match="larger than llama.cpp's context window"):
+        LlamaCppClient().chat_json(
+            system="Return JSON.",
+            user="Dense transcript.",
             schema_name="summary",
             schema={"type": "object"},
         )
@@ -440,6 +474,37 @@ def test_windows_cover_full_timeline() -> None:
     windows = build_transcript_windows(segments, window_seconds=7_200, overlap_seconds=0)
     assert len(windows) == 2
     assert windows[-1].segments[0]["segment_index"] == 1
+
+
+def test_dense_transcript_windows_are_bounded_with_small_context_overlap() -> None:
+    segments = [
+        {
+            "segment_index": index,
+            "start_seconds": float(index),
+            "end_seconds": float(index + 1),
+            "text": "dispatch evidence " + ("x" * 180),
+        }
+        for index in range(500)
+    ]
+
+    windows = build_transcript_windows(
+        segments,
+        window_seconds=7_200,
+        overlap_seconds=0,
+        max_prompt_chars=10_000,
+        overlap_prompt_chars=500,
+    )
+
+    assert len(windows) > 1
+    assert all(len(window.prompt_text()) <= 10_000 for window in windows)
+    assert {segment["segment_index"] for window in windows for segment in window.segments} == set(
+        range(500)
+    )
+    assert any(
+        set(segment["segment_index"] for segment in first.segments)
+        & set(segment["segment_index"] for segment in second.segments)
+        for first, second in zip(windows, windows[1:])
+    )
 
 
 def test_clear_evidence_corrects_category_and_routine_priority() -> None:

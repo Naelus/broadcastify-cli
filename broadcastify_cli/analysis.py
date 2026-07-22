@@ -27,11 +27,13 @@ LEGACY_LLM_MODELS = {
 }
 DEFAULT_EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"
 PROMPT_VERSION = "police-radio-events-v11-preserve-spoken-names"
-# The v10 evidence policy adds a deterministic, quote-backed recall pass after
-# the model. Its LLM window prompt is intentionally unchanged, so exact v9
-# window checkpoints remain reusable while saved incidents/summaries advance.
-WINDOW_PROMPT_VERSION = "police-radio-events-window-v10-preserve-spoken-names"
+# This separate version advances whenever extraction-window boundaries change.
+# Completed day-level results remain reusable, while an interrupted oversized
+# run cannot mistake an old two-hour checkpoint for a new bounded chunk.
+WINDOW_PROMPT_VERSION = "police-radio-events-window-v11-bounded-context"
 WEEKLY_PROMPT_VERSION = "police-radio-weekly-v4-preserve-spoken-names"
+MAX_TRANSCRIPT_WINDOW_CHARS = 40_000
+TRANSCRIPT_WINDOW_OVERLAP_CHARS = 2_000
 EVENT_TYPES = {
     "shots_fired",
     "fire",
@@ -1211,6 +1213,9 @@ class LlamaCppClient:
     @staticmethod
     def _schema_response_failed(response: requests.Response) -> bool:
         if response.status_code == 400:
+            detail = response.text.lower()
+            if "exceeds the available context size" in detail:
+                return False
             return True
         if response.status_code != 500:
             return False
@@ -1224,6 +1229,32 @@ class LlamaCppClient:
                 "response_format",
             )
         )
+
+    @staticmethod
+    def _raise_for_status(response: requests.Response) -> None:
+        try:
+            response.raise_for_status()
+        except requests.HTTPError as exc:
+            detail = response.text.strip()
+            try:
+                value = response.json()
+                error = value.get("error") if isinstance(value, dict) else None
+                if isinstance(error, dict):
+                    detail = str(error.get("message") or error.get("type") or detail)
+                elif error:
+                    detail = str(error)
+            except (ValueError, TypeError):
+                pass
+            detail = re.sub(r"\s+", " ", detail)[:800]
+            if "exceeds the available context size" in detail.lower():
+                raise LlamaServerError(
+                    "Local analysis generated a request larger than llama.cpp's "
+                    f"context window: {detail}"
+                ) from exc
+            suffix = f": {detail}" if detail else ""
+            raise LlamaServerError(
+                f"Local model request failed with HTTP {response.status_code}{suffix}"
+            ) from exc
 
     def chat_json(
         self,
@@ -1268,7 +1299,7 @@ class LlamaCppClient:
                 response = requests.post(
                     f"{self.base_url}/chat/completions", json=payload, timeout=self.timeout
                 )
-            response.raise_for_status()
+            self._raise_for_status(response)
             value = response.json()
             choice = value["choices"][0]
             content = choice["message"]["content"]
@@ -1312,7 +1343,7 @@ class LlamaCppClient:
             response = requests.post(
                 f"{self.base_url}/chat/completions", json=payload, timeout=self.timeout
             )
-            response.raise_for_status()
+            self._raise_for_status(response)
             choice = response.json()["choices"][0]
             content = choice["message"]["content"]
             if isinstance(content, list):
@@ -1334,22 +1365,76 @@ class TranscriptWindow:
     segments: tuple[dict[str, Any], ...]
 
     def prompt_text(self) -> str:
-        lines = []
-        for segment in self.segments:
-            speaker = f" {segment['speaker']}" if segment.get("speaker") else ""
-            lines.append(
-                f"S{segment['segment_index']} "
-                f"[{format_offset(float(segment['start_seconds']))}-"
-                f"{format_offset(float(segment['end_seconds']))}]{speaker}: "
-                f"{segment['text']}"
+        return "\n".join(_segment_prompt_line(segment) for segment in self.segments)
+
+
+def _segment_prompt_line(segment: dict[str, Any]) -> str:
+    speaker = f" {segment['speaker']}" if segment.get("speaker") else ""
+    return (
+        f"S{segment['segment_index']} "
+        f"[{format_offset(float(segment['start_seconds']))}-"
+        f"{format_offset(float(segment['end_seconds']))}]{speaker}: "
+        f"{segment['text']}"
+    )
+
+
+def _bounded_window_chunks(
+    selected: tuple[dict[str, Any], ...],
+    *,
+    max_prompt_chars: int,
+    overlap_prompt_chars: int,
+) -> list[tuple[dict[str, Any], ...]]:
+    if not selected:
+        return []
+    if max_prompt_chars <= 0:
+        raise ValueError("max_prompt_chars must be positive.")
+    overlap_prompt_chars = max(0, min(overlap_prompt_chars, max_prompt_chars // 2))
+    lines = [(_segment_prompt_line(segment), segment) for segment in selected]
+    if sum(len(line) for line, _segment in lines) + len(lines) - 1 <= max_prompt_chars:
+        return [selected]
+
+    chunks: list[tuple[dict[str, Any], ...]] = []
+    current: list[tuple[str, dict[str, Any]]] = []
+    current_chars = 0
+    for line, segment in lines:
+        if len(line) > max_prompt_chars:
+            raise ValueError(
+                f"Transcript segment S{segment['segment_index']} exceeds the "
+                "local-analysis window size."
             )
-        return "\n".join(lines)
+        added_chars = len(line) + (1 if current else 0)
+        if current and current_chars + added_chars > max_prompt_chars:
+            chunks.append(tuple(value for _text, value in current))
+            overlap: list[tuple[str, dict[str, Any]]] = []
+            overlap_chars = 0
+            for prior_line, prior_segment in reversed(current):
+                candidate_chars = len(prior_line) + (1 if overlap else 0)
+                if overlap_chars + candidate_chars > overlap_prompt_chars:
+                    break
+                overlap.append((prior_line, prior_segment))
+                overlap_chars += candidate_chars
+            current = list(reversed(overlap))
+            current_chars = sum(len(text) for text, _value in current)
+            if current:
+                current_chars += len(current) - 1
+            added_chars = len(line) + (1 if current else 0)
+            if current and current_chars + added_chars > max_prompt_chars:
+                current = []
+                current_chars = 0
+                added_chars = len(line)
+        current.append((line, segment))
+        current_chars += added_chars
+    if current:
+        chunks.append(tuple(value for _text, value in current))
+    return chunks
 
 
 def build_transcript_windows(
     segments: Sequence[dict[str, Any]],
     window_seconds: float = 7_200.0,
     overlap_seconds: float = 300.0,
+    max_prompt_chars: int = MAX_TRANSCRIPT_WINDOW_CHARS,
+    overlap_prompt_chars: int = TRANSCRIPT_WINDOW_OVERLAP_CHARS,
 ) -> list[TranscriptWindow]:
     if not segments:
         return []
@@ -1365,7 +1450,22 @@ def build_transcript_windows(
             and float(segment["start_seconds"]) < end + overlap_seconds
         )
         if selected:
-            windows.append(TranscriptWindow(start, min(end, final_end), selected))
+            chunks = _bounded_window_chunks(
+                selected,
+                max_prompt_chars=max_prompt_chars,
+                overlap_prompt_chars=overlap_prompt_chars,
+            )
+            if len(chunks) == 1:
+                windows.append(TranscriptWindow(start, min(end, final_end), selected))
+            else:
+                for chunk in chunks:
+                    windows.append(
+                        TranscriptWindow(
+                            float(chunk[0]["start_seconds"]),
+                            float(chunk[-1]["end_seconds"]),
+                            chunk,
+                        )
+                    )
         start = end
     return windows
 
