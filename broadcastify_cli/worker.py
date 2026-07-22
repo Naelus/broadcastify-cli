@@ -67,6 +67,7 @@ from .portable_diarization import (
 from .area_watch import AREA_PROMPT_VERSION, AreaStoryAnalyzer, _public_quote
 from .area_acquisition import AreaAcquisitionRunner
 from .broadcastify import BroadcastifyClient
+from .quota import ArchiveRequestLedger
 from .geography import CENSUS_ZCTA_YEAR, ZipCentroidCatalog
 from .jobs import JobRunner
 from .library import LocalProcessingRequest, prepare_local_day, scan_local_library
@@ -291,6 +292,11 @@ def authenticate() -> int:
     return 0
 
 
+def archive_quota_status() -> int:
+    emit({"type": "archive_quota_status", "status": ArchiveRequestLedger().status()})
+    return 0
+
+
 def diagnostics(settings: dict[str, Any] | None = None) -> int:
     llama_server = find_llama_server()
     selected_whisper_model: Path | None = None
@@ -373,6 +379,7 @@ def diagnostics(settings: dict[str, Any] | None = None) -> int:
         else "",
         "analysis_database": str(DEFAULT_DATABASE.resolve()),
         "analysis_stats": {},
+        "archive_quota": ArchiveRequestLedger().status(),
     }
     try:
         import torch
@@ -1540,6 +1547,7 @@ def build_parser() -> argparse.ArgumentParser:
     saved_area.add_argument("--profile-name", required=True)
     subparsers.add_parser("run")
     subparsers.add_parser("authenticate")
+    subparsers.add_parser("quota-status")
     subparsers.add_parser("diagnostics")
     subparsers.add_parser("diagnostics-selected")
     subparsers.add_parser("prepare-asr-model")
@@ -1618,6 +1626,8 @@ def main() -> int:
             return run_job()
         if arguments.command == "authenticate":
             return authenticate()
+        if arguments.command == "quota-status":
+            return archive_quota_status()
         if arguments.command == "diagnostics":
             return diagnostics()
         if arguments.command == "diagnostics-selected":

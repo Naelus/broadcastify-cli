@@ -149,6 +149,10 @@ celerybeat.pid
 
 # Environments
 .env
+.broadcastify-archive-quota.sqlite3
+.broadcastify-archive-quota.sqlite3-*
+archive-quota.sqlite3
+archive-quota.sqlite3-*
 broadcastify-desktop.env
 .venv
 .venv.broken*/

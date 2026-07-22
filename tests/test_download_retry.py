@@ -12,6 +12,7 @@ from broadcastify_cli.broadcastify import (
     BroadcastifyError,
     DownloadLimitExceeded,
 )
+from broadcastify_cli.quota import ArchiveRequestLedger
 
 
 class _QueuedSession:
@@ -39,7 +40,15 @@ def _response(
     return response
 
 
-def test_download_archive_retries_429_then_succeeds(tmp_path: Path) -> None:
+def _ledger(tmp_path: Path, *, limit: int = 240) -> ArchiveRequestLedger:
+    return ArchiveRequestLedger(
+        tmp_path / "archive-quota.sqlite3",
+        limit=limit,
+        provider_limit=max(250, limit + 10),
+    )
+
+
+def test_download_archive_stops_on_any_429_without_retry(tmp_path: Path) -> None:
     session = _QueuedSession(
         [
             _response(429, headers={"Retry-After": "0"}),
@@ -62,26 +71,28 @@ def test_download_archive_retries_429_then_succeeds(tmp_path: Path) -> None:
         download_backoff_base=0,
         download_backoff_max=0,
         random_uniform=lambda _start, _end: 0,
+        quota_ledger=_ledger(tmp_path),
     )
     client.session = session  # type: ignore[assignment]
 
-    result = client.download_archive(
-        "90001",
-        date(2026, 7, 12),
-        "test-archive",
-        tmp_path,
-        notice=notices.append,
-    )
+    with pytest.raises(DownloadLimitExceeded, match="HTTP 429"):
+        client.download_archive(
+            "90001",
+            date(2026, 7, 12),
+            "test-archive",
+            tmp_path,
+            notice=notices.append,
+        )
 
-    assert result.read_bytes() == b"audio"
-    assert len(session.calls) == 2
-    assert any("HTTP 429" in message for message in notices)
-    assert any("one at a time" in message for message in notices)
+    assert len(session.calls) == 1
+    assert len(session.responses) == 1
+    assert any("without retrying" in message for message in notices)
+    assert client.archive_quota_status()["blocked"] is True
 
 
 def test_download_archive_stops_after_configured_attempts(tmp_path: Path) -> None:
     session = _QueuedSession(
-        [_response(429, headers={"Retry-After": "0"}) for _ in range(3)]
+        [_response(503, headers={"Retry-After": "0"}) for _ in range(3)]
     )
     client = BroadcastifyClient(
         download_attempts=3,
@@ -89,6 +100,7 @@ def test_download_archive_stops_after_configured_attempts(tmp_path: Path) -> Non
         download_backoff_base=0,
         download_backoff_max=0,
         random_uniform=lambda _start, _end: 0,
+        quota_ledger=_ledger(tmp_path),
     )
     client.session = session  # type: ignore[assignment]
 
@@ -118,10 +130,11 @@ def test_download_archive_does_not_retry_exhausted_quota(tmp_path: Path) -> None
         download_attempts=7,
         download_request_interval=0,
         random_uniform=lambda _start, _end: 0,
+        quota_ledger=_ledger(tmp_path),
     )
     client.session = session  # type: ignore[assignment]
 
-    with pytest.raises(DownloadLimitExceeded, match="quota is exhausted"):
+    with pytest.raises(DownloadLimitExceeded, match="limit is exhausted"):
         client.download_archive(
             "90003",
             date(2026, 7, 3),
@@ -143,13 +156,44 @@ def test_retry_after_supports_seconds_and_http_dates() -> None:
     assert BroadcastifyClient._retry_after_seconds("not-a-date", now=now) is None
 
 
-def test_429_without_retry_after_uses_long_rate_limit_backoff() -> None:
-    client = BroadcastifyClient(random_uniform=lambda _start, _end: 0)
-    response = _response(429)
+def test_local_budget_blocks_before_an_extra_archive_request(tmp_path: Path) -> None:
+    session = _QueuedSession(
+        [
+            _response(
+                200,
+                headers={
+                    "Content-Type": "audio/mpeg",
+                    "Content-Disposition": 'attachment; filename="first.mp3"',
+                },
+                content=b"audio",
+            )
+        ]
+    )
+    client = BroadcastifyClient(
+        download_request_interval=0,
+        quota_ledger=_ledger(tmp_path, limit=1),
+    )
+    client.session = session  # type: ignore[assignment]
 
-    assert client._download_retry_delay(response, 1) == 30
-    assert client._download_retry_delay(response, 4) == 240
-    assert client._download_retry_delay(response, 7) == 300
+    client.download_archive("90001", date(2026, 7, 12), "first", tmp_path)
+    with pytest.raises(DownloadLimitExceeded, match="used its 1 automated"):
+        client.download_archive("90001", date(2026, 7, 12), "second", tmp_path)
+
+    assert len(session.calls) == 1
+    assert client.archive_quota_status()["remaining"] == 0
+
+
+def test_cached_archive_does_not_consume_local_budget(tmp_path: Path) -> None:
+    cached = tmp_path / "existing.mp3"
+    cached.write_bytes(b"audio")
+    client = BroadcastifyClient(quota_ledger=_ledger(tmp_path, limit=1))
+
+    result = client.download_archive(
+        "90001", date(2026, 7, 12), "existing", tmp_path
+    )
+
+    assert result == cached
+    assert client.archive_quota_status()["used"] == 0
 
 
 def test_serialized_throttle_is_reused_across_days_in_one_job() -> None:

@@ -18,6 +18,7 @@ import requests
 from bs4 import BeautifulSoup
 
 from .models import FeedSearchResult
+from .quota import ArchiveRequestBudgetExceeded, ArchiveRequestLedger
 
 
 ProgressCallback = Callable[[int, int, str], None]
@@ -129,6 +130,8 @@ class BroadcastifyClient:
         rate_limit_backoff_base: float = 30.0,
         rate_limit_backoff_max: float = 300.0,
         random_uniform: Callable[[float, float], float] | None = None,
+        quota_ledger: ArchiveRequestLedger | None = None,
+        quota_ledger_path: str | Path | None = None,
     ) -> None:
         # BROADCASTIFY_* avoids colliding with Windows' built-in USERNAME
         # environment variable. The legacy names remain supported when a
@@ -163,6 +166,8 @@ class BroadcastifyClient:
         self._archive_filename_prefixes: dict[str, str] = {}
         self._archive_timezones: dict[str, ZoneInfo] = {}
         self._county_feed_cache: dict[str, list[FeedSearchResult]] = {}
+        self._quota_ledger = quota_ledger
+        self._quota_ledger_path = quota_ledger_path
 
     def close(self) -> None:
         self.session.close()
@@ -609,7 +614,10 @@ class BroadcastifyClient:
             return []
 
         workers = max(1, min(jobs, len(archive_ids)))
-        throttle = self._shared_download_throttle(workers)
+        # Broadcastify's standard archive guidance calls for one file at a
+        # time. Worker threads may prepare/cache-check tasks concurrently, but
+        # this shared throttle admits only one upstream media request.
+        throttle = self._shared_download_throttle(1)
         successful = 0
         progress_lock = threading.Lock()
 
@@ -629,6 +637,13 @@ class BroadcastifyClient:
                 f"Pacing archive requests at least {self.download_request_interval:.1f}s "
                 f"apart (up to {per_minute:.0f}/minute)."
             )
+        quota = self.archive_quota_status()
+        retry_notice(
+            f"Installation archive budget: {quota['remaining']}/"
+            f"{quota['automated_limit']} automated requests available in the "
+            f"rolling 24-hour window; {quota['user_reserve']} requests are reserved "
+            "for manual use."
+        )
 
         # Acquire both ends of the live player window before older backlog:
         # the archive API is newest-first, so entries 0 and 1 are the current
@@ -861,8 +876,21 @@ class BroadcastifyClient:
             if admit_download is not None:
                 admit_download()
             request_throttle.acquire()
+            request_id: int | None = None
             try:
                 try:
+                    try:
+                        request_id = self._archive_quota().reserve(
+                            feed_id=feed_id,
+                            archive_date=archive_date.isoformat(),
+                            archive_id=archive_id,
+                        )
+                    except ArchiveRequestBudgetExceeded as exc:
+                        message = str(exc)
+                        request_throttle.block(message)
+                        if notice:
+                            notice(message)
+                        raise DownloadLimitExceeded(message) from exc
                     with self.session.get(
                         url,
                         headers={"Referer": f"{self.BASE_URL}/archives/feed/{feed_id}"},
@@ -870,34 +898,41 @@ class BroadcastifyClient:
                         timeout=(self.timeout, 120.0),
                         allow_redirects=True,
                     ) as response:
-                        if self._is_download_limit_response(response):
+                        assert request_id is not None
+                        self._archive_quota().finish(
+                            request_id,
+                            outcome=f"http_{response.status_code}",
+                            http_status=response.status_code,
+                        )
+                        request_id = None
+                        if response.status_code == 429:
+                            explicit_limit = self._is_download_limit_response(response)
                             message = (
-                                "Broadcastify's archive download quota is exhausted. "
-                                "The server did not provide a reset time, so this job stopped "
-                                "without retrying. Already-downloaded files are preserved and "
-                                "will be reused; contact support@broadcastify.com for quota details."
+                                "Broadcastify's archive request limit is exhausted."
+                                if explicit_limit
+                                else "Broadcastify returned HTTP 429 for an archive request."
                             )
+                            message += (
+                                " This installation has paused all new archive requests for "
+                                "24 hours without retrying. Already-cached files and local "
+                                "processing remain available."
+                            )
+                            self._archive_quota().mark_rate_limited(message)
                             request_throttle.block(message)
                             if notice:
                                 notice(message)
                             raise DownloadLimitExceeded(message)
 
-                        if response.status_code in {429, 500, 502, 503, 504}:
+                        if response.status_code in {500, 502, 503, 504}:
                             if attempt >= self.download_attempts:
                                 response.raise_for_status()
                             delay = self._download_retry_delay(response, attempt)
-                            limited = response.status_code == 429
-                            request_throttle.defer(delay, serialize=limited)
+                            request_throttle.defer(delay, serialize=False)
                             if notice:
-                                suffix = (
-                                    " Remaining archive requests in this job will run one at a time."
-                                    if limited
-                                    else ""
-                                )
                                 notice(
                                     f"Broadcastify returned HTTP {response.status_code} for archive "
                                     f"{archive_id}; waiting {delay:.1f}s before retry "
-                                    f"{attempt + 1}/{self.download_attempts}.{suffix}"
+                                    f"{attempt + 1}/{self.download_attempts}."
                                 )
                             continue
 
@@ -933,6 +968,12 @@ class BroadcastifyClient:
                                 partial_path.unlink()
                         return output_path
                 except (requests.ConnectionError, requests.Timeout) as exc:
+                    if request_id is not None:
+                        self._archive_quota().finish(
+                            request_id,
+                            outcome="network_error",
+                        )
+                        request_id = None
                     if attempt >= self.download_attempts:
                         raise
                     delay = self._exponential_backoff(attempt)
@@ -948,23 +989,24 @@ class BroadcastifyClient:
             f"Archive {archive_id} did not download after {self.download_attempts} attempts."
         )
 
+    def _archive_quota(self) -> ArchiveRequestLedger:
+        if self._quota_ledger is None:
+            self._quota_ledger = ArchiveRequestLedger(self._quota_ledger_path)
+        return self._quota_ledger
+
+    def archive_quota_status(self) -> dict[str, object]:
+        return self._archive_quota().status()
+
     def _exponential_backoff(self, attempt: int) -> float:
         base = self.download_backoff_base * (2 ** max(0, attempt - 1))
         delay = min(self.download_backoff_max, base)
         return delay + self._random_uniform(0.0, min(1.0, delay / 4))
-
-    def _rate_limit_backoff(self, attempt: int) -> float:
-        base = self.rate_limit_backoff_base * (2 ** max(0, attempt - 1))
-        delay = min(self.rate_limit_backoff_max, base)
-        return delay + self._random_uniform(0.0, min(5.0, delay / 10))
 
     def _download_retry_delay(
         self, response: requests.Response, attempt: int
     ) -> float:
         retry_after = self._retry_after_seconds(response.headers.get("Retry-After"))
         if retry_after is None:
-            if response.status_code == 429:
-                return self._rate_limit_backoff(attempt)
             return self._exponential_backoff(attempt)
         # A small jitter prevents all pool workers from resuming on the same tick,
         # while still waiting at least as long as Broadcastify requested.

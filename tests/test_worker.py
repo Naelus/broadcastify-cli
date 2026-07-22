@@ -13,12 +13,31 @@ from broadcastify_cli.worker import (
     _day_report,
     _incident_clip,
     analysis_self_test,
+    archive_quota_status,
     asr_self_test,
     diarization_self_test,
     load_worker_environment,
     prepare_asr_model_command,
     profile_self_test,
 )
+
+
+def test_archive_quota_status_mints_one_persistent_installation_identity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ledger = tmp_path / "quota.sqlite3"
+    monkeypatch.setenv("BROADCASTIFY_QUOTA_LEDGER", str(ledger))
+    emitted: list[dict[str, object]] = []
+    monkeypatch.setattr("broadcastify_cli.worker.emit", emitted.append)
+
+    assert archive_quota_status() == 0
+    assert archive_quota_status() == 0
+
+    statuses = [value["status"] for value in emitted]
+    assert statuses[0]["instance_id"] == statuses[1]["instance_id"]
+    assert statuses[0]["automated_limit"] == 240
+    assert statuses[0]["user_reserve"] == 10
 
 
 def test_asr_self_test_uses_selected_engine_without_returning_transcript_text(
