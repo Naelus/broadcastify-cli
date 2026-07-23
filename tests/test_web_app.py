@@ -12,6 +12,7 @@ import pytest
 from broadcastify_cli.analysis import PROMPT_VERSION
 from broadcastify_cli.storage import AnalysisStore
 from broadcastify_cli.web_app import (
+    FeedScheduleCoordinator,
     JobManager,
     WebRequestError,
     _area_stories_for_web,
@@ -110,6 +111,54 @@ def _retained_day(
         store.save_feed_catalog([{"feed_id": "90001", "name": "Example City Public Safety"}])
 
 
+def test_web_schedule_coordinator_claims_and_finishes_due_feed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = tmp_path / "analysis.sqlite3"
+    monkeypatch.setenv(
+        "BROADCASTIFY_QUOTA_LEDGER", str(tmp_path / "quota.sqlite3")
+    )
+    with AnalysisStore(database) as store:
+        saved = store.save_feed_schedule(
+            {
+                "feed_id": "90001",
+                "feed_name": "Example Public Safety",
+                "run_time_local": "00:00",
+                "lookback_days": 1,
+                "job": {"combine": False, "transcribe": False},
+            }
+        )
+
+    class FakeJobs:
+        def start(self, command: str, payload: dict[str, object]) -> dict[str, object]:
+            assert command == "run-scheduled"
+            assert payload["job"]["feed_id"] == "90001"  # type: ignore[index]
+            return {"id": "scheduled-job"}
+
+        def get(self, job_id: str) -> dict[str, object]:
+            assert job_id == "scheduled-job"
+            return {
+                "status": "completed",
+                "result": {
+                    "type": "scheduled_complete",
+                    "result": {"download_limited": False},
+                },
+            }
+
+    coordinator = FeedScheduleCoordinator(  # type: ignore[arg-type]
+        FakeJobs(), database, tmp_path, poll_seconds=0.05
+    )
+    coordinator.check_once()
+    coordinator.check_once()
+
+    with AnalysisStore(database) as store:
+        result = store.list_feed_schedules()[0]
+    assert result["id"] == saved["id"]
+    assert result["state"] == "complete"
+    assert result["last_run_date"] == date.today().isoformat()
+
+
 def test_loopback_web_app_serves_library_transcript_and_media(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -134,8 +183,9 @@ def test_loopback_web_app_serves_library_transcript_and_media(
         assert cookie.startswith("radio_archive_session=")
         assert token_match is not None
         assert b'id="areaPublicSafetyOnly"' in body
-        assert b'/static/app.js?v=31' in body
+        assert b'/static/app.js?v=32' in body
         assert b'id="archiveQuotaNotice"' in body
+        assert b'id="saveFeedScheduleButton"' in body
         assert b'id="accessScopeStatus"' in body
         assert b'value="qwen3-asr"' in body
         assert b'qwen3-asr-0.6b-int8' in body
@@ -159,7 +209,7 @@ def test_loopback_web_app_serves_library_transcript_and_media(
         assert response.getheader("Content-Type") == "image/svg+xml"
         assert b"<svg" in body
 
-        response, body = _request(connection, "GET", "/static/app.js?v=31")
+        response, body = _request(connection, "GET", "/static/app.js?v=32")
         assert response.status == 200
         assert b"areaSelectedStoryIndex" in body
         assert b"data-area-story-index" in body
@@ -199,6 +249,7 @@ def test_loopback_web_app_serves_library_transcript_and_media(
         assert b"lan_sync_enabled: Boolean(state.settings.lanSyncEnabled)" in body
         assert b"lan_peer_urls: state.settings.lanPeerUrls" in body
         assert b"function renderArchiveQuota" in body
+        assert b"function renderFeedSchedules" in body
 
         response, body = _request(connection, "GET", "/static/app.css?v=20")
         assert response.status == 200
@@ -222,6 +273,39 @@ def test_loopback_web_app_serves_library_transcript_and_media(
         assert bootstrap["runtime"]["archive_quota"]["automated_limit"] == 240
         assert bootstrap["runtime"]["archive_quota"]["user_reserve"] == 10
         assert bootstrap["runtime"]["archive_quota"]["remaining"] == 240
+        assert bootstrap["schedules"] == []
+
+        response, body = _request(
+            connection,
+            "POST",
+            "/api/schedules",
+            cookie=cookie,
+            token=token,
+            body={
+                "feed_id": "90001",
+                "feed_name": "Example City Public Safety",
+                "run_time_local": "23:59",
+                "lookback_days": 2,
+                "enabled": False,
+                "analyze": True,
+                "job": {"combine": True, "transcribe": True, "diarize": True},
+            },
+        )
+        saved_schedule = json.loads(body)["schedule"]
+        assert response.status == 200
+        assert saved_schedule["feed_id"] == "90001"
+        assert saved_schedule["job"]["download_jobs"] == 1
+
+        response, body = _request(
+            connection,
+            "POST",
+            f"/api/schedules/{saved_schedule['id']}/delete",
+            cookie=cookie,
+            token=token,
+            body={},
+        )
+        assert response.status == 200
+        assert json.loads(body)["deleted"] is True
 
         response, body = _request(
             connection,

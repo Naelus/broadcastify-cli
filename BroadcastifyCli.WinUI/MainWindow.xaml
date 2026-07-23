@@ -320,6 +320,16 @@
                                                  Message="Cached audio and local processing do not consume archive requests." />
                                         <Button x:Name="StartButton" Content="Start archive job" HorizontalAlignment="Stretch"
                                                 Style="{StaticResource AccentButtonStyle}" Click="Start_Click" />
+                                        <Grid ColumnSpacing="8">
+                                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                            <Button x:Name="ScheduleFeedButton" Content="Schedule this feed" HorizontalAlignment="Stretch"
+                                                    Click="ScheduleFeed_Click" />
+                                            <Button x:Name="ManageSchedulesButton" Grid.Column="1" Content="Manage schedules" HorizontalAlignment="Stretch"
+                                                    Click="ManageSchedules_Click" />
+                                        </Grid>
+                                        <InfoBar x:Name="FeedScheduleInfoBar" IsOpen="True" IsClosable="False" Severity="Informational"
+                                                 Title="No feed schedules yet"
+                                                 Message="Daily schedules run while this desktop app is open; the NAS service can run its own schedules continuously." />
                                         <TextBlock Text="Model, device, speaker, storage, and credential options are in Settings."
                                                    TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                     </StackPanel>

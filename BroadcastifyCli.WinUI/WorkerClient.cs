@@ -673,6 +673,109 @@ internal sealed class WorkerClient
         return status;
     }
 
+    public async Task<IReadOnlyList<FeedSchedule>> ListFeedSchedulesAsync(
+        CancellationToken cancellationToken)
+    {
+        List<FeedSchedule>? schedules = null;
+        await RunWorkerAsync(
+            ["-m", "broadcastify_cli.worker", "schedules"],
+            null,
+            message =>
+            {
+                if (message.TryGetProperty("type", out var type)
+                    && type.GetString() == "feed_schedules")
+                {
+                    schedules = message.GetProperty("schedules")
+                        .Deserialize<List<FeedSchedule>>(JsonOptions);
+                }
+            },
+            cancellationToken);
+        return schedules ?? [];
+    }
+
+    public async Task<FeedSchedule?> SaveFeedScheduleAsync(
+        FeedScheduleSaveRequest request,
+        CancellationToken cancellationToken)
+    {
+        FeedSchedule? schedule = null;
+        await RunWorkerAsync(
+            ["-m", "broadcastify_cli.worker", "save-schedule"],
+            JsonSerializer.Serialize(request, JsonOptions),
+            message =>
+            {
+                if (message.TryGetProperty("type", out var type)
+                    && type.GetString() == "feed_schedule_saved")
+                {
+                    schedule = message.GetProperty("schedule")
+                        .Deserialize<FeedSchedule>(JsonOptions);
+                }
+            },
+            cancellationToken);
+        return schedule;
+    }
+
+    public async Task<FeedSchedule?> ClaimDueFeedScheduleAsync(
+        CancellationToken cancellationToken)
+    {
+        FeedSchedule? schedule = null;
+        await RunWorkerAsync(
+            ["-m", "broadcastify_cli.worker", "claim-due-schedule"],
+            null,
+            message =>
+            {
+                if (message.TryGetProperty("type", out var type)
+                    && type.GetString() == "feed_schedule_claim"
+                    && message.TryGetProperty("schedule", out var value)
+                    && value.ValueKind != JsonValueKind.Null)
+                {
+                    schedule = value.Deserialize<FeedSchedule>(JsonOptions);
+                }
+            },
+            cancellationToken);
+        return schedule;
+    }
+
+    public async Task<FeedSchedule?> FinishFeedScheduleAsync(
+        FeedScheduleFinishRequest request,
+        CancellationToken cancellationToken)
+    {
+        FeedSchedule? schedule = null;
+        await RunWorkerAsync(
+            ["-m", "broadcastify_cli.worker", "finish-schedule"],
+            JsonSerializer.Serialize(request, JsonOptions),
+            message =>
+            {
+                if (message.TryGetProperty("type", out var type)
+                    && type.GetString() == "feed_schedule_finished")
+                {
+                    schedule = message.GetProperty("schedule")
+                        .Deserialize<FeedSchedule>(JsonOptions);
+                }
+            },
+            cancellationToken);
+        return schedule;
+    }
+
+    public async Task DeleteFeedScheduleAsync(
+        long scheduleId,
+        CancellationToken cancellationToken)
+    {
+        await RunWorkerAsync(
+            ["-m", "broadcastify_cli.worker", "delete-schedule"],
+            JsonSerializer.Serialize(new { schedule_id = scheduleId }, JsonOptions),
+            _ => { },
+            cancellationToken);
+    }
+
+    public async Task RecoverFeedSchedulesAsync(CancellationToken cancellationToken)
+    {
+        await RunWorkerAsync(
+            ["-m", "broadcastify_cli.worker", "recover-schedules"],
+            null,
+            _ => { },
+            cancellationToken);
+    }
+
     public async Task<AsrSelfTestStatus?> RunAsrSelfTestAsync(
         AsrSelfTestRequest request,
         Action<JsonElement> onMessage,

@@ -621,6 +621,7 @@ class JobManager:
             "authenticate",
             "continue-local",
             "run",
+            "run-scheduled",
             "run-area",
             "save-area-profile",
             "summarize-area",
@@ -631,9 +632,8 @@ class JobManager:
         if command in {"run", "continue-local", "analyze-day"}:
             payload["output_dir"] = str(self.output_dir)
         if command == "run":
-            # Broadcastify's numeric limit is unknown and shared. The browser UI
-            # deliberately keeps a single downloader, preserves source blocks,
-            # and asks trusted-LAN peers before any website archive download.
+            # The browser UI keeps a single upstream downloader, preserves
+            # source blocks, and asks trusted-LAN peers before website access.
             payload["download_jobs"] = 1
             payload["keep_originals"] = True
             payload.setdefault("lan_sync_enabled", True)
@@ -641,6 +641,22 @@ class JobManager:
             if payload.get("diarize"):
                 payload["combine"] = True
                 payload["transcribe"] = True
+        if command == "run-scheduled":
+            job_payload = dict(payload.get("job") or {})
+            values, _environment_file = _readiness_environment(self.working_dir)
+            job_payload = _apply_automatic_processing_defaults(
+                job_payload,
+                _processing_defaults(values),
+            )
+            job_payload["output_dir"] = str(self.output_dir)
+            job_payload["download_jobs"] = 1
+            job_payload["keep_originals"] = True
+            job_payload.setdefault("lan_sync_enabled", True)
+            job_payload.setdefault("lan_discovery_enabled", True)
+            if job_payload.get("diarize"):
+                job_payload["combine"] = True
+                job_payload["transcribe"] = True
+            payload["job"] = job_payload
         if command == "run-area":
             job_payload = dict(payload.get("job") or {})
             values, _environment_file = _readiness_environment(self.working_dir)
@@ -660,6 +676,107 @@ class JobManager:
         return [command], payload
 
 
+class FeedScheduleCoordinator:
+    """Run persisted feed schedules while the Web/NAS service is alive."""
+
+    def __init__(
+        self,
+        jobs: JobManager,
+        database_path: Path,
+        working_dir: Path,
+        *,
+        poll_seconds: float = 30.0,
+    ) -> None:
+        self.jobs = jobs
+        self.database_path = database_path
+        self.working_dir = working_dir
+        self.poll_seconds = max(0.05, float(poll_seconds))
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._active: tuple[str, dict[str, Any]] | None = None
+
+    def start(self) -> None:
+        if self._thread is not None:
+            return
+        with AnalysisStore(self.database_path) as store:
+            store.recover_feed_schedules()
+        self._thread = threading.Thread(
+            target=self._run,
+            name="radio-feed-schedules",
+            daemon=True,
+        )
+        self._thread.start()
+
+    def close(self) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=2)
+
+    def check_once(self) -> None:
+        if self._active is not None:
+            job_id, schedule = self._active
+            snapshot = self.jobs.get(job_id)
+            if snapshot["status"] in {"queued", "running", "canceling"}:
+                return
+            if snapshot["status"] == "completed":
+                event = snapshot.get("result") or {}
+                result = event.get("result") if isinstance(event, dict) else {}
+                result = result if isinstance(result, dict) else {}
+                limited = bool(result.get("download_limited"))
+                quota = ArchiveRequestLedger(base_dir=self.working_dir).status()
+                status = "waiting_quota" if limited else "complete"
+                message = (
+                    "Waiting for the next rolling archive-request slot."
+                    if limited
+                    else "Scheduled feed run completed."
+                )
+                next_request_at = str(quota.get("next_request_at") or "") if limited else ""
+            else:
+                status = "canceled" if snapshot["status"] == "canceled" else "failed"
+                message = str(snapshot.get("error") or "Scheduled feed job failed.")
+                next_request_at = ""
+            with AnalysisStore(self.database_path) as store:
+                store.finish_feed_schedule(
+                    int(schedule["id"]),
+                    due_date=str(schedule["due_date"]),
+                    status=status,
+                    message=message,
+                    next_request_at=next_request_at,
+                )
+            self._active = None
+            return
+
+        with AnalysisStore(self.database_path) as store:
+            schedule = store.claim_due_feed_schedule()
+        if schedule is None:
+            return
+        try:
+            job = self.jobs.start(
+                "run-scheduled",
+                {"job": schedule["job"], "analyze": schedule["analyze"]},
+            )
+        except WebRequestError:
+            with AnalysisStore(self.database_path) as store:
+                store.finish_feed_schedule(
+                    int(schedule["id"]),
+                    due_date=str(schedule["due_date"]),
+                    status="deferred",
+                    message="Another local job is active.",
+                )
+            return
+        self._active = (str(job["id"]), schedule)
+
+    def _run(self) -> None:
+        while not self._stop.is_set():
+            try:
+                self.check_once()
+            except Exception:
+                # Keep the long-running Web/NAS service alive. The claimed
+                # schedule lease and startup recovery prevent duplicate work.
+                pass
+            self._stop.wait(self.poll_seconds)
+
+
 @dataclass(frozen=True)
 class WebAppState:
     output_dir: Path
@@ -668,6 +785,7 @@ class WebAppState:
     static_dir: Path
     session_token: str
     jobs: JobManager
+    scheduler: FeedScheduleCoordinator
     bind_host: str
     access_scope: str
     loopback_only: bool
@@ -883,13 +1001,16 @@ def create_server(
             default=True,
         ),
     )
+    jobs = JobManager(root, database, work)
+    scheduler = FeedScheduleCoordinator(jobs, database, work)
     state = WebAppState(
         output_dir=root,
         database_path=database,
         working_dir=work,
         static_dir=static_dir,
         session_token=token,
-        jobs=JobManager(root, database, work),
+        jobs=jobs,
+        scheduler=scheduler,
         bind_host=host,
         access_scope=access_scope,
         loopback_only=loopback_only,
@@ -1049,12 +1170,14 @@ def create_server(
                 with AnalysisStore(state.database_path) as store:
                     profiles = store.list_area_profiles()
                     area_runs = store.list_area_acquisition_runs(limit=20)
+                    schedules = store.list_feed_schedules()
                 self._json(
                     HTTPStatus.OK,
                     {
                         **library,
                         "profiles": profiles,
                         "area_runs": area_runs,
+                        "schedules": schedules,
                         "runtime": {
                             "platform": platform.system(),
                             "platform_release": platform.release(),
@@ -1178,6 +1301,24 @@ def create_server(
                     raise WebRequestError(HTTPStatus.BAD_REQUEST, "The job payload must be a JSON object.")
                 self._json(HTTPStatus.ACCEPTED, state.jobs.start(command, payload))
                 return
+            if parsed.path == "/api/schedules":
+                body = self._body()
+                with AnalysisStore(state.database_path) as store:
+                    schedule = store.save_feed_schedule(body)
+                self._json(HTTPStatus.OK, {"schedule": schedule})
+                return
+            if parsed.path.startswith("/api/schedules/") and parsed.path.endswith("/delete"):
+                value = parsed.path.removeprefix("/api/schedules/").removesuffix("/delete")
+                try:
+                    schedule_id = int(value)
+                except ValueError:
+                    raise WebRequestError(HTTPStatus.BAD_REQUEST, "A numeric schedule ID is required.") from None
+                with AnalysisStore(state.database_path) as store:
+                    deleted = store.delete_feed_schedule(schedule_id)
+                if not deleted:
+                    raise WebRequestError(HTTPStatus.NOT_FOUND, "That feed schedule was not found.")
+                self._json(HTTPStatus.OK, {"deleted": True})
+                return
             if parsed.path.startswith("/api/jobs/") and parsed.path.endswith("/cancel"):
                 job_id = parsed.path.removeprefix("/api/jobs/").removesuffix("/cancel")
                 self._json(HTTPStatus.OK, state.jobs.cancel(job_id))
@@ -1236,6 +1377,7 @@ def create_server(
                         outcome=str(body.get("outcome") or ""),
                         block_count=int(body.get("block_count") or 0),
                         blocks=body.get("blocks") or (),  # type: ignore[arg-type]
+                        retry_after_seconds=body.get("retry_after_seconds"),  # type: ignore[arg-type]
                     )
                 else:
                     raise WebRequestError(
@@ -1425,6 +1567,7 @@ def create_server(
         daemon_threads = True
 
         def server_close(self) -> None:
+            state.scheduler.close()
             responder = getattr(self, "lan_discovery", None)
             if responder is not None:
                 responder.close()
@@ -1434,6 +1577,7 @@ def create_server(
     server.state = state  # type: ignore[attr-defined]
     server.quiet = False  # type: ignore[attr-defined]
     server.lan_discovery = None  # type: ignore[attr-defined]
+    state.scheduler.start()
     if state.lan_catalog.enabled and _environment_flag(
         readiness_values,
         "BROADCASTIFY_LAN_DISCOVERY_ENABLED",

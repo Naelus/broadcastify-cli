@@ -45,6 +45,8 @@ public sealed partial class MainWindow : Window
     private bool _broadcastifyRateLimitObserved;
     private bool _loadingSettings = true;
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _settingsSaveTimer;
+    private Microsoft.UI.Dispatching.DispatcherQueueTimer? _feedScheduleTimer;
+    private bool _checkingFeedSchedule;
     private string _lastAreaProfileName = "";
     private string _lastReviewFeedId = "";
     private string _lastReviewDate = "";
@@ -174,6 +176,12 @@ public sealed partial class MainWindow : Window
         await TryAutoSignInAsync();
         await LoadDiagnosticsAndDaysAsync();
         await RefreshLibraryAsync();
+        if (_worker is not null)
+        {
+            await _worker.RecoverFeedSchedulesAsync(CancellationToken.None);
+        }
+        await RefreshFeedScheduleStatusAsync();
+        ConfigureFeedScheduleTimer();
     }
 
     private void RootNavigation_SelectionChanged(
@@ -196,6 +204,7 @@ public sealed partial class MainWindow : Window
         if (page == "archive")
         {
             _ = RefreshArchiveQuotaStatusAsync();
+            _ = RefreshFeedScheduleStatusAsync();
         }
     }
 
@@ -417,6 +426,7 @@ public sealed partial class MainWindow : Window
     private void MainWindow_Closed(object sender, WindowEventArgs args)
     {
         _settingsSaveTimer?.Stop();
+        _feedScheduleTimer?.Stop();
         PersistUserSettings(logFailure: true);
         PersistAnalysisCredentialPreference();
         _worker?.StopLanNode();
@@ -2695,6 +2705,278 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    private async void ScheduleFeed_Click(object sender, RoutedEventArgs e)
+    {
+        if (_worker is null || _selectedFeed is null)
+        {
+            await ShowMessageAsync("Feed required", "Search for and select the feed to schedule.");
+            return;
+        }
+        var existing = (await _worker.ListFeedSchedulesAsync(CancellationToken.None))
+            .FirstOrDefault(value => value.FeedId == _selectedFeed.FeedId);
+        var timePicker = new TimePicker
+        {
+            Header = "Run daily at this local time",
+            Time = TimeSpan.TryParse(existing?.RunTimeLocal, out var savedTime)
+                ? savedTime
+                : new TimeSpan(2, 0, 0),
+            MinuteIncrement = 5,
+        };
+        var lookbackBox = new NumberBox
+        {
+            Header = "Revisit the latest days (including today)",
+            Minimum = 1,
+            Maximum = 14,
+            Value = existing?.LookbackDays ?? 2,
+            SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Inline,
+        };
+        var enabledBox = new CheckBox
+        {
+            Content = "Schedule enabled",
+            IsChecked = existing?.Enabled ?? true,
+        };
+        var explanation = new TextBlock
+        {
+            Text = "The schedule reuses retained work, waits for the next rolling request slot when necessary, and uses the processing settings currently selected in this app.",
+            TextWrapping = TextWrapping.Wrap,
+        };
+        var content = new StackPanel { Spacing = 12 };
+        content.Children.Add(explanation);
+        content.Children.Add(timePicker);
+        content.Children.Add(lookbackBox);
+        content.Children.Add(enabledBox);
+        var dialog = new ContentDialog
+        {
+            XamlRoot = ((FrameworkElement)Content).XamlRoot,
+            Title = $"Daily schedule · {_selectedFeed.Name}",
+            PrimaryButtonText = "Save schedule",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Primary,
+            Content = content,
+        };
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary)
+        {
+            return;
+        }
+        var today = DateTime.Today;
+        var request = CreateJobRequest(
+            _selectedFeed.FeedId,
+            today,
+            today,
+            OptionalPositiveInteger(MinimumSpeakersBox.Value),
+            OptionalPositiveInteger(MaximumSpeakersBox.Value),
+            _selectedFeed.Name);
+        var saved = await _worker.SaveFeedScheduleAsync(
+            new FeedScheduleSaveRequest
+            {
+                FeedId = _selectedFeed.FeedId,
+                FeedName = _selectedFeed.Name,
+                RunTimeLocal = $"{timePicker.Time.Hours:00}:{timePicker.Time.Minutes:00}",
+                LookbackDays = RequiredInteger(lookbackBox.Value, 2),
+                Job = request,
+                Analyze = AnalyzeAfterJobCheckBox.IsChecked == true,
+                Enabled = enabledBox.IsChecked == true,
+            },
+            CancellationToken.None);
+        AppendLog(saved is null
+            ? "The feed schedule returned no saved record."
+            : $"Scheduled {saved.FeedName} {saved.ScheduleSummary}.");
+        await RefreshFeedScheduleStatusAsync();
+    }
+
+    private async void ManageSchedules_Click(object sender, RoutedEventArgs e)
+    {
+        if (_worker is null)
+        {
+            return;
+        }
+        var schedules = await _worker.ListFeedSchedulesAsync(CancellationToken.None);
+        if (schedules.Count == 0)
+        {
+            await ShowMessageAsync("No feed schedules", "Select a feed and choose Schedule this feed.");
+            return;
+        }
+        var list = new StackPanel { Spacing = 10 };
+        foreach (var schedule in schedules)
+        {
+            var row = new Grid { ColumnSpacing = 10 };
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            var text = new TextBlock
+            {
+                Text = $"{schedule.FeedName} · feed {schedule.FeedId}\n{schedule.ScheduleSummary}\n{schedule.StateSummary}",
+                TextWrapping = TextWrapping.Wrap,
+            };
+            var remove = new Button { Content = "Remove", Tag = schedule.Id };
+            remove.Click += async (button, _) =>
+            {
+                if (button is Button value && value.Tag is long id)
+                {
+                    await _worker.DeleteFeedScheduleAsync(id, CancellationToken.None);
+                    value.IsEnabled = false;
+                    value.Content = "Removed";
+                    await RefreshFeedScheduleStatusAsync();
+                }
+            };
+            Grid.SetColumn(remove, 1);
+            row.Children.Add(text);
+            row.Children.Add(remove);
+            list.Children.Add(row);
+        }
+        var dialog = new ContentDialog
+        {
+            XamlRoot = ((FrameworkElement)Content).XamlRoot,
+            Title = "Feed schedules",
+            Content = new ScrollViewer { MaxHeight = 520, Content = list },
+            CloseButtonText = "Done",
+        };
+        await dialog.ShowAsync();
+    }
+
+    private void ConfigureFeedScheduleTimer()
+    {
+        if (_feedScheduleTimer is not null)
+        {
+            return;
+        }
+        _feedScheduleTimer = DispatcherQueue.CreateTimer();
+        _feedScheduleTimer.Interval = TimeSpan.FromMinutes(1);
+        _feedScheduleTimer.IsRepeating = true;
+        _feedScheduleTimer.Tick += async (_, _) => await CheckDueFeedScheduleAsync();
+        _feedScheduleTimer.Start();
+        _ = CheckDueFeedScheduleAsync();
+    }
+
+    private async Task RefreshFeedScheduleStatusAsync()
+    {
+        if (_worker is null || FeedScheduleInfoBar is null)
+        {
+            return;
+        }
+        try
+        {
+            var schedules = await _worker.ListFeedSchedulesAsync(CancellationToken.None);
+            var active = schedules.Where(value => value.Enabled).ToList();
+            var next = active
+                .Select(value => DateTimeOffset.TryParse(value.NextRunAt, out var date) ? date : (DateTimeOffset?)null)
+                .Where(value => value is not null)
+                .OrderBy(value => value)
+                .FirstOrDefault();
+            FeedScheduleInfoBar.Severity = active.Count > 0
+                ? InfoBarSeverity.Success
+                : InfoBarSeverity.Informational;
+            FeedScheduleInfoBar.Title = active.Count == 0
+                ? "No feed schedules yet"
+                : $"{active.Count} daily feed schedule{(active.Count == 1 ? "" : "s")} active";
+            FeedScheduleInfoBar.Message = active.Count == 0
+                ? "Select a search result and schedule that specific feed. Schedules run while this app is open."
+                : $"Next check: {(next?.ToLocalTime().ToString("g") ?? "when due")}. Jobs reuse cached work and wait for rolling quota slots.";
+        }
+        catch (Exception exception)
+        {
+            FeedScheduleInfoBar.Severity = InfoBarSeverity.Warning;
+            FeedScheduleInfoBar.Title = "Schedule status unavailable";
+            FeedScheduleInfoBar.Message = exception.Message;
+        }
+    }
+
+    private async Task CheckDueFeedScheduleAsync()
+    {
+        if (_worker is null || _checkingFeedSchedule || _operationCancellation is not null)
+        {
+            return;
+        }
+        _checkingFeedSchedule = true;
+        FeedSchedule? schedule = null;
+        var ownsOperation = false;
+        try
+        {
+            schedule = await _worker.ClaimDueFeedScheduleAsync(CancellationToken.None);
+            if (schedule is null)
+            {
+                return;
+            }
+            if (_operationCancellation is not null)
+            {
+                await _worker.FinishFeedScheduleAsync(
+                    new FeedScheduleFinishRequest
+                    {
+                        ScheduleId = schedule.Id,
+                        DueDate = schedule.DueDate,
+                        Status = "deferred",
+                        Message = "A user-started job was already active.",
+                    },
+                    CancellationToken.None);
+                return;
+            }
+            _operationCancellation = new CancellationTokenSource();
+            ownsOperation = true;
+            SetBusy(true, $"Scheduled feed: {schedule.FeedName}", jobRunning: true);
+            JobProgress.IsIndeterminate = true;
+            AppendLog($"Scheduled run starting for {schedule.FeedName} ({schedule.FeedId}).");
+            var result = await RunAndAnalyzeJobAsync(schedule.Job, schedule.Analyze);
+            var quota = await _worker.GetArchiveQuotaStatusAsync(CancellationToken.None);
+            var waiting = result?.DownloadLimited == true;
+            await _worker.FinishFeedScheduleAsync(
+                new FeedScheduleFinishRequest
+                {
+                    ScheduleId = schedule.Id,
+                    DueDate = schedule.DueDate,
+                    Status = waiting ? "waiting_quota" : "complete",
+                    Message = waiting
+                        ? "Waiting for the next rolling archive-request slot."
+                        : "Scheduled feed run completed.",
+                    NextRequestAt = waiting ? quota?.NextRequestAt ?? "" : "",
+                },
+                CancellationToken.None);
+        }
+        catch (OperationCanceledException)
+        {
+            if (schedule is not null)
+            {
+                await _worker.FinishFeedScheduleAsync(
+                    new FeedScheduleFinishRequest
+                    {
+                        ScheduleId = schedule.Id,
+                        DueDate = schedule.DueDate,
+                        Status = "canceled",
+                        Message = "Scheduled run canceled.",
+                    },
+                    CancellationToken.None);
+            }
+        }
+        catch (Exception exception)
+        {
+            AppendLog($"Scheduled feed failed: {exception.Message}");
+            if (schedule is not null)
+            {
+                await _worker.FinishFeedScheduleAsync(
+                    new FeedScheduleFinishRequest
+                    {
+                        ScheduleId = schedule.Id,
+                        DueDate = schedule.DueDate,
+                        Status = "failed",
+                        Message = exception.Message,
+                    },
+                    CancellationToken.None);
+            }
+        }
+        finally
+        {
+            if (ownsOperation && _operationCancellation is not null)
+            {
+                _operationCancellation.Dispose();
+                _operationCancellation = null;
+                JobProgress.IsIndeterminate = false;
+                SetBusy(false);
+                await RefreshLibraryAsync();
+                await RefreshArchiveQuotaStatusAsync();
+            }
+            _checkingFeedSchedule = false;
+            await RefreshFeedScheduleStatusAsync();
+        }
+    }
+
     private JobRequest CreateJobRequest(
         string feedId,
         DateTime startDate,
@@ -2741,7 +3023,9 @@ public sealed partial class MainWindow : Window
             .ToList(),
     };
 
-    private async Task<JobRunResult?> RunAndAnalyzeJobAsync(JobRequest request)
+    private async Task<JobRunResult?> RunAndAnalyzeJobAsync(
+        JobRequest request,
+        bool? analyzeOverride = null)
     {
         if (_worker is null || _operationCancellation is null)
         {
@@ -2753,7 +3037,7 @@ public sealed partial class MainWindow : Window
         await ConfigureLanSharingAsync();
         var jobResult = await _worker.RunJobAsync(
             request, HandleWorkerMessage, _operationCancellation.Token);
-        await AnalyzeCompletedJobAsync(request, jobResult);
+        await AnalyzeCompletedJobAsync(request, jobResult, analyzeOverride);
         return jobResult;
     }
 
@@ -2777,13 +3061,18 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private async Task AnalyzeCompletedJobAsync(JobRequest request, JobRunResult? jobResult)
+    private async Task AnalyzeCompletedJobAsync(
+        JobRequest request,
+        JobRunResult? jobResult,
+        bool? analyzeOverride = null)
     {
         if (_worker is null || _operationCancellation is null)
         {
             return;
         }
-        if (!request.Transcribe || !request.Combine || AnalyzeAfterJobCheckBox.IsChecked != true)
+        if (!request.Transcribe
+            || !request.Combine
+            || !(analyzeOverride ?? AnalyzeAfterJobCheckBox.IsChecked == true))
         {
             return;
         }
@@ -4156,6 +4445,8 @@ public sealed partial class MainWindow : Window
         }
         SearchButton.IsEnabled = !busy && _worker is not null;
         StartButton.IsEnabled = !busy && _worker is not null;
+        ScheduleFeedButton.IsEnabled = !busy && _worker is not null;
+        ManageSchedulesButton.IsEnabled = !busy && _worker is not null;
         RefreshAnalysisButton.IsEnabled = !busy && _worker is not null;
         AnalyzeSelectedButton.IsEnabled = !busy && _worker is not null;
         ReloadReportButton.IsEnabled = !busy && _worker is not null;

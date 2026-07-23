@@ -266,6 +266,60 @@ def run_job() -> int:
     return 0
 
 
+def run_scheduled_job() -> int:
+    payload = json.load(sys.stdin)
+    job_payload = dict(payload.get("job") or {})
+    request = JobRequest.from_dict(job_payload)
+    if request.feed_name:
+        with AnalysisStore(DEFAULT_DATABASE) as store:
+            store.save_feed_catalog(
+                [{"feed_id": request.feed_id, "name": request.feed_name}]
+            )
+    with BroadcastifyClient() as client:
+        result = JobRunner(request, emit=emit, client=client).run()
+    analyzed_dates: list[str] = []
+    if bool(payload.get("analyze", True)):
+        provider_fields = {
+            key: job_payload[key]
+            for key in (
+                "analysis_provider",
+                "analysis_model",
+                "analysis_device",
+                "analysis_endpoint",
+                "analysis_api_key_env",
+                "codex_cli_path",
+                "allow_external_analysis",
+            )
+            if key in job_payload
+        }
+        for day in result.get("days", []):
+            transcripts = list(day.get("transcripts") or [])
+            if not transcripts:
+                continue
+            archive_date = str(day.get("date") or "")
+            _analyze_day_payload(
+                {
+                    "feed_id": request.feed_id,
+                    "archive_date": archive_date,
+                    "output_dir": str(request.output_dir),
+                    **provider_fields,
+                }
+            )
+            analyzed_dates.append(archive_date)
+    emit(
+        {
+            "type": "scheduled_complete",
+            "message": (
+                f"Scheduled feed complete: {result.get('completed_days', 0)}/"
+                f"{result.get('requested_days', 0)} days ready."
+            ),
+            "result": result,
+            "analyzed_dates": analyzed_dates,
+        }
+    )
+    return 0
+
+
 def run_area_acquisition() -> int:
     payload = json.load(sys.stdin)
     with AnalysisStore(DEFAULT_DATABASE) as store, BroadcastifyClient() as client:
@@ -294,6 +348,63 @@ def authenticate() -> int:
 
 def archive_quota_status() -> int:
     emit({"type": "archive_quota_status", "status": ArchiveRequestLedger().status()})
+    return 0
+
+
+def list_feed_schedules() -> int:
+    with AnalysisStore(DEFAULT_DATABASE) as store:
+        schedules = store.list_feed_schedules()
+    emit({"type": "feed_schedules", "schedules": schedules})
+    return 0
+
+
+def save_feed_schedule() -> int:
+    payload = json.load(sys.stdin)
+    with AnalysisStore(DEFAULT_DATABASE) as store:
+        schedule = store.save_feed_schedule(payload)
+    emit({"type": "feed_schedule_saved", "schedule": schedule})
+    return 0
+
+
+def claim_due_feed_schedule() -> int:
+    with AnalysisStore(DEFAULT_DATABASE) as store:
+        schedule = store.claim_due_feed_schedule()
+    emit(
+        {
+            "type": "feed_schedule_claim",
+            "schedule": schedule,
+            "archive_quota": ArchiveRequestLedger().status(),
+        }
+    )
+    return 0
+
+
+def finish_feed_schedule() -> int:
+    payload = json.load(sys.stdin)
+    with AnalysisStore(DEFAULT_DATABASE) as store:
+        schedule = store.finish_feed_schedule(
+            int(payload["schedule_id"]),
+            due_date=str(payload["due_date"]),
+            status=str(payload["status"]),
+            message=str(payload.get("message") or ""),
+            next_request_at=str(payload.get("next_request_at") or ""),
+        )
+    emit({"type": "feed_schedule_finished", "schedule": schedule})
+    return 0
+
+
+def delete_feed_schedule() -> int:
+    payload = json.load(sys.stdin)
+    with AnalysisStore(DEFAULT_DATABASE) as store:
+        deleted = store.delete_feed_schedule(int(payload["schedule_id"]))
+    emit({"type": "feed_schedule_deleted", "deleted": deleted})
+    return 0
+
+
+def recover_feed_schedules() -> int:
+    with AnalysisStore(DEFAULT_DATABASE) as store:
+        recovered = store.recover_feed_schedules()
+    emit({"type": "feed_schedules_recovered", "recovered": recovered})
     return 0
 
 
@@ -1546,8 +1657,15 @@ def build_parser() -> argparse.ArgumentParser:
     saved_area = subparsers.add_parser("saved-area-digest")
     saved_area.add_argument("--profile-name", required=True)
     subparsers.add_parser("run")
+    subparsers.add_parser("run-scheduled")
     subparsers.add_parser("authenticate")
     subparsers.add_parser("quota-status")
+    subparsers.add_parser("schedules")
+    subparsers.add_parser("save-schedule")
+    subparsers.add_parser("claim-due-schedule")
+    subparsers.add_parser("finish-schedule")
+    subparsers.add_parser("delete-schedule")
+    subparsers.add_parser("recover-schedules")
     subparsers.add_parser("diagnostics")
     subparsers.add_parser("diagnostics-selected")
     subparsers.add_parser("prepare-asr-model")
@@ -1624,10 +1742,24 @@ def main() -> int:
             return latest_area_digest(arguments.profile_name)
         if arguments.command == "run":
             return run_job()
+        if arguments.command == "run-scheduled":
+            return run_scheduled_job()
         if arguments.command == "authenticate":
             return authenticate()
         if arguments.command == "quota-status":
             return archive_quota_status()
+        if arguments.command == "schedules":
+            return list_feed_schedules()
+        if arguments.command == "save-schedule":
+            return save_feed_schedule()
+        if arguments.command == "claim-due-schedule":
+            return claim_due_feed_schedule()
+        if arguments.command == "finish-schedule":
+            return finish_feed_schedule()
+        if arguments.command == "delete-schedule":
+            return delete_feed_schedule()
+        if arguments.command == "recover-schedules":
+            return recover_feed_schedules()
         if arguments.command == "diagnostics":
             return diagnostics()
         if arguments.command == "diagnostics-selected":

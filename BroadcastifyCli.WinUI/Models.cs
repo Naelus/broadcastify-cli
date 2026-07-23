@@ -699,6 +699,97 @@ internal sealed record JobRunResult
     public List<string> MissingDays { get; init; } = [];
 }
 
+internal sealed record FeedSchedule
+{
+    [JsonPropertyName("id")]
+    public long Id { get; init; }
+
+    [JsonPropertyName("feed_id")]
+    public string FeedId { get; init; } = "";
+
+    [JsonPropertyName("feed_name")]
+    public string FeedName { get; init; } = "";
+
+    [JsonPropertyName("run_time_local")]
+    public string RunTimeLocal { get; init; } = "02:00";
+
+    [JsonPropertyName("lookback_days")]
+    public int LookbackDays { get; init; } = 2;
+
+    [JsonPropertyName("job")]
+    public JobRequest Job { get; init; } = new();
+
+    [JsonPropertyName("analyze")]
+    public bool Analyze { get; init; } = true;
+
+    [JsonPropertyName("enabled")]
+    public bool Enabled { get; init; } = true;
+
+    [JsonPropertyName("state")]
+    public string State { get; init; } = "scheduled";
+
+    [JsonPropertyName("message")]
+    public string Message { get; init; } = "";
+
+    [JsonPropertyName("last_run_date")]
+    public string LastRunDate { get; init; } = "";
+
+    [JsonPropertyName("next_run_at")]
+    public string NextRunAt { get; init; } = "";
+
+    [JsonPropertyName("due_date")]
+    public string DueDate { get; init; } = "";
+
+    public string ScheduleSummary =>
+        $"Daily at {RunTimeLocal} · revisit {LookbackDays} day{(LookbackDays == 1 ? "" : "s")}";
+
+    public string StateSummary => string.IsNullOrWhiteSpace(Message)
+        ? State.Replace('_', ' ')
+        : $"{State.Replace('_', ' ')} · {Message}";
+}
+
+internal sealed record FeedScheduleSaveRequest
+{
+    [JsonPropertyName("feed_id")]
+    public string FeedId { get; init; } = "";
+
+    [JsonPropertyName("feed_name")]
+    public string FeedName { get; init; } = "";
+
+    [JsonPropertyName("run_time_local")]
+    public string RunTimeLocal { get; init; } = "02:00";
+
+    [JsonPropertyName("lookback_days")]
+    public int LookbackDays { get; init; } = 2;
+
+    [JsonPropertyName("job")]
+    public JobRequest Job { get; init; } = new();
+
+    [JsonPropertyName("analyze")]
+    public bool Analyze { get; init; } = true;
+
+    [JsonPropertyName("enabled")]
+    public bool Enabled { get; init; } = true;
+}
+
+internal sealed record FeedScheduleFinishRequest
+{
+    [JsonPropertyName("schedule_id")]
+    public long ScheduleId { get; init; }
+
+    [JsonPropertyName("due_date")]
+    public string DueDate { get; init; } = "";
+
+    [JsonPropertyName("status")]
+    public string Status { get; init; } = "";
+
+    [JsonPropertyName("message")]
+    public string Message { get; init; } = "";
+
+    [JsonPropertyName("next_request_at")]
+    public string NextRequestAt { get; init; } = "";
+}
+
 internal sealed record AreaAcquisitionRequest
 {
     [JsonPropertyName("profile_name")]

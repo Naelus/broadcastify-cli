@@ -5,7 +5,7 @@ import json
 import sqlite3
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import date, datetime, time as datetime_time, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable, Iterator, Sequence
 
@@ -230,6 +230,26 @@ class AnalysisStore:
                 updated_at TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS feed_schedules (
+                id INTEGER PRIMARY KEY,
+                feed_id TEXT NOT NULL UNIQUE,
+                feed_name TEXT NOT NULL,
+                run_time_local TEXT NOT NULL,
+                lookback_days INTEGER NOT NULL DEFAULT 2,
+                job_json TEXT NOT NULL,
+                analyze INTEGER NOT NULL DEFAULT 1,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                state TEXT NOT NULL DEFAULT 'scheduled',
+                message TEXT NOT NULL DEFAULT '',
+                last_run_date TEXT NOT NULL DEFAULT '',
+                last_started_at TEXT NOT NULL DEFAULT '',
+                last_finished_at TEXT NOT NULL DEFAULT '',
+                not_before TEXT NOT NULL DEFAULT '',
+                lease_until TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS area_profiles (
                 id INTEGER PRIMARY KEY,
                 name TEXT NOT NULL UNIQUE,
@@ -331,6 +351,290 @@ class AnalysisStore:
                 f"Unsupported analysis database version {row['version']}; expected {SCHEMA_VERSION}."
             )
         self.connection.commit()
+
+    @staticmethod
+    def _schedule_time(value: str) -> str:
+        text = str(value or "").strip()
+        try:
+            parsed = datetime_time.fromisoformat(text)
+        except ValueError as exc:
+            raise ValueError("Schedule time must use HH:MM local time.") from exc
+        return f"{parsed.hour:02d}:{parsed.minute:02d}"
+
+    @staticmethod
+    def _aware_local(value: datetime | None = None) -> datetime:
+        current = value or datetime.now().astimezone()
+        return current.astimezone() if current.tzinfo is None else current
+
+    @staticmethod
+    def _utc_value(value: str) -> datetime | None:
+        if not value:
+            return None
+        try:
+            parsed = datetime.fromisoformat(value)
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+
+    def _feed_schedule(
+        self,
+        row: sqlite3.Row,
+        *,
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        current = self._aware_local(now)
+        current_utc = current.astimezone(timezone.utc)
+        hour, minute = (int(value) for value in str(row["run_time_local"]).split(":"))
+        scheduled_today = datetime.combine(
+            current.date(),
+            datetime_time(hour=hour, minute=minute),
+            tzinfo=current.tzinfo,
+        )
+        not_before = self._utc_value(str(row["not_before"] or ""))
+        lease_until = self._utc_value(str(row["lease_until"] or ""))
+        running = str(row["state"]) == "running" and bool(
+            lease_until and lease_until > current_utc
+        )
+        due = bool(row["enabled"]) and (
+            current >= scheduled_today
+            and str(row["last_run_date"] or "") != current.date().isoformat()
+            and not running
+            and (not_before is None or not_before <= current_utc)
+        )
+        if due:
+            next_run = current
+        elif not_before is not None and not_before > current_utc:
+            next_run = max(scheduled_today, not_before.astimezone(current.tzinfo))
+        elif running and lease_until is not None:
+            next_run = lease_until.astimezone(current.tzinfo)
+        elif current < scheduled_today and str(row["last_run_date"] or "") != current.date().isoformat():
+            next_run = scheduled_today
+        else:
+            next_run = scheduled_today + timedelta(days=1)
+        return {
+            "id": int(row["id"]),
+            "feed_id": str(row["feed_id"]),
+            "feed_name": str(row["feed_name"]),
+            "run_time_local": str(row["run_time_local"]),
+            "lookback_days": int(row["lookback_days"]),
+            "job": json.loads(str(row["job_json"])),
+            "analyze": bool(row["analyze"]),
+            "enabled": bool(row["enabled"]),
+            "state": str(row["state"]),
+            "message": str(row["message"]),
+            "last_run_date": str(row["last_run_date"]),
+            "last_started_at": str(row["last_started_at"]),
+            "last_finished_at": str(row["last_finished_at"]),
+            "not_before": str(row["not_before"]),
+            "next_run_at": next_run.isoformat(timespec="seconds"),
+            "due": due,
+        }
+
+    def save_feed_schedule(self, payload: dict[str, Any]) -> dict[str, Any]:
+        feed_id = str(payload.get("feed_id") or "").strip()
+        if not feed_id.isdigit():
+            raise ValueError("A numeric feed ID is required for a schedule.")
+        feed_name = str(payload.get("feed_name") or f"Feed {feed_id}").strip()[:200]
+        run_time = self._schedule_time(str(payload.get("run_time_local") or "02:00"))
+        lookback_days = max(1, min(14, int(payload.get("lookback_days") or 2)))
+        job = dict(payload.get("job") or {})
+        for key in (
+            "feed_id",
+            "feed_name",
+            "start_date",
+            "end_date",
+            "huggingface_token",
+            "analysis_api_key",
+        ):
+            job.pop(key, None)
+        job["download_jobs"] = 1
+        job["keep_originals"] = True
+        now = utc_now()
+        with self.transaction() as connection:
+            connection.execute(
+                """
+                INSERT INTO feed_schedules(
+                    feed_id, feed_name, run_time_local, lookback_days,
+                    job_json, analyze, enabled, state, message,
+                    created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'scheduled', '', ?, ?)
+                ON CONFLICT(feed_id) DO UPDATE SET
+                    feed_name=excluded.feed_name,
+                    run_time_local=excluded.run_time_local,
+                    lookback_days=excluded.lookback_days,
+                    job_json=excluded.job_json,
+                    analyze=excluded.analyze,
+                    enabled=excluded.enabled,
+                    state=CASE
+                        WHEN feed_schedules.state='running' THEN feed_schedules.state
+                        ELSE 'scheduled'
+                    END,
+                    message='',
+                    not_before='',
+                    updated_at=excluded.updated_at
+                """,
+                (
+                    feed_id,
+                    feed_name,
+                    run_time,
+                    lookback_days,
+                    json.dumps(job, sort_keys=True),
+                    int(bool(payload.get("analyze", True))),
+                    int(bool(payload.get("enabled", True))),
+                    now,
+                    now,
+                ),
+            )
+        row = self.connection.execute(
+            "SELECT * FROM feed_schedules WHERE feed_id=?", (feed_id,)
+        ).fetchone()
+        assert row is not None
+        return self._feed_schedule(row)
+
+    def list_feed_schedules(
+        self,
+        *,
+        now: datetime | None = None,
+    ) -> list[dict[str, Any]]:
+        rows = self.connection.execute(
+            "SELECT * FROM feed_schedules ORDER BY enabled DESC, run_time_local, feed_name"
+        ).fetchall()
+        return [self._feed_schedule(row, now=now) for row in rows]
+
+    def delete_feed_schedule(self, schedule_id: int) -> bool:
+        with self.transaction() as connection:
+            cursor = connection.execute(
+                "DELETE FROM feed_schedules WHERE id=?", (int(schedule_id),)
+            )
+        return cursor.rowcount > 0
+
+    def recover_feed_schedules(self, *, now: datetime | None = None) -> int:
+        current = self._aware_local(now).astimezone(timezone.utc)
+        timestamp = current.isoformat(timespec="seconds")
+        not_before = (current + timedelta(minutes=1)).isoformat(timespec="seconds")
+        with self.transaction() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE feed_schedules
+                SET state='deferred',
+                    message='The previous app session ended during this scheduled run; resuming from retained work.',
+                    not_before=?, lease_until='', updated_at=?
+                WHERE state='running'
+                """,
+                (not_before, timestamp),
+            )
+        return int(cursor.rowcount)
+
+    def claim_due_feed_schedule(
+        self,
+        *,
+        now: datetime | None = None,
+    ) -> dict[str, Any] | None:
+        current = self._aware_local(now)
+        current_utc = current.astimezone(timezone.utc)
+        try:
+            self.connection.execute("BEGIN IMMEDIATE")
+            rows = self.connection.execute(
+                "SELECT * FROM feed_schedules ORDER BY run_time_local, id"
+            ).fetchall()
+            selected = next(
+                (
+                    (row, self._feed_schedule(row, now=current))
+                    for row in rows
+                    if self._feed_schedule(row, now=current)["due"]
+                ),
+                None,
+            )
+            if selected is None:
+                self.connection.commit()
+                return None
+            row, schedule = selected
+            started = current_utc.isoformat(timespec="seconds")
+            lease_until = (current_utc + timedelta(hours=24)).isoformat(timespec="seconds")
+            self.connection.execute(
+                """
+                UPDATE feed_schedules
+                SET state='running', message='', last_started_at=?,
+                    lease_until=?, updated_at=?
+                WHERE id=?
+                """,
+                (started, lease_until, started, int(row["id"])),
+            )
+            self.connection.commit()
+        except Exception:
+            self.connection.rollback()
+            raise
+        due_date = current.date()
+        lookback = int(schedule["lookback_days"])
+        job = {
+            **dict(schedule["job"]),
+            "feed_id": schedule["feed_id"],
+            "feed_name": schedule["feed_name"],
+            "start_date": (due_date - timedelta(days=lookback - 1)).isoformat(),
+            "end_date": due_date.isoformat(),
+            "download_jobs": 1,
+            "keep_originals": True,
+        }
+        schedule["state"] = "running"
+        schedule["due"] = False
+        schedule["due_date"] = due_date.isoformat()
+        schedule["job"] = job
+        return schedule
+
+    def finish_feed_schedule(
+        self,
+        schedule_id: int,
+        *,
+        due_date: str,
+        status: str,
+        message: str = "",
+        next_request_at: str = "",
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        allowed = {"complete", "waiting_quota", "failed", "canceled", "deferred"}
+        if status not in allowed:
+            raise ValueError("Unsupported schedule completion status.")
+        current = self._aware_local(now).astimezone(timezone.utc)
+        finished = current.isoformat(timespec="seconds")
+        last_run_date = due_date if status in {"complete", "failed", "canceled"} else ""
+        not_before = ""
+        if status == "waiting_quota":
+            parsed = self._utc_value(next_request_at)
+            not_before = (
+                parsed.isoformat(timespec="seconds")
+                if parsed is not None and parsed > current
+                else (current + timedelta(minutes=5)).isoformat(timespec="seconds")
+            )
+        elif status == "deferred":
+            not_before = (current + timedelta(minutes=5)).isoformat(timespec="seconds")
+        with self.transaction() as connection:
+            connection.execute(
+                """
+                UPDATE feed_schedules
+                SET state=?, message=?,
+                    last_run_date=CASE WHEN ?='' THEN last_run_date ELSE ? END,
+                    last_finished_at=?, not_before=?, lease_until='', updated_at=?
+                WHERE id=?
+                """,
+                (
+                    status,
+                    str(message)[:1000],
+                    last_run_date,
+                    last_run_date,
+                    finished,
+                    not_before,
+                    finished,
+                    int(schedule_id),
+                ),
+            )
+        row = self.connection.execute(
+            "SELECT * FROM feed_schedules WHERE id=?", (int(schedule_id),)
+        ).fetchone()
+        if row is None:
+            raise ValueError("Feed schedule was not found.")
+        return self._feed_schedule(row, now=now)
 
     def import_transcript(
         self,
