@@ -76,6 +76,8 @@ internal sealed class WorkerClient
                     "--port", boundedPort.ToString(
                         System.Globalization.CultureInfo.InvariantCulture),
                     "--output-dir", output,
+                    "--parent-pid", Environment.ProcessId.ToString(
+                        System.Globalization.CultureInfo.InvariantCulture),
                 ],
                 redirectStreams: false);
             var process = new Process

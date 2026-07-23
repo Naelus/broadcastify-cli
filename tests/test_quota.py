@@ -7,6 +7,7 @@ import pytest
 from broadcastify_cli.quota import (
     ArchiveRequestBudgetExceeded,
     ArchiveRequestLedger,
+    RATE_LIMIT_RELEASE_GRACE_SECONDS,
 )
 
 
@@ -145,3 +146,47 @@ def test_server_429_reopens_when_oldest_known_request_ages_out(
     assert ledger.status()["available"] is False
     now[0] += 2
     assert ledger.status()["available"] is True
+
+
+def test_legacy_429_migration_does_not_shift_release_forward(
+    tmp_path: Path,
+) -> None:
+    now = [10.0]
+    ledger = ArchiveRequestLedger(
+        tmp_path / "quota.sqlite3",
+        limit=4,
+        provider_limit=5,
+        window_seconds=100,
+        clock=lambda: now[0],
+    )
+    first = ledger.reserve(
+        feed_id="90001", archive_date="2026-07-22", archive_id="first"
+    )
+    ledger.finish(first, outcome="http_200", http_status=200)
+    now[0] = 30.0
+    limited = ledger.reserve(
+        feed_id="90001", archive_date="2026-07-22", archive_id="limited"
+    )
+    ledger.finish(limited, outcome="http_429", http_status=429)
+
+    with ledger._connect() as connection:
+        connection.execute(
+            """
+            UPDATE archive_quota_state
+            SET blocked_until = ?, blocked_reason = ?
+            WHERE singleton = 1
+            """,
+            (130.0, "legacy full-window 429 block"),
+        )
+
+    now[0] = 40.0
+    status = ledger.status()
+    assert status["blocked"] is True
+    assert status["next_request_seconds"] == int(
+        10.0 + 100.0 + RATE_LIMIT_RELEASE_GRACE_SECONDS - 40.0
+    )
+
+    now[0] = 116.0
+    status = ledger.status()
+    assert status["available"] is True
+    assert status["blocked"] is False

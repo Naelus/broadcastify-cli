@@ -6,6 +6,8 @@ import ipaddress
 import json
 import os
 import socket
+import threading
+import time
 from datetime import date
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -59,6 +61,60 @@ def _load_environment() -> None:
         path = Path(configured).expanduser()
         if path.is_file():
             load_dotenv(path, override=True)
+
+
+def _windows_wait_for_process_exit(parent_pid: int) -> None:
+    import ctypes
+    from ctypes import wintypes
+
+    synchronize = 0x00100000
+    infinite = 0xFFFFFFFF
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    kernel32.WaitForSingleObject.restype = wintypes.DWORD
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    handle = kernel32.OpenProcess(synchronize, False, int(parent_pid))
+    if not handle:
+        return
+    try:
+        kernel32.WaitForSingleObject(handle, infinite)
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+def _wait_for_parent_exit(parent_pid: int) -> None:
+    if os.name == "nt":
+        _windows_wait_for_process_exit(parent_pid)
+        return
+    while True:
+        try:
+            os.kill(parent_pid, 0)
+        except ProcessLookupError:
+            return
+        except PermissionError:
+            return
+        time.sleep(2.0)
+
+
+def _start_parent_watchdog(
+    server: ThreadingHTTPServer,
+    parent_pid: int | None,
+) -> None:
+    if parent_pid is None or parent_pid <= 0 or parent_pid == os.getpid():
+        return
+
+    def watch() -> None:
+        _wait_for_parent_exit(parent_pid)
+        server.shutdown()
+
+    threading.Thread(
+        target=watch,
+        name="lan-node-parent-watchdog",
+        daemon=True,
+    ).start()
 
 
 def create_lan_node_server(
@@ -372,6 +428,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Serve explicit peer URLs without UDP discovery.",
     )
+    parser.add_argument(
+        "--parent-pid",
+        type=int,
+        default=0,
+        help="Exit when the owning desktop process exits.",
+    )
     return parser
 
 
@@ -391,6 +453,7 @@ def main() -> int:
         ),
         advertise_url=arguments.advertise_url,
     )
+    _start_parent_watchdog(server, arguments.parent_pid)
     print(
         json.dumps(
             {

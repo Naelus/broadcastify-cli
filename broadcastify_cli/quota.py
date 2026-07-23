@@ -134,20 +134,15 @@ class ArchiveRequestLedger:
         )
         blocked_until_value = float(state["blocked_until"] if state else 0.0)
         blocked_reason = str(state["blocked_reason"] or "") if state else ""
-        # A provider 429 is rolling-window state. Once this installation's
-        # oldest known request ages out, one upstream slot should be available.
-        # Clamp legacy/full-window blocks to that earliest known release.
-        if blocked_until_value > now and oldest is not None:
-            stored_blocked_until = blocked_until_value
-            blocked_until_value = min(
-                blocked_until_value,
-                oldest + self.window_seconds + RATE_LIMIT_RELEASE_GRACE_SECONDS,
-            )
-            if blocked_until_value < stored_blocked_until:
-                blocked_reason = (
-                    "Broadcastify returned HTTP 429; this installation is "
-                    "waiting for its next known rolling-window release."
+        if blocked_until_value > now:
+            blocked_until_value, blocked_reason = (
+                self._migrate_legacy_rate_limit_block_locked(
+                    connection,
+                    now,
+                    blocked_until_value,
+                    blocked_reason,
                 )
+            )
         blocked = blocked_until_value > now
         capacity_available_at = (
             oldest + self.window_seconds
@@ -180,6 +175,61 @@ class ArchiveRequestLedger:
                 else 0
             ),
         }
+
+    def _migrate_legacy_rate_limit_block_locked(
+        self,
+        connection: sqlite3.Connection,
+        now: float,
+        blocked_until_value: float,
+        blocked_reason: str,
+    ) -> tuple[float, str]:
+        latest_429 = connection.execute(
+            """
+            SELECT requested_at
+            FROM archive_request_attempts
+            WHERE http_status = 429
+            ORDER BY requested_at DESC
+            LIMIT 1
+            """
+        ).fetchone()
+        if latest_429 is None:
+            return blocked_until_value, blocked_reason
+        limited_at = float(latest_429["requested_at"])
+        legacy_full_window = limited_at + self.window_seconds
+        if blocked_until_value < legacy_full_window - RATE_LIMIT_RELEASE_GRACE_SECONDS:
+            return blocked_until_value, blocked_reason
+
+        oldest_at_limit = connection.execute(
+            """
+            SELECT MIN(requested_at) AS oldest
+            FROM archive_request_attempts
+            WHERE requested_at > ? AND requested_at <= ?
+            """,
+            (limited_at - self.window_seconds, limited_at),
+        ).fetchone()
+        if oldest_at_limit is None or oldest_at_limit["oldest"] is None:
+            return blocked_until_value, blocked_reason
+        migrated_until = min(
+            blocked_until_value,
+            float(oldest_at_limit["oldest"])
+            + self.window_seconds
+            + RATE_LIMIT_RELEASE_GRACE_SECONDS,
+        )
+        if migrated_until >= blocked_until_value:
+            return blocked_until_value, blocked_reason
+        migrated_reason = (
+            "Broadcastify returned HTTP 429; this installation is waiting for "
+            "its next known rolling-window release."
+        )
+        connection.execute(
+            """
+            UPDATE archive_quota_state
+            SET blocked_until = ?, blocked_reason = ?
+            WHERE singleton = 1
+            """,
+            (migrated_until, migrated_reason),
+        )
+        return migrated_until, migrated_reason
 
     def status(self) -> dict[str, Any]:
         now = float(self.clock())
