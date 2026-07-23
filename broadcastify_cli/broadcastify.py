@@ -1068,10 +1068,36 @@ class BroadcastifyClient:
         # the feed's IANA timezone, which together form the exact file prefix.
         if filename_prefix:
             candidates.extend(day_dir.glob(f"{filename_prefix}-*-{feed_id}.mp3"))
+        for epoch_prefix in BroadcastifyClient._archive_id_epoch_prefixes(
+            archive_id,
+            day_dir.name,
+        ):
+            candidates.extend(day_dir.glob(f"{epoch_prefix}-*-{feed_id}.mp3"))
         return next(
             (value for value in candidates if value.is_file() and value.stat().st_size > 0),
             None,
         )
+
+    @staticmethod
+    def _archive_id_epoch_prefixes(archive_id: str, day_name: str) -> list[str]:
+        match = re.search(r"-(\d{10})(?:\D|$)", archive_id)
+        if not match:
+            return []
+        try:
+            timestamp = int(match.group(1))
+            day = datetime.strptime(day_name, "%Y%m%d").date()
+        except ValueError:
+            return []
+        prefixes: list[str] = []
+        for hour_offset in range(-12, 15):
+            for minute_offset in range(-14, 15):
+                local_candidate = datetime.fromtimestamp(
+                    timestamp + hour_offset * 3600 + minute_offset * 60,
+                    timezone.utc,
+                )
+                if local_candidate.date() == day:
+                    prefixes.append(local_candidate.strftime("%Y%m%d%H%M"))
+        return sorted(set(prefixes))
 
     @staticmethod
     def _download_filename(response: requests.Response, archive_id: str) -> str:
