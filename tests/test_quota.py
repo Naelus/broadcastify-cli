@@ -116,3 +116,32 @@ def test_server_429_conservatively_blocks_instance_for_one_window(
 
     now[0] += 101
     assert ledger.status()["available"] is True
+
+
+def test_server_429_reopens_when_oldest_known_request_ages_out(
+    tmp_path: Path,
+) -> None:
+    now = [1_800_000_000.0]
+    ledger = ArchiveRequestLedger(
+        tmp_path / "quota.sqlite3",
+        limit=4,
+        provider_limit=5,
+        window_seconds=100,
+        clock=lambda: now[0],
+    )
+    ledger.reserve(
+        feed_id="90001", archive_date="2026-07-22", archive_id="oldest"
+    )
+    now[0] += 90
+    limited = ledger.reserve(
+        feed_id="90001", archive_date="2026-07-22", archive_id="limited"
+    )
+    ledger.finish(limited, outcome="http_429", http_status=429)
+
+    status = ledger.mark_rate_limited("rolling limit")
+
+    assert status["next_request_seconds"] == 15
+    now[0] += 14
+    assert ledger.status()["available"] is False
+    now[0] += 2
+    assert ledger.status()["available"] is True

@@ -15,6 +15,7 @@ USER_ARCHIVE_REQUEST_RESERVE = (
     PROVIDER_ARCHIVE_REQUEST_LIMIT - AUTOMATED_ARCHIVE_REQUEST_LIMIT
 )
 ARCHIVE_REQUEST_WINDOW_SECONDS = 24 * 60 * 60.0
+RATE_LIMIT_RELEASE_GRACE_SECONDS = 5.0
 DEFAULT_ARCHIVE_QUOTA_FILENAME = ".broadcastify-archive-quota.sqlite3"
 
 
@@ -132,6 +133,21 @@ class ArchiveRequestLedger:
             else None
         )
         blocked_until_value = float(state["blocked_until"] if state else 0.0)
+        blocked_reason = str(state["blocked_reason"] or "") if state else ""
+        # A provider 429 is rolling-window state. Once this installation's
+        # oldest known request ages out, one upstream slot should be available.
+        # Clamp legacy/full-window blocks to that earliest known release.
+        if blocked_until_value > now and oldest is not None:
+            stored_blocked_until = blocked_until_value
+            blocked_until_value = min(
+                blocked_until_value,
+                oldest + self.window_seconds + RATE_LIMIT_RELEASE_GRACE_SECONDS,
+            )
+            if blocked_until_value < stored_blocked_until:
+                blocked_reason = (
+                    "Broadcastify returned HTTP 429; this installation is "
+                    "waiting for its next known rolling-window release."
+                )
         blocked = blocked_until_value > now
         capacity_available_at = (
             oldest + self.window_seconds
@@ -155,9 +171,7 @@ class ArchiveRequestLedger:
             "remaining": remaining,
             "available": remaining > 0 and not blocked,
             "blocked": blocked,
-            "blocked_reason": (
-                str(state["blocked_reason"] or "") if blocked and state else ""
-            ),
+            "blocked_reason": blocked_reason if blocked else "",
             "blocked_until": self._timestamp(blocked_until_value if blocked else None),
             "next_request_at": self._timestamp(next_request_at),
             "next_request_seconds": (
@@ -239,15 +253,32 @@ class ArchiveRequestLedger:
 
     def mark_rate_limited(self, reason: str) -> dict[str, Any]:
         now = float(self.clock())
-        blocked_until = now + self.window_seconds
         connection = self._connect()
         try:
             connection.execute("BEGIN IMMEDIATE")
+            cutoff = now - self.window_seconds
+            oldest = connection.execute(
+                """
+                SELECT MIN(requested_at) AS oldest
+                FROM archive_request_attempts
+                WHERE requested_at > ?
+                """,
+                (cutoff,),
+            ).fetchone()
+            oldest_value = (
+                float(oldest["oldest"])
+                if oldest is not None and oldest["oldest"] is not None
+                else now
+            )
+            blocked_until = min(
+                now + self.window_seconds,
+                oldest_value
+                + self.window_seconds
+                + RATE_LIMIT_RELEASE_GRACE_SECONDS,
+            )
             current = connection.execute(
                 "SELECT blocked_until FROM archive_quota_state WHERE singleton = 1"
             ).fetchone()
-            if current is not None:
-                blocked_until = max(blocked_until, float(current["blocked_until"]))
             connection.execute(
                 """
                 UPDATE archive_quota_state

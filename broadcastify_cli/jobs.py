@@ -326,6 +326,7 @@ class JobRunner:
                                 admit_download=heartbeat.assert_active,
                             )
                         except DownloadLimitExceeded:
+                            quota = self.client.archive_quota_status()
                             warning = self.lan_sync.finish_download_turn(
                                 turn,
                                 outcome="quota_limited",
@@ -335,6 +336,13 @@ class JobRunner:
                                         self.request.feed_id,
                                         archive_date,
                                     )
+                                ),
+                                retry_after_seconds=max(
+                                    5.0,
+                                    float(
+                                        quota.get("next_request_seconds")
+                                        or 5.0
+                                    ),
                                 ),
                             )
                             if warning:

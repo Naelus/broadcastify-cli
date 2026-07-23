@@ -334,3 +334,91 @@ def test_lan_queue_leader_publishes_completion_after_one_upstream_download(
         "finish:complete:1",
         "heartbeat:stop",
     ]
+
+
+def test_lan_queue_quota_result_uses_local_next_safe_delay(
+    tmp_path: Path,
+) -> None:
+    archive_date = date(2026, 7, 12)
+    published: list[tuple[str, float | None]] = []
+
+    class Heartbeat:
+        warnings: tuple[str, ...] = ()
+
+        def __enter__(self) -> "Heartbeat":
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def assert_active(self) -> None:
+            return None
+
+    class LeaderLanQueue:
+        enabled = True
+
+        def sync_day(self, *_args: object, **_kwargs: object) -> LanSyncResult:
+            return LanSyncResult(enabled=True, peers_reached=1)
+
+        def wait_for_download_turn(
+            self,
+            *_args: object,
+            **_kwargs: object,
+        ) -> LanDownloadTurn:
+            return LanDownloadTurn(
+                role="leader",
+                feed_id="90001",
+                archive_date=archive_date.isoformat(),
+                coordinator_url="http://127.0.0.1:8765",
+                producer_url="http://127.0.0.1:8766",
+                owner_node_id="producer_one",
+                lease_token="lease_token_value_that_is_long_enough",
+                lease_seconds=90.0,
+            )
+
+        def maintain_download_lease(self, _turn: LanDownloadTurn) -> Heartbeat:
+            return Heartbeat()
+
+        def local_source_files(
+            self,
+            *_args: object,
+            **_kwargs: object,
+        ) -> list[Path]:
+            return []
+
+        def finish_download_turn(
+            self,
+            _turn: LanDownloadTurn,
+            *,
+            outcome: str,
+            retry_after_seconds: float | None = None,
+            **_kwargs: object,
+        ) -> str:
+            published.append((outcome, retry_after_seconds))
+            return ""
+
+    class LimitedClient:
+        def authenticate(self) -> None:
+            return None
+
+        def download_day(self, *_args: object, **_kwargs: object) -> list[Path]:
+            raise DownloadLimitExceeded("rolling quota reached")
+
+        def archive_quota_status(self) -> dict[str, object]:
+            return {"next_request_seconds": 37}
+
+    request = JobRequest(
+        feed_id="90001",
+        start_date=archive_date,
+        end_date=archive_date,
+        output_dir=tmp_path,
+        lan_sync_enabled=True,
+    )
+    result = JobRunner(
+        request,
+        client=LimitedClient(),  # type: ignore[arg-type]
+        lan_sync=LeaderLanQueue(),  # type: ignore[arg-type]
+    ).run()
+
+    assert published == [("quota_limited", 37.0)]
+    assert result["download_limited"] is True

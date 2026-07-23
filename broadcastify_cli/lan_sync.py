@@ -5,6 +5,7 @@ import hashlib
 import hmac
 import ipaddress
 import json
+import math
 import os
 import re
 import secrets
@@ -441,12 +442,29 @@ class LanAcquisitionQueue:
         outcome: str,
         block_count: int = 0,
         blocks: Sequence[Mapping[str, Any]] = (),
+        retry_after_seconds: float | None = None,
     ) -> dict[str, Any]:
         scope = self._validate_key(quota_scope, feed_id)
         if outcome not in {"complete", "quota_limited", "failed"}:
             raise LanSyncError("The LAN acquisition outcome is not valid.")
         if not 0 <= int(block_count) <= MAX_BLOCKS_PER_DAY:
             raise LanSyncError("The LAN acquisition block count is not valid.")
+        retry_delay: float | None = None
+        if retry_after_seconds is not None:
+            try:
+                retry_delay = float(retry_after_seconds)
+            except (TypeError, ValueError) as exc:
+                raise LanSyncError(
+                    "The LAN acquisition retry delay is not valid."
+                ) from exc
+            if (
+                outcome != "quota_limited"
+                or not math.isfinite(retry_delay)
+                or not 0.0 <= retry_delay <= 24 * 60 * 60.0
+            ):
+                raise LanSyncError(
+                    "The LAN acquisition retry delay is not valid."
+                )
         completion_blocks: tuple[ArchiveBlock, ...] = ()
         raw_blocks = tuple(blocks)
         if outcome == "complete":
@@ -505,11 +523,15 @@ class LanAcquisitionQueue:
                 <= current_date
             )
             entry.blocks = completion_blocks
-            entry.expires_at = now + (
-                self.rolling_result_seconds
-                if entry.rolling
-                else self.result_seconds
-            )
+            if outcome == "quota_limited" and retry_delay is not None:
+                result_lifetime = max(5.0, retry_delay)
+            else:
+                result_lifetime = (
+                    self.rolling_result_seconds
+                    if entry.rolling
+                    else self.result_seconds
+                )
+            entry.expires_at = now + result_lifetime
             return self._payload_locked(key, now)
 
     def _authorized_active_entry(
@@ -1631,6 +1653,7 @@ class LanArchiveSyncClient:
         outcome: str,
         block_count: int = 0,
         source_files: Sequence[str | Path] = (),
+        retry_after_seconds: float | None = None,
     ) -> str:
         if not turn.is_leader:
             return ""
@@ -1659,6 +1682,7 @@ class LanArchiveSyncClient:
                     "outcome": outcome,
                     "block_count": int(block_count),
                     "blocks": [block.to_dict() for block in blocks],
+                    "retry_after_seconds": retry_after_seconds,
                 },
             )
         except (LanSyncError, requests.RequestException, ValueError) as exc:

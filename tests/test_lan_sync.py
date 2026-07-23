@@ -346,7 +346,7 @@ def test_recent_completed_day_is_a_short_lived_rolling_snapshot() -> None:
     assert queue.status("premium-account", "90001", old_date)["state"] == "complete"
 
 
-def test_recent_quota_limit_keeps_the_full_shared_cooldown() -> None:
+def test_quota_limit_uses_the_producer_next_rolling_slot() -> None:
     now = [400.0]
     today = date(2026, 7, 20)
     queue = LanAcquisitionQueue(
@@ -371,10 +371,13 @@ def test_recent_quota_limit_keeps_the_full_shared_cooldown() -> None:
         lease_token=str(claim["lease_token"]),
         outcome="quota_limited",
         block_count=2,
+        retry_after_seconds=45.0,
     )
 
     assert limited["rolling"] is False
-    assert limited["lease_seconds"] == 3600.0
+    assert limited["lease_seconds"] == 45.0
+    now[0] += 46.0
+    assert queue.status("premium-account", "90001", today)["state"] == "available"
 
 
 def test_web_queue_elects_one_producer_and_follower_pulls_completed_blocks(

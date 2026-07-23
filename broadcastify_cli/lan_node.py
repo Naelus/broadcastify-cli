@@ -251,6 +251,7 @@ def create_lan_node_server(
                     outcome=str(body.get("outcome") or ""),
                     block_count=int(body.get("block_count") or 0),
                     blocks=body.get("blocks") or (),  # type: ignore[arg-type]
+                    retry_after_seconds=body.get("retry_after_seconds"),  # type: ignore[arg-type]
                 )
             else:
                 raise FileNotFoundError

@@ -914,8 +914,8 @@ class BroadcastifyClient:
                             )
                             message += (
                                 " This installation has paused all new archive requests for "
-                                "24 hours without retrying. Already-cached files and local "
-                                "processing remain available."
+                                "the next known rolling-window release without retrying. "
+                                "Already-cached files and local processing remain available."
                             )
                             self._archive_quota().mark_rate_limited(message)
                             request_throttle.block(message)
