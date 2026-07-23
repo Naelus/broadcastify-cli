@@ -1,6 +1,6 @@
 # Broadcastify archive request limits
 
-Last reviewed: July 22, 2026.
+Last reviewed: July 23, 2026.
 
 ## Authorization comes first
 
@@ -41,7 +41,14 @@ The ledger counts attempts, not just successful files:
 - archive metadata listings, transcription, diarization, analysis, playback of
   retained local audio, and clip export do not use this archive-media ledger;
 - any HTTP 429 stops immediately without retry and blocks new archive requests
-  from that installation for a conservative 24 hours.
+  until the oldest request known to that installation leaves the rolling
+  window, plus a small clock-skew grace.
+
+At that next-safe time the installation may admit one guarded request. If the
+provider still returns 429 because of unseen browser/other-client activity, the
+new attempt is counted, stops immediately, and advances the block to the next
+known local release. Scheduled jobs preserve this deferral and resume then;
+they never poll the archive-media endpoint while the ledger is closed.
 
 The desktop and browser UIs show used, remaining, reserve, next-safe time, and a
 short form of the installation identity. The Windows package keeps its ledger
@@ -94,7 +101,9 @@ The fixes now in place are:
 
 Trusted-LAN peers may exchange hash-verified original archive blocks and elect
 one producer for a feed/day, reducing duplicate downloads. The transient
-feed/day result is retained for 24 hours after an explicit quota result.
+quota result carries the producer's next-safe delay, preventing followers from
+repeating the request until that rolling slot arrives. Completed old-day
+manifests may still be retained for the configured 24-hour result lifetime.
 
 LAN coordination does **not** merge request ledgers, credentials, or provider
 allowances. Each installed desktop or service retains its own 240-request

@@ -50,6 +50,8 @@ The payload is never included in the returned job snapshot. Still treat payload 
 - priority-first incident cards with quotes, timestamps, play-at-time, and exact clip preparation
 - paged/searchable speaker-labeled transcript viewing
 - website-backed feed search and guarded inclusive archive jobs
+- persistent daily schedules for explicitly selected feeds, with a recent-day
+  lookback, cache/stage reuse, service-start recovery, and rolling-quota resume
 - visible installation-local 240-of-250 rolling request status with a
   10-request manual reserve and next-safe time
 - trusted-LAN source-block pooling before website access, with optional discovery or explicit private peer URLs and one renewable upstream producer lease per quota-scope/feed/day
@@ -76,7 +78,14 @@ proxy, or use a public tunnel without a separate authentication/TLS layer.
 
 Static transcript, incident, feed, and model text is HTML-escaped before rendering. A restrictive content-security policy allows scripts, styles, media, and connections only from the local origin. Media paths must resolve beneath the configured archive root; absolute paths and traversal are rejected.
 
-Only one worker job may be queued/running at once. Archive job payloads are overwritten to `download_jobs=1` and `keep_originals=true`; diarization also forces daily combination and transcription. Every child worker uses the Web installation's durable request ledger. Cancel sends an interrupt to the worker process group before using a bounded forced stop, giving model/server contexts an opportunity to clean up.
+Only one worker job may be queued/running at once. Archive job payloads are
+overwritten to `download_jobs=1` and `keep_originals=true`; diarization also
+forces daily combination and transcription. Every child worker uses the Web
+installation's durable request ledger. The service checks feed schedules in
+the background while it is alive, defers behind a user-started job, and
+recovers an interrupted schedule on restart. Cancel sends an interrupt to the
+worker process group before using a bounded forced stop, giving model/server
+contexts an opportunity to clean up.
 
 An independently versioned, read-only LAN archive data surface is available only
 when `BROADCASTIFY_LAN_SHARING=true`. Its inventory and block routes do not use
@@ -91,7 +100,17 @@ explicit peer configuration, and the trusted-network boundary.
 
 ## Secrets and persistence
 
-Non-secret model/provider choices use browser-local storage. API keys and Hugging Face tokens are never written there; they remain in the active tab and travel only over the same-origin Web service to the selected child worker. A Hugging Face read token is needed for the first gated Community-1 download, but a complete cache can later run offline without one. Broadcastify login fields are sent to the website-auth worker and the password field is immediately cleared. For repeat launches, prefer the ignored `.env` variables documented in `.env-example`.
+Non-secret model/provider choices use browser-local storage. Saved feed
+schedules persist non-secret processing choices in SQLite but strip direct
+Hugging Face and analysis API-key values. API keys and Hugging Face tokens are
+never written to browser storage; they remain in the active tab and travel only
+over the same-origin Web service to the selected child worker. A continuously
+running schedule that needs such a value must obtain it from the service's
+private environment. A Hugging Face read token is needed for the first gated
+Community-1 download, but a complete cache can later run offline without one.
+Broadcastify login fields are sent to the website-auth worker and the password
+field is immediately cleared. For repeat launches, prefer the ignored `.env`
+variables documented in `.env-example`.
 
 WinUI can additionally use Windows Credential Locker. A portable OS-keychain
 adapter is not currently prioritized; the browser UI must not imply that

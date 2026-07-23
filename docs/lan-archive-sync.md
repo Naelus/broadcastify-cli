@@ -31,8 +31,8 @@ public peer-to-peer network:
    five minutes by default. A later job can elect one new producer to check for
    another finalized track while all followers reuse the exact snapshot;
 10. a crashed producer loses its lease and another producer can take over. A
-    shared quota-limit result suppresses follower retries for 24 hours by
-    default, including on a rolling day.
+    shared quota-limit result suppresses follower retries until the producer's
+    installation-local ledger reaches its next known rolling-window release.
 
 Peers may introduce other explicitly configured private peers, up to a bounded
 pool of 24 nodes. A filename conflict or disagreement between peers is reported
@@ -129,11 +129,12 @@ BROADCASTIFY_LAN_QUEUE_MAX_WAIT_SECONDS="1800"
 
 Active leases renew in the background. If renewal can no longer be proven,
 the downloader stops admitting new archive-media requests before the lease can
-be reassigned. `BROADCASTIFY_LAN_QUEUE_RESULT_SECONDS` applies to old completed
-days and explicit quota results. The rolling value applies only to successful
-today/yesterday manifests; it does not cause another media request when the
-exact new block is already present on any peer. Completed MP3s—not the
-transient queue—remain the durable state.
+be reassigned. `BROADCASTIFY_LAN_QUEUE_RESULT_SECONDS` applies to completed old
+days. The rolling value applies only to successful today/yesterday manifests.
+An explicit quota result instead supplies the producer ledger's next-safe
+delay, bounded to the provider's 24-hour window. None of these timers causes
+another media request when the exact block is already present on a peer.
+Completed MP3s—not the transient queue—remain the durable state.
 
 For an ordinary headless machine that should share blocks without exposing the
 complete browser UI:

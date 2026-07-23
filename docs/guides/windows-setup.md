@@ -64,10 +64,14 @@ dotnet build .\BroadcastifyCli.WinUI\BroadcastifyCli.WinUI.csproj -c Release
    and does not touch Broadcastify archive quota.
 5. Open **New archive**, search for a feed, select the inclusive date range, and
    keep **Create combined MP3** enabled for transcription/diarization.
-6. Open **Local library** to continue an interrupted or partially processed
+6. To revisit a feed automatically, select that search result and choose
+   **Schedule this feed**. Pick a local daily time and recent-day lookback.
+   Schedules run while the desktop app is open; use the managed Web/TrueNAS
+   service for continuous unattended scheduling.
+7. Open **Local library** to continue an interrupted or partially processed
    day. **Improve speakers** replaces preview labels with Community-1 without
    repeating transcription.
-7. Use **Review & Ask** for incidents, evidence clips, daily/weekly briefs, and
+8. Use **Review & Ask** for incidents, evidence clips, daily/weekly briefs, and
    range questions. Use **Area watch** for radius discovery and regional leads.
 
 Model self-tests prove that the selected runtime actually executes; generated

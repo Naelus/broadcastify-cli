@@ -42,13 +42,42 @@ own rolling 24-hour window, leaving 10 unspent for manual review.
 
 The ledger is reserved immediately before every archive-media request. Network
 and 5xx retries therefore consume another entry, just as they do upstream.
-Cached local or LAN blocks and local processing consume none. Any HTTP 429 stops
-without retry and conservatively pauses that installation for 24 hours.
+Cached local or LAN blocks and local processing consume none. Any HTTP 429
+stops without retry. The ledger then waits until its oldest known active
+request ages out of the rolling window (plus a small clock-skew grace) and
+admits at most the next guarded request. Another 429 advances the stop to the
+next known release; it does not produce a tight retry loop.
 
 The ledger cannot observe manual website activity, requests made before it was
 created, or another installation. Do not run separate desktop/NAS instances
 against the same provider allowance concurrently. See
 [rate-limits.md](../rate-limits.md) for the exact boundary and current terms.
+
+## Per-feed schedules
+
+A schedule belongs to one explicitly selected feed, not a search term or a
+hardcoded locality. It stores:
+
+- the feed ID and display name;
+- one local wall-clock time;
+- a one-to-fourteen-day lookback, including the current day;
+- the selected combination, ASR, speaker, analysis, and LAN settings; and
+- enabled, last-run, retry, and recovery state.
+
+At the scheduled time the job revisits that recent range. Exact source blocks
+and valid processing stages are reused, so overlap is intentional and does not
+repeat completed work. If the rolling archive guard is closed, cached days can
+still finish locally and the missing acquisition is deferred until the
+ledger's next-safe time. The desktop checks schedules while it is open. The
+Web/TrueNAS service owns a background coordinator and can run them continuously
+under its normal service supervisor.
+
+Schedules live in the evidence database and survive restart. An interrupted
+running schedule is returned to a deferred state on startup and resumes from
+retained files/checkpoints. Only one local worker job runs at a time. Stored
+schedule JSON removes direct Hugging Face and analysis API-key values; those
+secrets must remain in the platform credential store, active session, or
+private environment.
 
 ## Trusted-LAN pool
 
@@ -63,8 +92,9 @@ bounded next-day rollover consistently; the requested feed/day directory and a
 30-hour timestamp ceiling still prevent an unrelated block from being admitted.
 
 Today/yesterday successful manifests are short-lived rolling snapshots so a new
-track can be discovered. Explicit quota state keeps the full cooldown. LAN
-failure never prevents local cache use or the paced website fallback. See
+track can be discovered. Explicit quota state follows the producer ledger's
+next known rolling-window release. LAN failure never prevents local cache use
+or the paced website fallback. See
 [lan-archive-sync.md](../lan-archive-sync.md).
 
 ## Failure and resume rules

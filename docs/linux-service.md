@@ -5,6 +5,10 @@ systemd service. It is the managed Linux launch path for the same Library,
 acquisition, transcription, diarization, analysis, and evidence workflow used
 by `broadcastify-web`.
 
+Feed schedules saved in the browser UI run while this service is active. They
+are per-feed, revisit a bounded recent-day window, reuse retained stages, and
+defer missing archive work to the request ledger's next rolling release.
+
 The generated configuration uses `127.0.0.1` by default. An explicit
 `--host` can instead select a private/link-local address or wildcard listener
 for a trusted LAN. The Web app still creates a random session token at every

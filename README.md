@@ -23,6 +23,9 @@ a browser UI for Windows, Linux, macOS, and TrueNAS, plus command-line tools.
 - Downloads archive blocks conservatively with cache reuse, sequential pacing,
   resumable jobs, a durable 240-of-250 rolling-window guard, and optional
   trusted-LAN sharing.
+- Saves daily schedules for explicitly selected feeds; each run revisits a
+  short recent window, resumes retained work, and continues at rolling quota
+  release times instead of sleeping for a fixed day.
 - Combines each feed-day into one continuous timeline before transcription and
   speaker labeling.
 - Runs local Whisper-family ASR, Community-1 or a fast CPU speaker preview, BGE
@@ -64,10 +67,12 @@ In the app:
 2. Use **Verify profile** to execute all three model stages on generated local
    input without consuming archive quota.
 3. Open **New archive**, search for a feed, and select an inclusive date range.
-4. Leave combination enabled when transcribing or adding speaker labels.
-5. Review completed or interrupted days in **Local library**. The next action
+4. Optionally choose **Schedule this feed** to save a daily time and recent-day
+   lookback for that specific result.
+5. Leave combination enabled when transcribing or adding speaker labels.
+6. Review completed or interrupted days in **Local library**. The next action
    resumes only the missing or stale stage.
-6. Use **Review & Ask** or **Area watch** for cited incidents, clips, questions,
+7. Use **Review & Ask** or **Area watch** for cited incidents, clips, questions,
    weekly briefs, and regional leads.
 
 The full prerequisite, first-run, model, and private-build instructions are in

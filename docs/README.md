@@ -15,7 +15,7 @@ start.
 
 ## Features
 
-- [Archive acquisition, search, caching, and quota behavior](features/archive-acquisition.md)
+- [Archive acquisition, per-feed schedules, caching, and quota behavior](features/archive-acquisition.md)
 - [Combination, transcription, and diarization](features/audio-processing.md)
 - [Incident analysis, summaries, retrieval, and evidence clips](features/evidence-analysis.md)
 - [Local Library and Review](features/library-and-review.md)

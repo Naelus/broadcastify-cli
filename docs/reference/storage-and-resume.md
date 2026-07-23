@@ -63,7 +63,8 @@ The persistent database stores:
 - incidents and exact evidence references;
 - daily and weekly summaries;
 - question history;
-- area profiles, acquisition queues, and story digests; and
+- area profiles, acquisition queues, story digests, and per-feed schedules;
+  and
 - model-window checkpoints and prompt/source identities.
 
 SQLite is derived from retained transcripts/audio but is worth backing up with
@@ -98,6 +99,8 @@ A later stage cannot make an earlier stale stage look complete.
 - Portable diarization checkpoints every completed chunk and retains the
   checkpoint until final-cache commit.
 - Incident analysis checkpoints every completed model window.
+- Feed schedules store last-run and next-safe quota state; a startup recovery
+  defers any schedule left running and resumes from retained work.
 - Native settings are atomically written; activity/crash logs append.
 
 An application or machine interruption may leave a partial/checkpoint, but it
