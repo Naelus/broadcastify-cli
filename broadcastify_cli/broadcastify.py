@@ -1083,12 +1083,13 @@ class BroadcastifyClient:
             started = datetime.strptime(filename_prefix, "%Y%m%d%H%M")
         except ValueError:
             return [filename_prefix]
-        prefixes = [filename_prefix]
-        for minutes in (-1, 1):
-            candidate = started + timedelta(minutes=minutes)
-            if candidate.strftime("%Y%m%d") == day_name:
-                prefixes.append(candidate.strftime("%Y%m%d%H%M"))
-        return prefixes
+        prefixes: list[str] = []
+        for base in (started, started - timedelta(hours=1)):
+            for minutes in (0, -1, 1):
+                candidate = base + timedelta(minutes=minutes)
+                if candidate.strftime("%Y%m%d") == day_name:
+                    prefixes.append(candidate.strftime("%Y%m%d%H%M"))
+        return list(dict.fromkeys(prefixes))
 
     @staticmethod
     def _download_filename(response: requests.Response, archive_id: str) -> str:
