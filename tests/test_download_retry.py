@@ -196,6 +196,27 @@ def test_cached_archive_does_not_consume_local_budget(tmp_path: Path) -> None:
     assert client.archive_quota_status()["used"] == 0
 
 
+def test_cached_archive_allows_one_minute_filename_boundary(
+    tmp_path: Path,
+) -> None:
+    day_dir = tmp_path / "40590" / "20260719"
+    day_dir.mkdir(parents=True)
+    cached = day_dir / "202607191900-447318-40590.mp3"
+    cached.write_bytes(b"audio")
+    client = BroadcastifyClient(quota_ledger=_ledger(tmp_path, limit=1))
+    client._archive_filename_prefixes["40590-1784502071"] = "202607191901"
+
+    result = client.download_archive(
+        "40590",
+        date(2026, 7, 19),
+        "40590-1784502071",
+        day_dir,
+    )
+
+    assert result == cached
+    assert client.archive_quota_status()["used"] == 0
+
+
 def test_serialized_throttle_is_reused_across_days_in_one_job() -> None:
     client = BroadcastifyClient()
     first_day = client._shared_download_throttle(4)

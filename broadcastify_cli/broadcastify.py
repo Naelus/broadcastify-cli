@@ -7,7 +7,7 @@ import re
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Callable, Sequence
@@ -1067,11 +1067,28 @@ class BroadcastifyClient:
         # different identifiers. The archive-list payload supplies startTs and
         # the feed's IANA timezone, which together form the exact file prefix.
         if filename_prefix:
-            candidates.extend(day_dir.glob(f"{filename_prefix}-*-{feed_id}.mp3"))
+            for prefix in BroadcastifyClient._neighboring_archive_prefixes(
+                filename_prefix,
+                day_dir.name,
+            ):
+                candidates.extend(day_dir.glob(f"{prefix}-*-{feed_id}.mp3"))
         return next(
             (value for value in candidates if value.is_file() and value.stat().st_size > 0),
             None,
         )
+
+    @staticmethod
+    def _neighboring_archive_prefixes(filename_prefix: str, day_name: str) -> list[str]:
+        try:
+            started = datetime.strptime(filename_prefix, "%Y%m%d%H%M")
+        except ValueError:
+            return [filename_prefix]
+        prefixes = [filename_prefix]
+        for minutes in (-1, 1):
+            candidate = started + timedelta(minutes=minutes)
+            if candidate.strftime("%Y%m%d") == day_name:
+                prefixes.append(candidate.strftime("%Y%m%d%H%M"))
+        return prefixes
 
     @staticmethod
     def _download_filename(response: requests.Response, archive_id: str) -> str:
