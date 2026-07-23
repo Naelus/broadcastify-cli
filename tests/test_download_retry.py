@@ -397,6 +397,35 @@ def test_download_day_progress_distinguishes_cache_from_website_download(
     assert not any("cached or downloaded" in message for message in messages)
 
 
+def test_download_day_returns_unique_paths_when_archive_ids_share_file(
+    tmp_path: Path,
+) -> None:
+    client = BroadcastifyClient(download_request_interval=0)
+    client.authenticate = lambda force=False: None  # type: ignore[method-assign]
+    client.get_archive_ids = lambda feed_id, archive_date: [  # type: ignore[method-assign]
+        "first",
+        "second",
+    ]
+
+    def fake_download(
+        feed_id: str,
+        archive_date: date,
+        archive_id: str,
+        target: Path,
+        *_: object,
+        **__: object,
+    ) -> Path:
+        result = target / "shared.mp3"
+        result.write_bytes(b"audio")
+        return result
+
+    client.download_archive = fake_download  # type: ignore[method-assign]
+
+    result = client.download_day("90001", date(2026, 7, 12), tmp_path)
+
+    assert result == [tmp_path / "90001" / "20260712" / "shared.mp3"]
+
+
 def test_download_day_acquires_current_and_previous_before_older_backlog(
     tmp_path: Path,
 ) -> None:

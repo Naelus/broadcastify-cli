@@ -804,7 +804,7 @@ class BroadcastifyClient:
                             refreshed=True,
                         ),
                     )
-        return sorted(downloaded)
+        return sorted(dict.fromkeys(downloaded))
 
     def _is_current_archive_date(
         self,
