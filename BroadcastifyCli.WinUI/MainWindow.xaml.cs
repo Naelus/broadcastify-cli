@@ -2835,7 +2835,11 @@ public sealed partial class MainWindow : Window
                 + "Changing only the time or processing stages keeps its saved model and hardware choices.",
             TextWrapping = TextWrapping.Wrap,
         };
-        var content = new StackPanel { Spacing = 12 };
+        var content = new StackPanel
+        {
+            Spacing = 12,
+            MaxWidth = 480,
+        };
         content.Children.Add(explanation);
         content.Children.Add(timePicker);
         content.Children.Add(lookbackBox);
@@ -2861,6 +2865,9 @@ public sealed partial class MainWindow : Window
             Content = new ScrollViewer
             {
                 MaxHeight = 600,
+                HorizontalScrollMode = ScrollMode.Disabled,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+                HorizontalContentAlignment = HorizontalAlignment.Stretch,
                 Content = content,
             },
         };
@@ -2934,13 +2941,11 @@ public sealed partial class MainWindow : Window
             ContentDialog? manager = null;
             foreach (var schedule in schedules)
             {
-                var row = new Grid { ColumnSpacing = 10 };
-                row.ColumnDefinitions.Add(new ColumnDefinition
+                var schedulePanel = new StackPanel
                 {
-                    Width = new GridLength(1, GridUnitType.Star),
-                });
-                row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-                row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                    Spacing = 8,
+                    MaxWidth = 480,
+                };
                 var text = new TextBlock
                 {
                     Text = $"{schedule.FeedName} · feed {schedule.FeedId}\n"
@@ -2967,12 +2972,17 @@ public sealed partial class MainWindow : Window
                     removeSchedule = schedule;
                     manager?.Hide();
                 };
-                Grid.SetColumn(edit, 1);
-                Grid.SetColumn(remove, 2);
-                row.Children.Add(text);
-                row.Children.Add(edit);
-                row.Children.Add(remove);
-                list.Children.Add(row);
+                var actions = new StackPanel
+                {
+                    Orientation = Orientation.Horizontal,
+                    Spacing = 8,
+                    HorizontalAlignment = HorizontalAlignment.Right,
+                };
+                actions.Children.Add(edit);
+                actions.Children.Add(remove);
+                schedulePanel.Children.Add(text);
+                schedulePanel.Children.Add(actions);
+                list.Children.Add(schedulePanel);
             }
             manager = new ContentDialog
             {
@@ -2980,8 +2990,10 @@ public sealed partial class MainWindow : Window
                 Title = "Manage feed schedules",
                 Content = new ScrollViewer
                 {
-                    MinWidth = 620,
                     MaxHeight = 520,
+                    HorizontalScrollMode = ScrollMode.Disabled,
+                    HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+                    HorizontalContentAlignment = HorizontalAlignment.Stretch,
                     Content = list,
                 },
                 CloseButtonText = "Done",
