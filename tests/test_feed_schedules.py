@@ -94,6 +94,39 @@ def test_disabled_schedule_does_not_claim_and_can_be_removed(tmp_path: Path) -> 
         assert store.list_feed_schedules(now=now) == []
 
 
+def test_existing_schedule_can_update_timing_processing_and_enabled_state(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "analysis.sqlite3"
+    now = datetime(2026, 7, 23, 3, 0, tzinfo=timezone.utc)
+    with AnalysisStore(database) as store:
+        original = store.save_feed_schedule(_payload())
+        updated_payload = _payload(enabled=False)
+        updated_payload["run_time_local"] = "04:15"
+        updated_payload["lookback_days"] = 5
+        updated_payload["analyze"] = False
+        updated_payload["job"] = {
+            **dict(updated_payload["job"]),
+            "transcribe": False,
+            "diarize": False,
+            "model": "base",
+        }
+        updated = store.save_feed_schedule(updated_payload)
+        schedules = store.list_feed_schedules(now=now)
+
+    assert updated["id"] == original["id"]
+    assert len(schedules) == 1
+    assert schedules[0]["run_time_local"] == "04:15"
+    assert schedules[0]["lookback_days"] == 5
+    assert schedules[0]["enabled"] is False
+    assert schedules[0]["analyze"] is False
+    assert schedules[0]["job"]["transcribe"] is False
+    assert schedules[0]["job"]["diarize"] is False
+    assert schedules[0]["job"]["model"] == "base"
+    assert schedules[0]["job"]["download_jobs"] == 1
+    assert schedules[0]["job"]["keep_originals"] is True
+
+
 def test_startup_recovery_releases_interrupted_schedule(tmp_path: Path) -> None:
     database = tmp_path / "analysis.sqlite3"
     now = datetime(2026, 7, 23, 3, 0, tzinfo=timezone.utc)

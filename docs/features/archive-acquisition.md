@@ -79,6 +79,13 @@ schedule JSON removes direct Hugging Face and analysis API-key values; those
 secrets must remain in the platform credential store, active session, or
 private environment.
 
+On Windows, **Manage schedules** can edit the daily time, lookback, enabled
+state, local processing stages, and incident analysis for an existing feed.
+Changing those basics preserves the schedule's saved model, accelerator,
+speaker-tuning, output, and LAN choices. Select the refresh option in the
+editor to intentionally replace those advanced choices with the current
+Settings page values. Removing a schedule never removes retained evidence.
+
 ## Trusted-LAN pool
 
 The optional LAN node shares original archive MP3 blocks, not credentials,

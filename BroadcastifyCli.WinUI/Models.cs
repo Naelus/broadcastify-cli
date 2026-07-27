@@ -402,7 +402,7 @@ public sealed record AreaDigestReport
             : $" · {Coverage.StaleFeedDays.Count} retained feed-days need reanalysis");
 }
 
-internal sealed record JobRequest
+internal sealed record JobRequest : AnalysisProviderRequest
 {
     [JsonPropertyName("feed_id")]
     public string FeedId { get; init; } = "";

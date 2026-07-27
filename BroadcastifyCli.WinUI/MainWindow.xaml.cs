@@ -2714,6 +2714,33 @@ public sealed partial class MainWindow : Window
         }
         var existing = (await _worker.ListFeedSchedulesAsync(CancellationToken.None))
             .FirstOrDefault(value => value.FeedId == _selectedFeed.FeedId);
+        if (await ShowFeedScheduleEditorAsync(
+                _selectedFeed.FeedId,
+                _selectedFeed.Name,
+                existing))
+        {
+            await RefreshFeedScheduleStatusAsync();
+        }
+    }
+
+    private async Task<bool> ShowFeedScheduleEditorAsync(
+        string feedId,
+        string feedName,
+        FeedSchedule? existing)
+    {
+        if (_worker is null)
+        {
+            return false;
+        }
+
+        var today = DateTime.Today;
+        var storedJob = existing?.Job ?? CreateJobRequest(
+            feedId,
+            today,
+            today,
+            OptionalPositiveInteger(MinimumSpeakersBox.Value),
+            OptionalPositiveInteger(MaximumSpeakersBox.Value),
+            feedName);
         var timePicker = new TimePicker
         {
             Header = "Run daily at this local time",
@@ -2735,9 +2762,77 @@ public sealed partial class MainWindow : Window
             Content = "Schedule enabled",
             IsChecked = existing?.Enabled ?? true,
         };
+        var combineBox = new CheckBox
+        {
+            Content = "Create combined daily audio",
+            IsChecked = storedJob.Combine,
+        };
+        var transcribeBox = new CheckBox
+        {
+            Content = "Transcribe locally",
+            IsChecked = storedJob.Transcribe,
+        };
+        var diarizeBox = new CheckBox
+        {
+            Content = "Add speaker diarization",
+            IsChecked = storedJob.Diarize,
+        };
+        var analyzeBox = new CheckBox
+        {
+            Content = "Extract incidents, summarize, and index",
+            IsChecked = existing?.Analyze ?? true,
+        };
+        var refreshProfileBox = new CheckBox
+        {
+            Content = "Refresh advanced processing settings from the current Settings page",
+            IsChecked = false,
+            Visibility = existing is null ? Visibility.Collapsed : Visibility.Visible,
+        };
+        var profileSummary = new TextBlock
+        {
+            Text = $"Saved processing: {storedJob.AsrEngine} / {storedJob.Model} / {storedJob.Device}; "
+                + $"speaker labels: {storedJob.DiarizationEngine} / {storedJob.DiarizationDevice}; "
+                + $"analysis: {storedJob.AnalysisProvider} / "
+                + $"{(string.IsNullOrWhiteSpace(storedJob.AnalysisModel) ? "default model" : storedJob.AnalysisModel)}.",
+            TextWrapping = TextWrapping.Wrap,
+            FontSize = 12,
+            Opacity = 0.72,
+        };
+
+        void UpdateProcessingDependencies()
+        {
+            if (diarizeBox.IsChecked == true)
+            {
+                transcribeBox.IsChecked = true;
+                combineBox.IsChecked = true;
+            }
+            diarizeBox.IsEnabled = transcribeBox.IsChecked == true;
+            analyzeBox.IsEnabled =
+                transcribeBox.IsChecked == true && combineBox.IsChecked == true;
+            if (transcribeBox.IsChecked != true)
+            {
+                diarizeBox.IsChecked = false;
+                analyzeBox.IsChecked = false;
+            }
+            if (combineBox.IsChecked != true)
+            {
+                diarizeBox.IsChecked = false;
+                analyzeBox.IsChecked = false;
+            }
+        }
+
+        combineBox.Checked += (_, _) => UpdateProcessingDependencies();
+        combineBox.Unchecked += (_, _) => UpdateProcessingDependencies();
+        transcribeBox.Checked += (_, _) => UpdateProcessingDependencies();
+        transcribeBox.Unchecked += (_, _) => UpdateProcessingDependencies();
+        diarizeBox.Checked += (_, _) => UpdateProcessingDependencies();
+        diarizeBox.Unchecked += (_, _) => UpdateProcessingDependencies();
+        UpdateProcessingDependencies();
+
         var explanation = new TextBlock
         {
-            Text = "The schedule reuses retained work, waits for the next rolling request slot when necessary, and uses the processing settings currently selected in this app.",
+            Text = "The schedule reuses retained work and waits for rolling request slots. "
+                + "Changing only the time or processing stages keeps its saved model and hardware choices.",
             TextWrapping = TextWrapping.Wrap,
         };
         var content = new StackPanel { Spacing = 12 };
@@ -2745,43 +2840,74 @@ public sealed partial class MainWindow : Window
         content.Children.Add(timePicker);
         content.Children.Add(lookbackBox);
         content.Children.Add(enabledBox);
+        content.Children.Add(new TextBlock
+        {
+            Text = "Processing",
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+        });
+        content.Children.Add(combineBox);
+        content.Children.Add(transcribeBox);
+        content.Children.Add(diarizeBox);
+        content.Children.Add(analyzeBox);
+        content.Children.Add(profileSummary);
+        content.Children.Add(refreshProfileBox);
         var dialog = new ContentDialog
         {
             XamlRoot = ((FrameworkElement)Content).XamlRoot,
-            Title = $"Daily schedule · {_selectedFeed.Name}",
+            Title = $"{(existing is null ? "New" : "Edit")} daily schedule · {feedName}",
             PrimaryButtonText = "Save schedule",
             CloseButtonText = "Cancel",
             DefaultButton = ContentDialogButton.Primary,
-            Content = content,
+            Content = new ScrollViewer
+            {
+                MaxHeight = 600,
+                Content = content,
+            },
         };
         if (await dialog.ShowAsync() != ContentDialogResult.Primary)
         {
-            return;
+            return false;
         }
-        var today = DateTime.Today;
-        var request = CreateJobRequest(
-            _selectedFeed.FeedId,
-            today,
-            today,
-            OptionalPositiveInteger(MinimumSpeakersBox.Value),
-            OptionalPositiveInteger(MaximumSpeakersBox.Value),
-            _selectedFeed.Name);
+
+        var request = refreshProfileBox.IsChecked == true
+            ? CreateJobRequest(
+                feedId,
+                today,
+                today,
+                OptionalPositiveInteger(MinimumSpeakersBox.Value),
+                OptionalPositiveInteger(MaximumSpeakersBox.Value),
+                feedName)
+            : storedJob with
+            {
+                FeedId = feedId,
+                FeedName = feedName,
+                StartDate = today.ToString("yyyy-MM-dd"),
+                EndDate = today.ToString("yyyy-MM-dd"),
+            };
+        request = request with
+        {
+            Combine = combineBox.IsChecked == true,
+            KeepOriginals = true,
+            Transcribe = transcribeBox.IsChecked == true,
+            Diarize = diarizeBox.IsChecked == true,
+            DownloadJobs = 1,
+        };
         var saved = await _worker.SaveFeedScheduleAsync(
             new FeedScheduleSaveRequest
             {
-                FeedId = _selectedFeed.FeedId,
-                FeedName = _selectedFeed.Name,
+                FeedId = feedId,
+                FeedName = feedName,
                 RunTimeLocal = $"{timePicker.Time.Hours:00}:{timePicker.Time.Minutes:00}",
                 LookbackDays = RequiredInteger(lookbackBox.Value, 2),
                 Job = request,
-                Analyze = AnalyzeAfterJobCheckBox.IsChecked == true,
+                Analyze = analyzeBox.IsChecked == true,
                 Enabled = enabledBox.IsChecked == true,
             },
             CancellationToken.None);
         AppendLog(saved is null
             ? "The feed schedule returned no saved record."
             : $"Scheduled {saved.FeedName} {saved.ScheduleSummary}.");
-        await RefreshFeedScheduleStatusAsync();
+        return saved is not null;
     }
 
     private async void ManageSchedules_Click(object sender, RoutedEventArgs e)
@@ -2790,47 +2916,110 @@ public sealed partial class MainWindow : Window
         {
             return;
         }
-        var schedules = await _worker.ListFeedSchedulesAsync(CancellationToken.None);
-        if (schedules.Count == 0)
+
+        while (true)
         {
-            await ShowMessageAsync("No feed schedules", "Select a feed and choose Schedule this feed.");
-            return;
-        }
-        var list = new StackPanel { Spacing = 10 };
-        foreach (var schedule in schedules)
-        {
-            var row = new Grid { ColumnSpacing = 10 };
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            var text = new TextBlock
+            var schedules = await _worker.ListFeedSchedulesAsync(CancellationToken.None);
+            if (schedules.Count == 0)
             {
-                Text = $"{schedule.FeedName} · feed {schedule.FeedId}\n{schedule.ScheduleSummary}\n{schedule.StateSummary}",
-                TextWrapping = TextWrapping.Wrap,
-            };
-            var remove = new Button { Content = "Remove", Tag = schedule.Id };
-            remove.Click += async (button, _) =>
+                await ShowMessageAsync(
+                    "No feed schedules",
+                    "Select a feed and choose Schedule this feed.");
+                return;
+            }
+
+            FeedSchedule? editSchedule = null;
+            FeedSchedule? removeSchedule = null;
+            var list = new StackPanel { Spacing = 12 };
+            ContentDialog? manager = null;
+            foreach (var schedule in schedules)
             {
-                if (button is Button value && value.Tag is long id)
+                var row = new Grid { ColumnSpacing = 10 };
+                row.ColumnDefinitions.Add(new ColumnDefinition
                 {
-                    await _worker.DeleteFeedScheduleAsync(id, CancellationToken.None);
-                    value.IsEnabled = false;
-                    value.Content = "Removed";
+                    Width = new GridLength(1, GridUnitType.Star),
+                });
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                var text = new TextBlock
+                {
+                    Text = $"{schedule.FeedName} · feed {schedule.FeedId}\n"
+                        + $"{schedule.ScheduleSummary} · {(schedule.Enabled ? "enabled" : "paused")}\n"
+                        + schedule.StateSummary,
+                    TextWrapping = TextWrapping.Wrap,
+                };
+                var edit = new Button
+                {
+                    Content = "Edit",
+                    IsEnabled = !string.Equals(
+                        schedule.State,
+                        "running",
+                        StringComparison.OrdinalIgnoreCase),
+                };
+                edit.Click += (_, _) =>
+                {
+                    editSchedule = schedule;
+                    manager?.Hide();
+                };
+                var remove = new Button { Content = "Remove" };
+                remove.Click += (_, _) =>
+                {
+                    removeSchedule = schedule;
+                    manager?.Hide();
+                };
+                Grid.SetColumn(edit, 1);
+                Grid.SetColumn(remove, 2);
+                row.Children.Add(text);
+                row.Children.Add(edit);
+                row.Children.Add(remove);
+                list.Children.Add(row);
+            }
+            manager = new ContentDialog
+            {
+                XamlRoot = ((FrameworkElement)Content).XamlRoot,
+                Title = "Manage feed schedules",
+                Content = new ScrollViewer
+                {
+                    MinWidth = 620,
+                    MaxHeight = 520,
+                    Content = list,
+                },
+                CloseButtonText = "Done",
+            };
+            await manager.ShowAsync();
+
+            if (editSchedule is not null)
+            {
+                await ShowFeedScheduleEditorAsync(
+                    editSchedule.FeedId,
+                    editSchedule.FeedName,
+                    editSchedule);
+                await RefreshFeedScheduleStatusAsync();
+                continue;
+            }
+            if (removeSchedule is not null)
+            {
+                var confirmation = new ContentDialog
+                {
+                    XamlRoot = ((FrameworkElement)Content).XamlRoot,
+                    Title = $"Remove schedule · {removeSchedule.FeedName}",
+                    Content = "Retained audio, transcripts, and analysis will not be deleted.",
+                    PrimaryButtonText = "Remove schedule",
+                    CloseButtonText = "Cancel",
+                    DefaultButton = ContentDialogButton.Close,
+                };
+                if (await confirmation.ShowAsync() == ContentDialogResult.Primary)
+                {
+                    await _worker.DeleteFeedScheduleAsync(
+                        removeSchedule.Id,
+                        CancellationToken.None);
+                    AppendLog($"Removed the schedule for {removeSchedule.FeedName}.");
                     await RefreshFeedScheduleStatusAsync();
                 }
-            };
-            Grid.SetColumn(remove, 1);
-            row.Children.Add(text);
-            row.Children.Add(remove);
-            list.Children.Add(row);
+                continue;
+            }
+            break;
         }
-        var dialog = new ContentDialog
-        {
-            XamlRoot = ((FrameworkElement)Content).XamlRoot,
-            Title = "Feed schedules",
-            Content = new ScrollViewer { MaxHeight = 520, Content = list },
-            CloseButtonText = "Done",
-        };
-        await dialog.ShowAsync();
     }
 
     private void ConfigureFeedScheduleTimer()
@@ -2983,45 +3172,52 @@ public sealed partial class MainWindow : Window
         DateTime endDate,
         int? minimumSpeakers,
         int? maximumSpeakers,
-        string? feedName = null) => new()
+        string? feedName = null)
     {
-        FeedId = feedId,
-        FeedName = feedName?.Trim() ?? "",
-        StartDate = startDate.ToString("yyyy-MM-dd"),
-        EndDate = endDate.ToString("yyyy-MM-dd"),
-        OutputDirectory = string.IsNullOrWhiteSpace(OutputFolderBox.Text) ? "archives" : OutputFolderBox.Text.Trim(),
-        Combine = DiarizeCheckBox.IsChecked == true || CombineToggle.IsOn,
-        KeepOriginals = KeepOriginalsToggle.IsOn,
-        Transcribe = TranscribeCheckBox.IsChecked == true,
-        Diarize = DiarizeCheckBox.IsChecked == true,
-        Model = SelectedComboValue(ModelComboBox, "turbo"),
-        AsrEngine = SelectedComboValue(AsrEngineComboBox, "auto"),
-        Device = SelectedComboValue(DeviceComboBox, "auto"),
-        DeviceIndex = RequiredInteger(GpuIndexBox.Value, 0),
-        AsrModelPath = string.IsNullOrWhiteSpace(AsrModelPathBox.Text)
-            ? null
-            : AsrModelPathBox.Text.Trim(),
-        DiarizationEngine = SelectedComboValue(
-            DiarizationEngineComboBox, "community-1"),
-        DiarizationDevice = SelectedComboValue(DiarizationDeviceComboBox, "auto"),
-        DownloadJobs = _broadcastifyRateLimitObserved
-            ? 1
-            : RequiredInteger(DownloadJobsBox.Value, 1),
-        BatchSize = RequiredInteger(BatchSizeBox.Value, 8),
-        MinimumSpeakers = minimumSpeakers,
-        MaximumSpeakers = maximumSpeakers,
-        HuggingFaceToken = string.IsNullOrWhiteSpace(HuggingFaceTokenBox.Password)
-            ? null
-            : HuggingFaceTokenBox.Password,
-        LanSyncEnabled = LanSyncToggle.IsOn,
-        LanDiscoveryEnabled = LanDiscoveryToggle.IsOn,
-        LanPeerUrls = LanPeerUrlsBox.Text
-            .Split(
-                new[] { '\r', '\n', ',', ';', ' ', '\t' },
-                StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList(),
-    };
+        return ApplyAnalysisProvider(new JobRequest
+        {
+            FeedId = feedId,
+            FeedName = feedName?.Trim() ?? "",
+            StartDate = startDate.ToString("yyyy-MM-dd"),
+            EndDate = endDate.ToString("yyyy-MM-dd"),
+            OutputDirectory = string.IsNullOrWhiteSpace(OutputFolderBox.Text)
+                ? "archives"
+                : OutputFolderBox.Text.Trim(),
+            Combine = DiarizeCheckBox.IsChecked == true || CombineToggle.IsOn,
+            KeepOriginals = KeepOriginalsToggle.IsOn,
+            Transcribe = TranscribeCheckBox.IsChecked == true,
+            Diarize = DiarizeCheckBox.IsChecked == true,
+            Model = SelectedComboValue(ModelComboBox, "turbo"),
+            AsrEngine = SelectedComboValue(AsrEngineComboBox, "auto"),
+            Device = SelectedComboValue(DeviceComboBox, "auto"),
+            DeviceIndex = RequiredInteger(GpuIndexBox.Value, 0),
+            AsrModelPath = string.IsNullOrWhiteSpace(AsrModelPathBox.Text)
+                ? null
+                : AsrModelPathBox.Text.Trim(),
+            DiarizationEngine = SelectedComboValue(
+                DiarizationEngineComboBox, "community-1"),
+            DiarizationDevice = SelectedComboValue(
+                DiarizationDeviceComboBox, "auto"),
+            DownloadJobs = _broadcastifyRateLimitObserved
+                ? 1
+                : RequiredInteger(DownloadJobsBox.Value, 1),
+            BatchSize = RequiredInteger(BatchSizeBox.Value, 8),
+            MinimumSpeakers = minimumSpeakers,
+            MaximumSpeakers = maximumSpeakers,
+            HuggingFaceToken = string.IsNullOrWhiteSpace(HuggingFaceTokenBox.Password)
+                ? null
+                : HuggingFaceTokenBox.Password,
+            LanSyncEnabled = LanSyncToggle.IsOn,
+            LanDiscoveryEnabled = LanDiscoveryToggle.IsOn,
+            LanPeerUrls = LanPeerUrlsBox.Text
+                .Split(
+                    new[] { '\r', '\n', ',', ';', ' ', '\t' },
+                    StringSplitOptions.RemoveEmptyEntries
+                        | StringSplitOptions.TrimEntries)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList(),
+        });
+    }
 
     private async Task<JobRunResult?> RunAndAnalyzeJobAsync(
         JobRequest request,
