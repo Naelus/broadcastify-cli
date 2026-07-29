@@ -5,6 +5,7 @@
     <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
     <RootNamespace>BroadcastifyCli.WinUI</RootNamespace>
     <AssemblyName>Broadcastify Desktop</AssemblyName>
+    <ApplicationIcon>Assets\BroadcastifyDesktop.ico</ApplicationIcon>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <Platforms>x64</Platforms>
