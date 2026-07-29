@@ -20,6 +20,10 @@ requested flag or filename.
 
 - **Verify & resume** contacts the guarded archive path only when source
   completeness needs verification.
+- **Check for new source audio** is available on every retained day, including
+  days already ready for review. It rechecks that exact feed/date, reuses
+  retained blocks, downloads only missing source files, and obeys the rolling
+  archive-request ledger.
 - **Transcribe locally** uses retained combined audio.
 - **Add speaker labels** does not repeat ASR.
 - **Improve speakers** replaces portable preview labels with Community-1 and

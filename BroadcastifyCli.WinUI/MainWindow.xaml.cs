@@ -2102,6 +2102,8 @@ public sealed partial class MainWindow : Window
         LibrarySpeakerUpgradeButton.Visibility = day.SpeakerUpgradeAvailable
             ? Visibility.Visible
             : Visibility.Collapsed;
+        LibraryCheckSourceButton.IsEnabled =
+            _worker is not null && _operationCancellation is null;
         LibraryOpenFolderButton.IsEnabled = Directory.Exists(day.DayDirectory);
         LibraryOpenTranscriptButton.IsEnabled = File.Exists(day.TranscriptPath);
 
@@ -2233,6 +2235,16 @@ public sealed partial class MainWindow : Window
         await ContinueLibraryDayAsync(day, diarizationEngineOverride: "community-1");
     }
 
+    private async void LibraryCheckSource_Click(object sender, RoutedEventArgs e)
+    {
+        if (_selectedLibraryDay is not null)
+        {
+            await ContinueLibraryDayAsync(
+                _selectedLibraryDay,
+                forceSourceCheck: true);
+        }
+    }
+
     private async void LibraryOpenFolder_Click(object sender, RoutedEventArgs e)
     {
         if (_selectedLibraryDay is null || !Directory.Exists(_selectedLibraryDay.DayDirectory))
@@ -2280,14 +2292,16 @@ public sealed partial class MainWindow : Window
 
     private async Task ContinueLibraryDayAsync(
         LibraryDay day,
-        string? diarizationEngineOverride = null)
+        string? diarizationEngineOverride = null,
+        bool forceSourceCheck = false)
     {
         if (_worker is null)
         {
             return;
         }
         if (day.PrimaryAction == "open_review"
-            && string.IsNullOrWhiteSpace(diarizationEngineOverride))
+            && string.IsNullOrWhiteSpace(diarizationEngineOverride)
+            && !forceSourceCheck)
         {
             await OpenLibraryDayInReviewAsync(day);
             return;
@@ -2306,13 +2320,20 @@ public sealed partial class MainWindow : Window
         }
 
         _operationCancellation = new CancellationTokenSource();
-        SetBusy(true, $"Continuing {day.FeedName} for {day.ArchiveDate}…", jobRunning: true);
+        SetBusy(
+            true,
+            forceSourceCheck
+                ? $"Checking source audio for {day.FeedName} on {day.ArchiveDate}…"
+                : $"Continuing {day.FeedName} for {day.ArchiveDate}…",
+            jobRunning: true);
         JobProgress.IsIndeterminate = true;
         try
         {
-            if (day.NeedsNetwork)
+            if (day.NeedsNetwork || forceSourceCheck)
             {
-                AppendLog($"Resuming archive coverage for feed {day.FeedId} on {day.ArchiveDate}.");
+                AppendLog(forceSourceCheck
+                    ? $"Checking feed {day.FeedId} on {day.ArchiveDate} for new source audio."
+                    : $"Resuming archive coverage for feed {day.FeedId} on {day.ArchiveDate}.");
                 await RunAndAnalyzeJobAsync(CreateJobRequest(
                     day.FeedId, archiveDate.Date, archiveDate.Date, minimumSpeakers, maximumSpeakers,
                     string.Equals(day.FeedName, $"Feed {day.FeedId}", StringComparison.Ordinal)
@@ -4682,6 +4703,9 @@ public sealed partial class MainWindow : Window
             && _selectedLibraryDay is not null;
         LibraryDetailReviewButton.IsEnabled = !busy
             && _selectedLibraryDay?.CanOpenReview == true;
+        LibraryCheckSourceButton.IsEnabled = !busy
+            && _worker is not null
+            && _selectedLibraryDay is not null;
         LibraryOpenFolderButton.IsEnabled = !busy
             && _selectedLibraryDay is not null
             && Directory.Exists(_selectedLibraryDay.DayDirectory);

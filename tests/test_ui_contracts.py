@@ -131,3 +131,24 @@ def test_native_releases_media_handles_before_archive_mutation() -> None:
     assert native.count("await ReleaseMediaForArchiveMutationAsync();") == 2
     assert "_libraryMediaPlayer.Source = null;" in native
     assert "await Task.Delay(150);" in native
+
+
+def test_native_library_can_recheck_source_audio_for_complete_days() -> None:
+    root = ElementTree.parse(
+        ROOT / "BroadcastifyCli.WinUI" / "MainWindow.xaml"
+    ).getroot()
+    names = {
+        element.attrib.get(XAML_NAME): element
+        for element in root.iter()
+        if element.attrib.get(XAML_NAME)
+    }
+    source_button = names["LibraryCheckSourceButton"]
+
+    assert source_button.attrib["Content"] == "Check for new source audio"
+    assert source_button.attrib["Click"] == "LibraryCheckSource_Click"
+
+    native = (
+        ROOT / "BroadcastifyCli.WinUI" / "MainWindow.xaml.cs"
+    ).read_text(encoding="utf-8")
+    assert "forceSourceCheck: true" in native
+    assert "day.NeedsNetwork || forceSourceCheck" in native

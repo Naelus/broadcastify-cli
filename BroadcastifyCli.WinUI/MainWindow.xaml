@@ -192,6 +192,11 @@
                                                                     <TextBlock x:Name="LibraryAnalysisStageText" TextWrapping="Wrap" />
                                                                 </StackPanel>
                                                             </Border>
+                                                            <Button x:Name="LibraryCheckSourceButton"
+                                                                    Content="Check for new source audio"
+                                                                    HorizontalAlignment="Left"
+                                                                    Click="LibraryCheckSource_Click"
+                                                                    ToolTipService.ToolTip="Recheck this feed and date, reuse retained blocks, and download only missing source audio within the rolling quota." />
                                                             <TextBlock x:Name="LibraryPathText" TextWrapping="Wrap"
                                                                        IsTextSelectionEnabled="True"
                                                                        Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
