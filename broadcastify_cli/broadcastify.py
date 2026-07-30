@@ -1083,11 +1083,12 @@ class BroadcastifyClient:
             started = datetime.strptime(filename_prefix, "%Y%m%d%H%M")
         except ValueError:
             return [filename_prefix]
+        restrict_to_day = len(day_name) == 8 and day_name.isdigit()
         prefixes: list[str] = []
         for base in (started, started - timedelta(hours=1)):
             for minutes in (0, -1, 1):
                 candidate = base + timedelta(minutes=minutes)
-                if candidate.strftime("%Y%m%d") == day_name:
+                if not restrict_to_day or candidate.strftime("%Y%m%d") == day_name:
                     prefixes.append(candidate.strftime("%Y%m%d%H%M"))
         return list(dict.fromkeys(prefixes))
 
