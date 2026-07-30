@@ -136,5 +136,7 @@ def test_startup_recovery_releases_interrupted_schedule(tmp_path: Path) -> None:
         assert store.recover_feed_schedules(now=now + timedelta(minutes=2)) == 1
         recovered = store.list_feed_schedules(now=now + timedelta(minutes=2))[0]
         assert recovered["state"] == "deferred"
+        assert "resuming from retained work" in recovered["message"]
+        assert recovered["last_run_date"] == ""
         assert store.claim_due_feed_schedule(now=now + timedelta(minutes=2)) is None
         assert store.claim_due_feed_schedule(now=now + timedelta(minutes=4)) is not None

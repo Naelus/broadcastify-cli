@@ -664,6 +664,24 @@
                                                  Severity="Informational" Title="Checking this computer"
                                                  Message="No model downloads or archive requests are made by the setup overview." />
                                         <Border Style="{StaticResource CardBorderStyle}">
+                                            <StackPanel Spacing="10">
+                                                <TextBlock Text="Windows startup and scheduled feeds"
+                                                           Style="{StaticResource SubtitleTextBlockStyle}" />
+                                                <TextBlock Text="Keep the app available to run daily schedules, observe the rolling archive budget, and resume retained work after an interruption."
+                                                           TextWrapping="Wrap"
+                                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                <ToggleSwitch x:Name="StartWithWindowsToggle"
+                                                              Header="Start Broadcastify Desktop when I sign in"
+                                                              OnContent="On — recommended"
+                                                              OffContent="Off"
+                                                              Toggled="StartWithWindows_Toggled" />
+                                                <TextBlock x:Name="WindowsStartupStatusText"
+                                                           Text="Checking the current Windows startup preference…"
+                                                           TextWrapping="Wrap"
+                                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                            </StackPanel>
+                                        </Border>
+                                        <Border Style="{StaticResource CardBorderStyle}">
                                             <StackPanel Spacing="14">
                                                 <Grid ColumnSpacing="14">
                                                     <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="220" /></Grid.ColumnDefinitions>

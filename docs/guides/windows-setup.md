@@ -38,6 +38,38 @@ SmartScreen warning until code signing is configured. Starting trusted-LAN
 sharing from a newly installed path can also cause a one-time Windows Firewall
 prompt for the bundled Python executable.
 
+## Windows startup and schedule recovery
+
+An interactive install shows a dedicated **Start Broadcastify Desktop when I
+sign in** choice before files are copied. It is visibly enabled by default, not
+silently added. The same per-user choice is available later under **Settings →
+Setup**. A login launch checks setup and schedules, then minimizes the window
+when unattended processing is ready. If the Broadcastify login or selected
+Community-1 model access is not configured, the window stays visible and
+prompts the user to open Credentials; scheduled jobs wait until that setup is
+ready.
+
+Silent installation is deliberately opt-in: without custom flags it neither
+adds startup on a fresh install nor launches the app, and an upgrade preserves
+an existing startup preference. The recommended unattended install is:
+
+```powershell
+.\BroadcastifyDesktop-<version>-win-x64-setup.exe `
+  /VERYSILENT /SUPPRESSMSGBOXES /NORESTART `
+  /ENABLESTARTUP /LAUNCHAFTERINSTALL
+```
+
+`/ENABLESTARTUP` registers the current-user login launch.
+`/DISABLESTARTUP` explicitly removes it. `/LAUNCHAFTERINSTALL` launches the app
+after silent setup with the account-readiness prompt enabled.
+
+At every app start, a schedule left running by an interrupted process is
+released from its stale lease, deferred for one minute so an orphaned worker
+cannot collide, and then reclaimed. The same recent date range is submitted,
+but retained archive blocks, atomic combined audio, transcripts, diarization
+chunks, and analysis windows are reused instead of repeated. An explicit user
+cancel remains a cancel rather than an automatic restart.
+
 ## Credentials
 
 Choose **Credentials** in the bottom-left navigation:
@@ -78,8 +110,10 @@ model cache can later run offline.
 7. Use **Review & Ask** for evidence clips, daily/weekly briefs, and range
    questions. Use **Area watch** for radius discovery and regional leads.
 
-Desktop schedules run while the desktop application is open. Use the managed
-Web/TrueNAS service when a continuously supervised schedule is required.
+Desktop schedules run while the desktop application is open; the default
+current-user startup option keeps it available after Windows sign-in. Use the
+managed Web/TrueNAS service when a continuously supervised, headless schedule
+is required.
 
 ## Data, upgrades, and uninstall
 

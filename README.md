@@ -55,6 +55,9 @@ across upgrades and uninstall. Models remain explicit first-use downloads.
 Public releases contain no `.env`, account password, API token, or saved
 session. Credentials entered in the app are encrypted for the current Windows
 account and remain outside the installation directory.
+Interactive setup visibly offers **Start with Windows** and enables it by
+default so saved schedules keep running; the same toggle remains available
+under **Settings → Setup**.
 
 The installer is currently unsigned, so Windows may show an unknown-publisher
 warning until release signing is configured. LAN sharing may also request a
@@ -76,7 +79,8 @@ In the app:
 1. Open **Credentials** to enter the Broadcastify website login and optional
    Hugging Face read token. Windows encrypts them for the current account and
    shows only a short prefix afterward.
-2. Open **Settings → Setup** and configure storage, processing, and analysis.
+2. Open **Settings → Setup**, review **Start with Windows**, and configure
+   storage, processing, and analysis.
 3. Use **Verify profile** to execute all three model stages on generated local
    input without consuming archive quota.
 4. Open **New archive**, search for a feed, and select an inclusive date range.

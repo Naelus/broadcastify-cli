@@ -1,6 +1,6 @@
 # Feature inventory
 
-Last updated: July 29, 2026
+Last updated: July 30, 2026
 
 Status labels: **Validated**, **Implemented**, **Evaluated**, **Foundation**, or
 **Planned**. Detailed behavior and retained validation evidence belong in
@@ -16,7 +16,7 @@ Status labels: **Validated**, **Implemented**, **Evaluated**, **Foundation**, or
 | Cache-aware archive acquisition | Validated | Sequential pacing, timezone identity, newest/previous priority, current-day refresh, process-safe 240-of-250 rolling ledger, and immediate 429 stop. |
 | Source-specific progress | Validated | Each ready block reports local cache versus Broadcastify download; LAN copies name the exact peer-sourced block. |
 | Nearest-first area queue | Validated | Persists stop points, skips complete feeds, resumes partial work, stops lower priorities on quota exhaustion. |
-| Per-feed daily schedules | Validated | Explicitly selected feeds retain their processing profile and recent-day lookback; desktop runs while open, Web/NAS runs continuously, and quota deferrals resume at the next known rolling slot. |
+| Per-feed daily schedules | Validated | Explicitly selected feeds retain their processing profile and recent-day lookback; visible default-on Windows startup keeps the desktop scheduler available, interrupted runs resume retained work, Web/NAS runs continuously, and quota deferrals resume at the next known rolling slot. |
 | Trusted-LAN archive pool | Validated | One upstream producer lease; followers hash-verify raw blocks from any peer; no credentials/transcripts/analysis shared. |
 
 See [archive acquisition](docs/features/archive-acquisition.md),
@@ -71,7 +71,7 @@ See [evidence analysis](docs/features/evidence-analysis.md),
 | Linux user service | Validated | Install/start/stop/status/log/restart and data-preserving uninstall. |
 | TrueNAS App | Validated | Persistent host-path data, trusted-LAN UI, AMD Vulkan, unprivileged/read-only container boundary. |
 | Verified Windows publish | Validated | WinUI resources, namespaced Windows ML helper, normal/private environment isolation. |
-| Standalone Windows installer | Validated | Per-user Inno Setup package with embedded Python, FFmpeg, Windows ML and portable inference runtimes; install/upgrade/uninstall preserve application data. |
+| Standalone Windows installer | Validated | Per-user Inno Setup package with embedded Python, FFmpeg, Windows ML and portable inference runtimes; install/upgrade/uninstall preserve application data, interactive setup discloses default-on login startup, and silent setup requires explicit startup/launch flags. |
 | Accelerator add-on/model manager | Foundation | First-use managed models exist; a signed release and optional CUDA/OpenVINO/Vulkan add-on lifecycle remain packaging work. |
 
 See [Library and Review](docs/features/library-and-review.md),

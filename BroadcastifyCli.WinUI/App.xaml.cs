@@ -26,7 +26,12 @@ public partial class App : Application
     {
         try
         {
-            _window = new MainWindow();
+            var commandLine = Environment.GetCommandLineArgs()
+                .Skip(1)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            _window = new MainWindow(
+                startupLaunch: commandLine.Contains("--startup"),
+                promptForSetup: commandLine.Contains("--prompt-setup"));
             _window.Activate();
         }
         catch (Exception exception)

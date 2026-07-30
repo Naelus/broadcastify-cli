@@ -112,7 +112,9 @@ A later stage cannot make an earlier stale stage look complete.
   checkpoint until final-cache commit.
 - Incident analysis checkpoints every completed model window.
 - Feed schedules store last-run and next-safe quota state; a startup recovery
-  defers any schedule left running and resumes from retained work.
+  defers any schedule left running for one collision-avoidance minute and
+  resumes from retained work. Windows login startup runs this recovery before
+  claiming scheduled work.
 - Native settings are atomically written; activity/crash logs append.
 
 An application or machine interruption may leave a partial/checkpoint, but it

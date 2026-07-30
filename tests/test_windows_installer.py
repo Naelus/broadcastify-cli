@@ -48,6 +48,15 @@ def test_installer_is_per_user_upgrade_safe_and_preserves_app_data() -> None:
     assert 'Type: filesandordirs; Name: "{app}\\windowsml"' in installer
     assert "#if !FileExists(SourceDir + \"\\broadcastify-desktop.env\")" in installer
     assert 'Type: files; Name: "{app}\\broadcastify-desktop.env"' in installer
+    assert "Keep scheduled feeds current" in installer
+    assert "Start Broadcastify Desktop when I sign in (recommended)" in installer
+    assert "StartupPage.Values[0] := True" in installer
+    assert "if WizardSilent then" in installer
+    assert "HasCommandLineFlag('ENABLESTARTUP')" in installer
+    assert "HasCommandLineFlag('DISABLESTARTUP')" in installer
+    assert "HasCommandLineFlag('LAUNCHAFTERINSTALL')" in installer
+    assert 'Parameters: "--post-install --prompt-setup"' in installer
+    assert '\'" --startup --prompt-setup\'' in installer
 
 
 def test_public_installer_build_rejects_private_environment_and_pins_downloads() -> None:

@@ -820,13 +820,24 @@ internal sealed class WorkerClient
             cancellationToken);
     }
 
-    public async Task RecoverFeedSchedulesAsync(CancellationToken cancellationToken)
+    public async Task<int> RecoverFeedSchedulesAsync(
+        CancellationToken cancellationToken)
     {
+        var recovered = 0;
         await RunWorkerAsync(
             ["-m", "broadcastify_cli.worker", "recover-schedules"],
             null,
-            _ => { },
+            message =>
+            {
+                if (message.TryGetProperty("type", out var type)
+                    && type.GetString() == "feed_schedules_recovered"
+                    && message.TryGetProperty("recovered", out var value))
+                {
+                    recovered = value.GetInt32();
+                }
+            },
             cancellationToken);
+        return recovered;
     }
 
     public async Task<AsrSelfTestStatus?> RunAsrSelfTestAsync(

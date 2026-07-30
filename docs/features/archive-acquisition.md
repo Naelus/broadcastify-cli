@@ -68,16 +68,18 @@ At the scheduled time the job revisits that recent range. Exact source blocks
 and valid processing stages are reused, so overlap is intentional and does not
 repeat completed work. If the rolling archive guard is closed, cached days can
 still finish locally and the missing acquisition is deferred until the
-ledger's next-safe time. The desktop checks schedules while it is open. The
-Web/TrueNAS service owns a background coordinator and can run them continuously
-under its normal service supervisor.
+ledger's next-safe time. The desktop checks schedules while it is open; its
+visible, default-on Windows startup option keeps it available after user
+sign-in. The Web/TrueNAS service owns a background coordinator and can run them
+continuously under its normal service supervisor.
 
 Schedules live in the evidence database and survive restart. An interrupted
-running schedule is returned to a deferred state on startup and resumes from
-retained files/checkpoints. Only one local worker job runs at a time. Stored
-schedule JSON removes direct Hugging Face and analysis API-key values; those
-secrets must remain in the platform credential store, active session, or
-private environment.
+running schedule is returned to a deferred state on startup, waits one minute
+to avoid colliding with an orphaned worker, and resumes from retained
+files/checkpoints. The Windows activity log reports that recovery. Only one
+local worker job runs at a time. Stored schedule JSON removes direct Hugging
+Face and analysis API-key values; those secrets must remain in the platform
+credential store, active session, or private environment.
 
 On Windows, **Manage schedules** can edit the daily time, lookback, enabled
 state, local processing stages, and incident analysis for an existing feed.

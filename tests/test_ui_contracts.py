@@ -181,3 +181,46 @@ def test_native_credentials_are_one_click_and_never_prefill_saved_secrets() -> N
     assert "leave blank to reuse" in native
     assert 'startInfo.Environment["BROADCASTIFY_SECURE_PASSWORD"]' in worker
     assert 'startInfo.Environment["HUGGINGFACE_SECURE_TOKEN"]' in worker
+
+
+def test_windows_startup_is_visible_configurable_and_recovery_aware() -> None:
+    root = ElementTree.parse(
+        ROOT / "BroadcastifyCli.WinUI" / "MainWindow.xaml"
+    ).getroot()
+    names = {
+        element.attrib.get(XAML_NAME): element
+        for element in root.iter()
+        if element.attrib.get(XAML_NAME)
+    }
+
+    startup = names["StartWithWindowsToggle"]
+    assert startup.attrib["Header"] == "Start Broadcastify Desktop when I sign in"
+    assert startup.attrib["Toggled"] == "StartWithWindows_Toggled"
+    assert startup.attrib["OnContent"] == "On — recommended"
+
+    manager = (
+        ROOT / "BroadcastifyCli.WinUI" / "WindowsStartupManager.cs"
+    ).read_text(encoding="utf-8")
+    app = (
+        ROOT / "BroadcastifyCli.WinUI" / "App.xaml.cs"
+    ).read_text(encoding="utf-8")
+    window = (
+        ROOT / "BroadcastifyCli.WinUI" / "MainWindow.xaml.cs"
+    ).read_text(encoding="utf-8")
+    worker = (
+        ROOT / "BroadcastifyCli.WinUI" / "WorkerClient.cs"
+    ).read_text(encoding="utf-8")
+
+    assert r"Software\Microsoft\Windows\CurrentVersion\Run" in manager
+    assert '" --startup --prompt-setup"' in manager
+    assert 'commandLine.Contains("--startup")' in app
+    assert 'commandLine.Contains("--prompt-setup")' in app
+    assert "PromptForMissingAccountSetupAsync" in window
+    assert "MissingUnattendedSetup" in window
+    assert "_pauseScheduledJobsForSetup" in window
+    assert "presenter.Minimize();" in window
+    assert "Recovered {recovered} interrupted scheduled feed" in window
+    assert "Task<int> RecoverFeedSchedulesAsync" in worker
+    assert window.index("await ApplyLaunchBehaviorAsync();") < window.index(
+        "ConfigureFeedScheduleTimer();"
+    )

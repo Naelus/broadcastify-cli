@@ -1,6 +1,6 @@
 # Windows publish, installer, and release layout
 
-Last verified: July 29, 2026.
+Last verified: July 30, 2026.
 
 ## Raw native publish
 
@@ -27,7 +27,7 @@ The consumer build layers a portable runtime over the verified native publish:
 Output:
 
 ```text
-dist/windows/BroadcastifyDesktop-0.4.2-win-x64-setup.exe
+dist/windows/BroadcastifyDesktop-0.4.3-win-x64-setup.exe
 ```
 
 The application stage contains:
@@ -68,6 +68,11 @@ The Inno Setup package:
   `%LOCALAPPDATA%\Programs\Broadcastify Desktop`;
 - uses a stable `AppId` for in-place upgrades;
 - creates a Start-menu shortcut and offers an optional desktop shortcut;
+- visibly offers current-user Windows startup during interactive setup and
+  selects it by default;
+- leaves startup and post-install launch off for a fresh silent install unless
+  `/ENABLESTARTUP` and `/LAUNCHAFTERINSTALL` are explicitly supplied;
+- preserves an existing startup choice during a flagless silent upgrade;
 - registers one normal uninstall entry;
 - removes generated application-runtime residue on uninstall;
 - marks `%LOCALAPPDATA%\Broadcastify Desktop` as never uninstall;
@@ -75,7 +80,21 @@ The Inno Setup package:
   removed dependencies and old package metadata cannot survive;
 - never copies `.env` in a public build;
 - deletes a stale `broadcastify-desktop.env` when a public build upgrades a
-  machine that previously ran an owner-only private build.
+machine that previously ran an owner-only private build.
+
+The recommended silent deployment is:
+
+```powershell
+.\BroadcastifyDesktop-0.4.3-win-x64-setup.exe `
+  /VERYSILENT /SUPPRESSMSGBOXES /NORESTART `
+  /ENABLESTARTUP /LAUNCHAFTERINSTALL
+```
+
+The launched app receives `--prompt-setup`: if the archive account or selected
+gated speaker-label path is not configured, it remains visible and directs the
+user to Credentials while scheduled jobs wait. Normal login launches use
+`--startup --prompt-setup` and minimize only after readiness and
+interrupted-schedule recovery checks.
 
 The retained lifecycle test completed install, native launch with the bundled
 Python child, same-version upgrade, uninstall, and clean reinstall. Settings and

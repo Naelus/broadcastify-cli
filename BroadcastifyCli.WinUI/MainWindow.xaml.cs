@@ -77,9 +77,17 @@ public sealed partial class MainWindow : Window
     private int _diagnosticsLoadVersion;
     private string _configuredPythonRuntimePath = "";
     private bool _pythonRuntimeInputReady;
+    private readonly bool _startupLaunch;
+    private readonly bool _promptForSetup;
+    private bool _updatingStartupPreference;
+    private bool _pauseScheduledJobsForSetup;
 
-    public MainWindow()
+    public MainWindow(
+        bool startupLaunch = false,
+        bool promptForSetup = false)
     {
+        _startupLaunch = startupLaunch;
+        _promptForSetup = promptForSetup;
         // Keep one startup snapshot. Processing-tab controls can be realized
         // after the window constructor, so the worker must not depend on a
         // second settings read or the current visual value of that tab.
@@ -106,6 +114,7 @@ public sealed partial class MainWindow : Window
         CombineToggle.IsOn = true;
         CombineToggle.IsEnabled = false;
         KeepOriginalsToggle.IsEnabled = true;
+        RefreshWindowsStartupUi();
         LoadUserSettings(startupSettings);
         WireSettingsAutoSave();
         var today = DateTimeOffset.Now;
@@ -196,10 +205,172 @@ public sealed partial class MainWindow : Window
         await RefreshLibraryAsync();
         if (_worker is not null)
         {
-            await _worker.RecoverFeedSchedulesAsync(CancellationToken.None);
+            var recovered = await _worker.RecoverFeedSchedulesAsync(
+                CancellationToken.None);
+            if (recovered > 0)
+            {
+                AppendLog(
+                    $"Recovered {recovered} interrupted scheduled feed "
+                    + $"run{(recovered == 1 ? "" : "s")}; retained downloads "
+                    + "and processing checkpoints will resume after the safety delay.");
+            }
         }
         await RefreshFeedScheduleStatusAsync();
+        await ApplyLaunchBehaviorAsync();
         ConfigureFeedScheduleTimer();
+    }
+
+    private void RefreshWindowsStartupUi()
+    {
+        if (StartWithWindowsToggle is null || WindowsStartupStatusText is null)
+        {
+            return;
+        }
+        _updatingStartupPreference = true;
+        try
+        {
+            var enabled = WindowsStartupManager.IsEnabled();
+            StartWithWindowsToggle.IsOn = enabled;
+            WindowsStartupStatusText.Text = enabled
+                ? "Enabled for this Windows account. Login launches are minimized after setup checks; interrupted schedules resume from retained work."
+                : "Off. Scheduled jobs run only while you open Broadcastify Desktop yourself.";
+        }
+        catch (Exception exception)
+        {
+            StartWithWindowsToggle.IsOn = false;
+            StartWithWindowsToggle.IsEnabled = false;
+            WindowsStartupStatusText.Text =
+                $"Windows startup status is unavailable: {exception.Message}";
+        }
+        finally
+        {
+            _updatingStartupPreference = false;
+        }
+    }
+
+    private void StartWithWindows_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (_updatingStartupPreference)
+        {
+            return;
+        }
+        try
+        {
+            WindowsStartupManager.SetEnabled(StartWithWindowsToggle.IsOn);
+            WindowsStartupStatusText.Text = StartWithWindowsToggle.IsOn
+                ? "Enabled for this Windows account. Broadcastify Desktop will start minimized after sign-in and keep scheduled feeds current."
+                : "Off. Existing schedules remain saved and will run the next time the app is open.";
+            AppendLog(
+                StartWithWindowsToggle.IsOn
+                    ? "Start with Windows enabled."
+                    : "Start with Windows disabled.");
+        }
+        catch (Exception exception)
+        {
+            _updatingStartupPreference = true;
+            StartWithWindowsToggle.IsOn = !StartWithWindowsToggle.IsOn;
+            _updatingStartupPreference = false;
+            WindowsStartupStatusText.Text =
+                $"Windows could not save the startup preference: {exception.Message}";
+        }
+    }
+
+    private async Task ApplyLaunchBehaviorAsync()
+    {
+        var shouldPrompt = _promptForSetup || _startupLaunch;
+        var promptShown = false;
+        if (shouldPrompt)
+        {
+            promptShown = await PromptForMissingAccountSetupAsync();
+        }
+        _pauseScheduledJobsForSetup = promptShown;
+
+        if (!_startupLaunch)
+        {
+            return;
+        }
+        if (promptShown)
+        {
+            AppendLog(
+                "Started with Windows; setup needs attention before unattended schedules can run reliably.");
+            return;
+        }
+
+        AppendLog(
+            "Started with Windows; saved schedules were checked and the window was minimized.");
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            if (AppWindow.Presenter is OverlappedPresenter presenter)
+            {
+                presenter.Minimize();
+            }
+        });
+    }
+
+    private async Task<bool> PromptForMissingAccountSetupAsync()
+    {
+        var (missingBroadcastify, missingHuggingFace) =
+            MissingUnattendedSetup();
+        if (!missingBroadcastify && !missingHuggingFace)
+        {
+            return false;
+        }
+
+        var missing = new List<string>();
+        if (missingBroadcastify)
+        {
+            missing.Add("a saved Broadcastify premium website login or session");
+        }
+        if (missingHuggingFace)
+        {
+            missing.Add("a Hugging Face read token for Community-1 speaker labels");
+        }
+        var message =
+            "Automatic startup is ready, but unattended processing still needs "
+            + string.Join(" and ", missing)
+            + ". Open Credentials now to finish setup. Scheduled jobs will wait, and no archive request will be made by this prompt.";
+
+        if (((FrameworkElement)Content).XamlRoot is null)
+        {
+            OpenCredentialSetup();
+            return true;
+        }
+        var dialog = new ContentDialog
+        {
+            XamlRoot = ((FrameworkElement)Content).XamlRoot,
+            Title = "Finish unattended setup",
+            Content = message,
+            PrimaryButtonText = "Open credentials",
+            CloseButtonText = "Later",
+            DefaultButton = ContentDialogButton.Primary,
+        };
+        if (await dialog.ShowAsync() == ContentDialogResult.Primary)
+        {
+            OpenCredentialSetup();
+        }
+        return true;
+    }
+
+    private (bool Broadcastify, bool HuggingFace) MissingUnattendedSetup()
+    {
+        var missingBroadcastify = !_archiveAccessConfigured;
+        var tokenAvailable = _huggingFaceTokenConfigured
+            || _pyannoteAccessConfigured
+            || !string.IsNullOrWhiteSpace(CurrentHuggingFaceToken())
+            || SelectedHardwareProfile()?.DiarizationReady == true;
+        var missingHuggingFace =
+            SelectedComboValue(DiarizationEngineComboBox, "community-1")
+                == "community-1"
+            && !tokenAvailable;
+        return (missingBroadcastify, missingHuggingFace);
+    }
+
+    private void OpenCredentialSetup()
+    {
+        RootNavigation.SelectedItem = CredentialsNavigationItem;
+        ShowPage("settings");
+        SettingsTabView.SelectedItem = AccountSettingsTab;
+        RefreshHuggingFaceCredentialUi();
     }
 
     private void RootNavigation_SelectionChanged(
@@ -3335,8 +3506,8 @@ public sealed partial class MainWindow : Window
                 ? "No feed schedules yet"
                 : $"{active.Count} daily feed schedule{(active.Count == 1 ? "" : "s")} active";
             FeedScheduleInfoBar.Message = active.Count == 0
-                ? "Select a search result and schedule that specific feed. Schedules run while this app is open."
-                : $"Next check: {(next?.ToLocalTime().ToString("g") ?? "when due")}. Jobs reuse cached work and wait for rolling quota slots.";
+                ? "Select a search result and schedule that specific feed. Settings → Setup can keep the app available after Windows sign-in."
+                : $"Next check: {(next?.ToLocalTime().ToString("g") ?? "when due")}. Jobs reuse cached work, wait for rolling quota slots, and can run after sign-in when Start with Windows is on.";
         }
         catch (Exception exception)
         {
@@ -3351,6 +3522,18 @@ public sealed partial class MainWindow : Window
         if (_worker is null || _checkingFeedSchedule || _operationCancellation is not null)
         {
             return;
+        }
+        if (_pauseScheduledJobsForSetup)
+        {
+            var (missingBroadcastify, missingHuggingFace) =
+                MissingUnattendedSetup();
+            if (missingBroadcastify || missingHuggingFace)
+            {
+                return;
+            }
+            _pauseScheduledJobsForSetup = false;
+            AppendLog(
+                "Unattended setup is ready; saved feed schedules can run.");
         }
         _checkingFeedSchedule = true;
         FeedSchedule? schedule = null;

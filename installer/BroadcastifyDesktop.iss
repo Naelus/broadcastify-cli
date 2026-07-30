@@ -1,8 +1,8 @@
 #ifndef MyAppVersion
-  #define MyAppVersion "0.4.2"
+  #define MyAppVersion "0.4.3"
 #endif
 #ifndef MyAppVersionNumeric
-  #define MyAppVersionNumeric "0.4.2.0"
+  #define MyAppVersionNumeric "0.4.3.0"
 #endif
 #ifndef SourceDir
   #error SourceDir must point to the prepared Windows application directory.
@@ -88,7 +88,116 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\App Paths\{#MyApp
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\App Paths\{#MyAppExeName}"; ValueType: string; ValueName: "Path"; ValueData: "{app}"; Flags: uninsdeletekey
 
 [Run]
-Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; WorkingDir: "{localappdata}\Broadcastify Desktop"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\{#MyAppExeName}"; Parameters: "--post-install --prompt-setup"; Description: "Launch {#MyAppName}"; WorkingDir: "{localappdata}\Broadcastify Desktop"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\{#MyAppExeName}"; Parameters: "--post-install --prompt-setup"; WorkingDir: "{localappdata}\Broadcastify Desktop"; Flags: nowait; Check: ShouldLaunchAfterSilentInstall
+
+[Code]
+const
+  StartupRunKey = 'Software\Microsoft\Windows\CurrentVersion\Run';
+  StartupRunValue = 'Broadcastify Desktop';
+  StartupPreferenceKey = 'Software\Radio Archive Project\Broadcastify Desktop';
+  StartupPreferenceValue = 'StartWithWindows';
+
+var
+  StartupPage: TInputOptionWizardPage;
+
+function HasCommandLineFlag(const FlagName: String): Boolean;
+var
+  Index: Integer;
+  Value: String;
+begin
+  Result := False;
+  for Index := 1 to ParamCount do
+  begin
+    Value := Uppercase(ParamStr(Index));
+    if (Value = '/' + Uppercase(FlagName)) or
+       (Value = '-' + Uppercase(FlagName)) then
+    begin
+      Result := True;
+      Exit;
+    end;
+  end;
+end;
+
+procedure InitializeWizard;
+var
+  SavedPreference: Cardinal;
+begin
+  StartupPage := CreateInputOptionPage(
+    wpSelectDir,
+    'Keep scheduled feeds current',
+    'Start Broadcastify Desktop with Windows',
+    'This visible, per-user option lets saved schedules run after sign-in, ' +
+      'observe the rolling archive limit, and resume retained work after an interruption.',
+    False,
+    False);
+  StartupPage.Add('Start Broadcastify Desktop when I sign in (recommended)');
+  if RegQueryDWordValue(
+       HKCU,
+       StartupPreferenceKey,
+       StartupPreferenceValue,
+       SavedPreference) then
+    StartupPage.Values[0] := SavedPreference <> 0
+  else
+    StartupPage.Values[0] := True;
+end;
+
+procedure SaveStartupPreference(const Enabled: Boolean);
+var
+  Command: String;
+begin
+  if Enabled then
+  begin
+    Command :=
+      '"' + ExpandConstant('{app}\{#MyAppExeName}') +
+      '" --startup --prompt-setup';
+    if not RegWriteStringValue(
+             HKCU,
+             StartupRunKey,
+             StartupRunValue,
+             Command) then
+      RaiseException('Windows could not enable start with sign-in.');
+  end
+  else
+    RegDeleteValue(HKCU, StartupRunKey, StartupRunValue);
+
+  if not RegWriteDWordValue(
+           HKCU,
+           StartupPreferenceKey,
+           StartupPreferenceValue,
+           Ord(Enabled)) then
+    RaiseException('Windows could not save the startup preference.');
+end;
+
+procedure CurStepChanged(const CurStep: TSetupStep);
+begin
+  if CurStep <> ssPostInstall then
+    Exit;
+
+  if WizardSilent then
+  begin
+    if HasCommandLineFlag('ENABLESTARTUP') then
+      SaveStartupPreference(True)
+    else if HasCommandLineFlag('DISABLESTARTUP') then
+      SaveStartupPreference(False);
+    { With neither flag, a silent install preserves an existing preference
+      and leaves startup disabled on a fresh install. }
+  end
+  else
+    SaveStartupPreference(StartupPage.Values[0]);
+end;
+
+function ShouldLaunchAfterSilentInstall: Boolean;
+begin
+  Result :=
+    WizardSilent and HasCommandLineFlag('LAUNCHAFTERINSTALL');
+end;
+
+procedure CurUninstallStepChanged(const CurUninstallStep: TUninstallStep);
+begin
+  if CurUninstallStep = usUninstall then
+    RegDeleteValue(HKCU, StartupRunKey, StartupRunValue);
+end;
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}"
