@@ -67,10 +67,43 @@ def test_combined_audio_is_created_before_one_transcription_pass(
     )
     JobRunner(request, client=FakeClient(source_files, calls)).run()
 
-    assert calls.index("download") < calls.index("load_model")
+    assert calls.index("load_model") < calls.index("download")
     assert calls.index("combine") < calls.index("transcribe")
     assert calls.count("transcribe") == 1
     assert combined_feed_names == ["Example Public Safety"]
+
+
+def test_local_audio_failure_happens_before_archive_requests(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    calls: list[str] = []
+
+    class FailingTranscriber:
+        def __init__(self, **_kwargs: object) -> None:
+            calls.append("load_model")
+            raise RuntimeError("audio runtime missing")
+
+    monkeypatch.setattr(
+        "broadcastify_cli.jobs.LocalTranscriber",
+        FailingTranscriber,
+    )
+    request = JobRequest(
+        feed_id="5318",
+        start_date=date(2026, 7, 1),
+        end_date=date(2026, 7, 1),
+        output_dir=tmp_path,
+        transcribe=True,
+    )
+
+    try:
+        JobRunner(request, client=FakeClient([], calls)).run()
+    except RuntimeError as exc:
+        assert str(exc) == "audio runtime missing"
+    else:
+        raise AssertionError("The local audio preflight should have failed.")
+
+    assert calls == ["load_model"]
 
 
 def test_quota_stops_new_requests_but_keeps_complete_cached_days(tmp_path: Path) -> None:

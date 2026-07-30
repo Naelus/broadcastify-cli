@@ -4,7 +4,8 @@ namespace BroadcastifyCli.WinUI;
 
 internal sealed record DesktopSettings
 {
-    public int Version { get; init; } = 6;
+    public int Version { get; init; } = 7;
+    public string PythonRuntimePath { get; init; } = "";
     public string HardwareProfile { get; init; } = "auto";
     public string WhisperModel { get; init; } = "turbo";
     public string AsrEngine { get; init; } = "auto";
@@ -102,6 +103,14 @@ internal static class AppSettingsStore
                 // moving from a source checkout to an installed app cannot
                 // make an existing library appear empty.
                 settings = settings with { Version = 6 };
+                needsSave = true;
+            }
+            if (settings.Version < 7)
+            {
+                // Version 7 can select an external Python environment for
+                // optional heavyweight accelerator dependencies while the
+                // installer keeps its portable worker as the safe default.
+                settings = settings with { Version = 7 };
                 needsSave = true;
             }
             if (needsSave)

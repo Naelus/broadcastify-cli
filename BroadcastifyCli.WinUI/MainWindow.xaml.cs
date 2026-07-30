@@ -75,9 +75,15 @@ public sealed partial class MainWindow : Window
     private bool _cudaAvailable;
     private ProfileSetupAction? _profileRecoveryAction;
     private int _diagnosticsLoadVersion;
+    private string _configuredPythonRuntimePath = "";
+    private bool _pythonRuntimeInputReady;
 
     public MainWindow()
     {
+        // Keep one startup snapshot. Processing-tab controls can be realized
+        // after the window constructor, so the worker must not depend on a
+        // second settings read or the current visual value of that tab.
+        var startupSettings = AppSettingsStore.Load();
         InitializeComponent();
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(AppTitleBar);
@@ -100,7 +106,7 @@ public sealed partial class MainWindow : Window
         CombineToggle.IsOn = true;
         CombineToggle.IsEnabled = false;
         KeepOriginalsToggle.IsEnabled = true;
-        LoadUserSettings();
+        LoadUserSettings(startupSettings);
         WireSettingsAutoSave();
         var today = DateTimeOffset.Now;
         StartDatePicker.Date = today;
@@ -120,10 +126,16 @@ public sealed partial class MainWindow : Window
 
         try
         {
-            _worker = new WorkerClient();
+            _worker = new WorkerClient(startupSettings.PythonRuntimePath);
             _worker.SetLibraryDirectory(OutputFolderBox.Text);
             PersistUserSettings(logFailure: true);
             AppendLog($"Worker: {_worker.PythonDisplayName}");
+            PythonRuntimeStatusText.Text = _worker.PythonRuntimeWarning
+                ?? $"Active worker: {_worker.PythonDisplayName}";
+            if (_worker.PythonRuntimeWarning is not null)
+            {
+                AppendLog(_worker.PythonRuntimeWarning);
+            }
             AppendLog(_worker.IsBundledRuntime
                 ? $"Installed runtime: {_worker.RepositoryRoot}"
                 : $"Repository: {_worker.RepositoryRoot}");
@@ -377,10 +389,11 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private void LoadUserSettings()
+    private void LoadUserSettings(DesktopSettings settings)
     {
         _loadingSettings = true;
-        var settings = AppSettingsStore.Load();
+        _configuredPythonRuntimePath = settings.PythonRuntimePath.Trim();
+        PythonRuntimePathBox.Text = _configuredPythonRuntimePath;
         SelectComboValue(HardwareProfileComboBox, settings.HardwareProfile);
         SelectComboValue(ModelComboBox, settings.WhisperModel);
         SelectComboValue(AsrEngineComboBox, settings.AsrEngine);
@@ -478,6 +491,7 @@ public sealed partial class MainWindow : Window
     private DesktopSettings CaptureUserSettings() =>
         new()
         {
+            PythonRuntimePath = _configuredPythonRuntimePath,
             HardwareProfile = SelectedComboValue(HardwareProfileComboBox, "auto"),
             WhisperModel = SelectedComboValue(ModelComboBox, "turbo"),
             AsrEngine = SelectedComboValue(AsrEngineComboBox, "auto"),
@@ -608,6 +622,16 @@ public sealed partial class MainWindow : Window
         {
             textBox.TextChanged += (_, _) => ScheduleSettingsSave();
         }
+        PythonRuntimePathBox.TextChanged += (_, _) =>
+        {
+            if (_loadingSettings || !_pythonRuntimeInputReady)
+            {
+                return;
+            }
+            _configuredPythonRuntimePath =
+                PythonRuntimePathBox.Text.Trim();
+            ScheduleSettingsSave();
+        };
         foreach (var numberBox in new[]
                  {
                      GpuIndexBox,
@@ -2798,6 +2822,54 @@ public sealed partial class MainWindow : Window
             OutputFolderBox.Text = folder.Path;
             RefreshStorageReadiness();
         }
+    }
+
+    private async void BrowsePythonRuntime_Click(
+        object sender,
+        RoutedEventArgs e)
+    {
+        var picker = new FileOpenPicker
+        {
+            SuggestedStartLocation = PickerLocationId.ComputerFolder,
+        };
+        picker.FileTypeFilter.Add(".exe");
+        InitializeWithWindow.Initialize(
+            picker,
+            WindowNative.GetWindowHandle(this));
+        var file = await picker.PickSingleFileAsync();
+        if (file is null)
+        {
+            return;
+        }
+        _configuredPythonRuntimePath = file.Path.Trim();
+        PythonRuntimePathBox.Text = _configuredPythonRuntimePath;
+        PythonRuntimeStatusText.Text =
+            "Saved. Restart the app to validate and use this Python runtime.";
+        PersistUserSettings(logFailure: true);
+    }
+
+    private void ClearPythonRuntime_Click(object sender, RoutedEventArgs e)
+    {
+        _configuredPythonRuntimePath = "";
+        PythonRuntimePathBox.Text = "";
+        PythonRuntimeStatusText.Text =
+            "Bundled portable Python will be used after the app restarts.";
+        PersistUserSettings(logFailure: true);
+    }
+
+    private void PythonRuntimePathBox_Loaded(
+        object sender,
+        RoutedEventArgs e)
+    {
+        _pythonRuntimeInputReady = false;
+        if (!string.Equals(
+                PythonRuntimePathBox.Text,
+                _configuredPythonRuntimePath,
+                StringComparison.Ordinal))
+        {
+            PythonRuntimePathBox.Text = _configuredPythonRuntimePath;
+        }
+        _pythonRuntimeInputReady = true;
     }
 
     private void Combine_Toggled(object sender, RoutedEventArgs e)

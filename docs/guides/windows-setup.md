@@ -24,6 +24,15 @@ profile works without a system Python installation; CUDA, Community-1,
 OpenVINO, Vulkan, and local Gemma have the boundaries documented in
 [hardware backends](../hardware-backends.md).
 
+For CUDA faster-whisper or Community-1, **Settings → Processing → Optional
+Python runtime** can select `python.exe` from an environment where this project
+and its `transcription` optional dependencies are installed. The saved path is
+validated on the next app start; an invalid environment falls back to the
+bundled portable runtime with a visible warning. `BROADCASTIFY_PYTHON` remains
+the headless equivalent. Archive jobs load the selected local audio stack
+before contacting Broadcastify, so a missing dependency or model cannot spend
+archive requests before failing.
+
 The current installer is unsigned. Windows can show an unknown-publisher or
 SmartScreen warning until code signing is configured. Starting trusted-LAN
 sharing from a newly installed path can also cause a one-time Windows Firewall

@@ -582,7 +582,10 @@ class LocalTranscriber:
                 import torch
             except ModuleNotFoundError as exc:
                 raise TranscriptionDependencyError(
-                    'Local audio dependencies are missing. Install with: pip install -e ".[transcription]"'
+                    "Local audio dependencies are missing from the active Python "
+                    "runtime. In the installed app, select a prepared Python "
+                    "environment under Settings → Processing → Optional Python "
+                    'runtime. From source, install with: pip install -e ".[transcription]"'
                 ) from exc
             self._torch = torch
 
@@ -646,7 +649,10 @@ class LocalTranscriber:
                 from faster_whisper import BatchedInferencePipeline, WhisperModel
             except ModuleNotFoundError as exc:
                 raise TranscriptionDependencyError(
-                    'Transcription dependencies are missing. Install with: pip install -e ".[transcription]"'
+                    "faster-whisper is missing from the active Python runtime. "
+                    "In the installed app, select a prepared Python environment "
+                    "under Settings → Processing → Optional Python runtime. "
+                    'From source, install with: pip install -e ".[transcription]"'
                 ) from exc
             model_args: dict[str, object] = {
                 "device": self.device,
@@ -710,7 +716,9 @@ class LocalTranscriber:
                 from pyannote.audio import Pipeline
             except ModuleNotFoundError as exc:
                 raise TranscriptionDependencyError(
-                    "pyannote.audio is required when diarization is enabled."
+                    "pyannote.audio is missing from the active Python runtime. "
+                    "In the installed app, select a prepared Python environment "
+                    "under Settings → Processing → Optional Python runtime."
                 ) from exc
 
             token = (

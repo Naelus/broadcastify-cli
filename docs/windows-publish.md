@@ -27,7 +27,7 @@ The consumer build layers a portable runtime over the verified native publish:
 Output:
 
 ```text
-dist/windows/BroadcastifyDesktop-0.4.0-win-x64-setup.exe
+dist/windows/BroadcastifyDesktop-0.4.1-win-x64-setup.exe
 ```
 
 The application stage contains:

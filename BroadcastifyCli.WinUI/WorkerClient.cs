@@ -28,12 +28,13 @@ internal sealed class WorkerClient
     public string WorkingDirectory { get; }
     public bool IsBundledRuntime { get; }
     public string PythonDisplayName => _python.DisplayName;
+    public string? PythonRuntimeWarning { get; }
     public string BundledEnvironmentPath { get; }
     public bool HasBundledEnvironment => File.Exists(BundledEnvironmentPath);
     public string BundledWindowsMlHelperPath { get; }
     public bool HasBundledWindowsMlHelper => File.Exists(BundledWindowsMlHelperPath);
 
-    public WorkerClient()
+    public WorkerClient(string? preferredPython = null)
     {
         var bundledPython = BundledPythonPath;
         IsBundledRuntime = File.Exists(bundledPython);
@@ -47,10 +48,13 @@ internal sealed class WorkerClient
             : RepositoryRoot;
         Directory.CreateDirectory(WorkingDirectory);
         SetLibraryDirectory("archives");
-        _python = ResolvePython(
+        var pythonResolution = ResolvePython(
             RepositoryRoot,
             WorkingDirectory,
-            IsBundledRuntime ? bundledPython : null);
+            IsBundledRuntime ? bundledPython : null,
+            preferredPython);
+        _python = pythonResolution.Command;
+        PythonRuntimeWarning = pythonResolution.Warning;
         BundledEnvironmentPath = Path.Combine(AppContext.BaseDirectory, "broadcastify-desktop.env");
         BundledWindowsMlHelperPath = Path.Combine(
             AppContext.BaseDirectory,
@@ -1142,23 +1146,34 @@ internal sealed class WorkerClient
             "Could not find the broadcastify-cli repository. Start the app from the repository or its build output.");
     }
 
-    private static PythonCommand ResolvePython(
+    private static PythonResolution ResolvePython(
         string repositoryRoot,
         string workingDirectory,
-        string? bundledPython)
+        string? bundledPython,
+        string? preferredPython)
     {
-        var configured = Environment.GetEnvironmentVariable("BROADCASTIFY_PYTHON");
+        var warnings = new List<string>();
+        var configured = Environment.GetEnvironmentVariable(
+            "BROADCASTIFY_PYTHON");
         var candidates = new List<PythonCommand>();
+        AddConfiguredCandidate(
+            candidates,
+            warnings,
+            preferredPython,
+            workingDirectory,
+            "saved Python runtime");
+        AddConfiguredCandidate(
+            candidates,
+            warnings,
+            configured,
+            workingDirectory,
+            "BROADCASTIFY_PYTHON");
         if (!string.IsNullOrWhiteSpace(bundledPython))
         {
             candidates.Add(new PythonCommand(
                 bundledPython,
                 [],
                 "bundled Python 3.12"));
-        }
-        if (!string.IsNullOrWhiteSpace(configured))
-        {
-            candidates.Add(new PythonCommand(configured, [], configured));
         }
         candidates.Add(new PythonCommand(
             Path.Combine(repositoryRoot, ".venv", "Scripts", "python.exe"), [], ".venv Python"));
@@ -1167,16 +1182,68 @@ internal sealed class WorkerClient
 
         foreach (var candidate in candidates)
         {
-            if (CanRunPython(candidate, workingDirectory))
+            if (CanRunWorker(candidate, workingDirectory))
             {
-                return candidate;
+                return new PythonResolution(
+                    candidate,
+                    warnings.Count == 0
+                        ? null
+                        : string.Join(" ", warnings));
             }
         }
         throw new FileNotFoundException(
-            "No working Python installation was found. Recreate .venv or set BROADCASTIFY_PYTHON to python.exe.");
+            "No Python runtime capable of importing broadcastify_cli was found. "
+            + "Use the bundled runtime, select a prepared Python environment in "
+            + "Settings, or set BROADCASTIFY_PYTHON.");
     }
 
-    private static bool CanRunPython(PythonCommand candidate, string repositoryRoot)
+    private static void AddConfiguredCandidate(
+        ICollection<PythonCommand> candidates,
+        ICollection<string> warnings,
+        string? value,
+        string workingDirectory,
+        string source)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return;
+        }
+        try
+        {
+            var configured = value.Trim();
+            var path = Path.IsPathFullyQualified(configured)
+                || configured.Contains(Path.DirectorySeparatorChar)
+                || configured.Contains(Path.AltDirectorySeparatorChar)
+                    ? Path.GetFullPath(configured, workingDirectory)
+                    : configured;
+            var candidate = new PythonCommand(
+                path,
+                [],
+                $"{source}: {path}");
+            if (CanRunWorker(candidate, workingDirectory))
+            {
+                candidates.Add(candidate);
+            }
+            else
+            {
+                warnings.Add(
+                    $"The {source} could not import broadcastify_cli; "
+                    + "the next compatible runtime was used.");
+            }
+        }
+        catch (Exception exception) when (
+            exception is ArgumentException
+                or IOException
+                or NotSupportedException)
+        {
+            warnings.Add(
+                $"The {source} path is invalid; the next compatible runtime was used.");
+        }
+    }
+
+    private static bool CanRunWorker(
+        PythonCommand candidate,
+        string workingDirectory)
     {
         try
         {
@@ -1185,7 +1252,7 @@ internal sealed class WorkerClient
                 StartInfo = new ProcessStartInfo
                 {
                     FileName = candidate.FileName,
-                    WorkingDirectory = repositoryRoot,
+                    WorkingDirectory = workingDirectory,
                     UseShellExecute = false,
                     CreateNoWindow = true,
                     RedirectStandardOutput = true,
@@ -1196,7 +1263,8 @@ internal sealed class WorkerClient
             {
                 process.StartInfo.ArgumentList.Add(argument);
             }
-            process.StartInfo.ArgumentList.Add("--version");
+            process.StartInfo.ArgumentList.Add("-c");
+            process.StartInfo.ArgumentList.Add("import broadcastify_cli");
             return process.Start() && process.WaitForExit(3000) && process.ExitCode == 0;
         }
         catch (Exception exception) when (
@@ -1217,4 +1285,8 @@ internal sealed class WorkerClient
         string FileName,
         IReadOnlyList<string> PrefixArguments,
         string DisplayName);
+
+    private sealed record PythonResolution(
+        PythonCommand Command,
+        string? Warning);
 }

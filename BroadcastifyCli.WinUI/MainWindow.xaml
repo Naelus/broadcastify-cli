@@ -923,6 +923,22 @@
                                                     <TextBox x:Name="OutputFolderBox" Header="Archive library folder" Text="archives" />
                                                     <Button Grid.Column="1" Content="Browse…" VerticalAlignment="Bottom" Click="Browse_Click" />
                                                 </Grid>
+                                                <Grid ColumnSpacing="8">
+                                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                                    <TextBox x:Name="PythonRuntimePathBox"
+                                                             Header="Optional Python runtime for CUDA or Community-1"
+                                                             PlaceholderText="Leave blank to use the bundled portable runtime"
+                                                             Description="Choose python.exe from an environment containing broadcastify-cli and the selected optional audio packages. Restart the app after changing this."
+                                                             Loaded="PythonRuntimePathBox_Loaded" />
+                                                    <Button Grid.Column="1" Content="Browse…" VerticalAlignment="Bottom" Click="BrowsePythonRuntime_Click" />
+                                                </Grid>
+                                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                                    <Button Content="Use bundled runtime" Click="ClearPythonRuntime_Click" />
+                                                    <TextBlock x:Name="PythonRuntimeStatusText"
+                                                               Text="Checking the active Python worker…"
+                                                               VerticalAlignment="Center" TextWrapping="Wrap"
+                                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                </StackPanel>
                                                 <NumberBox x:Name="DownloadJobsBox" Header="Download workers" Value="1" Minimum="1" Maximum="32" SpinButtonPlacementMode="Compact" />
                                                 <ToggleSwitch x:Name="LanSyncToggle" IsOn="True"
                                                               Header="Reuse original archive blocks from trusted-LAN peers before Broadcastify" />
