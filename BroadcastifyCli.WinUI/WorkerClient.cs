@@ -1015,6 +1015,20 @@ internal sealed class WorkerClient
         {
             startInfo.Environment["BROADCASTIFY_ENV_FILE"] = BundledEnvironmentPath;
         }
+        var savedLogin = CredentialStore.TryLoad();
+        if (savedLogin is not null)
+        {
+            startInfo.Environment["BROADCASTIFY_SECURE_USERNAME"] =
+                savedLogin.Username;
+            startInfo.Environment["BROADCASTIFY_SECURE_PASSWORD"] =
+                savedLogin.Password;
+        }
+        var savedHuggingFaceToken = CredentialStore.TryLoadHuggingFaceToken();
+        if (savedHuggingFaceToken is not null)
+        {
+            startInfo.Environment["HUGGINGFACE_SECURE_TOKEN"] =
+                savedHuggingFaceToken.Secret;
+        }
         var lanNodePort = Volatile.Read(ref _lanNodePort);
         if (lanNodePort is >= 1024 and <= 65535)
         {

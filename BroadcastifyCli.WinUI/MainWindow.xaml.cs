@@ -68,6 +68,7 @@ public sealed partial class MainWindow : Window
     private string _analysisModelVerificationMessage = "";
     private bool _pyannotePackageInstalled;
     private bool _pyannoteAccessConfigured;
+    private SavedSecret? _savedHuggingFaceToken;
     private bool _portableDiarizationRuntimeInstalled;
     private bool _portableDiarizationModelReady;
     private bool _huggingFaceTokenConfigured;
@@ -191,6 +192,13 @@ public sealed partial class MainWindow : Window
         var page = args.IsSettingsSelected
             ? "settings"
             : (args.SelectedItemContainer as NavigationViewItem)?.Tag?.ToString() ?? "library";
+        if (page == "credentials")
+        {
+            ShowPage("settings");
+            SettingsTabView.SelectedItem = AccountSettingsTab;
+            RefreshHuggingFaceCredentialUi();
+            return;
+        }
         ShowPage(page);
     }
 
@@ -205,6 +213,10 @@ public sealed partial class MainWindow : Window
         {
             _ = RefreshArchiveQuotaStatusAsync();
             _ = RefreshFeedScheduleStatusAsync();
+        }
+        if (page == "settings")
+        {
+            RefreshHuggingFaceCredentialUi();
         }
     }
 
@@ -413,11 +425,13 @@ public sealed partial class MainWindow : Window
         }
         RememberAnalysisApiKeyCheckBox.IsChecked =
             settings.RememberAnalysisApiKey && savedAnalysisKey is not null;
+        _savedHuggingFaceToken = CredentialStore.TryLoadHuggingFaceToken();
         _lastAreaProfileName = settings.LastAreaProfileName;
         _lastReviewFeedId = settings.LastReviewFeedId;
         _lastReviewDate = settings.LastReviewDate;
         AnalysisFeedBox.Text = _lastReviewFeedId;
         _loadingSettings = false;
+        RefreshHuggingFaceCredentialUi();
         UpdateAnalysisProviderUi();
         UpdateAsrModelPreparationUi();
         UpdateSetupSummary();
@@ -1143,7 +1157,7 @@ public sealed partial class MainWindow : Window
                 AsrSelfTest_Click(sender, e);
                 break;
             case "configure-speakers":
-                SettingsTabView.SelectedItem = ProcessingSettingsTab;
+                SettingsTabView.SelectedItem = AccountSettingsTab;
                 HuggingFaceTokenBox.Focus(FocusState.Programmatic);
                 break;
             case "configure-analysis":
@@ -1211,7 +1225,7 @@ public sealed partial class MainWindow : Window
         var profile = SelectedHardwareProfile();
         var profileAction = _profileRecoveryAction ?? profile?.NextAction;
         var tokenAvailable = _huggingFaceTokenConfigured
-            || !string.IsNullOrWhiteSpace(HuggingFaceTokenBox?.Password);
+            || !string.IsNullOrWhiteSpace(CurrentHuggingFaceToken());
         var selectedDiarizationDevice = SelectedComboValue(DiarizationDeviceComboBox, "auto");
         var selectedDiarizationEngine = SelectedComboValue(
             DiarizationEngineComboBox, "community-1");
@@ -1386,7 +1400,7 @@ public sealed partial class MainWindow : Window
         var selectedEngine = SelectedComboValue(
             DiarizationEngineComboBox, "community-1");
         var tokenAvailable = _huggingFaceTokenConfigured
-            || !string.IsNullOrWhiteSpace(HuggingFaceTokenBox.Password);
+            || !string.IsNullOrWhiteSpace(CurrentHuggingFaceToken());
         var canTest = selectedEngine == "sherpa-onnx"
             ? _portableDiarizationRuntimeInstalled
             : _pyannotePackageInstalled && (_pyannoteAccessConfigured || tokenAvailable);
@@ -1408,6 +1422,7 @@ public sealed partial class MainWindow : Window
         }
         else
         {
+            SettingsTabView.SelectedItem = AccountSettingsTab;
             HuggingFaceTokenBox.Focus(FocusState.Programmatic);
         }
     }
@@ -1435,6 +1450,97 @@ public sealed partial class MainWindow : Window
     {
         ResetAsrVerification();
         ResetDiarizationVerification();
+        UpdateSetupSummary();
+    }
+
+    private string? CurrentHuggingFaceToken()
+    {
+        if (!string.IsNullOrWhiteSpace(HuggingFaceTokenBox?.Password))
+        {
+            return HuggingFaceTokenBox.Password.Trim();
+        }
+        return string.IsNullOrWhiteSpace(_savedHuggingFaceToken?.Secret)
+            ? null
+            : _savedHuggingFaceToken.Secret;
+    }
+
+    private void RefreshHuggingFaceCredentialUi()
+    {
+        if (HuggingFaceCredentialStatusText is null
+            || HuggingFaceProcessingInfoBar is null)
+        {
+            return;
+        }
+        var saved = _savedHuggingFaceToken;
+        var configured = saved is not null || _huggingFaceTokenConfigured;
+        var preview = saved is null
+            ? ""
+            : CredentialStore.CreateSecretPreview(saved.Secret, 8);
+        HuggingFaceCredentialStatusText.Text = saved is not null
+            ? $"Saved read token {preview} in Windows Credential Locker for this Windows account."
+            : _huggingFaceTokenConfigured
+                ? "A Hugging Face token is configured in the private environment. Its value is not shown or copied into settings."
+                : "No saved read token. Create one and accept the Community-1 terms before its first download.";
+        ClearHuggingFaceTokenButton.IsEnabled = saved is not null;
+        HuggingFaceProcessingInfoBar.Severity = configured
+            ? InfoBarSeverity.Success
+            : InfoBarSeverity.Warning;
+        HuggingFaceProcessingInfoBar.Title = configured
+            ? "Hugging Face model access configured"
+            : "Gated model access needs a token";
+        HuggingFaceProcessingInfoBar.Message = saved is not null
+            ? $"{preview} will be supplied automatically to local model jobs."
+            : _huggingFaceTokenConfigured
+                ? "The private environment token will be supplied to local model jobs."
+                : "Open Credentials to save a read token securely.";
+    }
+
+    private void ManageHuggingFaceToken_Click(object sender, RoutedEventArgs e)
+    {
+        RootNavigation.SelectedItem = CredentialsNavigationItem;
+        ShowPage("settings");
+        SettingsTabView.SelectedItem = AccountSettingsTab;
+        RefreshHuggingFaceCredentialUi();
+        HuggingFaceTokenBox.Focus(FocusState.Programmatic);
+    }
+
+    private async void SaveHuggingFaceToken_Click(object sender, RoutedEventArgs e)
+    {
+        var token = HuggingFaceTokenBox.Password.Trim();
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            await ShowMessageAsync(
+                "Hugging Face token required",
+                "Enter a read token to replace the saved token. Leaving the field blank keeps the current saved token.");
+            return;
+        }
+        if (!token.StartsWith("hf_", StringComparison.Ordinal))
+        {
+            await ShowMessageAsync(
+                "Check the token",
+                "Hugging Face user access tokens begin with hf_. Use the linked token page to create a read token.");
+            return;
+        }
+        CredentialStore.SaveHuggingFaceToken(token);
+        _savedHuggingFaceToken = new SavedSecret(token);
+        HuggingFaceTokenBox.Password = "";
+        RefreshHuggingFaceCredentialUi();
+        ResetAsrVerification();
+        ResetDiarizationVerification();
+        UpdateSetupSummary();
+        StatusText.Text = "Hugging Face token saved securely";
+    }
+
+    private void ClearHuggingFaceToken_Click(object sender, RoutedEventArgs e)
+    {
+        CredentialStore.ClearHuggingFaceToken();
+        _savedHuggingFaceToken = null;
+        HuggingFaceTokenBox.Password = "";
+        RefreshHuggingFaceCredentialUi();
+        ResetAsrVerification();
+        ResetDiarizationVerification();
+        UpdateSetupSummary();
+        StatusText.Text = "Saved Hugging Face token removed";
     }
 
     private async void RefreshDiagnostics_Click(object sender, RoutedEventArgs e)
@@ -1552,9 +1658,7 @@ public sealed partial class MainWindow : Window
             DiarizationDevice = SelectedComboValue(
                 DiarizationDeviceComboBox, "auto"),
             BatchSize = RequiredInteger(BatchSizeBox.Value, 8),
-            HuggingFaceToken = string.IsNullOrWhiteSpace(HuggingFaceTokenBox.Password)
-                ? null
-                : HuggingFaceTokenBox.Password,
+            HuggingFaceToken = CurrentHuggingFaceToken(),
         };
 
     private void ApplyAsrSelfTestResult(AsrSelfTestStatus result)
@@ -1717,9 +1821,7 @@ public sealed partial class MainWindow : Window
                     BatchSize = RequiredInteger(BatchSizeBox.Value, 8),
                     MinimumSpeakers = OptionalPositiveInteger(MinimumSpeakersBox.Value),
                     MaximumSpeakers = OptionalPositiveInteger(MaximumSpeakersBox.Value),
-                    HuggingFaceToken = string.IsNullOrWhiteSpace(HuggingFaceTokenBox.Password)
-                        ? null
-                        : HuggingFaceTokenBox.Password,
+                    HuggingFaceToken = CurrentHuggingFaceToken(),
                 },
                 HandleWorkerMessage,
                 _operationCancellation.Token);
@@ -1777,9 +1879,7 @@ public sealed partial class MainWindow : Window
                 DiarizationEngineComboBox, "community-1"),
             DiarizationDevice = SelectedComboValue(DiarizationDeviceComboBox, "auto"),
             BatchSize = RequiredInteger(BatchSizeBox.Value, 8),
-            HuggingFaceToken = string.IsNullOrWhiteSpace(HuggingFaceTokenBox.Password)
-                ? null
-                : HuggingFaceTokenBox.Password,
+            HuggingFaceToken = CurrentHuggingFaceToken(),
         });
 
     private void ApplyProfileSelfTestResults(ProfileSelfTestStatus status)
@@ -2364,9 +2464,7 @@ public sealed partial class MainWindow : Window
                         Analyze = true,
                         MinimumSpeakers = minimumSpeakers,
                         MaximumSpeakers = maximumSpeakers,
-                        HuggingFaceToken = string.IsNullOrWhiteSpace(HuggingFaceTokenBox.Password)
-                            ? null
-                            : HuggingFaceTokenBox.Password,
+                        HuggingFaceToken = CurrentHuggingFaceToken(),
                     }),
                     HandleWorkerMessage,
                     _operationCancellation.Token);
@@ -2474,7 +2572,10 @@ public sealed partial class MainWindow : Window
         var passwordBox = new PasswordBox
         {
             Header = "Password",
-            Password = saved?.Password ?? "",
+            PlaceholderText = saved is null
+                ? "Enter your Broadcastify password"
+                : $"Saved: {CredentialStore.CreateSecretPreview(saved.Password, 2)} — leave blank to reuse",
+            PasswordRevealMode = PasswordRevealMode.Peek,
         };
         var rememberCheckBox = new CheckBox
         {
@@ -2512,19 +2613,31 @@ public sealed partial class MainWindow : Window
             var deferral = args.GetDeferral();
             try
             {
-                if (string.IsNullOrWhiteSpace(usernameBox.Text) || string.IsNullOrEmpty(passwordBox.Password))
+                var username = usernameBox.Text.Trim();
+                var password = passwordBox.Password;
+                if (string.IsNullOrEmpty(password)
+                    && saved is not null
+                    && username.Equals(saved.Username, StringComparison.OrdinalIgnoreCase))
+                {
+                    password = saved.Password;
+                }
+                if (string.IsNullOrWhiteSpace(username) || string.IsNullOrEmpty(password))
                 {
                     args.Cancel = true;
-                    errorText.Text = "Enter both your username and password.";
+                    errorText.Text = saved is null
+                        ? "Enter both your username and password."
+                        : "Enter a password, or keep the saved username to reuse the encrypted password.";
                     return;
                 }
                 await _worker.AuthenticateAsync(
-                    usernameBox.Text.Trim(), passwordBox.Password, HandleWorkerMessage, CancellationToken.None);
+                    username, password, HandleWorkerMessage, CancellationToken.None);
                 if (rememberCheckBox.IsChecked == true)
                 {
-                    CredentialStore.Save(usernameBox.Text.Trim(), passwordBox.Password);
+                    CredentialStore.Save(username, password);
                     SettingsAuthStatusText.Text =
-                        $"Saved login for {usernameBox.Text.Trim()} in Windows Credential Locker. Automatic session refresh is enabled.";
+                        $"Saved login for {username} with password "
+                        + $"{CredentialStore.CreateSecretPreview(password, 2)} in Windows Credential Locker. "
+                        + "Automatic session refresh is enabled.";
                 }
                 else
                 {
@@ -2537,6 +2650,7 @@ public sealed partial class MainWindow : Window
                 AuthInfoBar.Message = "Premium archive session is ready and can refresh automatically when a saved login is available.";
                 _archiveAccessConfigured = true;
                 _archiveAccessVerified = true;
+                ClearSavedLoginButton.IsEnabled = rememberCheckBox.IsChecked == true;
                 UpdateSetupSummary();
                 AppendLog("Broadcastify sign-in succeeded.");
             }
@@ -2586,7 +2700,9 @@ public sealed partial class MainWindow : Window
             AuthInfoBar.Title = "Signed in automatically";
             AuthInfoBar.Message = "Windows Credential Locker supplied the saved login and refreshed the premium session.";
             SettingsAuthStatusText.Text =
-                $"Automatic sign-in is enabled for {saved.Username}. The password remains in Windows Credential Locker.";
+                $"Automatic sign-in is enabled for {saved.Username} with password "
+                + $"{CredentialStore.CreateSecretPreview(saved.Password, 2)}. "
+                + "The complete password remains in Windows Credential Locker.";
             _archiveAccessVerified = true;
             UpdateSetupSummary();
         }
@@ -3237,9 +3353,7 @@ public sealed partial class MainWindow : Window
             BatchSize = RequiredInteger(BatchSizeBox.Value, 8),
             MinimumSpeakers = minimumSpeakers,
             MaximumSpeakers = maximumSpeakers,
-            HuggingFaceToken = string.IsNullOrWhiteSpace(HuggingFaceTokenBox.Password)
-                ? null
-                : HuggingFaceTokenBox.Password,
+            HuggingFaceToken = CurrentHuggingFaceToken(),
             LanSyncEnabled = LanSyncToggle.IsOn,
             LanDiscoveryEnabled = LanDiscoveryToggle.IsOn,
             LanPeerUrls = LanPeerUrlsBox.Text
@@ -3382,6 +3496,7 @@ public sealed partial class MainWindow : Window
                 var tokenReady = value.TryGetProperty("huggingface_token_configured", out var token)
                     && token.GetBoolean();
                 _huggingFaceTokenConfigured = tokenReady;
+                RefreshHuggingFaceCredentialUi();
                 var environmentCredentials = value.TryGetProperty(
                     "broadcastify_credentials_configured", out var credentials)
                     && credentials.GetBoolean();
@@ -4713,6 +4828,9 @@ public sealed partial class MainWindow : Window
             && _selectedLibraryDay is not null
             && File.Exists(_selectedLibraryDay.TranscriptPath);
         ClearSavedLoginButton.IsEnabled = !busy && CredentialStore.TryLoad() is not null;
+        SaveHuggingFaceTokenButton.IsEnabled = !busy;
+        ClearHuggingFaceTokenButton.IsEnabled =
+            !busy && CredentialStore.TryLoadHuggingFaceToken() is not null;
         CancelButton.IsEnabled = busy && jobRunning;
         if (status is not null)
         {

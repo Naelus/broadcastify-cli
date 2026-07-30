@@ -10,6 +10,7 @@ internal static class CredentialStore
 {
     private const string Resource = "BroadcastifyDesktop.Broadcastify";
     private const string AnalysisResource = "BroadcastifyDesktop.AnalysisProvider";
+    private const string HuggingFaceResource = "BroadcastifyDesktop.HuggingFace";
 
     public static SavedLogin? TryLoad()
     {
@@ -67,6 +68,38 @@ internal static class CredentialStore
     }
 
     public static void ClearAnalysisKey() => ClearResource(AnalysisResource);
+
+    public static SavedSecret? TryLoadHuggingFaceToken()
+    {
+        var credential = TryLoadCredential(HuggingFaceResource);
+        return credential is null ? null : new SavedSecret(credential.Password);
+    }
+
+    public static void SaveHuggingFaceToken(string secret)
+    {
+        ClearResource(HuggingFaceResource);
+        new PasswordVault().Add(new PasswordCredential(
+            HuggingFaceResource,
+            "active-read-token",
+            secret));
+    }
+
+    public static void ClearHuggingFaceToken() =>
+        ClearResource(HuggingFaceResource);
+
+    public static string CreateSecretPreview(
+        string secret,
+        int prefixLength)
+    {
+        if (string.IsNullOrEmpty(secret))
+        {
+            return "";
+        }
+        var visible = Math.Min(
+            Math.Max(1, prefixLength),
+            Math.Max(1, secret.Length - 1));
+        return $"{secret[..visible]}••••";
+    }
 
     private static PasswordCredential? TryLoadCredential(string resource)
     {

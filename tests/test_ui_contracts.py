@@ -152,3 +152,32 @@ def test_native_library_can_recheck_source_audio_for_complete_days() -> None:
     ).read_text(encoding="utf-8")
     assert "forceSourceCheck: true" in native
     assert "day.NeedsNetwork || forceSourceCheck" in native
+
+
+def test_native_credentials_are_one_click_and_never_prefill_saved_secrets() -> None:
+    root = ElementTree.parse(
+        ROOT / "BroadcastifyCli.WinUI" / "MainWindow.xaml"
+    ).getroot()
+    names = {
+        element.attrib.get(XAML_NAME): element
+        for element in root.iter()
+        if element.attrib.get(XAML_NAME)
+    }
+
+    assert names["CredentialsNavigationItem"].attrib["Tag"] == "credentials"
+    assert names["HuggingFaceTokenBox"].attrib["PasswordRevealMode"] == "Peek"
+    assert (
+        names["SaveHuggingFaceTokenButton"].attrib["Click"]
+        == "SaveHuggingFaceToken_Click"
+    )
+
+    native = (
+        ROOT / "BroadcastifyCli.WinUI" / "MainWindow.xaml.cs"
+    ).read_text(encoding="utf-8")
+    worker = (
+        ROOT / "BroadcastifyCli.WinUI" / "WorkerClient.cs"
+    ).read_text(encoding="utf-8")
+    assert "Password = saved?.Password" not in native
+    assert "leave blank to reuse" in native
+    assert 'startInfo.Environment["BROADCASTIFY_SECURE_PASSWORD"]' in worker
+    assert 'startInfo.Environment["HUGGINGFACE_SECURE_TOKEN"]' in worker

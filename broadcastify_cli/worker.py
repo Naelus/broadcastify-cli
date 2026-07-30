@@ -336,8 +336,16 @@ def list_area_acquisition_runs(profile_name: str | None = None) -> int:
 
 def authenticate() -> int:
     payload = json.load(sys.stdin)
-    username = str(payload.get("username") or "").strip()
-    password = str(payload.get("password") or "")
+    username = str(
+        payload.get("username")
+        or os.getenv("BROADCASTIFY_USERNAME")
+        or ""
+    ).strip()
+    password = str(
+        payload.get("password")
+        or os.getenv("BROADCASTIFY_PASSWORD")
+        or ""
+    )
     if not username or not password:
         raise ValueError("Broadcastify username and password are required.")
     with BroadcastifyClient(username=username, password=password) as client:
@@ -1705,6 +1713,17 @@ def load_worker_environment() -> Path | None:
         if bundled_env.is_file():
             load_dotenv(bundled_env, override=True)
             loaded = bundled_env
+    # Native/browser secure stores deliberately win over an optional .env.
+    # These values exist only in the short-lived worker environment and are
+    # never written into ordinary settings or job payloads.
+    secure_values = {
+        "BROADCASTIFY_USERNAME": os.getenv("BROADCASTIFY_SECURE_USERNAME"),
+        "BROADCASTIFY_PASSWORD": os.getenv("BROADCASTIFY_SECURE_PASSWORD"),
+        "HUGGINGFACE_TOKEN": os.getenv("HUGGINGFACE_SECURE_TOKEN"),
+    }
+    for name, value in secure_values.items():
+        if value:
+            os.environ[name] = value
     return loaded
 
 

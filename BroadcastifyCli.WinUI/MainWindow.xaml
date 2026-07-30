@@ -42,6 +42,11 @@
                     <NavigationViewItem.Icon><FontIcon Glyph="&#xE707;" /></NavigationViewItem.Icon>
                 </NavigationViewItem>
             </NavigationView.MenuItems>
+            <NavigationView.FooterMenuItems>
+                <NavigationViewItem x:Name="CredentialsNavigationItem" Content="Credentials" Tag="credentials">
+                    <NavigationViewItem.Icon><FontIcon Glyph="&#xE8D7;" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
+            </NavigationView.FooterMenuItems>
 
             <NavigationView.Content>
                 <Grid>
@@ -894,9 +899,13 @@
                                                                  PlaceholderText="Leave blank to use the engine's managed model cache" />
                                                     </StackPanel>
                                                 </Expander>
-                                                <PasswordBox x:Name="HuggingFaceTokenBox" Header="Hugging Face read token for speaker labels and managed models"
-                                                             PlaceholderText="Optional here when HUGGINGFACE_TOKEN is in .env" PasswordRevealMode="Peek"
-                                                             PasswordChanged="HuggingFaceToken_Changed" />
+                                                <InfoBar x:Name="HuggingFaceProcessingInfoBar" IsOpen="True" IsClosable="False"
+                                                         Severity="Informational" Title="Checking Hugging Face model access"
+                                                         Message="Manage the encrypted read token under Credentials.">
+                                                    <InfoBar.ActionButton>
+                                                        <Button Content="Manage token" Click="ManageHuggingFaceToken_Click" />
+                                                    </InfoBar.ActionButton>
+                                                </InfoBar>
                                                 <InfoBar x:Name="AsrSelfTestInfoBar" IsOpen="True" IsClosable="False" Severity="Informational"
                                                          Title="Selected transcription engine not tested this session"
                                                          Message="The engine check decodes generated silence and may download a managed model. It proves local execution, not radio-word accuracy." />
@@ -1020,7 +1029,7 @@
                                 </ScrollViewer>
                             </TabViewItem>
 
-                            <TabViewItem x:Name="AccountSettingsTab" Header="Account &amp; private build" IsClosable="False">
+                            <TabViewItem x:Name="AccountSettingsTab" Header="Credentials" IsClosable="False">
                                 <ScrollViewer HorizontalScrollBarVisibility="Disabled">
                                     <StackPanel Spacing="16" MaxWidth="900" HorizontalAlignment="Left" Padding="0,4,12,16">
                                         <Border Style="{StaticResource CardBorderStyle}">
@@ -1034,6 +1043,33 @@
                                                 <StackPanel Orientation="Horizontal" Spacing="8">
                                                     <Button Content="Sign in or replace saved login" Click="SignIn_Click" />
                                                     <Button x:Name="ClearSavedLoginButton" Content="Forget saved login" Click="ClearSavedLogin_Click" />
+                                                </StackPanel>
+                                            </StackPanel>
+                                        </Border>
+                                        <Border Style="{StaticResource CardBorderStyle}">
+                                            <StackPanel Spacing="12">
+                                                <TextBlock Text="Hugging Face model access" Style="{StaticResource SubtitleTextBlockStyle}" />
+                                                <TextBlock Text="A read token is used only to download gated local models such as Community-1 speaker diarization."
+                                                           TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                <PasswordBox x:Name="HuggingFaceTokenBox" Header="Enter a new Hugging Face read token"
+                                                             PlaceholderText="hf_… — leave blank to keep the saved token"
+                                                             PasswordRevealMode="Peek"
+                                                             PasswordChanged="HuggingFaceToken_Changed" />
+                                                <TextBlock x:Name="HuggingFaceCredentialStatusText"
+                                                           Text="Checking Windows Credential Locker…"
+                                                           TextWrapping="Wrap"
+                                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                                    <Button x:Name="SaveHuggingFaceTokenButton" Content="Save encrypted token" Click="SaveHuggingFaceToken_Click" />
+                                                    <Button x:Name="ClearHuggingFaceTokenButton" Content="Forget saved token" Click="ClearHuggingFaceToken_Click" />
+                                                </StackPanel>
+                                                <StackPanel Orientation="Horizontal" Spacing="4">
+                                                    <HyperlinkButton Content="Create a read token"
+                                                                     NavigateUri="https://huggingface.co/settings/tokens" />
+                                                    <HyperlinkButton Content="Token documentation"
+                                                                     NavigateUri="https://huggingface.co/docs/hub/en/security-tokens" />
+                                                    <HyperlinkButton Content="Accept Community-1 terms"
+                                                                     NavigateUri="https://huggingface.co/pyannote/speaker-diarization-community-1" />
                                                 </StackPanel>
                                             </StackPanel>
                                         </Border>

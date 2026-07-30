@@ -31,6 +31,7 @@ from dotenv import dotenv_values
 from .analysis import PROMPT_VERSION, WEEKLY_PROMPT_VERSION
 from .area_watch import AREA_PROMPT_VERSION, _public_quote
 from .audio import select_incident_evidence_window
+from .credential_store import CredentialStoreError, EncryptedCredentialStore
 from .lan_sync import (
     LAN_PROTOCOL,
     LanArchiveCatalog,
@@ -250,8 +251,7 @@ def _apply_automatic_processing_defaults(
 
 def _runtime_readiness(state: "WebAppState") -> dict[str, Any]:
     values, environment_file = _readiness_environment(state.working_dir)
-    username = values.get("BROADCASTIFY_USERNAME") or values.get("USERNAME")
-    password = values.get("BROADCASTIFY_PASSWORD") or values.get("PASSWORD")
+    credentials = state.credential_store.status(values)
     session_path = state.working_dir / "cookies.json"
     probe = state.output_dir if state.output_dir.exists() else state.output_dir.parent
     storage_ready = bool(
@@ -259,13 +259,17 @@ def _runtime_readiness(state: "WebAppState") -> dict[str, Any]:
         and os.access(probe, os.R_OK | os.W_OK)
         and (not state.output_dir.exists() or state.output_dir.is_dir())
     )
-    credentials_configured = bool(username and password)
+    credentials_configured = bool(credentials["broadcastify"]["configured"])
     saved_session = session_path.is_file()
     return {
         "storage_ready": storage_ready,
+        "credentials": credentials,
         "account": {
             "configured": credentials_configured or saved_session,
             "credentials_configured": credentials_configured,
+            "encrypted_credentials_saved": bool(
+                credentials["broadcastify"]["saved"]
+            ),
             "saved_session_available": saved_session,
             "environment_file_available": bool(environment_file),
         },
@@ -355,10 +359,19 @@ def _area_stories_for_web(
 class JobManager:
     """Run the existing JSON worker behind a small, bounded local job API."""
 
-    def __init__(self, output_dir: Path, database_path: Path, working_dir: Path) -> None:
+    def __init__(
+        self,
+        output_dir: Path,
+        database_path: Path,
+        working_dir: Path,
+        credential_store: EncryptedCredentialStore | None = None,
+    ) -> None:
         self.output_dir = output_dir
         self.database_path = database_path
         self.working_dir = working_dir
+        self.credential_store = credential_store or (
+            EncryptedCredentialStore.for_working_directory(working_dir)
+        )
         self._jobs: dict[str, JobRecord] = {}
         self._lock = threading.RLock()
 
@@ -459,6 +472,7 @@ class JobManager:
         environment["BROADCASTIFY_ANALYSIS_DB"] = str(self.database_path)
         environment["PYTHONIOENCODING"] = "utf-8"
         environment["PYTHONUTF8"] = "1"
+        environment.update(self.credential_store.worker_environment())
         creation_flags = 0
         start_new_session = os.name != "nt"
         if os.name == "nt":
@@ -790,6 +804,7 @@ class WebAppState:
     access_scope: str
     loopback_only: bool
     lan_catalog: LanArchiveCatalog
+    credential_store: EncryptedCredentialStore
 
 
 def _safe_media_path(state: WebAppState, relative_value: str) -> Path:
@@ -963,6 +978,7 @@ def create_server(
     host: str = "127.0.0.1",
     port: int = 8765,
     working_dir: str | Path | None = None,
+    credential_store_path: str | Path | None = None,
 ) -> ThreadingHTTPServer:
     host = validate_bind_host(host)
     access_scope = bind_scope(host)
@@ -1001,7 +1017,12 @@ def create_server(
             default=True,
         ),
     )
-    jobs = JobManager(root, database, work)
+    credential_store = (
+        EncryptedCredentialStore(credential_store_path)
+        if credential_store_path is not None
+        else EncryptedCredentialStore.for_working_directory(work)
+    )
+    jobs = JobManager(root, database, work, credential_store)
     scheduler = FeedScheduleCoordinator(jobs, database, work)
     state = WebAppState(
         output_dir=root,
@@ -1015,6 +1036,7 @@ def create_server(
         access_scope=access_scope,
         loopback_only=loopback_only,
         lan_catalog=lan_catalog,
+        credential_store=credential_store,
     )
 
     class Handler(BaseHTTPRequestHandler):
@@ -1214,6 +1236,19 @@ def create_server(
                     },
                 )
                 return
+            if parsed.path == "/api/credentials":
+                readiness_values, _environment_file = _readiness_environment(
+                    state.working_dir
+                )
+                self._json(
+                    HTTPStatus.OK,
+                    {
+                        "credentials": state.credential_store.status(
+                            readiness_values
+                        )
+                    },
+                )
+                return
             if parsed.path == "/api/day":
                 feed_id, archive_date = self._feed_date(query)
                 self._json(HTTPStatus.OK, _day_payload(state, feed_id, archive_date))
@@ -1293,6 +1328,46 @@ def create_server(
 
         def _post(self) -> None:
             parsed = urlparse(self.path)
+            if parsed.path == "/api/credentials":
+                body = self._body()
+                kind = str(body.get("kind") or "").strip().lower()
+                action = str(body.get("action") or "save").strip().lower()
+                try:
+                    if kind == "broadcastify":
+                        if action == "clear":
+                            state.credential_store.clear_broadcastify()
+                        elif action == "save":
+                            state.credential_store.save_broadcastify(
+                                str(body.get("username") or ""),
+                                str(body.get("secret") or ""),
+                            )
+                        else:
+                            raise ValueError("Unknown credential action.")
+                    elif kind == "huggingface":
+                        if action == "clear":
+                            state.credential_store.clear_huggingface()
+                        elif action == "save":
+                            state.credential_store.save_huggingface(
+                                str(body.get("secret") or "")
+                            )
+                        else:
+                            raise ValueError("Unknown credential action.")
+                    else:
+                        raise ValueError("Choose Broadcastify or Hugging Face credentials.")
+                    readiness_values, _environment_file = _readiness_environment(
+                        state.working_dir
+                    )
+                    self._json(
+                        HTTPStatus.OK,
+                        {
+                            "credentials": state.credential_store.status(
+                                readiness_values
+                            )
+                        },
+                    )
+                except (CredentialStoreError, ValueError) as exc:
+                    raise WebRequestError(HTTPStatus.BAD_REQUEST, str(exc)) from exc
+                return
             if parsed.path == "/api/jobs":
                 body = self._body()
                 command = str(body.get("command") or "").strip()

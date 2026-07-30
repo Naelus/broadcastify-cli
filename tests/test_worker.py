@@ -631,6 +631,30 @@ def test_explicit_private_environment_overrides_repository_defaults(
     assert os.environ["BROADCASTIFY_PASSWORD"] == "bundled-password"
 
 
+def test_secure_store_values_override_private_environment(
+    monkeypatch, tmp_path: Path
+) -> None:
+    bundled = tmp_path / "broadcastify-desktop.env"
+    bundled.write_text(
+        'BROADCASTIFY_USERNAME="bundled-user"\n'
+        'BROADCASTIFY_PASSWORD="bundled-password"\n'
+        'HUGGINGFACE_TOKEN="hf_bundled"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("BROADCASTIFY_ENV_FILE", str(bundled))
+    monkeypatch.setenv("BROADCASTIFY_SECURE_USERNAME", "secure-user")
+    monkeypatch.setenv("BROADCASTIFY_SECURE_PASSWORD", "secure-password")
+    monkeypatch.setenv("HUGGINGFACE_SECURE_TOKEN", "hf_secure")
+
+    loaded = load_worker_environment()
+
+    assert loaded == bundled
+    assert os.environ["BROADCASTIFY_USERNAME"] == "secure-user"
+    assert os.environ["BROADCASTIFY_PASSWORD"] == "secure-password"
+    assert os.environ["HUGGINGFACE_TOKEN"] == "hf_secure"
+
+
 def test_day_report_exposes_playback_metadata_without_raw_evidence(tmp_path: Path) -> None:
     archive_date = date(2026, 7, 12)
     audio = tmp_path / "combined_90001_20260712.mp3"

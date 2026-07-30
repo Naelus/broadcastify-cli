@@ -472,6 +472,71 @@ function setView(name) {
   }
 }
 
+function credentialStatus() {
+  return state.bootstrap.runtime?.credentials || {
+    storage: "",
+    broadcastify: { saved: false, configured: false, username: "", password_preview: "", source: "" },
+    huggingface: { saved: false, configured: false, token_preview: "", source: "" },
+  };
+}
+
+function renderCredentials() {
+  const credentials = credentialStatus();
+  const broadcastify = credentials.broadcastify || {};
+  const huggingface = credentials.huggingface || {};
+  if (byId("loginUsername") && !byId("loginUsername").value) {
+    byId("loginUsername").value = broadcastify.username || "";
+  }
+  byId("forgetBroadcastifyLoginButton").disabled = !broadcastify.saved;
+  byId("forgetHuggingFaceTokenButton").disabled = !huggingface.saved;
+
+  const loginNotice = byId("loginNotice");
+  if (loginNotice) {
+    const ready = Boolean(state.accountVerified || broadcastify.configured || state.bootstrap.runtime?.account?.saved_session_available);
+    loginNotice.className = `notice${ready ? " success" : " warning"}`;
+    loginNotice.querySelector("strong").textContent = state.accountVerified
+      ? "Session verified"
+      : broadcastify.saved
+        ? "Encrypted login saved"
+        : ready
+          ? "Archive access configured"
+          : "Sign-in needed";
+    loginNotice.querySelector("span").textContent = broadcastify.saved
+      ? `${broadcastify.username} · password ${broadcastify.password_preview} · encrypted with ${credentials.storage}`
+      : broadcastify.configured
+        ? `${broadcastify.username || "Broadcastify login"} · configured in the server environment`
+        : state.bootstrap.runtime?.account?.saved_session_available
+          ? "A saved website session is available, but no refresh login is stored."
+          : "Enter a premium Broadcastify website login before acquiring archives.";
+  }
+
+  const huggingFaceNotice = byId("huggingFaceCredentialNotice");
+  if (huggingFaceNotice) {
+    huggingFaceNotice.className = `notice${huggingface.configured ? " success" : " warning"}`;
+    huggingFaceNotice.querySelector("strong").textContent = huggingface.saved
+      ? "Encrypted read token saved"
+      : huggingface.configured
+        ? "Read token configured"
+        : "Read token needed for gated models";
+    huggingFaceNotice.querySelector("span").textContent = huggingface.saved
+      ? `${huggingface.token_preview} · encrypted with ${credentials.storage}`
+      : huggingface.configured
+        ? "HUGGINGFACE_TOKEN or HF_TOKEN is configured in the server environment."
+        : "Create a read token and accept the Community-1 model terms before its first download.";
+  }
+
+  const processingNotice = byId("processingCredentialNotice");
+  if (processingNotice) {
+    processingNotice.className = `notice${huggingface.configured ? " success" : " warning"}`;
+    processingNotice.querySelector("strong").textContent = huggingface.configured
+      ? "Hugging Face model access configured"
+      : "Gated model access needs a token";
+    processingNotice.querySelector("span").textContent = huggingface.configured
+      ? `${huggingface.token_preview || "Token available"}; saved credentials are supplied automatically to local model jobs.`
+      : "Manage an encrypted Hugging Face read token before downloading Community-1 speaker labels.";
+  }
+}
+
 function setViewFromLocation() {
   const [requestedView, requestedSettingsSection] = location.hash.replace("#", "").split("/", 2);
   if (Object.hasOwn(SETTINGS_SECTIONS, requestedSettingsSection)) {
@@ -514,6 +579,7 @@ async function refreshBootstrap({ preserveSelection = true } = {}) {
     renderRuntime();
     renderArchiveQuota();
     renderFeedSchedules();
+    renderCredentials();
     if (preserveSelection && state.selectedDay) {
       const replacement = state.bootstrap.days.find((value) => value.feed_id === state.selectedDay.feed_id && value.archive_date === state.selectedDay.archive_date);
       if (replacement) await selectDay(replacement, false);
@@ -811,10 +877,11 @@ function renderSetupReadiness() {
   const profile = selectedHardwareProfile();
   const profileAction = currentProfileAction();
   const speakerLabels = state.hardwareDiagnostics?.accelerators?.speaker_labels || {};
+  const savedModelAccess = Boolean(runtime.credentials?.huggingface?.configured);
   const tokenInTab = Boolean(byId("settingHuggingFaceToken")?.value);
   const selectedDiarization = byId("settingDiarizationDevice")?.value || state.settings.diarizationDevice;
   const selectedDiarizationEngine = byId("settingDiarizationEngine")?.value || state.settings.diarizationEngine;
-  const tokenConfigured = Boolean(speakerLabels.token_configured || tokenInTab);
+  const tokenConfigured = Boolean(speakerLabels.token_configured || savedModelAccess || tokenInTab);
   const speakerAccessConfigured = Boolean(speakerLabels.access_configured || tokenConfigured);
   const speakerConfigured = selectedDiarizationEngine === "sherpa-onnx"
     ? Boolean(speakerLabels.portable?.ready)
@@ -845,7 +912,7 @@ function renderSetupReadiness() {
       detail: state.accountVerified
         ? "Premium website session refreshed in this browser session."
         : accountReady
-          ? "An environment login or saved website session is available."
+          ? "An encrypted login, environment login, or saved website session is available."
           : "A premium Broadcastify website login is needed for archives.",
       action: accountReady ? "Review" : "Sign in",
     },
@@ -891,12 +958,7 @@ function renderSetupReadiness() {
       <button class="button secondary small" data-setup-action="${html(item.id)}">${html(item.action)}</button>
     </article>`).join("");
 
-  const loginNotice = byId("loginNotice");
-  if (loginNotice) {
-    loginNotice.className = `notice${accountReady ? " success" : " warning"}`;
-    loginNotice.querySelector("strong").textContent = state.accountVerified ? "Session verified" : accountReady ? "Archive access configured" : "Sign-in needed";
-    loginNotice.querySelector("span").textContent = items[0].detail;
-  }
+  renderCredentials();
 }
 
 function renderHardwareProfiles() {
@@ -1269,7 +1331,12 @@ async function openSavedArea() {
 document.addEventListener("click", async (event) => {
   const button = event.target.closest("button");
   if (!button) return;
-  if (button.dataset.view) return setView(button.dataset.view);
+  if (button.dataset.view) {
+    if (button.dataset.settingsSectionTarget) {
+      state.settingsSection = button.dataset.settingsSectionTarget;
+    }
+    return setView(button.dataset.view);
+  }
   if (button.classList.contains("day-row")) {
     const day = state.bootstrap.days.find((value) => value.feed_id === button.dataset.feedId && value.archive_date === button.dataset.date);
     if (day) await selectDay(day);
@@ -1297,6 +1364,12 @@ document.addEventListener("click", async (event) => {
     return;
   }
   const action = button.dataset.action;
+  if (action === "manage-huggingface") {
+    state.settingsSection = "account";
+    setView("settings");
+    requestAnimationFrame(() => byId("settingHuggingFaceToken").focus());
+    return;
+  }
   if (action === "play-incident") {
     const audio = byId("dayAudio");
     if (!audio) return toast("No retained combined audio is available for this day.", true);
@@ -1745,7 +1818,7 @@ async function runProfileNextAction() {
     setSettingsSection("processing");
     await runAsrSelfTest();
   } else if (action.kind === "configure-speakers") {
-    setSettingsSection("processing");
+    setSettingsSection("account");
     requestAnimationFrame(() => byId("settingHuggingFaceToken").focus());
   } else if (action.kind === "configure-analysis") {
     setSettingsSection("analysis");
@@ -1922,7 +1995,6 @@ byId("setupReadinessGrid").addEventListener("click", async (event) => {
     else if (!selectedHardwareProfile()?.transcription_ready && next?.stage === "transcription") await runProfileNextAction();
     else await runAsrSelfTest();
   } else if (action === "diarization") {
-    setSettingsSection("processing");
     const next = currentProfileAction();
     const speaker = state.hardwareDiagnostics?.accelerators?.speaker_labels || {};
     const selectedEngine = byId("settingDiarizationEngine").value;
@@ -1936,8 +2008,10 @@ byId("setupReadinessGrid").addEventListener("click", async (event) => {
     } else if (next?.stage === "diarization") {
       await runProfileNextAction();
     } else if (!state.hardwareDiagnostics) {
+      setSettingsSection("processing");
       await runHardwareCheck();
     } else {
+      setSettingsSection("account");
       byId("settingHuggingFaceToken").focus();
     }
   } else if (action === "analysis") {
@@ -1963,15 +2037,85 @@ byId("asrPrepareButton").addEventListener("click", runAsrModelPreparation);
 byId("diarizationSelfTestButton").addEventListener("click", runDiarizationSelfTest);
 byId("loginForm").addEventListener("submit", async (event) => {
   event.preventDefault();
-  const username = byId("loginUsername").value;
+  const saved = credentialStatus().broadcastify || {};
+  const username = byId("loginUsername").value.trim() || saved.username || "";
   const password = byId("loginPassword").value;
+  const remember = byId("rememberBroadcastifyLogin").checked;
+  const canReuse = Boolean(
+    !password
+    && saved.configured
+    && (!saved.username || saved.username === username)
+  );
+  if (!username || (!password && !canReuse)) {
+    toast("Enter a username and password, or keep the username matching the saved login.", true);
+    return;
+  }
   byId("loginPassword").value = "";
-  await startJob("authenticate", { username, password }, { label: "Signing in to Broadcastify", onComplete: async () => {
+  const payload = password ? { username, password } : {};
+  await startJob("authenticate", payload, { label: "Signing in to Broadcastify", onComplete: async () => {
+    if (password && remember) {
+      await api("/api/credentials", {
+        method: "POST",
+        body: JSON.stringify({ kind: "broadcastify", action: "save", username, secret: password }),
+      });
+    } else if (!remember) {
+      await api("/api/credentials", {
+        method: "POST",
+        body: JSON.stringify({ kind: "broadcastify", action: "clear" }),
+      });
+    }
     state.accountVerified = true;
     await refreshBootstrap();
     renderSetupReadiness();
-    toast("Broadcastify website session refreshed.");
+    toast(remember ? "Broadcastify session refreshed; encrypted login is ready." : "Broadcastify session refreshed without saving the login.");
   } });
+});
+byId("forgetBroadcastifyLoginButton").addEventListener("click", async () => {
+  try {
+    await api("/api/credentials", {
+      method: "POST",
+      body: JSON.stringify({ kind: "broadcastify", action: "clear" }),
+    });
+    await refreshBootstrap();
+    toast("Encrypted Broadcastify login removed; the current website session remains.");
+  } catch (error) {
+    toast(error.message, true);
+  }
+});
+byId("huggingFaceCredentialForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const secret = byId("settingHuggingFaceToken").value.trim();
+  if (!secret) {
+    toast("Enter a Hugging Face read token to replace the saved token.", true);
+    return;
+  }
+  try {
+    await api("/api/credentials", {
+      method: "POST",
+      body: JSON.stringify({ kind: "huggingface", action: "save", secret }),
+    });
+    byId("settingHuggingFaceToken").value = "";
+    resetProfileVerification();
+    resetAsrVerification();
+    resetDiarizationVerification();
+    await refreshBootstrap();
+    toast("Hugging Face token encrypted and saved.");
+  } catch (error) {
+    toast(error.message, true);
+  }
+});
+byId("forgetHuggingFaceTokenButton").addEventListener("click", async () => {
+  try {
+    await api("/api/credentials", {
+      method: "POST",
+      body: JSON.stringify({ kind: "huggingface", action: "clear" }),
+    });
+    byId("settingHuggingFaceToken").value = "";
+    await refreshBootstrap();
+    toast("Encrypted Hugging Face token removed.");
+  } catch (error) {
+    toast(error.message, true);
+  }
 });
 
 const today = new Date();

@@ -26,7 +26,7 @@
         <button class="nav-item" data-view="area"><span aria-hidden="true">⌖</span>Area watch</button>
       </nav>
       <div class="sidebar-spacer"></div>
-      <button class="nav-item" data-view="settings"><span aria-hidden="true">⚙</span>Settings</button>
+      <button class="nav-item" data-view="settings" data-settings-section-target="account"><span aria-hidden="true">⚿</span>Credentials &amp; settings</button>
       <div class="local-only" id="accessScopeStatus"><span class="status-dot"></span>Checking access…</div>
     </aside>
     <button class="sidebar-scrim" id="sidebarScrim" type="button" aria-label="Close navigation"></button>
@@ -222,7 +222,7 @@
           <button class="settings-section-tab active" id="settingsTabSetup" role="tab" aria-selected="true" aria-controls="settingsPanelSetup" tabindex="0" data-settings-section="setup">Setup</button>
           <button class="settings-section-tab" id="settingsTabProcessing" role="tab" aria-selected="false" aria-controls="settingsPanelProcessing" tabindex="-1" data-settings-section="processing">Processing</button>
           <button class="settings-section-tab" id="settingsTabAnalysis" role="tab" aria-selected="false" aria-controls="settingsPanelAnalysis" tabindex="-1" data-settings-section="analysis">Analysis &amp; AI</button>
-          <button class="settings-section-tab" id="settingsTabAccount" role="tab" aria-selected="false" aria-controls="settingsPanelAccount" tabindex="-1" data-settings-section="account">Account</button>
+          <button class="settings-section-tab" id="settingsTabAccount" role="tab" aria-selected="false" aria-controls="settingsPanelAccount" tabindex="-1" data-settings-section="account">Credentials</button>
         </div>
         <div class="settings-panels">
           <section class="settings-panel active" id="settingsPanelSetup" role="tabpanel" aria-labelledby="settingsTabSetup" data-settings-panel="setup">
@@ -258,7 +258,7 @@
                   <label><span>Batch size</span><input id="settingBatchSize" type="number" min="1" max="64" value="8"></label>
                   <label><span>Optional ASR model path</span><input id="settingAsrModelPath" placeholder="Use automatic model discovery"></label>
                 </div>
-                <label class="secret-field"><span>Hugging Face token for this tab</span><input id="settingHuggingFaceToken" type="password" autocomplete="off" placeholder="Or set HUGGINGFACE_TOKEN in .env"></label>
+                <div class="notice" id="processingCredentialNotice"><strong>Checking model access</strong><span>Manage the encrypted Hugging Face token under Credentials.</span><button class="button secondary small" type="button" data-action="manage-huggingface">Manage token</button></div>
                 <div class="notice" id="asrSelfTestNotice"><strong>Not tested this session</strong><span>The engine check decodes generated silence and may download a managed model. It proves local execution, not radio-word accuracy.</span></div>
                 <div class="notice" id="diarizationSelfTestNotice"><strong>Speakers not tested this session</strong><span>The explicit test runs the selected local engine on generated audio. A first explicit test may download its pinned model.</span></div>
               </div>
@@ -293,15 +293,29 @@
             </div>
           </section>
           <section class="settings-panel" id="settingsPanelAccount" role="tabpanel" aria-labelledby="settingsTabAccount" data-settings-panel="account" hidden>
-            <div class="settings-grid settings-grid-focused">
+            <div class="settings-grid">
               <div class="card padded">
-                <div class="section-heading"><div><h2>Broadcastify website login</h2><p>Uses the premium website session, not the official API. Prefer an ignored .env for repeat launches on Linux/macOS.</p></div></div>
+                <div class="section-heading"><div><h2>Broadcastify website login</h2><p>Uses the premium website session, not the official API. The encrypted login can refresh expired sessions and scheduled jobs.</p></div></div>
                 <form id="loginForm" class="form-stack">
                   <label><span>Username</span><input id="loginUsername" autocomplete="username"></label>
-                  <label><span>Password</span><input id="loginPassword" type="password" autocomplete="current-password"></label>
-                  <button class="button secondary" type="submit">Sign in for this local session</button>
+                  <label><span>Password</span><input id="loginPassword" type="password" autocomplete="current-password" placeholder="Leave blank to reuse the encrypted login"></label>
+                  <label class="check-row"><input id="rememberBroadcastifyLogin" type="checkbox" checked><span><strong>Remember on this app server</strong><small>Windows uses current-user DPAPI. Linux and TrueNAS use AES-GCM with an owner-only local key.</small></span></label>
+                  <div class="button-row"><button class="button primary" type="submit">Sign in</button><button class="button secondary" id="forgetBroadcastifyLoginButton" type="button">Forget saved login</button></div>
                 </form>
-                <div class="notice" id="loginNotice"><strong>Checking access</strong><span>Looking for an ignored environment login or saved website session.</span></div>
+                <div class="notice" id="loginNotice"><strong>Checking access</strong><span>Looking for an encrypted login, environment login, or saved website session.</span></div>
+              </div>
+              <div class="card padded">
+                <div class="section-heading"><div><h2>Hugging Face model access</h2><p>A read token is used only to download gated local models such as Community-1 speaker diarization.</p></div></div>
+                <form id="huggingFaceCredentialForm" class="form-stack">
+                  <label class="secret-field"><span>Read token</span><input id="settingHuggingFaceToken" type="password" autocomplete="off" placeholder="hf_… — leave blank to keep the saved token"></label>
+                  <div class="button-row"><button class="button primary" type="submit">Save encrypted token</button><button class="button secondary" id="forgetHuggingFaceTokenButton" type="button">Forget saved token</button></div>
+                </form>
+                <div class="button-row">
+                  <a class="button secondary small" href="https://huggingface.co/settings/tokens" target="_blank" rel="noopener noreferrer">Create a read token</a>
+                  <a class="button secondary small" href="https://huggingface.co/docs/hub/en/security-tokens" target="_blank" rel="noopener noreferrer">Token documentation</a>
+                  <a class="button secondary small" href="https://huggingface.co/pyannote/speaker-diarization-community-1" target="_blank" rel="noopener noreferrer">Accept Community-1 terms</a>
+                </div>
+                <div class="notice" id="huggingFaceCredentialNotice"><strong>No saved token</strong><span>Enter a read token or configure HUGGINGFACE_TOKEN in the server environment.</span></div>
               </div>
             </div>
           </section>
@@ -324,6 +338,6 @@
   </aside>
 
   <div class="toast-region" id="toastRegion" aria-live="polite"></div>
-  <script src="/static/app.js?v=32" defer></script>
+  <script src="/static/app.js?v=33" defer></script>
 </body>
 </html>

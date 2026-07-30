@@ -154,6 +154,10 @@ celerybeat.pid
 archive-quota.sqlite3
 archive-quota.sqlite3-*
 broadcastify-desktop.env
+.credentials.enc
+.credentials.enc.key
+*.credentials.enc
+*.credentials.enc.key
 .venv
 .venv.broken*/
 env/

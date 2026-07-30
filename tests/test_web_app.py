@@ -183,7 +183,7 @@ def test_loopback_web_app_serves_library_transcript_and_media(
         assert cookie.startswith("radio_archive_session=")
         assert token_match is not None
         assert b'id="areaPublicSafetyOnly"' in body
-        assert b'/static/app.js?v=32' in body
+        assert b'/static/app.js?v=33' in body
         assert b'id="archiveQuotaNotice"' in body
         assert b'id="saveFeedScheduleButton"' in body
         assert b'id="accessScopeStatus"' in body
@@ -200,6 +200,9 @@ def test_loopback_web_app_serves_library_transcript_and_media(
         assert b'id="settingLanSyncEnabled"' in body
         assert b'id="settingLanDiscoveryEnabled"' in body
         assert b'id="settingLanPeerUrls"' in body
+        assert b'id="rememberBroadcastifyLogin"' in body
+        assert b'id="huggingFaceCredentialForm"' in body
+        assert b'href="https://huggingface.co/docs/hub/en/security-tokens"' in body
         assert b'role="tabpanel"' in body
         assert b'/static/favicon.svg' in body
         token = token_match.group(1).decode()
@@ -209,7 +212,7 @@ def test_loopback_web_app_serves_library_transcript_and_media(
         assert response.getheader("Content-Type") == "image/svg+xml"
         assert b"<svg" in body
 
-        response, body = _request(connection, "GET", "/static/app.js?v=32")
+        response, body = _request(connection, "GET", "/static/app.js?v=33")
         assert response.status == 200
         assert b"areaSelectedStoryIndex" in body
         assert b"data-area-story-index" in body
@@ -250,6 +253,8 @@ def test_loopback_web_app_serves_library_transcript_and_media(
         assert b"lan_peer_urls: state.settings.lanPeerUrls" in body
         assert b"function renderArchiveQuota" in body
         assert b"function renderFeedSchedules" in body
+        assert b"function renderCredentials" in body
+        assert b'api("/api/credentials"' in body
 
         response, body = _request(connection, "GET", "/static/app.css?v=20")
         assert response.status == 200
@@ -268,6 +273,7 @@ def test_loopback_web_app_serves_library_transcript_and_media(
         assert bootstrap["runtime"]["processing_defaults"] == {}
         assert bootstrap["runtime"]["storage_ready"] is True
         assert isinstance(bootstrap["runtime"]["account"]["configured"], bool)
+        assert "credentials" in bootstrap["runtime"]
         assert bootstrap["runtime"]["lan_sync"]["sharing_enabled"] is False
         assert bootstrap["runtime"]["archive_quota"]["provider_limit"] == 250
         assert bootstrap["runtime"]["archive_quota"]["automated_limit"] == 240
@@ -363,6 +369,111 @@ def test_loopback_web_app_serves_library_transcript_and_media(
         )
         assert response.status == 400
         assert "not supported" in json.loads(body)["error"].lower()
+    finally:
+        connection.close()
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=3)
+
+
+def test_web_credentials_are_encrypted_server_side_and_only_previewed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("BROADCASTIFY_USERNAME", raising=False)
+    monkeypatch.delenv("BROADCASTIFY_PASSWORD", raising=False)
+    monkeypatch.delenv("HUGGINGFACE_TOKEN", raising=False)
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    output = tmp_path / "archives"
+    output.mkdir()
+    credential_path = tmp_path / "credentials.enc"
+    server = create_server(
+        output,
+        port=0,
+        working_dir=tmp_path,
+        credential_store_path=credential_path,
+    )
+    server.quiet = True  # type: ignore[attr-defined]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    connection = http.client.HTTPConnection(
+        "127.0.0.1",
+        server.server_port,
+        timeout=5,
+    )
+    try:
+        response, body = _request(connection, "GET", "/")
+        assert response.status == 200
+        cookie = response.getheader("Set-Cookie", "").split(";", 1)[0]
+        token_match = re.search(rb'<meta name="app-token" content="([^"]+)">', body)
+        assert token_match is not None
+        token = token_match.group(1).decode()
+
+        response, body = _request(
+            connection,
+            "POST",
+            "/api/credentials",
+            cookie=cookie,
+            token=token,
+            body={
+                "kind": "broadcastify",
+                "action": "save",
+                "username": "example-user",
+                "secret": "example-password",
+            },
+        )
+        assert response.status == 200
+        payload = json.loads(body)
+        assert payload["credentials"]["broadcastify"]["password_preview"] == "ex••••"
+        assert b"example-password" not in body
+
+        response, body = _request(
+            connection,
+            "POST",
+            "/api/credentials",
+            cookie=cookie,
+            token=token,
+            body={
+                "kind": "huggingface",
+                "action": "save",
+                "secret": "hf_example_read_token_123",
+            },
+        )
+        assert response.status == 200
+        payload = json.loads(body)
+        assert payload["credentials"]["huggingface"]["token_preview"] == "hf_examp••••"
+        assert b"hf_example_read_token_123" not in body
+
+        encrypted = credential_path.read_text(encoding="utf-8")
+        assert "example-user" not in encrypted
+        assert "example-password" not in encrypted
+        assert "hf_example_read_token_123" not in encrypted
+
+        response, body = _request(
+            connection,
+            "GET",
+            "/api/bootstrap",
+            cookie=cookie,
+        )
+        assert response.status == 200
+        credentials = json.loads(body)["runtime"]["credentials"]
+        assert credentials["broadcastify"]["username"] == "example-user"
+        assert credentials["broadcastify"]["password_preview"] == "ex••••"
+        assert credentials["huggingface"]["token_preview"] == "hf_examp••••"
+        assert "example-password" not in body.decode()
+        assert "hf_example_read_token_123" not in body.decode()
+
+        for kind in ("broadcastify", "huggingface"):
+            response, _body = _request(
+                connection,
+                "POST",
+                "/api/credentials",
+                cookie=cookie,
+                token=token,
+                body={"kind": kind, "action": "clear"},
+            )
+            assert response.status == 200
+        assert not credential_path.exists()
     finally:
         connection.close()
         server.shutdown()
