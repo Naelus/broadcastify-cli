@@ -44,6 +44,10 @@ def test_installer_is_per_user_upgrade_safe_and_preserves_app_data() -> None:
     assert 'Type: filesandordirs; Name: "{app}"' in installer
     assert "Create a &desktop shortcut" in installer
     assert "skipifsilent" in installer
+    assert 'Type: filesandordirs; Name: "{app}\\runtime"' in installer
+    assert 'Type: filesandordirs; Name: "{app}\\windowsml"' in installer
+    assert "#if !FileExists(SourceDir + \"\\broadcastify-desktop.env\")" in installer
+    assert 'Type: files; Name: "{app}\\broadcastify-desktop.env"' in installer
 
 
 def test_public_installer_build_rejects_private_environment_and_pins_downloads() -> None:
@@ -57,6 +61,13 @@ def test_public_installer_build_rejects_private_environment_and_pins_downloads()
     assert "4ACBED6DD1C744B0376E3B1CF57CE906F9DC9E95E68824584C8099A63025A3C3" in build
     assert "DB580001CAA24AC104C8CB856CD113A87B0A443F7BDF47D8C12B1D740584A2EC" in build
     assert 'throw "A public installer stage contains broadcastify-desktop.env."' in build
+    assert '"dist\\windows-private"' in build
+    assert (
+        "A private environment build cannot write to the public release directory."
+        in build
+    )
+    assert "$normalizedOutput.StartsWith(" in build
+    assert "$publicOutputPrefix" in build
     assert "does not match pyproject.toml version" in build
     assert "$repositoryRoot[windowsml,qwen,portable-diarization]" in build
     assert "--constraint $constraints" in build

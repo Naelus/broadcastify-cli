@@ -27,7 +27,7 @@ The consumer build layers a portable runtime over the verified native publish:
 Output:
 
 ```text
-dist/windows/BroadcastifyDesktop-0.4.1-win-x64-setup.exe
+dist/windows/BroadcastifyDesktop-0.4.2-win-x64-setup.exe
 ```
 
 The application stage contains:
@@ -71,7 +71,11 @@ The Inno Setup package:
 - registers one normal uninstall entry;
 - removes generated application-runtime residue on uninstall;
 - marks `%LOCALAPPDATA%\Broadcastify Desktop` as never uninstall;
-- never copies `.env` in a public build.
+- replaces the bundled Python and Windows ML runtime trees on upgrade so
+  removed dependencies and old package metadata cannot survive;
+- never copies `.env` in a public build;
+- deletes a stale `broadcastify-desktop.env` when a public build upgrades a
+  machine that previously ran an owner-only private build.
 
 The retained lifecycle test completed install, native launch with the bundled
 Python child, same-version upgrade, uninstall, and clean reinstall. Settings and
@@ -93,8 +97,9 @@ for the bundled Python path.
 ```
 
 The build verifies the copied ignored `.env` by hash without printing it.
-Never distribute that artifact. The default and GitHub Actions paths are always
-public builds and reject any bundled private environment.
+It defaults to `dist/windows-private` and is forbidden from writing into the
+public `dist/windows` release tree. Never distribute that artifact. The default
+public and GitHub Actions paths reject any bundled private environment.
 
 ## GitHub release workflow
 

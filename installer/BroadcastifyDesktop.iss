@@ -1,8 +1,8 @@
 #ifndef MyAppVersion
-  #define MyAppVersion "0.4.1"
+  #define MyAppVersion "0.4.2"
 #endif
 #ifndef MyAppVersionNumeric
-  #define MyAppVersionNumeric "0.4.1.0"
+  #define MyAppVersionNumeric "0.4.2.0"
 #endif
 #ifndef SourceDir
   #error SourceDir must point to the prepared Windows application directory.
@@ -63,6 +63,17 @@ Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription
 
 [Files]
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+
+[InstallDelete]
+; Rebuild managed runtime trees on every upgrade so removed packages and
+; version metadata cannot survive an otherwise successful in-place install.
+Type: filesandordirs; Name: "{app}\runtime"
+Type: filesandordirs; Name: "{app}\windowsml"
+#if !FileExists(SourceDir + "\broadcastify-desktop.env")
+; A clean/public upgrade must scrub an owner-only environment file that may
+; have been installed by an earlier private build.
+Type: files; Name: "{app}\broadcastify-desktop.env"
+#endif
 
 [Dirs]
 Name: "{localappdata}\Broadcastify Desktop"; Flags: uninsneveruninstall

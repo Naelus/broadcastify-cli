@@ -126,12 +126,40 @@ if ($Version -notmatch '^\d+\.\d+\.\d+(?:\.\d+)?$') {
 }
 $numericVersion = Get-NumericVersion $Version
 if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
-    $OutputDirectory = Join-Path $repositoryRoot "dist\windows"
+    $defaultOutputDirectory = if ($BundleLocalEnv) {
+        "dist\windows-private"
+    }
+    else {
+        "dist\windows"
+    }
+    $OutputDirectory = Join-Path $repositoryRoot $defaultOutputDirectory
 }
 if ([string]::IsNullOrWhiteSpace($CacheDirectory)) {
     $CacheDirectory = Join-Path $repositoryRoot ".tmp\installer-cache"
 }
 $output = [System.IO.Path]::GetFullPath($OutputDirectory)
+$publicOutput = [System.IO.Path]::GetFullPath(
+    (Join-Path $repositoryRoot "dist\windows")
+).TrimEnd(
+    [System.IO.Path]::DirectorySeparatorChar,
+    [System.IO.Path]::AltDirectorySeparatorChar
+)
+$normalizedOutput = $output.TrimEnd(
+    [System.IO.Path]::DirectorySeparatorChar,
+    [System.IO.Path]::AltDirectorySeparatorChar
+)
+$publicOutputPrefix = $publicOutput + [System.IO.Path]::DirectorySeparatorChar
+if ($BundleLocalEnv -and (
+        $normalizedOutput.Equals(
+            $publicOutput,
+            [StringComparison]::OrdinalIgnoreCase
+        ) -or
+        $normalizedOutput.StartsWith(
+            $publicOutputPrefix,
+            [StringComparison]::OrdinalIgnoreCase
+        ))) {
+    throw "A private environment build cannot write to the public release directory. Use dist\windows-private or another explicitly private location."
+}
 $cache = [System.IO.Path]::GetFullPath($CacheDirectory)
 $stageRoot = Assert-ChildPath `
     (Join-Path $repositoryRoot ".tmp") `

@@ -140,5 +140,6 @@ For a private local build only:
 ```
 
 This copies the ignored `.env` as plaintext into that private application
-runtime. Never distribute a private installer. Public builds reject a stale or
-unexpected `broadcastify-desktop.env`.
+runtime under `dist\windows-private`. Never distribute a private installer.
+Public builds reject an unexpected `broadcastify-desktop.env`, and a public
+upgrade deletes a stale copy left by an earlier private installation.
