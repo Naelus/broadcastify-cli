@@ -41,6 +41,11 @@ Choose **Credentials** in the bottom-left navigation:
 - Saved values are supplied to foreground and scheduled worker processes
   without being written to ordinary settings or job JSON.
 
+The app performs the same login-page preflight and same-site redirect sequence
+as the website. Broadcastify uses HTTP 302 redirects for both successful and
+rejected form submissions, so the app verifies the premium session cookie
+instead of treating the status code itself as the result.
+
 Use a Hugging Face **read** token. The page links directly to the
 [token settings](https://huggingface.co/settings/tokens),
 [token documentation](https://huggingface.co/docs/hub/en/security-tokens), and

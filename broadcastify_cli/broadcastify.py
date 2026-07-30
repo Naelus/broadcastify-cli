@@ -11,7 +11,7 @@ from datetime import date, datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Callable, Sequence
-from urllib.parse import unquote, urljoin, urlparse
+from urllib.parse import parse_qs, unquote, urljoin, urlparse
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import requests
@@ -115,6 +115,8 @@ class BroadcastifyClient:
     ARCHIVE_LIST_URL = f"{BASE_URL}/archives/api/archives.php"
     ARCHIVE_DOWNLOAD_URL = f"{BASE_URL}/archives/download"
     FEED_SEARCH_URL = f"{BASE_URL}/listen/"
+    AUTH_REDIRECT_STATUSES = {301, 302, 303, 307, 308}
+    MAX_AUTH_REDIRECTS = 3
 
     def __init__(
         self,
@@ -195,6 +197,16 @@ class BroadcastifyClient:
 
             self._clear_auth_cookie()
 
+            login_page = self.session.get(
+                self.LOGIN_URL,
+                headers={
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                },
+                allow_redirects=True,
+                timeout=self.timeout,
+            )
+            login_page.raise_for_status()
+
             response = self.session.post(
                 self.LOGIN_URL,
                 data={
@@ -213,14 +225,47 @@ class BroadcastifyClient:
                 timeout=self.timeout,
             )
 
-            token = response.cookies.get("bcfyuser1")
-            if not token:
-                match = re.search(r"(?:^|;\s*)bcfyuser1=([^;]+)", response.headers.get("Set-Cookie", ""))
-                token = match.group(1) if match else None
+            token = self._auth_cookie_token(response)
+            redirects_followed = 0
+            rejected = self._login_redirect_rejected(response)
+            while (
+                not token
+                and not rejected
+                and response.status_code in self.AUTH_REDIRECT_STATUSES
+                and response.headers.get("Location")
+                and redirects_followed < self.MAX_AUTH_REDIRECTS
+            ):
+                target = urljoin(
+                    response.url or self.LOGIN_URL,
+                    response.headers["Location"],
+                )
+                if not self._is_broadcastify_url(target):
+                    break
+                response = self.session.get(
+                    target,
+                    headers={
+                        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                        "Referer": self.LOGIN_URL,
+                    },
+                    allow_redirects=False,
+                    timeout=self.timeout,
+                )
+                redirects_followed += 1
+                token = self._auth_cookie_token(response)
+                rejected = self._login_redirect_rejected(response)
 
-            if response.status_code not in {301, 302, 303} or not token:
+            if not token and rejected:
                 raise AuthenticationError(
-                    f"Broadcastify login failed with HTTP {response.status_code}."
+                    "Broadcastify rejected the username or password. "
+                    "Use the same username or email address that succeeds on "
+                    "the Broadcastify website."
+                )
+            if not token:
+                raise AuthenticationError(
+                    "Broadcastify redirected the login without issuing a "
+                    "premium session cookie. The website login flow may have "
+                    "changed; retry once, then verify the same login directly "
+                    "on the Broadcastify website."
                 )
 
             self._set_cookie(token)
@@ -229,6 +274,36 @@ class BroadcastifyClient:
                 json.dumps({"bcfyuser1": token}), encoding="utf-8"
             )
             self._authenticated = True
+
+    def _auth_cookie_token(self, response: requests.Response) -> str | None:
+        for cookie in response.cookies:
+            if cookie.name == "bcfyuser1" and cookie.value:
+                return str(cookie.value)
+        for cookie in self.session.cookies:
+            if cookie.name == "bcfyuser1" and cookie.value:
+                return str(cookie.value)
+        match = re.search(
+            r"(?:^|;\s*)bcfyuser1=([^;]+)",
+            response.headers.get("Set-Cookie", ""),
+        )
+        return match.group(1) if match else None
+
+    def _login_redirect_rejected(self, response: requests.Response) -> bool:
+        location = response.headers.get("Location")
+        if not location:
+            return False
+        target = urlparse(urljoin(response.url or self.LOGIN_URL, location))
+        query = parse_qs(target.query)
+        return target.path.rstrip("/") == "/login" and "failed" in query
+
+    def _is_broadcastify_url(self, value: str) -> bool:
+        target = urlparse(value)
+        expected = urlparse(self.BASE_URL)
+        return (
+            target.scheme == expected.scheme
+            and target.hostname == expected.hostname
+            and target.port in {None, 443}
+        )
 
     def _load_cookie(self) -> bool:
         if not self.cookie_path.exists():

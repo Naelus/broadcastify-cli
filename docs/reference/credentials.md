@@ -21,6 +21,15 @@ application credentials, not official Broadcastify API credentials.
 Credential Locker entries are scoped to the current Windows account. Uninstall
 does not silently delete them; **Forget** is the explicit removal action.
 
+The desktop login follows Broadcastify's website sequence: it first opens the
+login page, submits the form, follows only same-site redirects, and considers
+the sign-in successful only after Broadcastify issues its premium session
+cookie. An HTTP 302 alone is not treated as either success or failure because
+the website also uses a 302 redirect when it rejects a login. If automatic
+sign-in reports that Broadcastify rejected the login, verify the same username
+or email address and password directly on the website before replacing the
+saved Credential Locker entry.
+
 ## Browser/server UI
 
 The browser never owns a saved secret. Its same-origin Credentials form sends a
