@@ -101,20 +101,35 @@ explicit peer configuration, and the trusted-network boundary.
 ## Secrets and persistence
 
 Non-secret model/provider choices use browser-local storage. Saved feed
-schedules persist non-secret processing choices in SQLite but strip direct
-Hugging Face and analysis API-key values. API keys and Hugging Face tokens are
-never written to browser storage; they remain in the active tab and travel only
-over the same-origin Web service to the selected child worker. A continuously
-running schedule that needs such a value must obtain it from the service's
-private environment. A Hugging Face read token is needed for the first gated
-Community-1 download, but a complete cache can later run offline without one.
-Broadcastify login fields are sent to the website-auth worker and the password
-field is immediately cleared. For repeat launches, prefer the ignored `.env`
-variables documented in `.env-example`.
+schedules persist non-secret processing choices in SQLite and never contain
+direct passwords, tokens, or API keys.
 
-WinUI can additionally use Windows Credential Locker. A portable OS-keychain
-adapter is not currently prioritized; the browser UI must not imply that
-ordinary local storage is a safe replacement.
+The browser UI's **Credentials** page can persist the Broadcastify login and a
+Hugging Face read token on the app server. It never stores either value in
+browser storage or returns a complete secret to the browser:
+
+- Windows servers encrypt the complete credential payload with current-user
+  DPAPI.
+- Linux and TrueNAS servers use AES-GCM with a randomly generated 256-bit key;
+  the key and encrypted payload are restricted to the service account and must
+  live in the persistent private data mount.
+- Status responses contain only the username and a short password/token prefix.
+- Every foreground and scheduled worker receives the decrypted values only in
+  its child-process environment.
+
+The default payload is `.credentials.enc`; AES-GCM hosts also create
+`.credentials.enc.key` beneath the service working directory. Both patterns are
+ignored by Git. Set
+`BROADCASTIFY_CREDENTIAL_STORE` to choose another persistent private path.
+Filesystem/root access can still recover a local service key, so host and
+dataset permissions remain part of the security boundary.
+
+A Hugging Face read token is needed for the first gated Community-1 download;
+a complete cache can later run offline without one. Environment variables from
+`.env-example` remain a supported headless alternative, and encrypted UI values
+take precedence without rewriting that file. Hosted analysis API keys continue
+to be session/environment values unless their platform-specific secure-store
+path explicitly supports persistence.
 
 ## Current validation boundary
 

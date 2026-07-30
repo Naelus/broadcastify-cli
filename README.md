@@ -47,9 +47,17 @@ See [FEATURES.md](FEATURES.md) for the current capability matrix.
 
 ## Quick start on Windows
 
-Requirements: Python 3.12, FFmpeg, .NET 10 SDK, a Broadcastify premium login,
-and llama.cpp. NVIDIA CUDA is the tested fast default; CPU, Vulkan, OpenVINO,
-Windows ML, and portable profiles are available with documented boundaries.
+Download `BroadcastifyDesktop-<version>-win-x64-setup.exe` from
+[Releases](https://github.com/Naelus/broadcastify-cli/releases). The per-user
+installer includes the native WinUI app, Python worker, FFmpeg, Windows ML
+helper, and portable CPU/Qwen/Sherpa runtimes. It preserves application data
+across upgrades and uninstall. Models remain explicit first-use downloads.
+
+The installer is currently unsigned, so Windows may show an unknown-publisher
+warning until release signing is configured. LAN sharing may also request a
+one-time Windows Firewall allowance for the bundled Python path.
+
+For source development instead:
 
 ```powershell
 py -3.12 -m venv .venv
@@ -62,17 +70,19 @@ dotnet build .\BroadcastifyCli.WinUI\BroadcastifyCli.WinUI.csproj -c Release
 
 In the app:
 
-1. Open **Settings → Setup** and configure account, storage, processing, and
-   analysis.
-2. Use **Verify profile** to execute all three model stages on generated local
+1. Open **Credentials** to enter the Broadcastify website login and optional
+   Hugging Face read token. Windows encrypts them for the current account and
+   shows only a short prefix afterward.
+2. Open **Settings → Setup** and configure storage, processing, and analysis.
+3. Use **Verify profile** to execute all three model stages on generated local
    input without consuming archive quota.
-3. Open **New archive**, search for a feed, and select an inclusive date range.
-4. Optionally choose **Schedule this feed** to save a daily time and recent-day
+4. Open **New archive**, search for a feed, and select an inclusive date range.
+5. Optionally choose **Schedule this feed** to save a daily time and recent-day
    lookback for that specific result.
-5. Leave combination enabled when transcribing or adding speaker labels.
-6. Review completed or interrupted days in **Local library**. The next action
+6. Leave combination enabled when transcribing or adding speaker labels.
+7. Review completed or interrupted days in **Local library**. The next action
    resumes only the missing or stale stage.
-7. Use **Review & Ask** or **Area watch** for cited incidents, clips, questions,
+8. Use **Review & Ask** or **Area watch** for cited incidents, clips, questions,
    weekly briefs, and regional leads.
 
 The full prerequisite, first-run, model, and private-build instructions are in
@@ -80,8 +90,10 @@ The full prerequisite, first-run, model, and private-build instructions are in
 
 ## Local data and recovery
 
-Archive data defaults to `archives/`; analysis defaults to
-`archives/broadcastify-analysis.sqlite3`. Downloads, combined audio,
+Installed Windows archive data defaults to
+`%LOCALAPPDATA%\Broadcastify Desktop\archives`; source and server runs default
+to `archives/`. Analysis lives in the selected library as
+`broadcastify-analysis.sqlite3`. Downloads, combined audio,
 transcription, diarization, embeddings, incidents, and summaries have separate
 cache identities. A retry starts at the first missing or invalid stage rather
 than repeating successful work.
@@ -108,6 +120,7 @@ Useful starting points:
 - [Incident analysis and evidence](docs/features/evidence-analysis.md)
 - [Area Watch and regional leads](docs/features/area-watch.md)
 - [Hardware backends and measured limits](docs/hardware-backends.md)
+- [Credential storage and precedence](docs/reference/credentials.md)
 - [TrueNAS Apps deployment](deploy/truenas/README.md)
 
 ## Development tracking

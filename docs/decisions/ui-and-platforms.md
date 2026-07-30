@@ -12,10 +12,11 @@ implementation simplicity over the contemporary native layout/navigation model
 this application needs. WPF would also be viable, but WinUI is Microsoft's
 current direction for new native Windows applications.
 
-The desktop is unpackaged x64 today. That avoids requiring MSIX during
-development, but the verified publish still depends on the repository Python
-environment and is not a complete consumer installer. See
-[Windows publish](../windows-publish.md).
+The desktop remains an unpackaged x64 executable rather than MSIX, but its
+per-user Inno Setup release is now a complete portable application runtime:
+self-contained WinUI, embedded Python worker, FFmpeg, Windows ML helper, and
+portable inference dependencies. Models and optional heavyweight accelerator
+stacks remain explicit. See [Windows publish](../windows-publish.md).
 
 ## Why a separate browser companion
 
@@ -41,7 +42,8 @@ Both UIs are task-oriented rather than one long scrolling form:
 - **New Archive** for discovery and acquisition
 - **Review & Ask** for incidents, clips, summaries, and questions
 - **Area Watch** for profiles, queues, and regional leads
-- **Settings** for Setup, Processing, Analysis & AI, and Account
+- **Credentials** for encrypted Broadcastify and Hugging Face access
+- **Settings** for Setup, Processing, and Analysis & AI
 
 Master/detail layouts keep a bounded list and one selected evidence package
 visible. Generated prose is secondary to coverage and citations.

@@ -13,9 +13,21 @@ Native Windows state:
 
 - settings: `%LOCALAPPDATA%\Broadcastify Desktop\settings.json`
 - activity log: `%LOCALAPPDATA%\Broadcastify Desktop\activity.log`
-- exception log: `%LOCALAPPDATA%\Broadcastify Desktop\exceptions.log`
+- exception log: `%LOCALAPPDATA%\Broadcastify Desktop\crash.log`
 - archive request ledger: `%LOCALAPPDATA%\Broadcastify Desktop\archive-quota.sqlite3`
-- managed model root: the app's per-user model directory reported in Settings
+- installed default library: `%LOCALAPPDATA%\Broadcastify Desktop\archives`
+- managed model root: `%LOCALAPPDATA%\Broadcastify Desktop\models`
+- program runtime: `%LOCALAPPDATA%\Programs\Broadcastify Desktop`
+
+The program runtime is replaceable and is removed by uninstall. The data
+directory is explicitly retained. New settings persist the selected library as
+an absolute path. The installed app can reconnect an older source build's
+relative `archives` setting to a valid prior library recorded in the local
+activity history; it does not copy or delete that library.
+
+Native secrets are separate from these files. Windows Credential Locker stores
+the Broadcastify password, Hugging Face token, and any explicitly remembered
+analysis key for the current account.
 
 Linux service defaults:
 

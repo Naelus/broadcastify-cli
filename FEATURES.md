@@ -1,6 +1,6 @@
 # Feature inventory
 
-Last updated: July 23, 2026
+Last updated: July 29, 2026
 
 Status labels: **Validated**, **Implemented**, **Evaluated**, **Foundation**, or
 **Planned**. Detailed behavior and retained validation evidence belong in
@@ -66,12 +66,13 @@ See [evidence analysis](docs/features/evidence-analysis.md),
 | Area Watch | Validated | Profile discovery, queue, coverage-aware ranked leads, selected evidence, clips and exports. |
 | Neighborhood subscription delivery | Foundation | Story eligibility and neighborhood/topic tags exist; opt-in delivery is explicitly low priority in [#5](https://github.com/Naelus/broadcastify-cli/issues/5). |
 | Cross-platform browser UI | Validated | Windows/Linux desktop and mobile validation; loopback default and explicit trusted-LAN mode. |
-| Saved Windows login | Implemented | Windows Credential Locker plus ignored session cookie. |
+| Encrypted local credentials | Validated | One-click Windows Credential Locker UI; browser/server DPAPI or AES-GCM store; only short non-secret previews return to either UI. |
 | First-run/profile verifier | Validated | Real generated-input execution across ASR, speakers, and analysis without archive quota. |
 | Linux user service | Validated | Install/start/stop/status/log/restart and data-preserving uninstall. |
 | TrueNAS App | Validated | Persistent host-path data, trusted-LAN UI, AMD Vulkan, unprivileged/read-only container boundary. |
 | Verified Windows publish | Validated | WinUI resources, namespaced Windows ML helper, normal/private environment isolation. |
-| Standalone installer/model manager | Foundation | Verified publish exists; the remaining non-developer packaging and managed-model work is tracked in [#1](https://github.com/Naelus/broadcastify-cli/issues/1). |
+| Standalone Windows installer | Validated | Per-user Inno Setup package with embedded Python, FFmpeg, Windows ML and portable inference runtimes; install/upgrade/uninstall preserve application data. |
+| Accelerator add-on/model manager | Foundation | First-use managed models exist; a signed release and optional CUDA/OpenVINO/Vulkan add-on lifecycle remain packaging work. |
 
 See [Library and Review](docs/features/library-and-review.md),
 [Area Watch](docs/features/area-watch.md),

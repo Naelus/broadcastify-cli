@@ -1,114 +1,130 @@
 # Windows setup and first run
 
-The native Windows application is the reference experience. It is an unpackaged
-x64 WinUI 3 application built on .NET 10 and Windows App SDK 2.3.1. It still
-uses the repository Python environment; the verified publish is not yet a
-standalone installer.
+The reference Windows experience is a native x64 WinUI 3 application on .NET
+10 and Windows App SDK 2.3.1.
 
-## Prerequisites
+## Install a release
 
-- Windows 10 version 1809 or later, x64
-- Python 3.12
-- FFmpeg
-- .NET 10 SDK
-- llama.cpp for the default local analysis provider
-- A Broadcastify premium account
-- A Hugging Face read token for the first Community-1 download only
+Download `BroadcastifyDesktop-<version>-win-x64-setup.exe` from
+[GitHub Releases](https://github.com/Naelus/broadcastify-cli/releases) and run
+it. The installer is per-user by default and creates a Start-menu shortcut; a
+desktop shortcut is optional.
 
-Install the basic tools:
+The package includes:
 
-```powershell
-winget install --id Python.Python.3.12 -e
-winget install --id Gyan.FFmpeg.Shared -e
-winget install --id Microsoft.DotNet.SDK.10 -e
-winget install --id ggml.llamacpp -e
-```
+- the self-contained WinUI application and Windows ML helper;
+- embedded Python 3.12 and the application worker;
+- FFmpeg and FFprobe;
+- Windows ML model-build dependencies;
+- portable Qwen3-ASR and Sherpa ONNX speaker runtimes.
 
-## Python environment
+It deliberately does not bundle multi-gigabyte models, llama.cpp, PyTorch, or
+CUDA. Model acquisition remains an explicit action in Setup. The portable CPU
+profile works without a system Python installation; CUDA, Community-1,
+OpenVINO, Vulkan, and local Gemma have the boundaries documented in
+[hardware backends](../hardware-backends.md).
 
-The tested NVIDIA setup uses CUDA 12.8 PyTorch wheels:
+The current installer is unsigned. Windows can show an unknown-publisher or
+SmartScreen warning until code signing is configured. Starting trusted-LAN
+sharing from a newly installed path can also cause a one-time Windows Firewall
+prompt for the bundled Python executable.
+
+## Credentials
+
+Choose **Credentials** in the bottom-left navigation:
+
+- Broadcastify username/password are stored in Windows Credential Locker for
+  the current Windows account.
+- A Hugging Face read token is stored in its own Credential Locker entry.
+- Saved secrets are never pre-filled. The UI shows only the username and a
+  short password/token prefix so the user can identify the selected credential.
+- Saved values are supplied to foreground and scheduled worker processes
+  without being written to ordinary settings or job JSON.
+
+Use a Hugging Face **read** token. The page links directly to the
+[token settings](https://huggingface.co/settings/tokens),
+[token documentation](https://huggingface.co/docs/hub/en/security-tokens), and
+[Community-1 terms](https://huggingface.co/pyannote/speaker-diarization-community-1).
+A token is needed only for the first gated Community-1 download; a complete
+model cache can later run offline.
+
+## First-run workflow
+
+1. Open **Credentials** and sign in through the Broadcastify website session.
+2. Open **Settings → Setup**. The overview distinguishes detected,
+   configured, and execution-verified stages.
+3. Choose the hardware profile. The packaged portable paths are available on
+   a clean machine; install optional accelerator dependencies only when needed.
+4. Use **Verify profile**. It runs generated-input transcription, speaker
+   labeling, and analysis without consuming Broadcastify archive quota.
+5. Open **New archive**, find a feed, select an inclusive date range, and keep
+   combination enabled for transcription or speaker labels.
+6. Use **Local library** to continue interrupted or partially processed days.
+   **Improve speakers** can replace preview labels without repeating ASR.
+7. Use **Review & Ask** for evidence clips, daily/weekly briefs, and range
+   questions. Use **Area watch** for radius discovery and regional leads.
+
+Desktop schedules run while the desktop application is open. Use the managed
+Web/TrueNAS service when a continuously supervised schedule is required.
+
+## Data, upgrades, and uninstall
+
+The installed application uses:
+
+- program files: `%LOCALAPPDATA%\Programs\Broadcastify Desktop`
+- settings, quota ledger, logs, and managed models:
+  `%LOCALAPPDATA%\Broadcastify Desktop`
+- default installed library:
+  `%LOCALAPPDATA%\Broadcastify Desktop\archives`
+
+Upgrades use a stable installer identity. Uninstall removes the application
+runtime but intentionally never removes the data directory. A source build now
+persists its library as an absolute path. When upgrading an older source build
+whose setting was the relative value `archives`, the installed app can
+reconnect to a valid previous library recorded in its own activity history and
+then persists that absolute location.
+
+See [storage and resume](../reference/storage-and-resume.md) before moving a
+library.
+
+## Build from source
+
+Source development still uses Python 3.12, FFmpeg, the .NET 10 SDK, and the
+desired optional inference backends. The tested NVIDIA environment is:
 
 ```powershell
 py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install --upgrade pip
 .\.venv\Scripts\python.exe -m pip install torch==2.11.0+cu128 torchaudio==2.11.0+cu128 --index-url https://download.pytorch.org/whl/cu128
 .\.venv\Scripts\python.exe -m pip install -e ".[transcription,analysis,dev]"
-```
-
-Optional groups:
-
-- `.[qwen]` for the fast CPU Qwen3-ASR preview
-- `.[openvino]` for OpenVINO ASR
-- `.[windowsml]` for Windows ML model export/build support
-
-## Build and run
-
-```powershell
 dotnet build .\BroadcastifyCli.WinUI\BroadcastifyCli.WinUI.csproj -c Release
 & ".\BroadcastifyCli.WinUI\bin\Release\net10.0-windows10.0.26100.0\win-x64\Broadcastify Desktop.exe"
 ```
 
-## First-run workflow
+Optional dependency groups include `qwen`, `portable-diarization`, `openvino`,
+and `windowsml`.
 
-1. Open **Settings → Setup**. The overview distinguishes detection,
-   configuration, and verified execution for the account, storage,
-   transcription, speaker, and analysis stages.
-2. Enter the premium Broadcastify login. **Save this login securely** stores it
-   in Windows Credential Locker for the current Windows account. Session cookies
-   remain in the ignored `cookies.json` file.
-3. Keep **Community-1 — accuracy default** on the CUDA reference path. Accept
-   the Community-1 model terms and supply a read token for its first download.
-   The token is not required after the complete model cache exists.
-4. Use **Verify profile**. It runs generated-input transcription, speaker
-   labeling, and analysis sequentially, releases model memory between stages,
-   and does not touch Broadcastify archive quota.
-5. Open **New archive**, search for a feed, select the inclusive date range, and
-   keep **Create combined MP3** enabled for transcription/diarization.
-6. To revisit a feed automatically, select that search result and choose
-   **Schedule this feed**. Pick a local daily time and recent-day lookback.
-   Schedules run while the desktop app is open; use the managed Web/TrueNAS
-   service for continuous unattended scheduling.
-7. Open **Local library** to continue an interrupted or partially processed
-   day. **Improve speakers** replaces preview labels with Community-1 without
-   repeating transcription.
-8. Use **Review & Ask** for incidents, evidence clips, daily/weekly briefs, and
-   range questions. Use **Area watch** for radius discovery and regional leads.
+## Build an installer
 
-Model self-tests prove that the selected runtime actually executes; generated
-silence is not a radio-accuracy benchmark. See [hardware backends](../hardware-backends.md).
-
-## Environment file
-
-Copy `.env-example` to the ignored `.env` when environment-based configuration
-is preferred. The important account variables are:
-
-```dotenv
-BROADCASTIFY_USERNAME=""
-BROADCASTIFY_PASSWORD=""
-HUGGINGFACE_TOKEN=""
-```
-
-Runtime/model overrides and hosted processing defaults are documented inline in
-`.env-example`. Never commit `.env`, `cookies.json`, or a private publish.
-
-## Verified publish
-
-Normal publish:
+Install the pinned Inno Setup compiler once, then build:
 
 ```powershell
-.\scripts\verify_windows_publish.ps1 `
-  -OutputDirectory .\BroadcastifyCli.WinUI\bin\Publish\win-x64
+.\scripts\install_inno_setup.ps1
+.\scripts\build_windows_installer.ps1
 ```
 
-Private personal publish with the ignored `.env` bundled as plaintext inside
-the dedicated output directory:
+The public artifact is written to
+`dist\windows\BroadcastifyDesktop-<version>-win-x64-setup.exe`. Verified Python
+and FFmpeg archives plus an exact Python dependency constraints file make the
+portable runtime repeatable. Tagged `v*` pushes run the Windows release
+workflow and attach this asset to the existing GitHub release.
+
+For a private local build only:
 
 ```powershell
-.\scripts\verify_windows_publish.ps1 `
-  -OutputDirectory .\BroadcastifyCli.WinUI\bin\Private\publish-win-x64 `
-  -BundleLocalEnv
+.\scripts\build_windows_installer.ps1 -BundleLocalEnv
 ```
 
-Do not distribute a private publish. The verifier checks environment isolation,
-compiled WinUI resources, and the bundled Windows ML helper. See
-[Windows publish layout](../windows-publish.md).
+This copies the ignored `.env` as plaintext into that private application
+runtime. Never distribute a private installer. Public builds reject a stale or
+unexpected `broadcastify-desktop.env`.

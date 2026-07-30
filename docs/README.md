@@ -32,6 +32,7 @@ start.
 ## Reference and validation
 
 - [Storage layout and resumability](reference/storage-and-resume.md)
+- [Credential storage and precedence](reference/credentials.md)
 - [Hardware backends](hardware-backends.md)
 - [Analysis providers](model-providers.md)
 - [Archive rate limits](rate-limits.md)

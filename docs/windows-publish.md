@@ -1,34 +1,108 @@
-# Windows publish and runtime layout
+# Windows publish, installer, and release layout
 
-Last verified: July 18, 2026.
+Last verified: July 29, 2026.
 
-The Windows reference shell can now be produced with `dotnet publish` without merging the Windows ML helper into the WinUI dependency graph:
+## Raw native publish
+
+The development verifier still produces and probes the native WinUI publish:
 
 ```powershell
 .\scripts\verify_windows_publish.ps1 `
   -OutputDirectory .\BroadcastifyCli.WinUI\bin\Publish\win-x64
 ```
 
-The verifier performs a real Release publish, checks the unpackaged WinUI compiled XAML and PRI resources, confirms the private environment is absent, and executes `windowsml\BroadcastifyCli.WindowsML.exe --probe`. The helper is kept in a namespaced subdirectory with its complete runtime so duplicate Windows App SDK filenames cannot collide with the desktop shell. The desktop passes that exact helper path to every Python child unless `WINDOWS_ML_HELPER_PATH` was explicitly configured by the user.
+It checks compiled XAML/PRI resources, the namespaced Windows ML helper, and
+normal/private environment isolation. This raw folder intentionally remains a
+developer artifact that uses the repository Python environment.
 
-Both native projects now target the current stable [Windows App SDK **2.3.1** release](https://github.com/microsoft/WindowsAppSDK/releases/tag/v2.3.1) and `Microsoft.Windows.SDK.BuildTools` **10.0.28000.2270**. The supported metapackage graph resolves `Microsoft.Windows.AI.MachineLearning` and `Microsoft.WindowsAppSDK.ML` **2.1.74**. The earlier 1.8.10 build remains historical validation evidence, not the current runtime.
+## Standalone installer
 
-Both projects build with zero warnings or errors. The upgraded native app completed the real CUDA/Community-1/Gemma setup proof in **14.9 seconds**, and the helper completed a real CPU FP32 Whisper decode. A current joined Windows ML profile completed in **13.546 seconds**, including its **0.437-second** CPU ASR decode. GPU execution remains gated by the model/provider tests in [hardware-backends.md](hardware-backends.md).
-
-`dotnet list package --outdated --include-transitive` reports a few independently versioned transitive components newer than the minimum versions selected by Windows App SDK 2.3.1. They are intentionally not overridden one-by-one: the Windows App SDK metapackage owns the tested WinUI, Windows ML, WebView2, and MSIX component graph.
-
-For the owner's private build only:
+The consumer build layers a portable runtime over the verified native publish:
 
 ```powershell
-.\scripts\verify_windows_publish.ps1 `
-  -OutputDirectory .\BroadcastifyCli.WinUI\bin\Private\publish-win-x64 `
-  -BundleLocalEnv
+.\scripts\install_inno_setup.ps1
+.\scripts\build_windows_installer.ps1
 ```
 
-That opt-in verifies the published `broadcastify-desktop.env` against the ignored repository `.env` by hash without printing either file. Re-running the verifier without `-BundleLocalEnv` against the same output removes and rejects a stale private environment.
+Output:
 
-The current migration repeated a normal → private → normal → private cycle. The final private publish retained the matching ignored environment, the normal pass proved stale-private removal, and the published desktop visibly completed all three setup model stages. The bundled helper's read-only provider inspection reported `WebGpuExecutionProvider:NotPresent` and certified installed `NvTensorRTRTXExecutionProvider:NotReady`; no provider was downloaded, acquired, or registered.
+```text
+dist/windows/BroadcastifyDesktop-0.4.0-win-x64-setup.exe
+```
 
-## Current boundary
+The application stage contains:
 
-This is a verified runnable publish, but not yet a standalone installer. `WorkerClient` still locates the source tree (`pyproject.toml`) and uses its configured Python/`.venv`; model caches also remain external. A distributable installer must supervise or bundle Python and the selected optional dependencies, choose per-hardware components, and provide an explicit model/cache manager. Do not describe the current folder as a standalone package.
+```text
+Broadcastify Desktop.exe
+windowsml/
+runtime/
+  python/
+    python.exe
+    Lib/site-packages/
+  tools/
+    ffmpeg.exe
+    ffprobe.exe
+build-manifest.json
+LICENSE
+THIRD-PARTY-NOTICES.txt
+```
+
+`WorkerClient` detects `runtime/python/python.exe`, stops searching for
+`pyproject.toml`, and runs workers from the writable per-user data directory.
+Relative output paths therefore resolve under
+`%LOCALAPPDATA%\Broadcastify Desktop`, never under the program directory.
+Bundled workers disable user-site packages and bytecode writes. FFmpeg receives
+an explicit path.
+
+Python 3.12.10 and the FFmpeg 8.1.2 essentials archive are SHA-256 pinned.
+Python wheel versions are exact in
+`installer/windows-runtime-constraints.txt`. The package includes Windows ML,
+Qwen3-ASR, and portable Sherpa diarization dependencies but excludes the
+multi-gigabyte CUDA/PyTorch stack. Models are not bundled.
+
+## Installer behavior
+
+The Inno Setup package:
+
+- installs per-user under
+  `%LOCALAPPDATA%\Programs\Broadcastify Desktop`;
+- uses a stable `AppId` for in-place upgrades;
+- creates a Start-menu shortcut and offers an optional desktop shortcut;
+- registers one normal uninstall entry;
+- removes generated application-runtime residue on uninstall;
+- marks `%LOCALAPPDATA%\Broadcastify Desktop` as never uninstall;
+- never copies `.env` in a public build.
+
+The retained lifecycle test completed install, native launch with the bundled
+Python child, same-version upgrade, uninstall, and clean reinstall. Settings and
+all data files were unchanged; the corrected uninstall removed the complete
+program directory; and the clean launch generated no Python cache directories.
+
+The current local installer is unsigned. A release certificate can be added
+without changing the layout; signing should cover the application executable
+and final setup executable. Until then, Windows reputation warnings are
+expected. Trusted-LAN sharing can cause a separate one-time firewall consent
+for the bundled Python path.
+
+## Private build
+
+`-BundleLocalEnv` is an explicit owner-only escape hatch:
+
+```powershell
+.\scripts\build_windows_installer.ps1 -BundleLocalEnv
+```
+
+The build verifies the copied ignored `.env` by hash without printing it.
+Never distribute that artifact. The default and GitHub Actions paths are always
+public builds and reject any bundled private environment.
+
+## GitHub release workflow
+
+`.github/workflows/windows-release.yml` runs on `v*` tags or manual dispatch.
+It installs the checksum- and signature-verified Inno Setup 7.0.2 compiler,
+builds the installer, uploads a workflow artifact, and creates a tagged GitHub
+release with generated notes or replaces its existing installer asset.
+
+The workflow never creates a tag and requires the tag/build version to match
+`pyproject.toml`. It contains no credentials; repository `GITHUB_TOKEN` supplies
+only release permission.
