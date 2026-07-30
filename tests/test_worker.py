@@ -646,6 +646,10 @@ def test_secure_store_values_override_private_environment(
     monkeypatch.setenv("BROADCASTIFY_SECURE_USERNAME", "secure-user")
     monkeypatch.setenv("BROADCASTIFY_SECURE_PASSWORD", "secure-password")
     monkeypatch.setenv("HUGGINGFACE_SECURE_TOKEN", "hf_secure")
+    monkeypatch.setenv(
+        "BROADCASTIFY_SECURE_ANALYSIS_DB",
+        str(tmp_path / "selected-library.sqlite3"),
+    )
 
     loaded = load_worker_environment()
 
@@ -653,6 +657,9 @@ def test_secure_store_values_override_private_environment(
     assert os.environ["BROADCASTIFY_USERNAME"] == "secure-user"
     assert os.environ["BROADCASTIFY_PASSWORD"] == "secure-password"
     assert os.environ["HUGGINGFACE_TOKEN"] == "hf_secure"
+    assert os.environ["BROADCASTIFY_ANALYSIS_DB"] == str(
+        tmp_path / "selected-library.sqlite3"
+    )
 
 
 def test_day_report_exposes_playback_metadata_without_raw_evidence(tmp_path: Path) -> None:

@@ -470,6 +470,9 @@ class JobManager:
             job.started_at = utc_now()
         environment = os.environ.copy()
         environment["BROADCASTIFY_ANALYSIS_DB"] = str(self.database_path)
+        environment["BROADCASTIFY_SECURE_ANALYSIS_DB"] = str(
+            self.database_path
+        )
         environment["PYTHONIOENCODING"] = "utf-8"
         environment["PYTHONUTF8"] = "1"
         environment.update(self.credential_store.worker_environment())

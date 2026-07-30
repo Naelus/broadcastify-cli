@@ -121,8 +121,13 @@ public sealed partial class MainWindow : Window
         try
         {
             _worker = new WorkerClient();
+            _worker.SetLibraryDirectory(OutputFolderBox.Text);
+            PersistUserSettings(logFailure: true);
             AppendLog($"Worker: {_worker.PythonDisplayName}");
-            AppendLog($"Repository: {_worker.RepositoryRoot}");
+            AppendLog(_worker.IsBundledRuntime
+                ? $"Installed runtime: {_worker.RepositoryRoot}"
+                : $"Repository: {_worker.RepositoryRoot}");
+            AppendLog($"Working data: {_worker.WorkingDirectory}");
             AppendLog(_worker.HasBundledWindowsMlHelper
                 ? "Windows ML helper: bundled runtime"
                 : "Windows ML helper: repository/runtime discovery");
@@ -384,9 +389,26 @@ public sealed partial class MainWindow : Window
         SelectComboValue(DiarizationDeviceComboBox, settings.DiarizationDevice);
         EnsureDiarizationSelectionCompatibility();
         AsrModelPathBox.Text = settings.AsrModelPath;
-        OutputFolderBox.Text = string.IsNullOrWhiteSpace(settings.OutputDirectory)
+        var configuredOutputDirectory = string.IsNullOrWhiteSpace(settings.OutputDirectory)
             ? "archives"
             : settings.OutputDirectory;
+        var migratedOutputDirectory = false;
+        if (WorkerClient.BundledRuntimeAvailable
+            && !Path.IsPathRooted(configuredOutputDirectory))
+        {
+            var currentCandidate = Path.GetFullPath(
+                configuredOutputDirectory,
+                AppSettingsStore.LocalDataDirectory);
+            var previousLibrary = AppDiagnostics.FindPreviousLibraryDirectory(
+                configuredOutputDirectory,
+                currentCandidate);
+            if (!string.IsNullOrWhiteSpace(previousLibrary))
+            {
+                configuredOutputDirectory = previousLibrary;
+                migratedOutputDirectory = true;
+            }
+        }
+        OutputFolderBox.Text = configuredOutputDirectory;
         GpuIndexBox.Value = Math.Clamp(settings.GpuIndex, 0, 15);
         BatchSizeBox.Value = Math.Clamp(settings.BatchSize, 1, 64);
         MinimumSpeakersBox.Value = Math.Clamp(settings.MinimumSpeakers, 0, 64);
@@ -431,6 +453,13 @@ public sealed partial class MainWindow : Window
         _lastReviewDate = settings.LastReviewDate;
         AnalysisFeedBox.Text = _lastReviewFeedId;
         _loadingSettings = false;
+        if (migratedOutputDirectory)
+        {
+            PersistUserSettings();
+            AppendLog(
+                $"Reconnected the installed app to the existing library at "
+                + $"{configuredOutputDirectory}.");
+        }
         RefreshHuggingFaceCredentialUi();
         UpdateAnalysisProviderUi();
         UpdateAsrModelPreparationUi();
@@ -456,9 +485,7 @@ public sealed partial class MainWindow : Window
             DiarizationEngine = SelectedComboValue(DiarizationEngineComboBox, "community-1"),
             DiarizationDevice = SelectedComboValue(DiarizationDeviceComboBox, "auto"),
             AsrModelPath = AsrModelPathBox.Text.Trim(),
-            OutputDirectory = string.IsNullOrWhiteSpace(OutputFolderBox.Text)
-                ? "archives"
-                : OutputFolderBox.Text.Trim(),
+            OutputDirectory = PersistedOutputDirectory(),
             GpuIndex = RequiredInteger(GpuIndexBox.Value, 0),
             BatchSize = RequiredInteger(BatchSizeBox.Value, 8),
             MinimumSpeakers = RequiredInteger(MinimumSpeakersBox.Value, 0),
@@ -488,6 +515,34 @@ public sealed partial class MainWindow : Window
             LastReviewFeedId = _lastReviewFeedId,
             LastReviewDate = _lastReviewDate,
         };
+
+    private string PersistedOutputDirectory()
+    {
+        var configured = string.IsNullOrWhiteSpace(OutputFolderBox?.Text)
+            ? "archives"
+            : OutputFolderBox.Text.Trim();
+        try
+        {
+            if (Path.IsPathRooted(configured))
+            {
+                return Path.GetFullPath(configured);
+            }
+            if (_worker is null)
+            {
+                return configured;
+            }
+            return Path.GetFullPath(configured, _worker.WorkingDirectory);
+        }
+        catch (Exception exception) when (
+            exception is ArgumentException
+                or IOException
+                or NotSupportedException)
+        {
+            // Preserve in-progress text without crashing autosave. Storage
+            // validation will explain the invalid path before a job can run.
+            return configured;
+        }
+    }
 
     private void PersistUserSettings(bool logFailure = false)
     {
@@ -653,6 +708,7 @@ public sealed partial class MainWindow : Window
         {
             return;
         }
+        _worker?.SetLibraryDirectory(OutputFolderBox.Text);
         _settingsSaveTimer.Stop();
         _settingsSaveTimer.Start();
     }
@@ -1179,7 +1235,7 @@ public sealed partial class MainWindow : Window
             var configured = string.IsNullOrWhiteSpace(OutputFolderBox?.Text)
                 ? "archives"
                 : OutputFolderBox.Text.Trim();
-            var baseDirectory = _worker?.RepositoryRoot ?? Environment.CurrentDirectory;
+            var baseDirectory = _worker?.WorkingDirectory ?? Environment.CurrentDirectory;
             var path = Path.GetFullPath(configured, baseDirectory);
             Directory.CreateDirectory(path);
             var probe = Path.Combine(path, $".radio-archive-write-{Guid.NewGuid():N}.tmp");
@@ -3329,9 +3385,7 @@ public sealed partial class MainWindow : Window
             FeedName = feedName?.Trim() ?? "",
             StartDate = startDate.ToString("yyyy-MM-dd"),
             EndDate = endDate.ToString("yyyy-MM-dd"),
-            OutputDirectory = string.IsNullOrWhiteSpace(OutputFolderBox.Text)
-                ? "archives"
-                : OutputFolderBox.Text.Trim(),
+            OutputDirectory = PersistedOutputDirectory(),
             Combine = DiarizeCheckBox.IsChecked == true || CombineToggle.IsOn,
             KeepOriginals = KeepOriginalsToggle.IsOn,
             Transcribe = TranscribeCheckBox.IsChecked == true,

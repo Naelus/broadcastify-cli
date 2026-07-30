@@ -4,7 +4,7 @@ namespace BroadcastifyCli.WinUI;
 
 internal sealed record DesktopSettings
 {
-    public int Version { get; init; } = 5;
+    public int Version { get; init; } = 6;
     public string HardwareProfile { get; init; } = "auto";
     public string WhisperModel { get; init; } = "turbo";
     public string AsrEngine { get; init; } = "auto";
@@ -94,6 +94,14 @@ internal static class AppSettingsStore
                     Version = 5,
                     LanShareEnabled = settings.LanSyncEnabled,
                 };
+                needsSave = true;
+            }
+            if (settings.Version < 6)
+            {
+                // Version 6 persists library locations as absolute paths so
+                // moving from a source checkout to an installed app cannot
+                // make an existing library appear empty.
+                settings = settings with { Version = 6 };
                 needsSave = true;
             }
             if (needsSave)

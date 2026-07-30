@@ -1720,6 +1720,9 @@ def load_worker_environment() -> Path | None:
         "BROADCASTIFY_USERNAME": os.getenv("BROADCASTIFY_SECURE_USERNAME"),
         "BROADCASTIFY_PASSWORD": os.getenv("BROADCASTIFY_SECURE_PASSWORD"),
         "HUGGINGFACE_TOKEN": os.getenv("HUGGINGFACE_SECURE_TOKEN"),
+        "BROADCASTIFY_ANALYSIS_DB": os.getenv(
+            "BROADCASTIFY_SECURE_ANALYSIS_DB"
+        ),
     }
     for name, value in secure_values.items():
         if value:

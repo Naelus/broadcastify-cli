@@ -13,10 +13,20 @@ internal sealed class WorkerClient
     private readonly SemaphoreSlim _lanNodeGate = new(1, 1);
     private Process? _lanNodeProcess;
     private string _lanNodeConfiguration = "";
+    private string _libraryDirectory = "";
     private int _lanNodePort;
     private int _lanNodeShutdown;
 
+    public static string BundledPythonPath => Path.Combine(
+        AppContext.BaseDirectory,
+        "runtime",
+        "python",
+        "python.exe");
+    public static bool BundledRuntimeAvailable =>
+        File.Exists(BundledPythonPath);
     public string RepositoryRoot { get; }
+    public string WorkingDirectory { get; }
+    public bool IsBundledRuntime { get; }
     public string PythonDisplayName => _python.DisplayName;
     public string BundledEnvironmentPath { get; }
     public bool HasBundledEnvironment => File.Exists(BundledEnvironmentPath);
@@ -25,8 +35,22 @@ internal sealed class WorkerClient
 
     public WorkerClient()
     {
-        RepositoryRoot = FindRepositoryRoot();
-        _python = ResolvePython(RepositoryRoot);
+        var bundledPython = BundledPythonPath;
+        IsBundledRuntime = File.Exists(bundledPython);
+        RepositoryRoot = IsBundledRuntime
+            ? AppContext.BaseDirectory.TrimEnd(
+                Path.DirectorySeparatorChar,
+                Path.AltDirectorySeparatorChar)
+            : FindRepositoryRoot();
+        WorkingDirectory = IsBundledRuntime
+            ? AppSettingsStore.LocalDataDirectory
+            : RepositoryRoot;
+        Directory.CreateDirectory(WorkingDirectory);
+        SetLibraryDirectory("archives");
+        _python = ResolvePython(
+            RepositoryRoot,
+            WorkingDirectory,
+            IsBundledRuntime ? bundledPython : null);
         BundledEnvironmentPath = Path.Combine(AppContext.BaseDirectory, "broadcastify-desktop.env");
         BundledWindowsMlHelperPath = Path.Combine(
             AppContext.BaseDirectory,
@@ -54,10 +78,10 @@ internal sealed class WorkerClient
             }
             var output = Path.GetFullPath(
                 string.IsNullOrWhiteSpace(outputDirectory)
-                    ? Path.Combine(RepositoryRoot, "archives")
+                    ? Path.Combine(WorkingDirectory, "archives")
                     : Path.IsPathRooted(outputDirectory)
                         ? outputDirectory
-                        : Path.Combine(RepositoryRoot, outputDirectory));
+                        : Path.Combine(WorkingDirectory, outputDirectory));
             var boundedPort = Math.Clamp(port, 1024, 65535);
             var configuration = $"{output}|{boundedPort}";
             if (_lanNodeProcess is { HasExited: false }
@@ -160,6 +184,29 @@ internal sealed class WorkerClient
         finally
         {
             _lanNodeGate.Release();
+        }
+    }
+
+    public void SetLibraryDirectory(string outputDirectory)
+    {
+        var configured = string.IsNullOrWhiteSpace(outputDirectory)
+            ? "archives"
+            : outputDirectory.Trim();
+        try
+        {
+            var resolved = Path.GetFullPath(
+                Path.IsPathRooted(configured)
+                    ? configured
+                    : Path.Combine(WorkingDirectory, configured));
+            Volatile.Write(ref _libraryDirectory, resolved);
+        }
+        catch (Exception exception) when (
+            exception is ArgumentException
+                or IOException
+                or NotSupportedException)
+        {
+            // TextChanged fires while the user is still editing. Keep the last
+            // valid library until the UI's storage validation reports the path.
         }
     }
 
@@ -988,7 +1035,7 @@ internal sealed class WorkerClient
         var startInfo = new ProcessStartInfo
         {
             FileName = _python.FileName,
-            WorkingDirectory = RepositoryRoot,
+            WorkingDirectory = WorkingDirectory,
             UseShellExecute = false,
             CreateNoWindow = true,
             RedirectStandardInput = redirectStreams,
@@ -1003,10 +1050,35 @@ internal sealed class WorkerClient
         }
         startInfo.Environment["PYTHONIOENCODING"] = "utf-8";
         startInfo.Environment["PYTHONUTF8"] = "1";
+        if (IsBundledRuntime)
+        {
+            startInfo.Environment["PYTHONNOUSERSITE"] = "1";
+            startInfo.Environment["PYTHONDONTWRITEBYTECODE"] = "1";
+            var toolsDirectory = Path.Combine(
+                AppContext.BaseDirectory,
+                "runtime",
+                "tools");
+            var ffmpeg = Path.Combine(toolsDirectory, "ffmpeg.exe");
+            if (File.Exists(ffmpeg))
+            {
+                var inheritedPath = startInfo.Environment.TryGetValue(
+                    "PATH",
+                    out var currentPath)
+                    ? currentPath ?? ""
+                    : "";
+                startInfo.Environment["FFMPEG_PATH"] = ffmpeg;
+                startInfo.Environment["PATH"] =
+                    toolsDirectory + Path.PathSeparator
+                    + inheritedPath;
+            }
+        }
         Directory.CreateDirectory(AppSettingsStore.LocalDataDirectory);
         startInfo.Environment["BROADCASTIFY_QUOTA_LEDGER"] = Path.Combine(
             AppSettingsStore.LocalDataDirectory,
             "archive-quota.sqlite3");
+        startInfo.Environment["BROADCASTIFY_SECURE_ANALYSIS_DB"] = Path.Combine(
+            Volatile.Read(ref _libraryDirectory),
+            "broadcastify-analysis.sqlite3");
         foreach (var argument in _python.PrefixArguments.Concat(arguments))
         {
             startInfo.ArgumentList.Add(argument);
@@ -1070,10 +1142,20 @@ internal sealed class WorkerClient
             "Could not find the broadcastify-cli repository. Start the app from the repository or its build output.");
     }
 
-    private static PythonCommand ResolvePython(string repositoryRoot)
+    private static PythonCommand ResolvePython(
+        string repositoryRoot,
+        string workingDirectory,
+        string? bundledPython)
     {
         var configured = Environment.GetEnvironmentVariable("BROADCASTIFY_PYTHON");
         var candidates = new List<PythonCommand>();
+        if (!string.IsNullOrWhiteSpace(bundledPython))
+        {
+            candidates.Add(new PythonCommand(
+                bundledPython,
+                [],
+                "bundled Python 3.12"));
+        }
         if (!string.IsNullOrWhiteSpace(configured))
         {
             candidates.Add(new PythonCommand(configured, [], configured));
@@ -1085,7 +1167,7 @@ internal sealed class WorkerClient
 
         foreach (var candidate in candidates)
         {
-            if (CanRunPython(candidate, repositoryRoot))
+            if (CanRunPython(candidate, workingDirectory))
             {
                 return candidate;
             }
