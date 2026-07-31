@@ -272,6 +272,16 @@ if ($LASTEXITCODE -ne 0) {
 
 Get-ChildItem -LiteralPath $sitePackages -Filter direct_url.json -Recurse -File |
     Remove-Item -Force
+$generatedLauncherDirectory = Join-Path $sitePackages "bin"
+if (Test-Path -LiteralPath $generatedLauncherDirectory) {
+    # pip's --target launchers contain an absolute shebang to the build
+    # interpreter. The desktop invokes every worker through the bundled
+    # python.exe and module name, so these non-portable stubs are unnecessary.
+    $verifiedLauncherDirectory = Assert-ChildPath `
+        $sitePackages `
+        $generatedLauncherDirectory
+    Remove-Item -LiteralPath $verifiedLauncherDirectory -Recurse -Force
+}
 $prunableRuntimeTests = @(
     (Join-Path $sitePackages "onnx\backend\test"),
     (Join-Path $sitePackages "onnx\test"),
@@ -286,6 +296,10 @@ foreach ($runtimeTestPath in $prunableRuntimeTests) {
 Get-ChildItem -LiteralPath $sitePackages -Filter __pycache__ -Recurse -Directory |
     Sort-Object FullName -Descending |
     Remove-Item -Recurse -Force
+
+if (Test-Path -LiteralPath $generatedLauncherDirectory) {
+    throw "The portable runtime still contains non-portable pip launchers."
+}
 
 $ffmpegArchive = Get-VerifiedDownload `
     -Uri $ffmpegUrl `

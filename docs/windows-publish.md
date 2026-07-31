@@ -56,7 +56,10 @@ staged PDB so local build paths cannot enter a release installer.
 Relative output paths therefore resolve under
 `%LOCALAPPDATA%\Broadcastify Desktop`, never under the program directory.
 Bundled workers disable user-site packages and bytecode writes. FFmpeg receives
-an explicit path.
+an explicit path. The build removes pip's generated console-launcher directory:
+those stubs contain an absolute path to the build interpreter, while every
+installed worker is launched portably as a module through the bundled
+`python.exe`.
 
 Python 3.12.10 and the FFmpeg 8.1.2 essentials archive are SHA-256 pinned.
 Python wheel versions are exact in
