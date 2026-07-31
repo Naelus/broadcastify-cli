@@ -69,6 +69,9 @@ Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs 
 ; version metadata cannot survive an otherwise successful in-place install.
 Type: filesandordirs; Name: "{app}\runtime"
 Type: filesandordirs; Name: "{app}\windowsml"
+; Public releases no longer contain symbols. Remove a root symbol left by an
+; earlier developer or private build during an in-place upgrade.
+Type: files; Name: "{app}\*.pdb"
 #if !FileExists(SourceDir + "\broadcastify-desktop.env")
 ; A clean/public upgrade must scrub an owner-only environment file that may
 ; have been installed by an earlier private build.

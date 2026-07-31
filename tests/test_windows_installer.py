@@ -73,6 +73,7 @@ def test_installer_is_per_user_upgrade_safe_and_preserves_app_data() -> None:
     assert "skipifsilent" in installer
     assert 'Type: filesandordirs; Name: "{app}\\runtime"' in installer
     assert 'Type: filesandordirs; Name: "{app}\\windowsml"' in installer
+    assert 'Type: files; Name: "{app}\\*.pdb"' in installer
     assert "#if !FileExists(SourceDir + \"\\broadcastify-desktop.env\")" in installer
     assert 'Type: files; Name: "{app}\\broadcastify-desktop.env"' in installer
     assert "Keep scheduled feeds current" in installer

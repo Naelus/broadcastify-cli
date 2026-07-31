@@ -87,6 +87,8 @@ The Inno Setup package:
   removed dependencies and old package metadata cannot survive;
 - never copies `.env` in a public build;
 - contains no PDB/debug-symbol files or developer build paths;
+- removes root debug symbols left by an earlier developer/private build during
+  an in-place public upgrade;
 - deletes a stale `broadcastify-desktop.env` when a public build upgrades a
 machine that previously ran an owner-only private build.
 
