@@ -591,6 +591,14 @@ async function refreshBootstrap({ preserveSelection = true } = {}) {
   }
 }
 
+function dayStorage(day) {
+  const retained = `${bytes(day.storage_bytes)} retained`;
+  const working = Number(day.working_storage_bytes || 0);
+  return working > 0
+    ? `${retained} · ${bytes(working)} temporary`
+    : retained;
+}
+
 function renderFeedSchedules() {
   const target = byId("feedScheduleList");
   if (!target) return;
@@ -659,7 +667,7 @@ function renderLibrary() {
     const selected = state.selectedDay && state.selectedDay.feed_id === day.feed_id && state.selectedDay.archive_date === day.archive_date;
     return `<button class="day-row${selected ? " selected" : ""}" role="option" aria-selected="${selected}" data-feed-id="${html(day.feed_id)}" data-date="${html(day.archive_date)}">
       <strong>${html(day.feed_name)}</strong><span class="status-chip${day.is_complete ? " ready" : ""}">${html(day.status)}</span>
-      <span class="date">${html(day.archive_date)} · ${bytes(day.storage_bytes)}</span>
+      <span class="date">${html(day.archive_date)} · ${dayStorage(day)}</span>
       <span class="next">${html(day.pipeline_percent)}% · Next: ${html(day.next_step)}</span>
     </button>`;
   }).join("");
@@ -720,7 +728,7 @@ function renderDayDetail(activeTab = "incidents") {
   const primaryLabel = day.primary_action === "open_review" ? "Review evidence" : day.next_step;
   const actionDisabled = day.primary_action === "resume_download" ? "" : "";
   byId("dayDetail").innerHTML = `
-    <div class="detail-head"><div><h2>${html(day.feed_name)}</h2><p>Feed ${html(day.feed_id)} · ${html(day.archive_date)} · ${bytes(day.storage_bytes)}</p></div>
+    <div class="detail-head"><div><h2>${html(day.feed_name)}</h2><p>Feed ${html(day.feed_id)} · ${html(day.archive_date)} · ${dayStorage(day)}</p></div>
       <div class="button-row">${day.speaker_upgrade_available ? '<button class="button secondary" data-action="upgrade-speakers" title="Replace fast preview labels with Community-1 without repeating transcription.">Improve speakers</button>' : ""}
       <button class="button ${day.is_complete ? "secondary" : "primary"}" data-action="primary-day" ${actionDisabled}>${html(primaryLabel)}</button></div></div>
     <div class="notice ${day.is_complete ? "success" : day.needs_network ? "warning" : "success"}"><strong>${html(day.status)}</strong><span>${html(day.status_detail)}. Next: ${html(day.next_step)}.</span></div>

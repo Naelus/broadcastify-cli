@@ -933,6 +933,9 @@ public sealed record LibraryDay
     [JsonPropertyName("storage_bytes")]
     public long StorageBytes { get; init; }
 
+    [JsonPropertyName("working_storage_bytes")]
+    public long WorkingStorageBytes { get; init; }
+
     [JsonPropertyName("pipeline_percent")]
     public int PipelinePercent { get; init; }
 
@@ -971,9 +974,12 @@ public sealed record LibraryDay
         "open_review" => "Open review",
         _ => "Continue",
     };
-    public string StorageSummary => FormatBytes(StorageBytes);
+    public string StorageSummary => WorkingStorageBytes > 0
+        ? $"{FormatBytes(StorageBytes, "retained")} · "
+            + $"{FormatBytes(WorkingStorageBytes, "temporary")}"
+        : FormatBytes(StorageBytes, "retained");
 
-    private static string FormatBytes(long bytes)
+    private static string FormatBytes(long bytes, string label)
     {
         string[] units = ["B", "KB", "MB", "GB", "TB"];
         var value = Math.Max(0, bytes);
@@ -984,7 +990,7 @@ public sealed record LibraryDay
             display /= 1024;
             unit++;
         }
-        return $"{display:0.#} {units[unit]} local";
+        return $"{display:0.#} {units[unit]} {label}";
     }
 }
 
@@ -1004,6 +1010,9 @@ internal sealed record LibrarySummary
 
     [JsonPropertyName("storage_bytes")]
     public long StorageBytes { get; init; }
+
+    [JsonPropertyName("working_storage_bytes")]
+    public long WorkingStorageBytes { get; init; }
 }
 
 internal sealed record LibraryResponse

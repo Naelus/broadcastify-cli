@@ -110,6 +110,10 @@ A later stage cannot make an earlier stale stage look complete.
 - Transcript JSON/TXT and manifests use atomic replacement.
 - Portable diarization checkpoints every completed chunk and retains the
   checkpoint until final-cache commit.
+- Community-1 reports its lossless retry input and float32 mapped waveform as
+  temporary-working storage rather than retained archive size. A completed
+  retry input survives an interruption, then is removed after an exact final
+  diarization cache exists.
 - Incident analysis checkpoints every completed model window.
 - Feed schedules store last-run and next-safe quota state; a startup recovery
   defers any schedule left running for one collision-avoidance minute and
@@ -119,6 +123,13 @@ A later stage cannot make an earlier stale stage look complete.
 
 An application or machine interruption may leave a partial/checkpoint, but it
 must not overwrite the last known-good final artifact.
+
+Refreshing the Local Library removes only identifiable old work artifacts: an
+orphaned combined-output partial, an incomplete speaker-preparation partial, or
+a raw speaker waveform whose recorded process no longer exists. It keeps active
+worker scratch files and reusable completed preparations. It also stops showing
+a transcript as current when the combined recording has a newer modification
+identity.
 
 ## Moving and backing up a library
 

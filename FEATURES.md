@@ -1,6 +1,6 @@
 # Feature inventory
 
-Last updated: July 30, 2026
+Last updated: July 31, 2026
 
 Status labels: **Validated**, **Implemented**, **Evaluated**, **Foundation**, or
 **Planned**. Detailed behavior and retained validation evidence belong in
@@ -62,7 +62,7 @@ See [evidence analysis](docs/features/evidence-analysis.md),
 | Capability | Status | Notes |
 |---|---|---|
 | Native WinUI 3 shell | Validated | Task navigation for Library, New Archive, Review & Ask, Area Watch, and Settings. |
-| Local Library | Validated | Five-stage timeline, playback, transcript preview, exact resume/upgrade/review action. |
+| Local Library | Validated | Five-stage timeline, playback, transcript preview, stale-result detection, retained-versus-temporary storage, safe orphan cleanup, and exact resume/upgrade/review action. |
 | Area Watch | Validated | Profile discovery, queue, coverage-aware ranked leads, selected evidence, clips and exports. |
 | Neighborhood subscription delivery | Foundation | Story eligibility and neighborhood/topic tags exist; opt-in delivery is explicitly low priority in [#5](https://github.com/Naelus/broadcastify-cli/issues/5). |
 | Cross-platform browser UI | Validated | Windows/Linux desktop and mobile validation; loopback default and explicit trusted-LAN mode. |

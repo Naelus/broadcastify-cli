@@ -1,4 +1,6 @@
 import json
+import os
+import time
 from datetime import date
 from pathlib import Path
 
@@ -87,6 +89,112 @@ def test_library_discovers_partial_and_analyzed_days(tmp_path: Path) -> None:
     assert incomplete["raw_file_count"] == 1
     assert incomplete["needs_network"] is True
     assert incomplete["primary_action"] == "resume_download"
+
+
+def test_library_separates_working_audio_and_cleans_old_orphans(
+    tmp_path: Path,
+) -> None:
+    day = _day(tmp_path, "90004", "2026-07-29")
+    raw = day / "202607290000-1-90004.mp3"
+    raw.write_bytes(b"retained")
+    cache = day / "transcripts" / ".cache"
+    cache.mkdir(parents=True)
+    prepared = cache / "combined_90004_20260729.pyannote.flac"
+    prepared.write_bytes(b"reusable retry input")
+    active_raw = (
+        cache
+        / f".combined_90004_20260729.pyannote.{os.getpid()}.123.pyannote.f32le"
+    )
+    active_raw.write_bytes(b"active raw scratch")
+    orphan_raw = (
+        cache
+        / ".combined_90004_20260729.pyannote.999999999.456.pyannote.f32le"
+    )
+    orphan_raw.write_bytes(b"orphan raw scratch")
+    orphan_part = day / ".combined_90004_20260729.old.part.mp3"
+    orphan_part.write_bytes(b"orphan combined output")
+    old = time.time() - 7_200
+    for path in (active_raw, orphan_raw, orphan_part):
+        os.utime(path, (old, old))
+
+    state = scan_local_library(tmp_path)[0]
+
+    assert state["storage_bytes"] == raw.stat().st_size
+    assert state["working_storage_bytes"] == (
+        prepared.stat().st_size + active_raw.stat().st_size
+    )
+    assert prepared.exists()
+    assert active_raw.exists()
+    assert not orphan_raw.exists()
+    assert not orphan_part.exists()
+
+
+def test_library_removes_prepared_audio_after_exact_diarization_cache(
+    tmp_path: Path,
+) -> None:
+    day = _day(tmp_path, "90004", "2026-07-29")
+    audio = day / "combined_90004_20260729.mp3"
+    audio.write_bytes(b"combined audio")
+    cache = day / "transcripts" / ".cache"
+    cache.mkdir(parents=True)
+    prepared = cache / "combined_90004_20260729.pyannote.flac"
+    prepared.write_bytes(b"completed preparation")
+    stat = audio.stat()
+    (cache.parent / "combined_90004_20260729.diarization.json").write_text(
+        json.dumps(
+            {
+                "engine": "community-1",
+                "audio_size": stat.st_size,
+                "audio_mtime_ns": stat.st_mtime_ns,
+                "turns": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    old = time.time() - 7_200
+    os.utime(prepared, (old, old))
+
+    state = scan_local_library(tmp_path)[0]
+
+    assert not prepared.exists()
+    assert state["working_storage_bytes"] == 0
+    assert state["storage_bytes"] == (
+        audio.stat().st_size
+        + (
+            cache.parent / "combined_90004_20260729.diarization.json"
+        ).stat().st_size
+    )
+
+
+def test_library_rejects_transcript_older_than_refreshed_combined_audio(
+    tmp_path: Path,
+) -> None:
+    day = _day(tmp_path, "90005", "2026-07-29")
+    audio = day / "combined_90005_20260729.mp3"
+    audio.write_bytes(b"first combined audio")
+    transcript = day / "transcripts" / "combined_90005_20260729.json"
+    transcript.parent.mkdir()
+    transcript.write_text(
+        json.dumps(
+            {
+                "segments": [{"start": 0.0, "end": 1.0, "text": "old"}],
+                "diarization_completed": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    future = time.time() + 10
+    audio.write_bytes(b"refreshed combined audio")
+    os.utime(audio, (future, future))
+
+    state = scan_local_library(tmp_path)[0]
+
+    assert state["has_combined"] is True
+    assert state["has_transcript"] is False
+    assert state["has_diarization"] is False
+    assert state["has_analysis"] is False
+    assert state["status"] == "Audio ready"
+    assert state["next_step"] == "Transcribe locally"
 
 
 def test_library_does_not_present_older_combined_timeline_as_current(

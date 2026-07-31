@@ -18,6 +18,10 @@ from .portable_diarization import (
 )
 from .storage import AnalysisStore
 from .transcription import LocalTranscriber
+from .workfiles import (
+    cleanup_orphaned_audio_work_files,
+    directory_storage_usage,
+)
 
 
 RAW_ARCHIVE_PATTERN = re.compile(r"^\d{12}-\d+-(\d+)\.mp3$", re.IGNORECASE)
@@ -97,19 +101,6 @@ def _friendly_feed_names(store: AnalysisStore) -> dict[str, str]:
     return names
 
 
-def _directory_size(path: Path) -> int:
-    if not path.is_dir():
-        return 0
-    total = 0
-    for item in path.rglob("*"):
-        try:
-            if item.is_file():
-                total += item.stat().st_size
-        except OSError:
-            continue
-    return total
-
-
 def _manifest_feed_name(path: Path) -> str:
     if not path.is_file():
         return ""
@@ -120,6 +111,20 @@ def _manifest_feed_name(path: Path) -> str:
     if not isinstance(payload, dict):
         return ""
     return str(payload.get("feed_name") or "").strip()[:200]
+
+
+def _transcript_is_current(audio: Path, transcript: Path) -> bool:
+    """Reject results created before the combined recording was refreshed."""
+
+    try:
+        return (
+            audio.is_file()
+            and transcript.is_file()
+            and transcript.stat().st_size > 0
+            and transcript.stat().st_mtime_ns >= audio.stat().st_mtime_ns
+        )
+    except OSError:
+        return False
 
 
 def _state_for_day(
@@ -167,7 +172,7 @@ def _state_for_day(
     )
     has_combined = has_combined_file and not has_stale_combined
     has_transcript = bool(
-        has_combined and transcript.is_file() and transcript.stat().st_size > 0
+        has_combined and _transcript_is_current(combined, transcript)
     )
     has_diarization = has_transcript and (
         transcript_has_diarization(transcript)
@@ -261,6 +266,7 @@ def _state_for_day(
         else "Not analyzed",
     ]
     resolved_feed_name = feed_name or _manifest_feed_name(manifest)
+    storage_bytes, working_storage_bytes = directory_storage_usage(day_directory)
     return {
         "feed_id": feed_id,
         "feed_name": resolved_feed_name or f"Feed {feed_id}",
@@ -289,7 +295,8 @@ def _state_for_day(
         "expected_analysis_prompt_version": PROMPT_VERSION,
         "incident_count": incident_count,
         "segment_count": segment_count,
-        "storage_bytes": _directory_size(day_directory),
+        "storage_bytes": storage_bytes,
+        "working_storage_bytes": working_storage_bytes,
         "pipeline_percent": completed_stages * 20,
         "pipeline_summary": "  ·  ".join(stage_parts),
         "status": status,
@@ -331,16 +338,21 @@ def scan_local_library(
                     continue
                 keys.add((feed_directory.name, archive_date))
 
-    results = [
-        _state_for_day(
-            output_root,
-            feed_id,
-            archive_date,
-            stored_days.get((feed_id, archive_date)),
-            feed_names.get(feed_id, ""),
+    results = []
+    for feed_id, archive_date in keys:
+        day_directory = (
+            output_root / feed_id / archive_date.strftime("%Y%m%d")
         )
-        for feed_id, archive_date in keys
-    ]
+        cleanup_orphaned_audio_work_files(day_directory)
+        results.append(
+            _state_for_day(
+                output_root,
+                feed_id,
+                archive_date,
+                stored_days.get((feed_id, archive_date)),
+                feed_names.get(feed_id, ""),
+            )
+        )
     return sorted(results, key=lambda value: (value["archive_date"], value["feed_id"]), reverse=True)
 
 

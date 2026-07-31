@@ -838,6 +838,9 @@ def _library_payload(state: WebAppState) -> dict[str, Any]:
             "complete_count": sum(bool(value["is_complete"]) for value in days),
             "attention_count": sum(not bool(value["is_complete"]) for value in days),
             "storage_bytes": sum(int(value["storage_bytes"]) for value in days),
+            "working_storage_bytes": sum(
+                int(value["working_storage_bytes"]) for value in days
+            ),
         },
     }
 

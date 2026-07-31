@@ -5,7 +5,7 @@
 The Library is a master/detail view over every retained feed-day. It shows:
 
 - durable feed name and date;
-- source-block count and storage use;
+- source-block count plus retained and temporary-working storage;
 - five-stage processing state;
 - combined-audio playback;
 - timestamped transcript preview;
@@ -36,6 +36,19 @@ An older combined MP3 is not considered current when its manifest differs from
 the retained raw blocks. That day is labeled **New audio pending combine**; the
 older recording is preserved, while its obsolete transcript/review state is
 withheld until refresh.
+
+A transcript created before a later successful combine is also withheld, even
+when its filename still matches. The next action returns to local
+transcription/diarization for the current recording instead of presenting stale
+quotes or incidents.
+
+Community-1 may temporarily use substantially more disk than the compressed
+archive audio while it prepares and memory-maps a full-day waveform. The
+Library labels that separately as **temporary**, keeps a completed lossless
+preparation after interruption so retry work is reusable, and releases it once
+an exact completed diarization cache exists. Refreshing the Library also removes
+old partial combines and raw speaker scratch files whose worker no longer
+exists; active worker files and retained archive evidence are never removed.
 
 ## Review and Ask
 
