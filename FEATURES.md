@@ -34,7 +34,7 @@ See [archive acquisition](docs/features/archive-acquisition.md),
 | Qwen3-ASR CPU preview | Implemented | Fast bounded-region preview with no fabricated word timing; retained full-day quality evaluation is tracked in [#2](https://github.com/Naelus/broadcastify-cli/issues/2). |
 | Community-1 diarization | Validated | Accuracy default on CUDA/CPU; can improve an existing transcript without repeating ASR. |
 | Portable CPU speaker preview | Validated | Checksum-managed sherpa-onnx models, bounded chunks, atomic resume, and chunk-scoped anonymous labels; human scoring and supported accelerator research are tracked in [#3](https://github.com/Naelus/broadcastify-cli/issues/3). |
-| Persistent evidence store | Validated | SQLite/FTS, embeddings, incidents, summaries, Q&A, profiles/queues, prompt/source versioning and checkpoints. |
+| Persistent evidence store | Validated | SQLite/FTS, embeddings, incidents, summaries, Q&A, profiles/queues, prompt/source versioning and checkpoints; every review/query/brief/clip consumer enforces the retained revision. |
 
 See [audio processing](docs/features/audio-processing.md),
 [storage and resume](docs/reference/storage-and-resume.md), and
@@ -71,7 +71,7 @@ See [evidence analysis](docs/features/evidence-analysis.md),
 | Linux user service | Validated | Install/start/stop/status/log/restart and data-preserving uninstall. |
 | TrueNAS App | Validated | Persistent host-path data, trusted-LAN UI, AMD Vulkan, unprivileged/read-only container boundary. |
 | Verified Windows publish | Validated | WinUI resources, namespaced Windows ML helper, normal/private environment isolation. |
-| Standalone Windows installer | Validated | Per-user Inno Setup package with embedded Python, FFmpeg, Windows ML and portable inference runtimes; install/upgrade/uninstall preserve application data, interactive setup discloses default-on login startup, and silent setup requires explicit startup/launch flags. |
+| Standalone Windows installer | Validated | Per-user Inno Setup package with self-contained .NET app/helper, embedded Python, FFmpeg, Windows ML and portable inference runtimes; public stages reject PDBs/private state, install/upgrade/uninstall preserve application data, interactive setup discloses default-on login startup, and silent setup requires explicit startup/launch flags. |
 | Accelerator add-on/model manager | Foundation | First-use managed models exist; a signed release and optional CUDA/OpenVINO/Vulkan add-on lifecycle remain packaging work. |
 
 See [Library and Review](docs/features/library-and-review.md),

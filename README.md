@@ -50,7 +50,7 @@ See [FEATURES.md](FEATURES.md) for the current capability matrix.
 Download `BroadcastifyDesktop-<version>-win-x64-setup.exe` from
 [Releases](https://github.com/Naelus/broadcastify-cli/releases). The per-user
 installer includes the native WinUI app, Python worker, FFmpeg, Windows ML
-helper, and portable CPU/Qwen/Sherpa runtimes. It preserves application data
+helper, the .NET desktop runtime, and portable CPU/Qwen/Sherpa runtimes. It preserves application data
 across upgrades and uninstall. Models remain explicit first-use downloads.
 Public releases contain no `.env`, account password, API token, or saved
 session. Credentials entered in the app are encrypted for the current Windows

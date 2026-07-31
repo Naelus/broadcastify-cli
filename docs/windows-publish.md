@@ -27,7 +27,7 @@ The consumer build layers a portable runtime over the verified native publish:
 Output:
 
 ```text
-dist/windows/BroadcastifyDesktop-0.4.4-win-x64-setup.exe
+dist/windows/BroadcastifyDesktop-0.4.5-win-x64-setup.exe
 ```
 
 The application stage contains:
@@ -46,6 +46,10 @@ build-manifest.json
 LICENSE
 THIRD-PARTY-NOTICES.txt
 ```
+
+The main application and namespaced Windows ML helper each carry the .NET 10
+runtime files they require. Public builds disable debug symbols and reject any
+staged PDB so local build paths cannot enter a release installer.
 
 `WorkerClient` detects `runtime/python/python.exe`, stops searching for
 `pyproject.toml`, and runs workers from the writable per-user data directory.
@@ -79,13 +83,14 @@ The Inno Setup package:
 - replaces the bundled Python and Windows ML runtime trees on upgrade so
   removed dependencies and old package metadata cannot survive;
 - never copies `.env` in a public build;
+- contains no PDB/debug-symbol files or developer build paths;
 - deletes a stale `broadcastify-desktop.env` when a public build upgrades a
 machine that previously ran an owner-only private build.
 
 The recommended silent deployment is:
 
 ```powershell
-.\BroadcastifyDesktop-0.4.4-win-x64-setup.exe `
+.\BroadcastifyDesktop-0.4.5-win-x64-setup.exe `
   /VERYSILENT /SUPPRESSMSGBOXES /NORESTART `
   /ENABLESTARTUP /LAUNCHAFTERINSTALL
 ```

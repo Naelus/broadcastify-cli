@@ -1,7 +1,34 @@
+import re
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_release_version_is_consistent_across_all_entry_points() -> None:
+    pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    match = re.search(r'^version = "([^"]+)"$', pyproject, re.MULTILINE)
+    assert match is not None
+    version = match.group(1)
+    numeric = f"{version}.0"
+
+    for project in (
+        ROOT / "BroadcastifyCli.WinUI" / "BroadcastifyCli.WinUI.csproj",
+        ROOT / "BroadcastifyCli.WindowsML" / "BroadcastifyCli.WindowsML.csproj",
+    ):
+        content = project.read_text(encoding="utf-8")
+        assert f"<Version>{version}</Version>" in content
+        assert f"<FileVersion>{numeric}</FileVersion>" in content
+
+    package = (ROOT / "broadcastify_cli" / "__init__.py").read_text(
+        encoding="utf-8"
+    )
+    installer = (
+        ROOT / "installer" / "BroadcastifyDesktop.iss"
+    ).read_text(encoding="utf-8")
+    assert f'__version__ = "{version}"' in package
+    assert f'#define MyAppVersion "{version}"' in installer
+    assert f'#define MyAppVersionNumeric "{numeric}"' in installer
 
 
 def test_installed_worker_uses_bundled_runtime_and_writable_data_root() -> None:
@@ -81,6 +108,10 @@ def test_public_installer_build_rejects_private_environment_and_pins_downloads()
     assert "$repositoryRoot[windowsml,qwen,portable-diarization]" in build
     assert "--constraint $constraints" in build
     assert "$env:PYTHONDONTWRITEBYTECODE = \"1\"" in build
+    assert '"-p:SelfContained=true"' in build
+    assert '"-p:DebugType=None"' in build
+    assert '"windowsml\\hostfxr.dll"' in build
+    assert "$unexpectedPdbFiles.Count -gt 0" in build
     assert 'tags:' in workflow
     assert '"v*"' in workflow
     assert "gh release upload" in workflow

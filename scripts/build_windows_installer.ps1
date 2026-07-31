@@ -180,7 +180,10 @@ $bundleValue = if ($BundleLocalEnv) { "true" } else { "false" }
     -r win-x64 `
     -o $application `
     "-p:BundleLocalEnv=$bundleValue" `
-    "-p:Version=$Version"
+    "-p:Version=$Version" `
+    "-p:SelfContained=true" `
+    "-p:DebugType=None" `
+    "-p:DebugSymbols=false"
 if ($LASTEXITCODE -ne 0) {
     throw "dotnet publish failed with exit code $LASTEXITCODE."
 }
@@ -190,12 +193,31 @@ $requiredDesktopFiles = @(
     "Broadcastify Desktop.pri",
     "App.xbf",
     "MainWindow.xbf",
-    "windowsml\BroadcastifyCli.WindowsML.exe"
+    "hostfxr.dll",
+    "hostpolicy.dll",
+    "coreclr.dll",
+    "System.Private.CoreLib.dll",
+    "windowsml\BroadcastifyCli.WindowsML.exe",
+    "windowsml\hostfxr.dll",
+    "windowsml\hostpolicy.dll",
+    "windowsml\coreclr.dll",
+    "windowsml\System.Private.CoreLib.dll"
 )
 foreach ($relativePath in $requiredDesktopFiles) {
     if (-not (Test-Path -LiteralPath (Join-Path $application $relativePath) -PathType Leaf)) {
         throw "The native publish is missing $relativePath."
     }
+}
+
+$unexpectedPdbFiles = @(
+    Get-ChildItem -LiteralPath $application -Filter *.pdb -Recurse -File
+)
+if ($unexpectedPdbFiles.Count -gt 0) {
+    throw (
+        "The public application stage contains debug symbols that can expose " +
+        "local build paths: " +
+        (($unexpectedPdbFiles | ForEach-Object FullName) -join ", ")
+    )
 }
 
 $privateEnvironment = Join-Path $application "broadcastify-desktop.env"

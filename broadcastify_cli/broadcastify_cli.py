@@ -7,13 +7,14 @@ import click
 from dotenv import load_dotenv
 from rich.console import Console
 
+from . import __version__
 from .broadcastify import BroadcastifyClient
 from .jobs import JobRunner
 from .models import JobRequest
 from .transcription import LocalTranscriber
 
 
-VERSION = "0.2.0"
+VERSION = __version__
 console = Console()
 
 
