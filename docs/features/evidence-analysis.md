@@ -46,7 +46,13 @@ outcomes, and invented category rankings. Deterministic fallbacks remain
 available when the model fails those checks.
 
 Range questions combine structured incidents with retrieved transcript evidence
-and require E/I citations. Missing or stale dates are reported explicitly.
+and require E/I citations. Before Review, questions, weekly/area summaries, or
+clip export can use a saved row, the retained audio, transcript import hash,
+analysis hash, and prompt revision must still agree. Older rows remain
+recoverable but cannot be presented against newer retained audio. Missing or
+stale dates are reported explicitly. Saved weekly and area briefs also carry an
+exact source fingerprint and are hidden as stale when a current daily summary,
+incident set, or area profile changes.
 
 Local Gemma is the default. OpenAI Responses, compatible `/v1` endpoints, and a
 saved-login Codex harness are optional and require explicit consent before

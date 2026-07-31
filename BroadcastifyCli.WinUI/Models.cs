@@ -906,6 +906,12 @@ public sealed record LibraryDay
     [JsonPropertyName("has_transcript")]
     public bool HasTranscript { get; init; }
 
+    [JsonPropertyName("has_stale_transcript")]
+    public bool HasStaleTranscript { get; init; }
+
+    [JsonPropertyName("has_imported_transcript")]
+    public bool HasImportedTranscript { get; init; }
+
     [JsonPropertyName("has_diarization")]
     public bool HasDiarization { get; init; }
 
@@ -1178,12 +1184,17 @@ public sealed record AnalysisDay
     [JsonPropertyName("analysis_update_required")]
     public bool AnalysisUpdateRequired { get; init; }
 
+    [JsonPropertyName("transcript_import_required")]
+    public bool TranscriptImportRequired { get; init; }
+
     [JsonPropertyName("has_diarization")]
     public int HasDiarizationValue { get; init; }
 
     public string FeedAndDate => $"Feed {FeedId} · {ArchiveDate}";
-    public string ProcessingSummary => $"{SegmentCount:N0} segments · {IncidentCount:N0} incidents · {DurationSeconds / 3600:0.0} hours"
-        + (AnalysisUpdateRequired ? " · analysis update required" : "");
+    public string ProcessingSummary => TranscriptImportRequired
+        ? $"Current transcript awaits database import · saved analysis hidden · {DurationSeconds / 3600:0.0} hours"
+        : $"{SegmentCount:N0} segments · {IncidentCount:N0} incidents · {DurationSeconds / 3600:0.0} hours"
+          + (AnalysisUpdateRequired ? " · analysis update required" : "");
     public string SpeakerSummary => HasDiarizationValue != 0
         ? $"Diarized · {SpeakerCount} transcript clusters"
         : "Not diarized";

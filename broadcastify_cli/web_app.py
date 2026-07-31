@@ -28,8 +28,16 @@ from urllib.parse import parse_qs, quote, unquote, urlparse
 
 from dotenv import dotenv_values
 
-from .analysis import PROMPT_VERSION, WEEKLY_PROMPT_VERSION
-from .area_watch import AREA_PROMPT_VERSION, _public_quote
+from .analysis import (
+    PROMPT_VERSION,
+    WEEKLY_PROMPT_VERSION,
+    current_weekly_summary_source_fingerprint,
+)
+from .area_watch import (
+    AREA_PROMPT_VERSION,
+    _public_quote,
+    current_area_story_source_fingerprint,
+)
 from .audio import select_incident_evidence_window
 from .credential_store import CredentialStoreError, EncryptedCredentialStore
 from .lan_sync import (
@@ -40,7 +48,7 @@ from .lan_sync import (
     normalize_peer_url,
     normalize_peer_urls,
 )
-from .library import scan_local_library
+from .library import require_current_range_evidence, scan_local_library
 from .quota import ArchiveRequestLedger
 from .storage import AnalysisStore
 
@@ -883,7 +891,11 @@ def _compact_incident(value: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _day_payload(state: WebAppState, feed_id: str, archive_date: date) -> dict[str, Any]:
+def _local_day_state(
+    state: WebAppState,
+    feed_id: str,
+    archive_date: date,
+) -> dict[str, Any]:
     library = scan_local_library(state.output_dir, state.database_path)
     day_state = next(
         (
@@ -895,31 +907,40 @@ def _day_payload(state: WebAppState, feed_id: str, archive_date: date) -> dict[s
     )
     if day_state is None:
         raise WebRequestError(HTTPStatus.NOT_FOUND, "That feed day is not in the local library.")
+    return day_state
+
+
+def _day_payload(state: WebAppState, feed_id: str, archive_date: date) -> dict[str, Any]:
+    day_state = _local_day_state(state, feed_id, archive_date)
     summary = ""
     incidents: list[dict[str, Any]] = []
-    with AnalysisStore(state.database_path) as store:
-        stored_day = store.get_day(feed_id, archive_date)
-        if stored_day is not None:
-            stored_summary = store.get_latest_daily_summary(int(stored_day["id"]))
-            analysis_current = bool(
-                stored_summary
-                and str(stored_summary["prompt_version"]) == PROMPT_VERSION
-            )
-            summary = (
-                str(stored_summary["summary"])
-                if stored_summary and analysis_current
-                else ""
-            )
-            if analysis_current:
-                incidents = [
-                    _compact_incident(value)
-                    for value in store.get_incidents(
-                        feed_id,
-                        archive_date,
-                        archive_date,
-                        prompt_version=PROMPT_VERSION,
-                    )
-                ]
+    if day_state["has_analysis"]:
+        with AnalysisStore(state.database_path) as store:
+            stored_day = store.get_day(feed_id, archive_date)
+            if stored_day is not None:
+                stored_summary = store.get_latest_daily_summary(
+                    int(stored_day["id"])
+                )
+                analysis_current = bool(
+                    stored_summary
+                    and str(stored_summary["prompt_version"])
+                    == PROMPT_VERSION
+                )
+                summary = (
+                    str(stored_summary["summary"])
+                    if stored_summary and analysis_current
+                    else ""
+                )
+                if analysis_current:
+                    incidents = [
+                        _compact_incident(value)
+                        for value in store.get_incidents(
+                            feed_id,
+                            archive_date,
+                            archive_date,
+                            prompt_version=PROMPT_VERSION,
+                        )
+                    ]
     return {
         "state": day_state,
         "summary": summary,
@@ -936,13 +957,22 @@ def _transcript_payload(
     limit: int,
     query: str,
 ) -> dict[str, Any]:
+    day = _local_day_state(state, feed_id, archive_date)
+    if not day["has_transcript"]:
+        return {
+            "segments": [],
+            "offset": offset,
+            "limit": limit,
+            "total": 0,
+            "has_more": False,
+        }
     segments: list[dict[str, Any]] = []
-    with AnalysisStore(state.database_path) as store:
-        stored_day = store.get_day(feed_id, archive_date)
-        if stored_day is not None:
-            segments = store.get_segments(int(stored_day["id"]))
+    if day["has_imported_transcript"]:
+        with AnalysisStore(state.database_path) as store:
+            stored_day = store.get_day(feed_id, archive_date)
+            if stored_day is not None:
+                segments = store.get_segments(int(stored_day["id"]))
     if not segments:
-        day = _day_payload(state, feed_id, archive_date)["state"]
         transcript_path = Path(str(day.get("transcript_path") or ""))
         if transcript_path.is_file():
             try:
@@ -1283,24 +1313,66 @@ def create_server(
                         profile_name,
                         prompt_version=AREA_PROMPT_VERSION,
                     )
-                result = None
-                stale = latest_any is not None and row is None
-                if row is not None:
-                    coverage = json.loads(str(row["coverage_json"]))
-                    if str(coverage.get("incident_prompt_version") or "") != PROMPT_VERSION:
-                        stale = True
-                    else:
-                        result = {
-                            "profile_name": str(row["profile_name"]),
-                            "start_date": str(row["start_date"]),
-                            "end_date": str(row["end_date"]),
-                            "summary": str(row["summary"]),
-                            "stories": _area_stories_for_web(
-                                state.output_dir,
-                                json.loads(str(row["stories_json"])),
-                            ),
-                            "coverage": coverage,
-                        }
+                    result = None
+                    stale = latest_any is not None and row is None
+                    if row is not None:
+                        coverage = json.loads(str(row["coverage_json"]))
+                        profile = store.get_area_profile(profile_name)
+                        if (
+                            str(coverage.get("incident_prompt_version") or "")
+                            != PROMPT_VERSION
+                            or profile is None
+                        ):
+                            stale = True
+                        else:
+                            try:
+                                require_current_range_evidence(
+                                    store,
+                                    [
+                                        str(value)
+                                        for value in profile["feed_ids"]
+                                    ],
+                                    date.fromisoformat(str(row["start_date"])),
+                                    date.fromisoformat(str(row["end_date"])),
+                                    require_analysis=True,
+                                    purpose="Saved area summary",
+                                )
+                            except ValueError:
+                                stale = True
+                            else:
+                                current_fingerprint = (
+                                    current_area_story_source_fingerprint(
+                                        store,
+                                        profile,
+                                        date.fromisoformat(
+                                            str(row["start_date"])
+                                        ),
+                                        date.fromisoformat(
+                                            str(row["end_date"])
+                                        ),
+                                    )
+                                )
+                                if (
+                                    str(row["source_fingerprint"])
+                                    != current_fingerprint
+                                ):
+                                    stale = True
+                                else:
+                                    result = {
+                                        "profile_name": str(
+                                            row["profile_name"]
+                                        ),
+                                        "start_date": str(row["start_date"]),
+                                        "end_date": str(row["end_date"]),
+                                        "summary": str(row["summary"]),
+                                        "stories": _area_stories_for_web(
+                                            state.output_dir,
+                                            json.loads(
+                                                str(row["stories_json"])
+                                            ),
+                                        ),
+                                        "coverage": coverage,
+                                    }
                 self._json(HTTPStatus.OK, {"result": result, "stale": stale})
                 return
             if parsed.path == "/api/saved-week":
@@ -1316,13 +1388,45 @@ def create_server(
                         week_ending,
                         prompt_version=WEEKLY_PROMPT_VERSION,
                     )
+                    stale = False
+                    if row is not None:
+                        try:
+                            require_current_range_evidence(
+                                store,
+                                [feed_id],
+                                week_start,
+                                week_ending,
+                                require_analysis=True,
+                                purpose="Saved weekly summary",
+                            )
+                        except ValueError:
+                            row = None
+                            stale = True
+                        else:
+                            current_fingerprint = (
+                                current_weekly_summary_source_fingerprint(
+                                    store,
+                                    feed_id,
+                                    week_start,
+                                    week_ending,
+                                )
+                            )
+                            if (
+                                str(row["source_fingerprint"])
+                                != current_fingerprint
+                            ):
+                                row = None
+                                stale = True
                 result = None
                 if row is not None:
                     result = dict(row)
                     result["notable_incident_ids"] = json.loads(
                         str(result.pop("notable_incident_ids_json") or "[]")
                     )
-                self._json(HTTPStatus.OK, {"result": result})
+                self._json(
+                    HTTPStatus.OK,
+                    {"result": result, "stale": stale},
+                )
                 return
             if parsed.path == "/media":
                 media_value = str((query.get("path") or [""])[0])

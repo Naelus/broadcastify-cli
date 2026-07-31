@@ -47,8 +47,16 @@ archive audio while it prepares and memory-maps a full-day waveform. The
 Library labels that separately as **temporary**, keeps a completed lossless
 preparation after interruption so retry work is reusable, and releases it once
 an exact completed diarization cache exists. Refreshing the Library also removes
-old partial combines and raw speaker scratch files whose worker no longer
-exists; active worker files and retained archive evidence are never removed.
+PID-owned partial combines and raw speaker scratch files whose worker no longer
+exists; active or ownership-free worker files and retained archive evidence are
+never removed.
+
+The same current-revision gate applies to native and browser details, Review &
+Ask, weekly and area briefs, and clip playback/export. When a combined recording
+or transcript changes, older database segments, incidents, summaries, and
+offsets are preserved for recovery but withheld until the current transcript
+revision has been imported and analyzed. The command-line review, question, and
+weekly-summary surfaces enforce the same gate.
 
 ## Review and Ask
 

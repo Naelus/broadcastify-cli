@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import click
@@ -23,6 +23,7 @@ from .analysis_providers import (
     AnalysisProviderConfig,
     open_analysis_client,
 )
+from .library import require_current_range_evidence
 from .storage import AnalysisStore
 
 
@@ -209,6 +210,17 @@ def ask(
         analysis_device,
     )
     with AnalysisStore(db) as store:
+        try:
+            require_current_range_evidence(
+                store,
+                [feed_id],
+                start_date,
+                end_date,
+                require_analysis=False,
+                purpose="Archive question answering",
+            )
+        except ValueError as exc:
+            raise click.ClickException(str(exc)) from exc
         indexer = None
         if semantic:
             indexer = SemanticIndexer(store, model=embedding_model)
@@ -264,6 +276,17 @@ def summarize_week(
         analysis_device,
     )
     with AnalysisStore(db) as store:
+        try:
+            require_current_range_evidence(
+                store,
+                [feed_id],
+                week_ending - timedelta(days=6),
+                week_ending,
+                require_analysis=True,
+                purpose="Weekly summary",
+            )
+        except ValueError as exc:
+            raise click.ClickException(str(exc)) from exc
         with open_analysis_client(provider_settings) as client:
             result = WeeklySummaryAnalyzer(
                 store,
@@ -308,6 +331,17 @@ def report_day(
             raise click.ClickException(
                 f"No imported transcript for feed {feed_id} on {date_value}."
             )
+        try:
+            require_current_range_evidence(
+                store,
+                [feed_id],
+                date_value,
+                date_value,
+                require_analysis=True,
+                purpose="Day report",
+            )
+        except ValueError as exc:
+            raise click.ClickException(str(exc)) from exc
         incidents = [
             value
             for value in store.get_incidents(

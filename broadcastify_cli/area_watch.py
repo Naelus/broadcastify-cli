@@ -392,6 +392,64 @@ def _story_from_cluster(
     }
 
 
+def area_story_source_fingerprint(
+    profile: dict[str, Any],
+    days: Sequence[dict[str, Any]],
+    incidents: Sequence[dict[str, Any]],
+) -> str:
+    """Hash the exact current inputs used to write an area digest."""
+
+    source = {
+        "incident_prompt_version": PROMPT_VERSION,
+        "profile_updated_at": profile["updated_at"],
+        "feed_ids": list(profile["feed_ids"]),
+        "days": [
+            (
+                value["feed_id"],
+                value["archive_date"],
+                value["transcript_sha256"],
+                value.get("audio_sha256"),
+            )
+            for value in days
+        ],
+        "incidents": [
+            (value["id"], value["fingerprint"], value["created_at"])
+            for value in incidents
+        ],
+    }
+    return hashlib.sha256(
+        json.dumps(source, sort_keys=True).encode("utf-8")
+    ).hexdigest()
+
+
+def current_area_story_source_fingerprint(
+    store: AnalysisStore,
+    profile: dict[str, Any],
+    start_date: date,
+    end_date: date,
+) -> str:
+    """Recompute a saved area digest's source identity without a model."""
+
+    feed_ids = [str(value) for value in profile["feed_ids"]]
+    incidents = store.get_incidents_for_feeds(
+        feed_ids,
+        start_date,
+        end_date,
+        prompt_version=PROMPT_VERSION,
+    )
+    days = [
+        value
+        for value in store.list_days()
+        if str(value["feed_id"]) in feed_ids
+        and start_date.isoformat()
+        <= str(value["archive_date"])
+        <= end_date.isoformat()
+        and str(value.get("summary_prompt_version") or "")
+        == PROMPT_VERSION
+    ]
+    return area_story_source_fingerprint(profile, days, incidents)
+
+
 class AreaStoryAnalyzer:
     def __init__(
         self,
@@ -476,27 +534,11 @@ class AreaStoryAnalyzer:
             "area_prompt_version": self.prompt_version,
         }
 
-        source = {
-            "incident_prompt_version": PROMPT_VERSION,
-            "profile_updated_at": profile["updated_at"],
-            "feed_ids": feed_ids,
-            "days": [
-                (
-                    value["feed_id"],
-                    value["archive_date"],
-                    value["transcript_sha256"],
-                    value.get("audio_sha256"),
-                )
-                for value in days
-            ],
-            "incidents": [
-                (value["id"], value["fingerprint"], value["created_at"])
-                for value in incidents
-            ],
-        }
-        fingerprint = hashlib.sha256(
-            json.dumps(source, sort_keys=True).encode("utf-8")
-        ).hexdigest()
+        fingerprint = area_story_source_fingerprint(
+            profile,
+            days,
+            incidents,
+        )
         existing = None if force else self.store.get_area_story_digest(
             int(profile["id"]),
             start_date,

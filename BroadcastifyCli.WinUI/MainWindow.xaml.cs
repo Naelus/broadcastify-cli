@@ -2420,7 +2420,11 @@ public sealed partial class MainWindow : Window
             ? "✓  2. Combine — one continuous day timeline is ready"
             : "○  2. Combine — waits for complete archive coverage";
         LibraryTranscriptStageText.Text = day.HasTranscript
-            ? $"✓  3. Transcription — {day.SegmentCount:N0} timestamped segments"
+            ? day.HasImportedTranscript
+                ? $"✓  3. Transcription — {day.SegmentCount:N0} timestamped segments"
+                : "→  3. Transcription — current file awaits database import"
+            : day.HasStaleTranscript
+                ? "→  3. Transcription — combined audio changed; previous results are hidden"
             : day.HasCombined
                 ? "→  3. Transcription — ready to run locally"
                 : "○  3. Transcription — waits for combined audio";
@@ -2433,6 +2437,8 @@ public sealed partial class MainWindow : Window
                 : "○  4. Speaker labels — waits for a transcript";
         LibraryAnalysisStageText.Text = day.HasAnalysis
             ? $"✓  5. Event analysis — {day.IncidentCount:N0} incidents saved"
+            : day.HasTranscript && !day.HasImportedTranscript
+                ? "→  5. Event analysis — import the current transcript first"
             : day.HasStaleAnalysis
                 ? "→  5. Event analysis — saved results need current evidence rules"
             : day.HasTranscript
@@ -2456,7 +2462,8 @@ public sealed partial class MainWindow : Window
         LibraryCheckSourceButton.IsEnabled =
             _worker is not null && _operationCancellation is null;
         LibraryOpenFolderButton.IsEnabled = Directory.Exists(day.DayDirectory);
-        LibraryOpenTranscriptButton.IsEnabled = File.Exists(day.TranscriptPath);
+        LibraryOpenTranscriptButton.IsEnabled =
+            day.HasTranscript && File.Exists(day.TranscriptPath);
 
         if (File.Exists(day.CombinedPath))
         {
@@ -2470,7 +2477,9 @@ public sealed partial class MainWindow : Window
             LibraryAudioStatusText.Text = "No combined day recording is available yet.";
             LibraryAudioPlayer.IsEnabled = false;
         }
-        LibraryTranscriptPreviewText.Text = File.Exists(day.TranscriptPath)
+        LibraryTranscriptPreviewText.Text = day.HasStaleTranscript
+            ? "The previous transcript is preserved but hidden because the combined recording changed. Finish this day locally to update it."
+            : File.Exists(day.TranscriptPath)
             ? "Loading timestamped transcript preview…"
             : "No transcript is available yet. The Processing tab shows the next step.";
         return selectionVersion;
@@ -2478,7 +2487,7 @@ public sealed partial class MainWindow : Window
 
     private async Task LoadLibraryTranscriptPreviewAsync(LibraryDay day, int selectionVersion)
     {
-        if (!File.Exists(day.TranscriptPath))
+        if (!day.HasTranscript || !File.Exists(day.TranscriptPath))
         {
             return;
         }
@@ -3993,7 +4002,7 @@ public sealed partial class MainWindow : Window
             PlaybackStatusText.Text =
                 "Saved incident claims are hidden until the retained transcript is reanalyzed.";
             SummaryText.Text =
-                "Saved analysis predates the current evidence rules. Choose Analyze to rebuild it from the retained transcript without downloading the archive again.";
+                "Saved analysis no longer matches the retained audio, transcript, or current evidence rules. Finish the local day to rebuild it without downloading the archive again.";
         }
         else
         {

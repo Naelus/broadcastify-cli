@@ -2,14 +2,24 @@ from __future__ import annotations
 
 import http.client
 import json
+import os
 import re
 import threading
+import time
 from datetime import date
 from pathlib import Path
 
 import pytest
 
-from broadcastify_cli.analysis import PROMPT_VERSION
+from broadcastify_cli.analysis import (
+    PROMPT_VERSION,
+    WEEKLY_PROMPT_VERSION,
+    current_weekly_summary_source_fingerprint,
+)
+from broadcastify_cli.area_watch import (
+    AREA_PROMPT_VERSION,
+    current_area_story_source_fingerprint,
+)
 from broadcastify_cli.storage import AnalysisStore
 from broadcastify_cli.web_app import (
     FeedScheduleCoordinator,
@@ -512,6 +522,294 @@ def test_loopback_web_app_hides_stale_daily_claims(tmp_path: Path) -> None:
         assert detail["summary"] == ""
         assert detail["incidents"] == []
         assert detail["state"]["has_stale_analysis"] is True
+    finally:
+        connection.close()
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=3)
+
+
+def test_loopback_web_app_hides_results_for_refreshed_combined_audio(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "archives"
+    database = output / "broadcastify-analysis.sqlite3"
+    _retained_day(output, database)
+    audio = output / "90001" / "20260712" / "combined_90001_20260712.mp3"
+    audio.write_bytes(b"refreshed combined recording")
+    future = time.time() + 10
+    os.utime(audio, (future, future))
+    server = create_server(output, database, port=0, working_dir=Path.cwd())
+    server.quiet = True  # type: ignore[attr-defined]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    connection = http.client.HTTPConnection(
+        "127.0.0.1", server.server_port, timeout=5
+    )
+    try:
+        response, _body = _request(connection, "GET", "/")
+        cookie = response.getheader("Set-Cookie", "").split(";", 1)[0]
+
+        response, body = _request(
+            connection, "GET", "/api/bootstrap", cookie=cookie
+        )
+        day = json.loads(body)["days"][0]
+        assert response.status == 200
+        assert day["has_transcript"] is False
+        assert day["has_stale_transcript"] is True
+        assert day["has_analysis"] is False
+        assert day["segment_count"] == 0
+        assert day["incident_count"] == 0
+
+        response, body = _request(
+            connection,
+            "GET",
+            "/api/day?feed_id=90001&date=2026-07-12",
+            cookie=cookie,
+        )
+        detail = json.loads(body)
+        assert response.status == 200
+        assert detail["summary"] == ""
+        assert detail["incidents"] == []
+
+        response, body = _request(
+            connection,
+            "GET",
+            "/api/transcript?feed_id=90001&date=2026-07-12",
+            cookie=cookie,
+        )
+        transcript = json.loads(body)
+        assert response.status == 200
+        assert transcript["segments"] == []
+        assert transcript["total"] == 0
+    finally:
+        connection.close()
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=3)
+
+
+def test_loopback_web_app_reads_current_file_when_import_revision_is_older(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "archives"
+    database = output / "broadcastify-analysis.sqlite3"
+    _retained_day(output, database)
+    transcript_path = (
+        output
+        / "90001"
+        / "20260712"
+        / "transcripts"
+        / "combined_90001_20260712.json"
+    )
+    transcript_path.write_text(
+        json.dumps(
+            {
+                "duration": 12.0,
+                "diarization_completed": True,
+                "segments": [
+                    {
+                        "start": 3.0,
+                        "end": 4.0,
+                        "speaker": "SPEAKER_01",
+                        "text": "Current file text.",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    server = create_server(output, database, port=0, working_dir=Path.cwd())
+    server.quiet = True  # type: ignore[attr-defined]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    connection = http.client.HTTPConnection(
+        "127.0.0.1", server.server_port, timeout=5
+    )
+    try:
+        response, _body = _request(connection, "GET", "/")
+        cookie = response.getheader("Set-Cookie", "").split(";", 1)[0]
+
+        response, body = _request(
+            connection, "GET", "/api/bootstrap", cookie=cookie
+        )
+        day = json.loads(body)["days"][0]
+        assert response.status == 200
+        assert day["has_transcript"] is True
+        assert day["has_imported_transcript"] is False
+        assert day["has_analysis"] is False
+
+        response, body = _request(
+            connection,
+            "GET",
+            "/api/transcript?feed_id=90001&date=2026-07-12",
+            cookie=cookie,
+        )
+        payload = json.loads(body)
+        assert response.status == 200
+        assert payload["total"] == 1
+        assert payload["segments"][0]["text"] == "Current file text."
+    finally:
+        connection.close()
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=3)
+
+
+def test_loopback_web_app_hides_saved_week_after_current_daily_summary_changes(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "archives"
+    database = output / "broadcastify-analysis.sqlite3"
+    _retained_day(output, database)
+    week_ending = date(2026, 7, 12)
+    with AnalysisStore(database) as store:
+        fingerprint = current_weekly_summary_source_fingerprint(
+            store,
+            "90001",
+            date(2026, 7, 6),
+            week_ending,
+        )
+        store.save_weekly_summary(
+            "90001",
+            date(2026, 7, 6),
+            week_ending,
+            "Current saved week.",
+            [],
+            1,
+            1,
+            "test",
+            WEEKLY_PROMPT_VERSION,
+            fingerprint,
+        )
+
+    server = create_server(output, database, port=0, working_dir=Path.cwd())
+    server.quiet = True  # type: ignore[attr-defined]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    connection = http.client.HTTPConnection(
+        "127.0.0.1", server.server_port, timeout=5
+    )
+    try:
+        response, _body = _request(connection, "GET", "/")
+        cookie = response.getheader("Set-Cookie", "").split(";", 1)[0]
+        endpoint = "/api/saved-week?feed_id=90001&week_ending=2026-07-12"
+
+        response, body = _request(connection, "GET", endpoint, cookie=cookie)
+        current = json.loads(body)
+        assert response.status == 200
+        assert current["stale"] is False
+        assert current["result"]["summary"] == "Current saved week."
+
+        with AnalysisStore(database) as store:
+            day = store.get_day("90001", week_ending)
+            assert day is not None
+            store.save_daily_summary(
+                int(day["id"]),
+                "A newer current daily summary.",
+                [],
+                model="test",
+                prompt_version=PROMPT_VERSION,
+                transcript_sha256=str(day["transcript_sha256"]),
+            )
+        response, body = _request(connection, "GET", endpoint, cookie=cookie)
+        stale = json.loads(body)
+        assert response.status == 200
+        assert stale["stale"] is True
+        assert stale["result"] is None
+    finally:
+        connection.close()
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=3)
+
+
+def test_loopback_web_app_hides_saved_area_after_current_incidents_change(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "archives"
+    database = output / "broadcastify-analysis.sqlite3"
+    _retained_day(output, database)
+    archive_date = date(2026, 7, 12)
+    with AnalysisStore(database) as store:
+        profile = store.save_area_profile(
+            "ExampleArea",
+            ["00000"],
+            [{"feed_id": "90001", "name": "Example Public Safety"}],
+        )
+        fingerprint = current_area_story_source_fingerprint(
+            store,
+            profile,
+            archive_date,
+            archive_date,
+        )
+        store.save_area_story_digest(
+            int(profile["id"]),
+            archive_date,
+            archive_date,
+            "Current saved area brief.",
+            [],
+            {"incident_prompt_version": PROMPT_VERSION},
+            "test",
+            AREA_PROMPT_VERSION,
+            fingerprint,
+        )
+
+    server = create_server(output, database, port=0, working_dir=Path.cwd())
+    server.quiet = True  # type: ignore[attr-defined]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    connection = http.client.HTTPConnection(
+        "127.0.0.1", server.server_port, timeout=5
+    )
+    try:
+        response, _body = _request(connection, "GET", "/")
+        cookie = response.getheader("Set-Cookie", "").split(";", 1)[0]
+        endpoint = "/api/saved-area-digest?profile_name=ExampleArea"
+
+        response, body = _request(connection, "GET", endpoint, cookie=cookie)
+        current = json.loads(body)
+        assert response.status == 200
+        assert current["stale"] is False
+        assert current["result"]["summary"] == "Current saved area brief."
+
+        with AnalysisStore(database) as store:
+            day = store.get_day("90001", archive_date)
+            assert day is not None
+            incident_ids = store.replace_incidents(
+                int(day["id"]),
+                [
+                    {
+                        "fingerprint": "new-current-area-incident",
+                        "event_type": "fire",
+                        "title": "New current incident",
+                        "summary": "A new current incident was extracted.",
+                        "location": "Example Place",
+                        "start_seconds": 3.0,
+                        "end_seconds": 4.0,
+                        "priority": 4,
+                        "confidence": 0.9,
+                        "evidence": [],
+                        "attributes": {},
+                    }
+                ],
+                model="test",
+                prompt_version=PROMPT_VERSION,
+            )
+            store.save_daily_summary(
+                int(day["id"]),
+                "A newer current daily summary.",
+                incident_ids,
+                model="test",
+                prompt_version=PROMPT_VERSION,
+                transcript_sha256=str(day["transcript_sha256"]),
+            )
+
+        response, body = _request(connection, "GET", endpoint, cookie=cookie)
+        stale = json.loads(body)
+        assert response.status == 200
+        assert stale["stale"] is True
+        assert stale["result"] is None
     finally:
         connection.close()
         server.shutdown()

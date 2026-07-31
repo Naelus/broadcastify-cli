@@ -895,6 +895,8 @@ class AnalysisStore:
                        AS has_summary,
                    (SELECT ds.prompt_version FROM daily_summaries ds WHERE ds.day_id=d.id)
                        AS summary_prompt_version,
+                   (SELECT ds.transcript_sha256 FROM daily_summaries ds WHERE ds.day_id=d.id)
+                       AS summary_transcript_sha256,
                    (SELECT ds.model FROM daily_summaries ds WHERE ds.day_id=d.id)
                        AS summary_model
             FROM feed_days d

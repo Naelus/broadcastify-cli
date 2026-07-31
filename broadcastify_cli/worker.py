@@ -12,7 +12,7 @@ import time
 import traceback
 import warnings
 import wave
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -64,13 +64,23 @@ from .portable_diarization import (
     portable_diarization_diagnostics,
     prepare_portable_diarization_model,
 )
-from .area_watch import AREA_PROMPT_VERSION, AreaStoryAnalyzer, _public_quote
+from .area_watch import (
+    AREA_PROMPT_VERSION,
+    AreaStoryAnalyzer,
+    _public_quote,
+    current_area_story_source_fingerprint,
+)
 from .area_acquisition import AreaAcquisitionRunner
 from .broadcastify import BroadcastifyClient
 from .quota import ArchiveRequestLedger
 from .geography import CENSUS_ZCTA_YEAR, ZipCentroidCatalog
 from .jobs import JobRunner
-from .library import LocalProcessingRequest, prepare_local_day, scan_local_library
+from .library import (
+    LocalProcessingRequest,
+    prepare_local_day,
+    require_current_range_evidence,
+    scan_local_library,
+)
 from .models import JobRequest
 from .storage import AnalysisStore, sha256_file
 from .transcription import LocalTranscriber, decoded_diarization_audio
@@ -1189,12 +1199,31 @@ def profile_self_test(payload: dict[str, Any] | None = None) -> int:
 def analysis_days(feed_id: str | None) -> int:
     with AnalysisStore(DEFAULT_DATABASE) as store:
         days = store.list_days(feed_id)
-    for day in days:
-        analysis_current = (
-            str(day.get("summary_prompt_version") or "") == PROMPT_VERSION
+    states = {
+        (str(value["feed_id"]), str(value["archive_date"])): value
+        for value in scan_local_library(
+            DEFAULT_DATABASE.parent,
+            DEFAULT_DATABASE,
         )
+    }
+    for day in days:
+        state = states.get(
+            (str(day["feed_id"]), str(day["archive_date"]))
+        )
+        analysis_current = bool(state and state["has_analysis"])
         day["analysis_current"] = analysis_current
-        day["analysis_update_required"] = bool(day.get("has_summary")) and not analysis_current
+        day["analysis_update_required"] = (
+            bool(day.get("has_summary")) and not analysis_current
+        )
+        day["transcript_import_required"] = bool(
+            state
+            and state["has_transcript"]
+            and not state["has_imported_transcript"]
+        )
+        if state:
+            day["segment_count"] = int(state["segment_count"])
+            day["incident_count"] = int(state["incident_count"])
+            day["has_diarization"] = int(bool(state["has_diarization"]))
     emit({"type": "analysis_days", "days": days})
     return 0
 
@@ -1220,20 +1249,46 @@ def library_days(output_dir: str) -> int:
     return 0
 
 
+def _library_state_for_store(
+    store: AnalysisStore,
+    feed_id: str,
+    archive_date: date,
+) -> dict[str, Any] | None:
+    return next(
+        (
+            value
+            for value in scan_local_library(store.path.parent, store.path)
+            if value["feed_id"] == feed_id
+            and value["archive_date"] == archive_date.isoformat()
+        ),
+        None,
+    )
+
+
 def _day_report(store: AnalysisStore, feed_id: str, archive_date: date) -> dict[str, Any]:
     day = store.get_day(feed_id, archive_date)
     if day is None:
         raise ValueError(f"No imported transcript for feed {feed_id} on {archive_date}.")
+    state = _library_state_for_store(store, feed_id, archive_date)
+    if state is None:
+        raise ValueError(
+            f"Retained files for feed {feed_id} on {archive_date} were not found."
+        )
     summary = store.get_latest_daily_summary(int(day["id"]))
     analysis_prompt_version = str(summary["prompt_version"]) if summary else ""
-    analysis_current = analysis_prompt_version == PROMPT_VERSION
+    analysis_current = bool(state["has_analysis"])
     incidents = []
-    for stored in store.get_incidents(
-        feed_id,
-        archive_date,
-        archive_date,
-        prompt_version=PROMPT_VERSION,
-    ):
+    stored_incidents = (
+        store.get_incidents(
+            feed_id,
+            archive_date,
+            archive_date,
+            prompt_version=PROMPT_VERSION,
+        )
+        if analysis_current
+        else []
+    )
+    for stored in stored_incidents:
         evidence_start, evidence_end = select_incident_evidence_window(stored)
         quote_parts = []
         for raw in stored.get("evidence", []):
@@ -1281,8 +1336,8 @@ def _day_report(store: AnalysisStore, feed_id: str, archive_date: date) -> dict[
         "archive_date": archive_date.isoformat(),
         "summary": str(summary["summary"]) if summary and analysis_current else "",
         "incidents": incidents,
-        "audio_path": str(day["audio_path"] or ""),
-        "has_diarization": bool(day["has_diarization"]),
+        "audio_path": str(state["combined_path"] or ""),
+        "has_diarization": bool(state["has_diarization"]),
         "analysis_current": analysis_current,
         "analysis_update_required": bool(summary) and not analysis_current,
         "analysis_prompt_version": analysis_prompt_version,
@@ -1307,6 +1362,22 @@ def _incident_clip(
     incident = store.get_incident(incident_id)
     if incident is None:
         raise ValueError(f"Incident I{incident_id} was not found in the local analysis database.")
+    archive_date = date.fromisoformat(str(incident["archive_date"]))
+    state = _library_state_for_store(
+        store,
+        str(incident["feed_id"]),
+        archive_date,
+    )
+    if (
+        state is None
+        or not state["has_imported_transcript"]
+        or not state["has_transcript"]
+        or str(incident.get("prompt_version") or "") != PROMPT_VERSION
+    ):
+        raise ValueError(
+            f"Incident I{incident_id} belongs to an older retained-evidence "
+            "revision. Finish that local day before playing or exporting its clip."
+        )
     source_value = str(incident.get("audio_path") or "")
     source = Path(source_value)
     if not source.is_file():
@@ -1538,6 +1609,14 @@ def ask_archive() -> int:
         }
     )
     with AnalysisStore(DEFAULT_DATABASE) as store:
+        require_current_range_evidence(
+            store,
+            [feed_id],
+            start_date,
+            end_date,
+            require_analysis=False,
+            purpose="Archive question answering",
+        )
         indexer = SemanticIndexer(store, model=DEFAULT_EMBEDDING_MODEL)
         indexer.index_missing()
         with open_analysis_client(provider) as client:
@@ -1564,6 +1643,15 @@ def summarize_week() -> int:
         }
     )
     with AnalysisStore(DEFAULT_DATABASE) as store:
+        start_date = week_ending - timedelta(days=6)
+        require_current_range_evidence(
+            store,
+            [feed_id],
+            start_date,
+            week_ending,
+            require_analysis=True,
+            purpose="Weekly summary",
+        )
         with open_analysis_client(provider) as client:
             result = WeeklySummaryAnalyzer(
                 store,
@@ -1604,6 +1692,17 @@ def summarize_area() -> int:
         }
     )
     with AnalysisStore(DEFAULT_DATABASE) as store:
+        profile = store.get_area_profile(profile_name)
+        if profile is None:
+            raise ValueError(f"Area profile {profile_name!r} was not found.")
+        require_current_range_evidence(
+            store,
+            [str(value) for value in profile["feed_ids"]],
+            start_date,
+            end_date,
+            require_analysis=True,
+            purpose="Area summary",
+        )
         with open_analysis_client(provider) as client:
             result = AreaStoryAnalyzer(
                 store,
@@ -1629,22 +1728,51 @@ def latest_area_digest(profile_name: str) -> int:
             profile_name,
             prompt_version=AREA_PROMPT_VERSION,
         )
-    result = None
-    stale = latest_any is not None and row is None
-    if row is not None:
-        coverage = json.loads(str(row["coverage_json"]))
-        if str(coverage.get("incident_prompt_version") or "") != PROMPT_VERSION:
-            stale = True
-        else:
-            result = {
-                "profile_name": str(row["profile_name"]),
-                "start_date": str(row["start_date"]),
-                "end_date": str(row["end_date"]),
-                "summary": str(row["summary"]),
-                "stories": json.loads(str(row["stories_json"])),
-                "coverage": coverage,
-                "cached": True,
-            }
+        result = None
+        stale = latest_any is not None and row is None
+        if row is not None:
+            coverage = json.loads(str(row["coverage_json"]))
+            profile = store.get_area_profile(profile_name)
+            if str(coverage.get("incident_prompt_version") or "") != PROMPT_VERSION:
+                stale = True
+            elif profile is None:
+                stale = True
+            else:
+                try:
+                    require_current_range_evidence(
+                        store,
+                        [str(value) for value in profile["feed_ids"]],
+                        date.fromisoformat(str(row["start_date"])),
+                        date.fromisoformat(str(row["end_date"])),
+                        require_analysis=True,
+                        purpose="Saved area summary",
+                    )
+                except ValueError:
+                    stale = True
+                else:
+                    current_fingerprint = (
+                        current_area_story_source_fingerprint(
+                            store,
+                            profile,
+                            date.fromisoformat(str(row["start_date"])),
+                            date.fromisoformat(str(row["end_date"])),
+                        )
+                    )
+                    if (
+                        str(row["source_fingerprint"])
+                        != current_fingerprint
+                    ):
+                        stale = True
+                    else:
+                        result = {
+                            "profile_name": str(row["profile_name"]),
+                            "start_date": str(row["start_date"]),
+                            "end_date": str(row["end_date"]),
+                            "summary": str(row["summary"]),
+                            "stories": json.loads(str(row["stories_json"])),
+                            "coverage": coverage,
+                            "cached": True,
+                        }
     emit({"type": "saved_area_digest", "result": result, "stale": stale})
     return 0
 

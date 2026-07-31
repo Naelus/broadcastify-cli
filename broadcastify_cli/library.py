@@ -16,11 +16,12 @@ from .portable_diarization import (
     diarization_engine_satisfies,
     normalize_diarization_engine,
 )
-from .storage import AnalysisStore
+from .storage import AnalysisStore, sha256_file
 from .transcription import LocalTranscriber
 from .workfiles import (
     cleanup_orphaned_audio_work_files,
     directory_storage_usage,
+    files_storage_usage,
 )
 
 
@@ -127,6 +128,30 @@ def _transcript_is_current(audio: Path, transcript: Path) -> bool:
         return False
 
 
+def _external_artifacts(
+    combined: Path,
+    manifest: Path,
+    transcript: Path,
+    raw_files: list[Path],
+) -> list[Path]:
+    """Select one imported feed-day's files without counting sibling data."""
+
+    paths = [
+        combined,
+        manifest,
+        transcript,
+        transcript.with_suffix(".txt"),
+        *raw_files,
+    ]
+    stem = combined.stem
+    for directory in (transcript.parent, transcript.parent / ".cache"):
+        if not directory.is_dir():
+            continue
+        paths.extend(directory.glob(f"{stem}*"))
+        paths.extend(directory.glob(f".{stem}*"))
+    return paths
+
+
 def _state_for_day(
     output_root: Path,
     feed_id: str,
@@ -134,7 +159,10 @@ def _state_for_day(
     stored: dict[str, Any] | None,
     feed_name: str,
 ) -> dict[str, Any]:
-    day_directory = output_root / feed_id / archive_date.strftime("%Y%m%d")
+    expected_day_directory = (
+        output_root / feed_id / archive_date.strftime("%Y%m%d")
+    )
+    day_directory = expected_day_directory
     stem = f"combined_{feed_id}_{archive_date:%Y%m%d}"
     combined = day_directory / f"{stem}.mp3"
     manifest = day_directory / f"{stem}.manifest.json"
@@ -152,13 +180,24 @@ def _state_for_day(
         if not manifest.is_file() and stored_manifest.is_file():
             manifest = stored_manifest
 
+    expected_root = expected_day_directory.resolve()
+    external_layout = False
+    for artifact in (combined, manifest, transcript):
+        if not artifact.is_file():
+            continue
+        try:
+            artifact.resolve().relative_to(expected_root)
+        except (OSError, ValueError):
+            external_layout = True
+            break
+
     raw_files = []
     if day_directory.is_dir():
-        raw_files = sorted(
-            path
-            for path in day_directory.glob("*.mp3")
-            if RAW_ARCHIVE_PATTERN.match(path.name)
-        )
+        for path in day_directory.glob("*.mp3"):
+            match = RAW_ARCHIVE_PATTERN.match(path.name)
+            if match and match.group(1) == feed_id:
+                raw_files.append(path)
+        raw_files.sort()
     has_combined_file = combined.is_file() and combined.stat().st_size > 0
     # Imported/legacy combined recordings may legitimately have no retained raw
     # blocks.  When raw blocks are present, however, the manifest must describe
@@ -171,12 +210,30 @@ def _state_for_day(
         and not combined_output_is_current(combined, manifest, raw_files)
     )
     has_combined = has_combined_file and not has_stale_combined
+    transcript_file_exists = bool(
+        transcript.is_file() and transcript.stat().st_size > 0
+    )
     has_transcript = bool(
         has_combined and _transcript_is_current(combined, transcript)
     )
+    has_stale_transcript = bool(
+        has_combined and transcript_file_exists and not has_transcript
+    )
+    stored_matches_transcript = False
+    if has_transcript and stored:
+        expected_transcript_sha256 = str(
+            stored.get("transcript_sha256") or ""
+        )
+        try:
+            stored_matches_transcript = bool(
+                expected_transcript_sha256
+                and sha256_file(transcript) == expected_transcript_sha256
+            )
+        except OSError:
+            stored_matches_transcript = False
     has_diarization = has_transcript and (
         transcript_has_diarization(transcript)
-        or bool(stored and stored.get("has_diarization"))
+        or bool(stored_matches_transcript and stored.get("has_diarization"))
     )
     diarization_engine = (
         transcript_diarization_engine(transcript) if has_diarization else ""
@@ -188,16 +245,32 @@ def _state_for_day(
     analysis_prompt_version = (
         str(stored.get("summary_prompt_version") or "") if stored else ""
     )
+    summary_transcript_sha256 = (
+        str(stored.get("summary_transcript_sha256") or "")
+        if stored
+        else ""
+    )
     has_analysis = bool(
         has_transcript
+        and stored_matches_transcript
         and has_saved_analysis
         and analysis_prompt_version == PROMPT_VERSION
+        and summary_transcript_sha256
+        == str(stored.get("transcript_sha256") or "")
     )
     has_stale_analysis = bool(
         has_transcript and has_saved_analysis and not has_analysis
     )
-    incident_count = int(stored.get("incident_count") or 0) if stored else 0
-    segment_count = int(stored.get("segment_count") or 0) if stored else 0
+    incident_count = (
+        int(stored.get("incident_count") or 0)
+        if stored_matches_transcript and has_analysis
+        else 0
+    )
+    segment_count = (
+        int(stored.get("segment_count") or 0)
+        if stored_matches_transcript
+        else 0
+    )
 
     if has_stale_combined:
         next_step = "Refresh archive day"
@@ -217,6 +290,14 @@ def _state_for_day(
             "completeness has not been verified"
             if raw_files
             else "No usable combined audio was found"
+        )
+    elif has_stale_transcript:
+        next_step = "Update local transcript"
+        action = "continue_local"
+        status = "Transcript update required"
+        status_detail = (
+            "Combined audio changed; the previous transcript is preserved but "
+            "hidden until local processing updates it"
         )
     elif not has_transcript:
         next_step = "Transcribe locally"
@@ -257,7 +338,13 @@ def _state_for_day(
         if raw_files
         else "Audio retained" if has_combined else "Audio missing",
         "Combined" if has_combined else "Not combined",
-        f"Transcript {segment_count:,} segments" if has_transcript and segment_count else "Transcribed" if has_transcript else "Not transcribed",
+        f"Transcript {segment_count:,} segments"
+        if has_transcript and segment_count
+        else "Transcribed"
+        if has_transcript
+        else "Transcript update required"
+        if has_stale_transcript
+        else "Not transcribed",
         "Diarized" if has_diarization else "Not diarized",
         f"Analyzed {incident_count} incidents"
         if has_analysis
@@ -266,7 +353,14 @@ def _state_for_day(
         else "Not analyzed",
     ]
     resolved_feed_name = feed_name or _manifest_feed_name(manifest)
-    storage_bytes, working_storage_bytes = directory_storage_usage(day_directory)
+    if external_layout:
+        storage_bytes, working_storage_bytes = files_storage_usage(
+            _external_artifacts(combined, manifest, transcript, raw_files)
+        )
+    else:
+        storage_bytes, working_storage_bytes = directory_storage_usage(
+            day_directory
+        )
     return {
         "feed_id": feed_id,
         "feed_name": resolved_feed_name or f"Feed {feed_id}",
@@ -279,6 +373,8 @@ def _state_for_day(
         "has_combined": has_combined,
         "has_stale_combined": has_stale_combined,
         "has_transcript": has_transcript,
+        "has_stale_transcript": has_stale_transcript,
+        "has_imported_transcript": stored_matches_transcript,
         "has_diarization": has_diarization,
         "diarization_engine": diarization_engine,
         "diarization_quality": (
@@ -354,6 +450,88 @@ def scan_local_library(
             )
         )
     return sorted(results, key=lambda value: (value["archive_date"], value["feed_id"]), reverse=True)
+
+
+def require_current_range_evidence(
+    store: AnalysisStore,
+    feed_ids: list[str],
+    start_date: date,
+    end_date: date,
+    *,
+    require_analysis: bool,
+    purpose: str,
+) -> None:
+    """Block DB consumers when retained files have moved to a newer revision."""
+
+    normalized = list(dict.fromkeys(str(value) for value in feed_ids if str(value)))
+    states = {
+        (str(value["feed_id"]), str(value["archive_date"])): value
+        for value in scan_local_library(store.path.parent, store.path)
+    }
+    relevant: set[tuple[str, str]] = set()
+    days: dict[tuple[str, str], dict[str, Any]] = {}
+    for feed_id in normalized:
+        for day in store.list_days(feed_id):
+            archive_value = str(day["archive_date"])
+            if start_date.isoformat() <= archive_value <= end_date.isoformat():
+                key = (feed_id, archive_value)
+                days[key] = day
+                if not require_analysis and (
+                    int(day.get("segment_count") or 0) > 0
+                    or int(day.get("passage_count") or 0) > 0
+                ):
+                    relevant.add(key)
+
+    if require_analysis:
+        for key, day in days.items():
+            if (
+                bool(day.get("has_summary"))
+                and str(day.get("summary_prompt_version") or "")
+                == PROMPT_VERSION
+            ):
+                relevant.add(key)
+        for incident in store.get_incidents_for_feeds(
+            normalized,
+            start_date,
+            end_date,
+            prompt_version=PROMPT_VERSION,
+        ):
+            relevant.add(
+                (
+                    str(incident["feed_id"]),
+                    str(incident["archive_date"]),
+                )
+            )
+
+    stale: list[tuple[str, str]] = []
+    for key in sorted(relevant):
+        state = states.get(key)
+        current = bool(
+            state
+            and (
+                state["has_analysis"]
+                if require_analysis
+                else (
+                    state["has_transcript"]
+                    and state["has_imported_transcript"]
+                )
+            )
+        )
+        if not current:
+            stale.append(key)
+    if not stale:
+        return
+    labels = ", ".join(
+        f"feed {feed_id} on {archive_value}"
+        for feed_id, archive_value in stale[:8]
+    )
+    if len(stale) > 8:
+        labels += f", and {len(stale) - 8} more"
+    raise ValueError(
+        f"{purpose} is blocked because saved evidence is older than the "
+        f"retained files for {labels}. Finish those local days first; no "
+        "archive re-download is required."
+    )
 
 
 @dataclass(frozen=True)
@@ -447,7 +625,7 @@ def prepare_local_day(
         "max_speakers": request.max_speakers,
     }
     operation = "reused"
-    if not transcript.is_file():
+    if not _transcript_is_current(audio, transcript):
         if progress:
             progress(
                 f"Loading local transcription {request.model} "

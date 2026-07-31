@@ -13,6 +13,7 @@ from broadcastify_cli.library import (
 )
 from broadcastify_cli.storage import AnalysisStore
 from broadcastify_cli.transcription import LocalTranscriber, SpeakerTurn
+from broadcastify_cli.workfiles import work_file_owner_token
 
 
 def _day(tmp_path: Path, feed_id: str, value: str) -> Path:
@@ -101,32 +102,84 @@ def test_library_separates_working_audio_and_cleans_old_orphans(
     cache.mkdir(parents=True)
     prepared = cache / "combined_90004_20260729.pyannote.flac"
     prepared.write_bytes(b"reusable retry input")
+    owner = work_file_owner_token()
     active_raw = (
         cache
-        / f".combined_90004_20260729.pyannote.{os.getpid()}.123.pyannote.f32le"
+        / f".combined_90004_20260729.pyannote.{owner}."
+        f"{os.getpid()}.123.pyannote.f32le"
     )
     active_raw.write_bytes(b"active raw scratch")
+    active_preparation = (
+        cache
+        / f".combined_90004_20260729.{owner}."
+        f"{os.getpid()}.789.pyannote.part.flac"
+    )
+    active_preparation.write_bytes(b"active preparation")
+    active_combine = (
+        day
+        / f".combined_90004_20260729.{owner}."
+        f"{os.getpid()}.abcdefgh.part.mp3"
+    )
+    active_combine.write_bytes(b"active combined output")
     orphan_raw = (
         cache
-        / ".combined_90004_20260729.pyannote.999999999.456.pyannote.f32le"
+        / f".combined_90004_20260729.pyannote.{owner}."
+        "999999999.456.pyannote.f32le"
     )
     orphan_raw.write_bytes(b"orphan raw scratch")
+    orphan_preparation = (
+        cache
+        / f".combined_90004_20260729.{owner}."
+        "999999999.456.pyannote.part.flac"
+    )
+    orphan_preparation.write_bytes(b"orphan preparation")
+    orphan_combine = (
+        day
+        / f".combined_90004_20260729.{owner}."
+        "999999999.abcdefgh.part.mp3"
+    )
+    orphan_combine.write_bytes(b"orphan combined output")
+    foreign_combine = (
+        day
+        / ".combined_90004_20260729.000000000000."
+        "999999999.abcdefgh.part.mp3"
+    )
+    foreign_combine.write_bytes(b"foreign active output")
     orphan_part = day / ".combined_90004_20260729.old.part.mp3"
     orphan_part.write_bytes(b"orphan combined output")
     old = time.time() - 7_200
-    for path in (active_raw, orphan_raw, orphan_part):
+    for path in (
+        active_raw,
+        active_preparation,
+        active_combine,
+        orphan_raw,
+        orphan_preparation,
+        orphan_combine,
+        foreign_combine,
+        orphan_part,
+    ):
         os.utime(path, (old, old))
 
     state = scan_local_library(tmp_path)[0]
 
     assert state["storage_bytes"] == raw.stat().st_size
     assert state["working_storage_bytes"] == (
-        prepared.stat().st_size + active_raw.stat().st_size
+        prepared.stat().st_size
+        + active_raw.stat().st_size
+        + active_preparation.stat().st_size
+        + active_combine.stat().st_size
+        + foreign_combine.stat().st_size
+        + orphan_part.stat().st_size
     )
     assert prepared.exists()
     assert active_raw.exists()
+    assert active_preparation.exists()
+    assert active_combine.exists()
     assert not orphan_raw.exists()
-    assert not orphan_part.exists()
+    assert not orphan_preparation.exists()
+    assert not orphan_combine.exists()
+    assert foreign_combine.exists()
+    assert orphan_part.exists()
 
 
 def test_library_removes_prepared_audio_after_exact_diarization_cache(
@@ -191,10 +244,295 @@ def test_library_rejects_transcript_older_than_refreshed_combined_audio(
 
     assert state["has_combined"] is True
     assert state["has_transcript"] is False
+    assert state["has_stale_transcript"] is True
     assert state["has_diarization"] is False
     assert state["has_analysis"] is False
-    assert state["status"] == "Audio ready"
-    assert state["next_step"] == "Transcribe locally"
+    assert state["status"] == "Transcript update required"
+    assert state["next_step"] == "Update local transcript"
+
+
+def test_prepare_local_day_retranscribes_after_combined_audio_changes(
+    monkeypatch, tmp_path: Path
+) -> None:
+    day = _day(tmp_path, "90005", "2026-07-29")
+    audio = day / "combined_90005_20260729.mp3"
+    audio.write_bytes(b"first combined audio")
+    transcript = day / "transcripts" / "combined_90005_20260729.json"
+    transcript.parent.mkdir()
+    transcript.write_text(
+        json.dumps(
+            {
+                "segments": [{"start": 0.0, "end": 1.0, "text": "old"}],
+                "diarization_completed": True,
+                "diarization_engine": "community-1",
+            }
+        ),
+        encoding="utf-8",
+    )
+    audio.write_bytes(b"refreshed combined audio")
+    future = time.time() + 10
+    os.utime(audio, (future, future))
+    constructor_arguments: list[dict[str, object]] = []
+
+    class FakeTranscriber:
+        def __init__(self, **kwargs: object) -> None:
+            constructor_arguments.append(kwargs)
+
+        def transcribe_file(self, _audio: Path, progress=None) -> Path:
+            transcript.write_text(
+                json.dumps(
+                    {
+                        "segments": [
+                            {"start": 0.0, "end": 1.0, "text": "current"}
+                        ],
+                        "diarization_completed": True,
+                        "diarization_engine": "community-1",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            return transcript
+
+        def diarize_existing_transcript(self, *_args, **_kwargs) -> Path:
+            raise AssertionError("Stale transcript must not be relabeled")
+
+    monkeypatch.setattr(
+        "broadcastify_cli.library.LocalTranscriber", FakeTranscriber
+    )
+
+    result = prepare_local_day(
+        LocalProcessingRequest(
+            feed_id="90005",
+            archive_date=date(2026, 7, 29),
+            output_dir=tmp_path,
+        )
+    )
+
+    assert result["operation"] == "transcribed"
+    assert constructor_arguments
+    assert "load_asr" not in constructor_arguments[0]
+    assert json.loads(transcript.read_text(encoding="utf-8"))["segments"][0][
+        "text"
+    ] == "current"
+
+
+def test_library_does_not_trust_analysis_from_an_older_transcript_revision(
+    tmp_path: Path,
+) -> None:
+    day = _day(tmp_path, "90006", "2026-07-29")
+    audio = day / "combined_90006_20260729.mp3"
+    audio.write_bytes(b"combined audio")
+    transcript = day / "transcripts" / "combined_90006_20260729.json"
+    transcript.parent.mkdir()
+    transcript.write_text(
+        json.dumps(
+            {
+                "segments": [
+                    {
+                        "start": 0.0,
+                        "end": 1.0,
+                        "text": "old",
+                        "speaker": "SPEAKER_00",
+                    }
+                ],
+                "diarization_completed": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    database = tmp_path / "analysis.sqlite3"
+    with AnalysisStore(database) as store:
+        imported = store.import_transcript(
+            "90006", date(2026, 7, 29), transcript, audio
+        )
+        store.save_daily_summary(
+            imported.day_id,
+            "Old summary",
+            [],
+            model="test",
+            prompt_version=PROMPT_VERSION,
+            transcript_sha256=imported.transcript_sha256,
+        )
+
+    transcript.write_text(
+        json.dumps(
+            {
+                "segments": [
+                    {"start": 0.0, "end": 1.0, "text": "current"}
+                ],
+                "diarization_completed": False,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    state = scan_local_library(tmp_path, database)[0]
+
+    assert state["has_transcript"] is True
+    assert state["has_imported_transcript"] is False
+    assert state["has_diarization"] is False
+    assert state["has_analysis"] is False
+    assert state["has_stale_analysis"] is True
+    assert state["segment_count"] == 0
+    assert state["incident_count"] == 0
+    assert state["status"] == "Transcript ready"
+
+
+def test_library_requires_summary_to_match_current_imported_transcript(
+    tmp_path: Path,
+) -> None:
+    day = _day(tmp_path, "90008", "2026-07-29")
+    audio = day / "combined_90008_20260729.mp3"
+    audio.write_bytes(b"combined audio")
+    transcript = day / "transcripts" / "combined_90008_20260729.json"
+    transcript.parent.mkdir()
+    transcript.write_text(
+        json.dumps(
+            {
+                "segments": [
+                    {
+                        "start": 0.0,
+                        "end": 1.0,
+                        "text": "old",
+                        "speaker": "SPEAKER_00",
+                    }
+                ],
+                "diarization_completed": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    database = tmp_path / "analysis.sqlite3"
+    with AnalysisStore(database) as store:
+        previous = store.import_transcript(
+            "90008", date(2026, 7, 29), transcript, audio
+        )
+        transcript.write_text(
+            json.dumps(
+                {
+                    "segments": [
+                        {
+                            "start": 0.0,
+                            "end": 2.0,
+                            "text": "current",
+                            "speaker": "SPEAKER_01",
+                        }
+                    ],
+                    "diarization_completed": True,
+                }
+            ),
+            encoding="utf-8",
+        )
+        current = store.import_transcript(
+            "90008", date(2026, 7, 29), transcript, audio
+        )
+        assert current.transcript_sha256 != previous.transcript_sha256
+        store.save_daily_summary(
+            current.day_id,
+            "Summary for the previous transcript.",
+            [],
+            model="test",
+            prompt_version=PROMPT_VERSION,
+            transcript_sha256=previous.transcript_sha256,
+        )
+
+    state = scan_local_library(tmp_path, database)[0]
+
+    assert state["has_transcript"] is True
+    assert state["has_imported_transcript"] is True
+    assert state["has_diarization"] is True
+    assert state["has_analysis"] is False
+    assert state["has_stale_analysis"] is True
+    assert state["segment_count"] == 1
+    assert state["incident_count"] == 0
+    assert state["status"] == "Analysis update available"
+
+
+def test_imported_day_storage_does_not_count_unrelated_sibling_files(
+    tmp_path: Path,
+) -> None:
+    external = tmp_path / "external"
+    external.mkdir()
+    audio = external / "combined_90007_20260729.mp3"
+    transcript = external / "combined_90007_20260729.json"
+    audio.write_bytes(b"audio")
+    transcript.write_text(
+        json.dumps({"segments": [], "diarization_completed": False}),
+        encoding="utf-8",
+    )
+    (external / "unrelated-large-file.bin").write_bytes(b"x" * 10_000)
+    output = tmp_path / "library"
+    database = output / "analysis.sqlite3"
+    output.mkdir()
+    with AnalysisStore(database) as store:
+        store.import_transcript(
+            "90007", date(2026, 7, 29), transcript, audio
+        )
+
+    state = scan_local_library(output, database)[0]
+
+    assert state["storage_bytes"] == (
+        audio.stat().st_size + transcript.stat().st_size
+    )
+
+
+def test_imported_day_storage_includes_mixed_layout_transcript(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "library"
+    day = _day(output, "90009", "2026-07-29")
+    audio = day / "combined_90009_20260729.mp3"
+    audio.write_bytes(b"audio")
+    external = tmp_path / "external"
+    external.mkdir()
+    transcript = external / "combined_90009_20260729.json"
+    transcript.write_text(
+        json.dumps({"segments": [], "diarization_completed": False}),
+        encoding="utf-8",
+    )
+    database = output / "analysis.sqlite3"
+    with AnalysisStore(database) as store:
+        store.import_transcript(
+            "90009", date(2026, 7, 29), transcript, audio
+        )
+
+    state = scan_local_library(output, database)[0]
+
+    assert state["storage_bytes"] == (
+        audio.stat().st_size + transcript.stat().st_size
+    )
+
+
+def test_imported_day_storage_includes_matching_external_raw_blocks(
+    tmp_path: Path,
+) -> None:
+    external = tmp_path / "external"
+    external.mkdir()
+    audio = external / "combined_90010_20260729.mp3"
+    audio.write_bytes(b"audio")
+    raw = external / "202607290000-1-90010.mp3"
+    raw.write_bytes(b"raw block")
+    transcript = external / "combined_90010_20260729.json"
+    transcript.write_text(
+        json.dumps({"segments": [], "diarization_completed": False}),
+        encoding="utf-8",
+    )
+    output = tmp_path / "library"
+    output.mkdir()
+    database = output / "analysis.sqlite3"
+    with AnalysisStore(database) as store:
+        store.import_transcript(
+            "90010", date(2026, 7, 29), transcript, audio
+        )
+
+    state = scan_local_library(output, database)[0]
+
+    assert state["raw_file_count"] == 1
+    assert state["storage_bytes"] == (
+        audio.stat().st_size
+        + raw.stat().st_size
+        + transcript.stat().st_size
+    )
 
 
 def test_library_does_not_present_older_combined_timeline_as_current(

@@ -1,5 +1,6 @@
 import json
 import os
+import time
 from contextlib import nullcontext
 from datetime import date
 from pathlib import Path
@@ -8,15 +9,22 @@ from types import SimpleNamespace
 import pytest
 
 from broadcastify_cli.analysis import PROMPT_VERSION
+from broadcastify_cli.area_watch import (
+    AREA_PROMPT_VERSION,
+    current_area_story_source_fingerprint,
+)
+from broadcastify_cli.library import require_current_range_evidence
 from broadcastify_cli.storage import AnalysisStore
 from broadcastify_cli.worker import (
     _day_report,
     _incident_clip,
+    analysis_days,
     analysis_self_test,
     archive_quota_status,
     asr_self_test,
     diarization_self_test,
     load_worker_environment,
+    latest_area_digest,
     prepare_asr_model_command,
     profile_self_test,
 )
@@ -797,6 +805,280 @@ def test_day_report_hides_incidents_from_older_evidence_rules(tmp_path: Path) ->
     assert report["analysis_update_required"] is True
 
 
+def _analyzed_worker_day(
+    tmp_path: Path,
+) -> tuple[Path, Path, Path, date, int]:
+    archive_date = date(2026, 7, 29)
+    audio = tmp_path / "combined_90001_20260729.mp3"
+    transcript = tmp_path / "combined_90001_20260729.json"
+    database = tmp_path / "analysis.sqlite3"
+    audio.write_bytes(b"combined audio")
+    transcript.write_text(
+        json.dumps(
+            {
+                "duration": 30.0,
+                "diarization_completed": True,
+                "segments": [
+                    {
+                        "start": 1.0,
+                        "end": 2.0,
+                        "speaker": "SPEAKER_00",
+                        "text": "Current retained evidence.",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    with AnalysisStore(database) as store:
+        imported = store.import_transcript(
+            "90001", archive_date, transcript, audio
+        )
+        incident_id = store.replace_incidents(
+            imported.day_id,
+            [
+                {
+                    "fingerprint": "current-worker-evidence",
+                    "event_type": "other",
+                    "title": "Current event",
+                    "summary": "Current retained event.",
+                    "location": "",
+                    "start_seconds": 1.0,
+                    "end_seconds": 2.0,
+                    "priority": 3,
+                    "confidence": 0.8,
+                    "evidence": [],
+                    "attributes": {},
+                }
+            ],
+            model="test-model",
+            prompt_version=PROMPT_VERSION,
+        )[0]
+        store.save_daily_summary(
+            imported.day_id,
+            "Current summary.",
+            [incident_id],
+            model="test-model",
+            prompt_version=PROMPT_VERSION,
+            transcript_sha256=imported.transcript_sha256,
+        )
+    return database, audio, transcript, archive_date, incident_id
+
+
+def test_day_report_hides_current_prompt_results_after_audio_refresh(
+    tmp_path: Path,
+) -> None:
+    database, audio, _transcript, archive_date, _incident_id = (
+        _analyzed_worker_day(tmp_path)
+    )
+    audio.write_bytes(b"refreshed combined audio")
+    future = time.time() + 10
+    os.utime(audio, (future, future))
+
+    with AnalysisStore(database) as store:
+        report = _day_report(store, "90001", archive_date)
+
+    assert report["summary"] == ""
+    assert report["incidents"] == []
+    assert report["analysis_current"] is False
+    assert report["analysis_update_required"] is True
+
+
+def test_day_report_hides_database_results_after_transcript_rewrite(
+    tmp_path: Path,
+) -> None:
+    database, _audio, transcript, archive_date, _incident_id = (
+        _analyzed_worker_day(tmp_path)
+    )
+    transcript.write_text(
+        json.dumps(
+            {
+                "duration": 30.0,
+                "segments": [
+                    {
+                        "start": 3.0,
+                        "end": 4.0,
+                        "text": "A newer transcript revision.",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with AnalysisStore(database) as store:
+        report = _day_report(store, "90001", archive_date)
+
+    assert report["summary"] == ""
+    assert report["incidents"] == []
+    assert report["analysis_current"] is False
+    assert report["analysis_update_required"] is True
+
+
+def test_range_consumers_and_clip_reject_older_retained_revision(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    database, audio, _transcript, archive_date, incident_id = (
+        _analyzed_worker_day(tmp_path)
+    )
+    extracted = False
+
+    def fail_extract(*_args, **_kwargs) -> Path:
+        nonlocal extracted
+        extracted = True
+        raise AssertionError("Stale evidence must not be clipped")
+
+    monkeypatch.setattr("broadcastify_cli.worker.extract_audio_clip", fail_extract)
+    with AnalysisStore(database) as store:
+        require_current_range_evidence(
+            store,
+            ["90001"],
+            archive_date,
+            archive_date,
+            require_analysis=False,
+            purpose="Question answering",
+        )
+        require_current_range_evidence(
+            store,
+            ["90001"],
+            archive_date,
+            archive_date,
+            require_analysis=True,
+            purpose="Summary",
+        )
+
+    audio.write_bytes(b"refreshed combined audio")
+    future = time.time() + 10
+    os.utime(audio, (future, future))
+    with AnalysisStore(database) as store:
+        with pytest.raises(ValueError, match="older than the retained files"):
+            require_current_range_evidence(
+                store,
+                ["90001"],
+                archive_date,
+                archive_date,
+                require_analysis=False,
+                purpose="Question answering",
+            )
+        with pytest.raises(ValueError, match="older than the retained files"):
+            require_current_range_evidence(
+                store,
+                ["90001"],
+                archive_date,
+                archive_date,
+                require_analysis=True,
+                purpose="Summary",
+            )
+        with pytest.raises(ValueError, match="older retained-evidence revision"):
+            _incident_clip(store, incident_id)
+    assert extracted is False
+
+
+def test_analysis_day_list_uses_retained_revision_state(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    database, audio, _transcript, _archive_date, _incident_id = (
+        _analyzed_worker_day(tmp_path)
+    )
+    emitted: list[dict[str, object]] = []
+    monkeypatch.setattr("broadcastify_cli.worker.DEFAULT_DATABASE", database)
+    monkeypatch.setattr("broadcastify_cli.worker.emit", emitted.append)
+
+    assert analysis_days("90001") == 0
+    current = emitted[-1]["days"][0]  # type: ignore[index]
+    assert current["analysis_current"] is True
+    assert current["incident_count"] == 1
+
+    audio.write_bytes(b"refreshed combined audio")
+    future = time.time() + 10
+    os.utime(audio, (future, future))
+    assert analysis_days("90001") == 0
+    stale = emitted[-1]["days"][0]  # type: ignore[index]
+    assert stale["analysis_current"] is False
+    assert stale["analysis_update_required"] is True
+    assert stale["segment_count"] == 0
+    assert stale["incident_count"] == 0
+
+
+def test_native_saved_area_digest_requires_exact_current_source_fingerprint(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    database, _audio, _transcript, archive_date, _incident_id = (
+        _analyzed_worker_day(tmp_path)
+    )
+    with AnalysisStore(database) as store:
+        profile = store.save_area_profile(
+            "ExampleArea",
+            ["00000"],
+            [{"feed_id": "90001", "name": "Example Public Safety"}],
+        )
+        fingerprint = current_area_story_source_fingerprint(
+            store,
+            profile,
+            archive_date,
+            archive_date,
+        )
+        store.save_area_story_digest(
+            int(profile["id"]),
+            archive_date,
+            archive_date,
+            "Current saved area brief.",
+            [],
+            {"incident_prompt_version": PROMPT_VERSION},
+            "test",
+            AREA_PROMPT_VERSION,
+            fingerprint,
+        )
+
+    emitted: list[dict[str, object]] = []
+    monkeypatch.setattr("broadcastify_cli.worker.DEFAULT_DATABASE", database)
+    monkeypatch.setattr("broadcastify_cli.worker.emit", emitted.append)
+    assert latest_area_digest("ExampleArea") == 0
+    current = emitted[-1]
+    assert current["stale"] is False
+    assert current["result"]["summary"] == "Current saved area brief."  # type: ignore[index]
+
+    with AnalysisStore(database) as store:
+        day = store.get_day("90001", archive_date)
+        assert day is not None
+        incident_ids = store.replace_incidents(
+            int(day["id"]),
+            [
+                {
+                    "fingerprint": "new-native-area-incident",
+                    "event_type": "fire",
+                    "title": "New current incident",
+                    "summary": "A new current incident was extracted.",
+                    "location": "",
+                    "start_seconds": 3.0,
+                    "end_seconds": 4.0,
+                    "priority": 4,
+                    "confidence": 0.9,
+                    "evidence": [],
+                    "attributes": {},
+                }
+            ],
+            model="test",
+            prompt_version=PROMPT_VERSION,
+        )
+        store.save_daily_summary(
+            int(day["id"]),
+            "New current daily summary.",
+            incident_ids,
+            model="test",
+            prompt_version=PROMPT_VERSION,
+            transcript_sha256=str(day["transcript_sha256"]),
+        )
+
+    assert latest_area_digest("ExampleArea") == 0
+    stale = emitted[-1]
+    assert stale["stale"] is True
+    assert stale["result"] is None
+
+
 def test_incident_clip_uses_a_timestamped_cache_key(
     monkeypatch, tmp_path: Path
 ) -> None:
@@ -857,7 +1139,7 @@ def test_incident_clip_uses_a_timestamped_cache_key(
                 }
             ],
             model="test-model",
-            prompt_version="test-prompt",
+            prompt_version=PROMPT_VERSION,
         )[0]
 
         result = _incident_clip(store, incident_id)

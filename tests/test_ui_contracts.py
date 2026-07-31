@@ -154,6 +154,32 @@ def test_native_library_can_recheck_source_audio_for_complete_days() -> None:
     assert "day.NeedsNetwork || forceSourceCheck" in native
 
 
+def test_native_and_web_distinguish_working_storage_and_stale_transcripts() -> None:
+    native_models = (
+        ROOT / "BroadcastifyCli.WinUI" / "Models.cs"
+    ).read_text(encoding="utf-8")
+    native_window = (
+        ROOT / "BroadcastifyCli.WinUI" / "MainWindow.xaml.cs"
+    ).read_text(encoding="utf-8")
+    web = (
+        ROOT / "broadcastify_cli" / "web_static" / "app.js"
+    ).read_text(encoding="utf-8")
+
+    assert '"working_storage_bytes"' in native_models
+    assert '"has_stale_transcript"' in native_models
+    assert '"has_imported_transcript"' in native_models
+    assert 'FormatBytes(StorageBytes, "retained")' in native_models
+    assert 'FormatBytes(WorkingStorageBytes, "temporary")' in native_models
+    assert "day.HasStaleTranscript" in native_window
+    assert "day.HasImportedTranscript" in native_window
+    assert "previous results are hidden" in native_window
+    assert "function dayStorage(day)" in web
+    assert "${bytes(working)} temporary" in web
+    assert "day.has_stale_transcript" in web
+    assert "day.has_imported_transcript" in web
+    assert "previous transcript and its derived incidents" in web
+
+
 def test_native_credentials_are_one_click_and_never_prefill_saved_secrets() -> None:
     root = ElementTree.parse(
         ROOT / "BroadcastifyCli.WinUI" / "MainWindow.xaml"

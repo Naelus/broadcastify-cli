@@ -1,17 +1,44 @@
 from __future__ import annotations
 
 import ctypes
+import hashlib
 import json
 import os
 import re
+import socket
 import time
+import uuid
 from pathlib import Path
+from typing import Iterable
 
 
 _PYANNOTE_RAW_PATTERN = re.compile(
-    r"^\..+\.(?P<pid>\d+)\.\d+\.pyannote\.f32le$",
+    r"^\..+\.(?P<owner>[a-f0-9]{12})\.(?P<pid>\d+)\.\d+"
+    r"\.pyannote\.f32le$",
     re.IGNORECASE,
 )
+_PYANNOTE_PART_PATTERN = re.compile(
+    r"^\..+\.(?P<owner>[a-f0-9]{12})\.(?P<pid>\d+)\.\d+"
+    r"\.pyannote\.part\.flac$",
+    re.IGNORECASE,
+)
+_COMBINED_PART_PATTERN = re.compile(
+    r"^\.combined_.+\.(?P<owner>[a-f0-9]{12})\.(?P<pid>\d+)"
+    r"\.[^.]+\.part\.(?:mp3|wav|flac)$",
+    re.IGNORECASE,
+)
+_WORK_FILE_OWNER_TOKEN = hashlib.sha256(
+    (
+        str(os.getenv("BROADCASTIFY_WORK_OWNER_ID") or "").strip()
+        or f"{socket.gethostname() or 'unknown-host'}|{uuid.getnode():012x}"
+    ).encode("utf-8", errors="replace")
+).hexdigest()[:12]
+
+
+def work_file_owner_token() -> str:
+    """Return an opaque host token used to distinguish shared-path workers."""
+
+    return _WORK_FILE_OWNER_TOKEN
 
 
 def is_temporary_audio_work_file(path: str | Path) -> bool:
@@ -52,6 +79,29 @@ def directory_storage_usage(path: str | Path) -> tuple[int, int]:
     return retained, working
 
 
+def files_storage_usage(paths: Iterable[str | Path]) -> tuple[int, int]:
+    """Return retained and working bytes for an explicit artifact set."""
+
+    retained = 0
+    working = 0
+    seen: set[Path] = set()
+    for value in paths:
+        item = Path(value)
+        try:
+            identity = item.resolve()
+            if identity in seen or not item.is_file():
+                continue
+            seen.add(identity)
+            size = item.stat().st_size
+        except OSError:
+            continue
+        if is_temporary_audio_work_file(item):
+            working += size
+        else:
+            retained += size
+    return retained, working
+
+
 def _windows_process_running(pid: int) -> bool:
     process_query_limited_information = 0x1000
     still_active = 259
@@ -71,7 +121,10 @@ def _windows_process_running(pid: int) -> bool:
         pid,
     )
     if not handle:
-        return False
+        # ERROR_INVALID_PARAMETER is the normal "PID does not exist" result.
+        # Access denied and other indeterminate failures must be treated as
+        # alive so a read-oriented refresh never deletes active work.
+        return ctypes.get_last_error() != 87
     try:
         exit_code = ctypes.c_ulong()
         if not get_exit_code(handle, ctypes.byref(exit_code)):
@@ -178,18 +231,30 @@ def cleanup_orphaned_audio_work_files(
         else:
             removable = False
         raw_match = _PYANNOTE_RAW_PATTERN.match(item.name)
-        if raw_match and process_running(int(raw_match.group("pid"))):
-            continue
+        partial_match = _PYANNOTE_PART_PATTERN.match(item.name)
+        combined_match = _COMBINED_PART_PATTERN.match(item.name)
+        owned_match = raw_match or partial_match or combined_match
+        if owned_match:
+            # A PID has meaning only on its originating host. Foreign-host
+            # work on a shared NAS path is never eligible for local cleanup.
+            if owned_match.group("owner").lower() != work_file_owner_token():
+                continue
+            if process_running(int(owned_match.group("pid"))):
+                continue
+        # Legacy partial names do not carry ownership, so their worker cannot
+        # be proven dead. Count them as temporary but never unlink them from a
+        # read-oriented Library refresh. New writers include a PID.
         removable = removable or (
             raw_match is not None
-            or name.endswith(".pyannote.part.flac")
-            or (
-                name.startswith(".combined_")
-                and ".part." in name
-                and name.endswith((".mp3", ".wav", ".flac"))
-            )
+            or partial_match is not None
+            or combined_match is not None
         )
         if not removable:
+            continue
+        try:
+            if item.stat().st_mtime > cutoff:
+                continue
+        except OSError:
             continue
         try:
             item.unlink()

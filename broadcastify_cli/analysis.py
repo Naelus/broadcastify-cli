@@ -2332,6 +2332,79 @@ class IncidentAnalyzer:
         )
 
 
+def weekly_summary_source_fingerprint(
+    days: Sequence[Mapping[str, Any]],
+    daily_summaries: Sequence[Mapping[str, Any]],
+    incidents: Sequence[Mapping[str, Any]],
+) -> str:
+    """Hash the exact current inputs used to write a weekly brief."""
+
+    source_payload = {
+        "incident_prompt_version": PROMPT_VERSION,
+        "days": [
+            {
+                "date": str(value["archive_date"]),
+                "transcript": str(value["transcript_sha256"]),
+            }
+            for value in days
+        ],
+        "daily_summaries": [dict(value) for value in daily_summaries],
+        "incidents": [
+            {
+                "id": int(value["id"]),
+                "fingerprint": str(value["fingerprint"]),
+                "model": str(value["model"]),
+                "prompt": str(value["prompt_version"]),
+                "created": str(value["created_at"]),
+            }
+            for value in incidents
+        ],
+    }
+    return hashlib.sha256(
+        json.dumps(source_payload, sort_keys=True).encode("utf-8")
+    ).hexdigest()
+
+
+def current_weekly_summary_source_fingerprint(
+    store: AnalysisStore,
+    feed_id: str,
+    start_date: date,
+    end_date: date,
+) -> str:
+    """Recompute a saved weekly brief's source identity without a model."""
+
+    days = [
+        value
+        for value in store.list_days(feed_id)
+        if start_date.isoformat()
+        <= str(value["archive_date"])
+        <= end_date.isoformat()
+        and str(value.get("summary_prompt_version") or "")
+        == PROMPT_VERSION
+    ]
+    days.sort(key=lambda value: str(value["archive_date"]))
+    daily_summaries: list[dict[str, str]] = []
+    for day in days:
+        saved = store.get_latest_daily_summary(int(day["id"]))
+        daily_summaries.append(
+            {
+                "date": str(day["archive_date"]),
+                "summary": str(saved["summary"]) if saved else "",
+            }
+        )
+    incidents = store.get_incidents(
+        feed_id,
+        start_date,
+        end_date,
+        prompt_version=PROMPT_VERSION,
+    )
+    return weekly_summary_source_fingerprint(
+        days,
+        daily_summaries,
+        incidents,
+    )
+
+
 class WeeklySummaryAnalyzer:
     """Build and cache an evidence-referenced seven-day activity brief."""
 
@@ -2404,30 +2477,11 @@ class WeeklySummaryAnalyzer:
             category_counts[event_type] = category_counts.get(event_type, 0) + 1
         serious_count = sum(int(value["priority"]) >= 4 for value in incidents)
 
-        source_payload = {
-            "incident_prompt_version": PROMPT_VERSION,
-            "days": [
-                {
-                    "date": str(value["archive_date"]),
-                    "transcript": str(value["transcript_sha256"]),
-                }
-                for value in days
-            ],
-            "daily_summaries": daily_summaries,
-            "incidents": [
-                {
-                    "id": int(value["id"]),
-                    "fingerprint": str(value["fingerprint"]),
-                    "model": str(value["model"]),
-                    "prompt": str(value["prompt_version"]),
-                    "created": str(value["created_at"]),
-                }
-                for value in incidents
-            ],
-        }
-        source_fingerprint = hashlib.sha256(
-            json.dumps(source_payload, sort_keys=True).encode("utf-8")
-        ).hexdigest()
+        source_fingerprint = weekly_summary_source_fingerprint(
+            days,
+            daily_summaries,
+            incidents,
+        )
         existing = None if force else self.store.get_weekly_summary(
             feed_id,
             start_date,

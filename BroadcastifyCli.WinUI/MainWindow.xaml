@@ -133,14 +133,17 @@
                                                 <ProgressBar Minimum="0" Maximum="100" Value="{x:Bind PipelinePercent}" />
                                                 <Grid ColumnSpacing="8">
                                                     <Grid.ColumnDefinitions>
-                                                        <ColumnDefinition Width="*" />
-                                                        <ColumnDefinition Width="Auto" />
+                                                        <ColumnDefinition Width="3*" />
+                                                        <ColumnDefinition Width="2*" />
                                                     </Grid.ColumnDefinitions>
                                                     <TextBlock Text="{x:Bind NextStep}"
                                                                Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"
                                                                MaxLines="1" TextTrimming="CharacterEllipsis" />
                                                     <TextBlock Grid.Column="1" Text="{x:Bind StorageSummary}"
-                                                               Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                                                               Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                                               TextAlignment="Right" MaxLines="1"
+                                                               TextTrimming="CharacterEllipsis"
+                                                               ToolTipService.ToolTip="{x:Bind StorageSummary}" />
                                                 </Grid>
                                             </StackPanel>
                                         </DataTemplate>

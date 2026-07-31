@@ -706,7 +706,17 @@ function stageCards(day) {
   const stages = [
     [Boolean(day.raw_file_count || day.has_combined), "Archive audio", day.raw_file_count ? `${day.raw_file_count} source blocks` : "retained audio"],
     [day.has_combined, "Combine", day.has_combined ? "continuous timeline" : "not ready"],
-    [day.has_transcript, "Transcription", day.has_transcript ? `${day.segment_count || 0} segments` : "not ready"],
+    [
+      day.has_transcript,
+      "Transcription",
+      day.has_transcript
+        ? day.has_imported_transcript
+          ? `${day.segment_count || 0} segments`
+          : "awaiting database import"
+        : day.has_stale_transcript
+          ? "update required"
+          : "not ready",
+    ],
     [
       day.has_diarization,
       "Speaker labels",
@@ -731,16 +741,21 @@ function renderDayDetail(activeTab = "incidents") {
     <div class="detail-head"><div><h2>${html(day.feed_name)}</h2><p>Feed ${html(day.feed_id)} · ${html(day.archive_date)} · ${dayStorage(day)}</p></div>
       <div class="button-row">${day.speaker_upgrade_available ? '<button class="button secondary" data-action="upgrade-speakers" title="Replace fast preview labels with Community-1 without repeating transcription.">Improve speakers</button>' : ""}
       <button class="button ${day.is_complete ? "secondary" : "primary"}" data-action="primary-day" ${actionDisabled}>${html(primaryLabel)}</button></div></div>
-    <div class="notice ${day.is_complete ? "success" : day.needs_network ? "warning" : "success"}"><strong>${html(day.status)}</strong><span>${html(day.status_detail)}. Next: ${html(day.next_step)}.</span></div>
+    <div class="notice ${day.is_complete ? "success" : day.needs_network || day.has_stale_combined || day.has_stale_transcript || day.has_stale_analysis ? "warning" : "success"}"><strong>${html(day.status)}</strong><span>${html(day.status_detail)}. Next: ${html(day.next_step)}.</span></div>
     <div class="pipeline">${stageCards(day)}</div>
     ${detail.audio_url ? `<div class="audio-block"><audio id="dayAudio" controls preload="metadata" src="${html(detail.audio_url)}"></audio><small>Retained continuous recording. Incident play buttons jump to the cited time without contacting Broadcastify.</small></div>` : ""}
+    ${day.has_stale_transcript ? '<div class="notice warning"><strong>Transcript update required</strong><span>The combined recording changed. The previous transcript and its derived incidents are preserved locally but hidden until local processing updates them.</span></div>' : ""}
     ${day.has_stale_analysis ? '<div class="notice warning"><strong>Analysis update required</strong><span>Older incident claims are hidden. Finish this day to apply the current evidence rules using the retained transcript—no archive download is needed.</span></div>' : detail.summary ? `<div class="notice success"><strong>Daily brief</strong><span>${html(detail.summary)}</span></div>` : ""}
     <div class="detail-tabs"><button class="detail-tab${activeTab === "incidents" ? " active" : ""}" data-detail-tab="incidents">Incidents (${detail.incidents.length})</button><button class="detail-tab${activeTab === "transcript" ? " active" : ""}" data-detail-tab="transcript">Transcript (${day.segment_count || state.transcript.total || 0})</button></div>
     <div class="detail-panel" id="detailPanel">${activeTab === "incidents" ? incidentMarkup(detail.incidents) : transcriptMarkup()}</div>`;
 }
 
 function incidentMarkup(incidents) {
-  if (!incidents.length) return '<div class="empty-compact">No extracted incidents are saved for this day yet.</div>';
+  if (!incidents.length) {
+    const day = state.selectedDayDetail?.state;
+    if (day?.has_stale_transcript || day?.has_stale_analysis) return '<div class="empty-compact">Previous incidents are preserved but hidden until this day is updated locally.</div>';
+    return '<div class="empty-compact">No extracted incidents are saved for this day yet.</div>';
+  }
   const ordered = incidents.slice().sort((a, b) => b.priority - a.priority || a.start_seconds - b.start_seconds);
   const visible = state.incidentExpanded ? ordered : ordered.slice(0, 12);
   return `<div class="incident-list">${visible.map((item) => `<article class="incident-card">
@@ -766,7 +781,11 @@ async function loadTranscript(append, query = state.transcript.query) {
 }
 
 function transcriptMarkup() {
-  const content = state.transcript.segments.length ? state.transcript.segments.map((segment) => `<div class="transcript-row"><time>${clock(segment.start_seconds)}</time><span class="speaker">${html(segment.speaker || "Unknown speaker")}</span><p>${html(segment.text)}</p></div>`).join("") : '<div class="empty-compact">No transcript segments match this search.</div>';
+  const day = state.selectedDayDetail?.state;
+  const empty = day?.has_stale_transcript
+    ? "The previous transcript is preserved but hidden until this day is updated locally."
+    : "No transcript segments match this search.";
+  const content = state.transcript.segments.length ? state.transcript.segments.map((segment) => `<div class="transcript-row"><time>${clock(segment.start_seconds)}</time><span class="speaker">${html(segment.speaker || "Unknown speaker")}</span><p>${html(segment.text)}</p></div>`).join("") : `<div class="empty-compact">${html(empty)}</div>`;
   return `<div class="transcript-tools"><input id="transcriptSearch" type="search" value="${html(state.transcript.query)}" placeholder="Search this transcript"><button class="button secondary small" data-action="search-transcript">Search</button></div><div class="transcript-list">${content}</div>${state.transcript.hasMore ? '<button class="button secondary wide load-more" data-action="load-transcript">Load more transcript</button>' : ""}`;
 }
 

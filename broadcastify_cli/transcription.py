@@ -37,6 +37,7 @@ from .portable_diarization import (
     normalize_diarization_engine,
 )
 from .qwen_asr import SherpaQwen3Asr, normalize_qwen3_asr_model_name
+from .workfiles import work_file_owner_token
 
 
 @dataclass(frozen=True)
@@ -485,7 +486,8 @@ def decoded_diarization_audio(audio_path: Path):
         raise RuntimeError("FFmpeg is required to decode audio for speaker labeling.")
     directory = audio_path.parent
     raw_path = directory / (
-        f".{audio_path.stem}.{os.getpid()}.{time.time_ns()}.pyannote.f32le"
+        f".{audio_path.stem}.{work_file_owner_token()}."
+        f"{os.getpid()}.{time.time_ns()}.pyannote.f32le"
     )
     process = subprocess.run(
         [
@@ -1441,8 +1443,11 @@ class LocalTranscriber:
         cache_dir = audio_path.parent / "transcripts" / ".cache"
         cache_dir.mkdir(parents=True, exist_ok=True)
         prepared = cache_dir / f"{audio_path.stem}.pyannote.flac"
-        partial = cache_dir / f"{audio_path.stem}.pyannote.part.flac"
-        partial.unlink(missing_ok=True)
+        partial = cache_dir / (
+            f".{audio_path.stem}.{work_file_owner_token()}."
+            f"{os.getpid()}.{time.time_ns()}"
+            ".pyannote.part.flac"
+        )
         if (
             prepared.is_file()
             and prepared.stat().st_size > 0

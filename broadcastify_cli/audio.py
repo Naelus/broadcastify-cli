@@ -12,6 +12,8 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
+from .workfiles import work_file_owner_token
+
 
 class AudioCombineError(RuntimeError):
     pass
@@ -437,7 +439,12 @@ def combine_mp3_files(
             list_path = Path(concat_file.name)
 
         with tempfile.NamedTemporaryFile(
-            prefix=f".{output.stem}.",
+            # Include the worker PID so a concurrent Library refresh can
+            # distinguish a slow active combine from an abandoned partial.
+            prefix=(
+                f".{output.stem}.{work_file_owner_token()}."
+                f"{os.getpid()}."
+            ),
             suffix=f".part{output.suffix}",
             dir=root,
             delete=False,

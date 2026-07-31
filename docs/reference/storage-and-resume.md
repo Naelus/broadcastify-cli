@@ -124,12 +124,15 @@ A later stage cannot make an earlier stale stage look complete.
 An application or machine interruption may leave a partial/checkpoint, but it
 must not overwrite the last known-good final artifact.
 
-Refreshing the Local Library removes only identifiable old work artifacts: an
-orphaned combined-output partial, an incomplete speaker-preparation partial, or
-a raw speaker waveform whose recorded process no longer exists. It keeps active
-worker scratch files and reusable completed preparations. It also stops showing
-a transcript as current when the combined recording has a newer modification
-identity.
+Refreshing the Local Library removes only host-token/PID-owned work artifacts
+whose originating local worker no longer exists: a combined-output partial, an
+incomplete speaker-preparation partial, or a raw speaker waveform. A worker on
+another host sharing the same NAS path is never judged by a local PID.
+Ownership-free partials from older releases remain visible as temporary storage
+because a read-oriented refresh cannot prove them abandoned. Active or
+unqueryable worker scratch files and reusable completed preparations are kept.
+The Library also stops showing a transcript as current when the combined
+recording has a newer modification identity.
 
 ## Moving and backing up a library
 
