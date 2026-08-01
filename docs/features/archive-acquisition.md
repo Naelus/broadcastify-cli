@@ -18,8 +18,16 @@ reverse-engineered website endpoints rather than the official API.
 
 ## Cache and ordering
 
-Archive cache identity uses the feed's published timezone and source timestamp,
-not the downloaded filename alone. A range job:
+Archive cache identity uses the exact provider archive ID returned by the
+website listing. The downloaded `Content-Disposition` filename can carry a
+different timestamp/token and is not treated as that identity. Each feed-day
+keeps the relationship in an atomic hidden
+`.broadcastify-archive-index.json` file. Older retained blocks without an index
+are matched once using the feed timezone and bounded source-timestamp fallback,
+then migrated to the exact index. A complete legacy day can also be reconciled
+chronologically when listing/file counts, timestamp ordering, clock drift, and
+any already-known mappings all agree; partial or ambiguous days are rejected
+rather than guessed. A range job:
 
 1. resolves the requested listings;
 2. reuses exact local or trusted-LAN blocks;
@@ -27,6 +35,12 @@ not the downloaded filename alone. A range job:
 4. continues older backlog sequentially; and
 5. refreshes a current-day listing once at the end to catch a block finalized
    while the run was active.
+
+Repeated archive IDs in one listing are collapsed before progress accounting
+or acquisition. An indexed filename can satisfy only its mapped provider ID,
+and its recorded byte size must still match. These rules prevent a retained
+block from being counted twice or a second listing identity from borrowing the
+wrong file.
 
 The live block cannot be downloaded until Broadcastify publishes it as an
 archive. Each ready message says **cached locally** or **downloaded from
@@ -105,7 +119,9 @@ nearest/highest-priority feed.
 The optional LAN node shares original archive MP3 blocks, not credentials,
 transcripts, analysis, or combined audio. One renewable producer lease owns a
 feed/day upstream acquisition; followers assemble the exact completion manifest
-from any peer and verify size plus SHA-256.
+from any peer and verify size plus SHA-256. Inventories and completion manifests
+also carry the optional exact provider ID and listing prefix, so a copied block
+retains the same no-request cache identity on the receiving node.
 
 Broadcastify source labels can drift slightly across midnight even when the
 track belongs to the prior website archive page. LAN manifests accept that

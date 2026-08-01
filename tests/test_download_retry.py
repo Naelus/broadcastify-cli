@@ -12,6 +12,11 @@ from broadcastify_cli.broadcastify import (
     BroadcastifyError,
     DownloadLimitExceeded,
 )
+from broadcastify_cli.archive_cache import (
+    cached_archive_for_id,
+    reconcile_complete_legacy_day,
+    remember_archive_identity,
+)
 from broadcastify_cli.quota import ArchiveRequestLedger
 
 
@@ -238,6 +243,201 @@ def test_cached_archive_allows_observed_one_hour_filename_displacement(
     assert client.archive_quota_status()["used"] == 0
 
 
+def test_download_archive_persists_exact_provider_identity(tmp_path: Path) -> None:
+    day_dir = tmp_path / "90001" / "20260712"
+    day_dir.mkdir(parents=True)
+    session = _QueuedSession(
+        [
+            _response(
+                200,
+                headers={
+                    "Content-Type": "audio/mpeg",
+                    "Content-Disposition": (
+                        'attachment; filename="202607120035-777-90001.mp3"'
+                    ),
+                },
+                content=b"audio",
+            )
+        ]
+    )
+    first = BroadcastifyClient(
+        download_request_interval=0,
+        quota_ledger=_ledger(tmp_path / "first", limit=1),
+    )
+    first.session = session  # type: ignore[assignment]
+    first._archive_filename_prefixes["90001-opaque"] = "202607120001"
+
+    downloaded = first.download_archive(
+        "90001",
+        date(2026, 7, 12),
+        "90001-opaque",
+        day_dir,
+    )
+
+    assert downloaded.name == "202607120035-777-90001.mp3"
+    assert (day_dir / ".broadcastify-archive-index.json").is_file()
+
+    second_session = _QueuedSession([])
+    second = BroadcastifyClient(
+        download_request_interval=0,
+        quota_ledger=_ledger(tmp_path / "second", limit=1),
+    )
+    second.session = second_session  # type: ignore[assignment]
+    # A changed listing timestamp must not matter once the exact provider ID
+    # has been retained beside the source file.
+    second._archive_filename_prefixes["90001-opaque"] = "202607121200"
+
+    reused = second.download_archive(
+        "90001",
+        date(2026, 7, 12),
+        "90001-opaque",
+        day_dir,
+    )
+
+    assert reused == downloaded
+    assert second_session.calls == []
+    assert second.archive_quota_status()["used"] == 0
+
+
+def test_exact_identity_prevents_one_file_from_satisfying_two_archives(
+    tmp_path: Path,
+) -> None:
+    day_dir = tmp_path / "90001" / "20260712"
+    day_dir.mkdir(parents=True)
+    cached = day_dir / "202607120035-777-90001.mp3"
+    cached.write_bytes(b"audio")
+
+    remember_archive_identity(
+        day_dir,
+        "90001",
+        date(2026, 7, 12),
+        "first-provider-id",
+        cached,
+        listing_prefix="202607120001",
+    )
+    client = BroadcastifyClient(quota_ledger=_ledger(tmp_path, limit=1))
+
+    assert (
+        client._existing_archive(
+            day_dir,
+            "90001",
+            "second-provider-id",
+            "202607120035",
+        )
+        is None
+    )
+
+
+def test_exact_identity_rejects_changed_or_unsafe_cached_file(tmp_path: Path) -> None:
+    day_dir = tmp_path / "90001" / "20260712"
+    day_dir.mkdir(parents=True)
+    cached = day_dir / "202607120035-777-90001.mp3"
+    cached.write_bytes(b"audio")
+    remember_archive_identity(
+        day_dir,
+        "90001",
+        date(2026, 7, 12),
+        "exact-provider-id",
+        cached,
+        listing_prefix="202607120001",
+    )
+
+    cached.write_bytes(b"changed")
+    assert cached_archive_for_id(day_dir, "90001", "exact-provider-id") is None
+    client = BroadcastifyClient(quota_ledger=_ledger(tmp_path, limit=1))
+    assert (
+        client._existing_archive(
+            day_dir,
+            "90001",
+            "exact-provider-id",
+            "202607120035",
+        )
+        is None
+    )
+
+    cached.write_bytes(b"audio")
+    index = day_dir / ".broadcastify-archive-index.json"
+    index.write_text(
+        '{"schema_version":1,"feed_id":"90001","archive_date":"2026-07-12",'
+        '"archives":{"exact-provider-id":{"filename":"../outside.mp3",'
+        '"listing_prefix":"202607120001","size":5}}}',
+        encoding="utf-8",
+    )
+    assert cached_archive_for_id(day_dir, "90001", "exact-provider-id") is None
+
+
+def test_complete_legacy_day_reconciles_large_filename_clock_drift(
+    tmp_path: Path,
+) -> None:
+    day_dir = tmp_path / "90001" / "20260712"
+    day_dir.mkdir(parents=True)
+    first = day_dir / "202607120035-111-90001.mp3"
+    second = day_dir / "202607120106-222-90001.mp3"
+    first.write_bytes(b"first")
+    second.write_bytes(b"second")
+
+    added = reconcile_complete_legacy_day(
+        day_dir,
+        "90001",
+        date(2026, 7, 12),
+        ["provider-second", "provider-first", "provider-second"],
+        {
+            "provider-first": "202607120000",
+            "provider-second": "202607120030",
+        },
+    )
+
+    assert added == 2
+    assert cached_archive_for_id(day_dir, "90001", "provider-first") == first
+    assert cached_archive_for_id(day_dir, "90001", "provider-second") == second
+
+
+def test_complete_legacy_day_refuses_partial_or_conflicting_migration(
+    tmp_path: Path,
+) -> None:
+    day_dir = tmp_path / "90001" / "20260712"
+    day_dir.mkdir(parents=True)
+    first = day_dir / "202607120035-111-90001.mp3"
+    first.write_bytes(b"first")
+    identities = {
+        "provider-first": "202607120000",
+        "provider-second": "202607120030",
+    }
+
+    assert (
+        reconcile_complete_legacy_day(
+            day_dir,
+            "90001",
+            date(2026, 7, 12),
+            list(identities),
+            identities,
+        )
+        == 0
+    )
+
+    second = day_dir / "202607120106-222-90001.mp3"
+    second.write_bytes(b"second")
+    remember_archive_identity(
+        day_dir,
+        "90001",
+        date(2026, 7, 12),
+        "provider-first",
+        second,
+        listing_prefix="202607120000",
+    )
+    assert (
+        reconcile_complete_legacy_day(
+            day_dir,
+            "90001",
+            date(2026, 7, 12),
+            list(identities),
+            identities,
+        )
+        == 0
+    )
+    assert cached_archive_for_id(day_dir, "90001", "provider-first") == second
+
+
 def test_serialized_throttle_is_reused_across_days_in_one_job() -> None:
     client = BroadcastifyClient()
     first_day = client._shared_download_throttle(4)
@@ -424,6 +624,43 @@ def test_download_day_returns_unique_paths_when_archive_ids_share_file(
     result = client.download_day("90001", date(2026, 7, 12), tmp_path)
 
     assert result == [tmp_path / "90001" / "20260712" / "shared.mp3"]
+
+
+def test_download_day_deduplicates_repeated_listing_ids(tmp_path: Path) -> None:
+    client = BroadcastifyClient(download_request_interval=0)
+    client.authenticate = lambda force=False: None  # type: ignore[method-assign]
+    client.get_archive_ids = lambda feed_id, archive_date: [  # type: ignore[method-assign]
+        "current",
+        "current",
+        "previous",
+    ]
+    calls: list[str] = []
+    totals: list[int] = []
+
+    def fake_download(
+        feed_id: str,
+        archive_date: date,
+        archive_id: str,
+        target: Path,
+        *_: object,
+        **__: object,
+    ) -> Path:
+        calls.append(archive_id)
+        result = target / f"{archive_id}.mp3"
+        result.write_bytes(b"audio")
+        return result
+
+    client.download_archive = fake_download  # type: ignore[method-assign]
+
+    client.download_day(
+        "90001",
+        date(2026, 7, 12),
+        tmp_path,
+        progress=lambda _current, total, _message: totals.append(total),
+    )
+
+    assert calls == ["current", "previous"]
+    assert set(totals) == {2}
 
 
 def test_download_day_acquires_current_and_previous_before_older_backlog(

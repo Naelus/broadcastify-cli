@@ -13,6 +13,10 @@ from pathlib import Path
 import pytest
 
 import broadcastify_cli.lan_sync as lan_sync
+from broadcastify_cli.archive_cache import (
+    cached_archive_for_id,
+    remember_archive_identity,
+)
 from broadcastify_cli.lan_sync import (
     LanArchiveCatalog,
     LanArchiveSyncClient,
@@ -126,7 +130,15 @@ def test_hash_verified_peer_sync_copies_missing_blocks_without_a_session(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     source = tmp_path / "peer"
-    _day, raw = _raw_day(source)
+    source_day, raw = _raw_day(source)
+    remember_archive_identity(
+        source_day,
+        "90001",
+        date(2026, 7, 12),
+        "90001-exact-provider-id",
+        raw[0],
+        listing_prefix="202607120001",
+    )
     monkeypatch.setenv("BROADCASTIFY_LAN_SHARING", "true")
     monkeypatch.setenv("BROADCASTIFY_LAN_SYNC_KEY", "shared-test-key")
     monkeypatch.setenv("BROADCASTIFY_LAN_DISCOVERY_ENABLED", "false")
@@ -158,6 +170,11 @@ def test_hash_verified_peer_sync_copies_missing_blocks_without_a_session(
         assert [path.read_bytes() for path in copied] == [
             path.read_bytes() for path in raw
         ]
+        assert cached_archive_for_id(
+            target / "90001" / "20260712",
+            "90001",
+            "90001-exact-provider-id",
+        ) == target / "90001" / "20260712" / raw[0].name
 
         wrong_key = LanArchiveSyncClient(
             enabled=True,

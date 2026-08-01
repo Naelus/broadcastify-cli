@@ -46,6 +46,7 @@ adopted without moving it.
 archives/
   5318/
     20260713/
+      .broadcastify-archive-index.json
       202607130000-…-5318.mp3
       combined_5318_20260713.mp3
       combined_5318_20260713.manifest.json
@@ -91,7 +92,8 @@ not synchronized over LAN.
 
 Each expensive stage has an independent cache contract:
 
-- archive blocks: feed/timezone/source identity and non-empty local file;
+- archive blocks: exact provider archive ID, retained filename/size, and a
+  bounded feed-timezone/source-time migration path for older unindexed files;
 - combined audio: exact ordered source list, modification times, and timeline
   manifest;
 - ASR: audio/model/engine/backend plus rendered-text integrity;

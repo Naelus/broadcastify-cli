@@ -26,6 +26,7 @@ from urllib.parse import quote, urlparse, urlunparse
 
 import requests
 
+from .archive_cache import archive_identity_for_filename, remember_archive_identity
 
 LAN_PROTOCOL = "radio-archive-lan/1"
 LAN_DISCOVERY_MAGIC = b"RADIO-ARCHIVE-LAN-DISCOVER/1 "
@@ -194,6 +195,8 @@ class ArchiveBlock:
     size: int
     sha256: str
     modified_ns: int
+    archive_id: str = ""
+    listing_prefix: str = ""
 
     @classmethod
     def from_mapping(
@@ -210,6 +213,8 @@ class ArchiveBlock:
             size=int(value.get("size") or 0),
             sha256=str(value.get("sha256") or "").lower(),
             modified_ns=int(value.get("modified_ns") or 0),
+            archive_id=str(value.get("archive_id") or ""),
+            listing_prefix=str(value.get("listing_prefix") or ""),
         )
         block.validate(expected_feed_id=expected_feed_id, expected_date=expected_date)
         return block
@@ -229,6 +234,10 @@ class ArchiveBlock:
             raise LanSyncError("A LAN peer advertised an invalid archive block size.")
         if not re.fullmatch(r"[0-9a-f]{64}", self.sha256):
             raise LanSyncError("A LAN peer advertised an invalid archive block hash.")
+        if self.archive_id and not re.fullmatch(r"[A-Za-z0-9_.-]{1,200}", self.archive_id):
+            raise LanSyncError("A LAN peer advertised an invalid archive identity.")
+        if self.listing_prefix and not re.fullmatch(r"\d{12}", self.listing_prefix):
+            raise LanSyncError("A LAN peer advertised an invalid archive timestamp.")
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -758,6 +767,14 @@ class LanArchiveCatalog:
             stat = resolved.stat()
             if not 0 < stat.st_size <= MAX_ARCHIVE_BLOCK_BYTES:
                 continue
+            archive_id, listing_prefix, identity_valid = archive_identity_for_filename(
+                day_dir,
+                feed_id,
+                path.name,
+            )
+            if not identity_valid:
+                archive_id = ""
+                listing_prefix = ""
             blocks.append(
                 ArchiveBlock(
                     feed_id=feed_id,
@@ -766,6 +783,8 @@ class LanArchiveCatalog:
                     size=stat.st_size,
                     sha256=self.hashes.sha256(resolved),
                     modified_ns=stat.st_mtime_ns,
+                    archive_id=archive_id,
+                    listing_prefix=listing_prefix,
                 )
             )
             if len(blocks) >= MAX_BLOCKS_PER_DAY:
@@ -798,6 +817,14 @@ class LanArchiveCatalog:
         stat = path.stat()
         if not 0 < stat.st_size <= MAX_ARCHIVE_BLOCK_BYTES:
             raise FileNotFoundError(filename)
+        archive_id, listing_prefix, identity_valid = archive_identity_for_filename(
+            day_dir,
+            feed_id,
+            filename,
+        )
+        if not identity_valid:
+            archive_id = ""
+            listing_prefix = ""
         block = ArchiveBlock(
             feed_id=feed_id,
             archive_date=archive_date.isoformat(),
@@ -805,6 +832,8 @@ class LanArchiveCatalog:
             size=stat.st_size,
             sha256=self.hashes.sha256(path),
             modified_ns=stat.st_mtime_ns,
+            archive_id=archive_id,
+            listing_prefix=listing_prefix,
         )
         return path, block
 
@@ -1372,6 +1401,15 @@ class LanArchiveSyncClient:
                         and self.hashes.sha256(target) == expected.sha256
                     ):
                         already_local += 1
+                        if expected.archive_id:
+                            remember_archive_identity(
+                                day_dir,
+                                feed_id,
+                                archive_date,
+                                expected.archive_id,
+                                target,
+                                listing_prefix=expected.listing_prefix,
+                            )
                     else:
                         conflicts += 1
                         failures.append(
@@ -1391,6 +1429,15 @@ class LanArchiveSyncClient:
                     copied += 1
                     copied_bytes += transferred
                     copied_from_peer = True
+                    if block.archive_id:
+                        remember_archive_identity(
+                            day_dir,
+                            feed_id,
+                            archive_date,
+                            block.archive_id,
+                            target,
+                            listing_prefix=block.listing_prefix,
+                        )
                     if progress:
                         progress(
                             f"Copied archive block {filename} from LAN peer "
@@ -2019,6 +2066,14 @@ class LanArchiveSyncClient:
                     "A completed acquisition contains a duplicate source block."
                 )
             names.add(path.name)
+            archive_id, listing_prefix, identity_valid = archive_identity_for_filename(
+                path.parent,
+                feed_id,
+                path.name,
+            )
+            if not identity_valid:
+                archive_id = ""
+                listing_prefix = ""
             blocks.append(
                 ArchiveBlock(
                     feed_id=feed_id,
@@ -2027,6 +2082,8 @@ class LanArchiveSyncClient:
                     size=stat.st_size,
                     sha256=self.hashes.sha256(resolved),
                     modified_ns=stat.st_mtime_ns,
+                    archive_id=archive_id,
+                    listing_prefix=listing_prefix,
                 )
             )
         if len(blocks) > MAX_BLOCKS_PER_DAY:
@@ -2068,6 +2125,15 @@ class LanArchiveSyncClient:
                     or self.hashes.sha256(path) != block.sha256
                 ):
                     return []
+                if block.archive_id:
+                    remember_archive_identity(
+                        day_dir,
+                        feed_id,
+                        archive_date,
+                        block.archive_id,
+                        path,
+                        listing_prefix=block.listing_prefix,
+                    )
                 verified.append(path.resolve())
         except (LanSyncError, OSError):
             return []

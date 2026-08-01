@@ -21,8 +21,9 @@ public peer-to-peer network:
 6. every copy verifies the advertised byte length and SHA-256 while streaming to a
    unique temporary file;
 7. the leader atomically publishes each file and reports the exact completed
-   filename/size/SHA-256 manifest; followers assemble and verify that manifest
-   from any combination of peers, then process the day without contacting
+   filename/size/SHA-256 manifest plus its optional provider archive identity;
+   followers assemble and verify that manifest from any combination of peers,
+   retain the same identity mapping, then process the day without contacting
    Broadcastify;
 8. the producer acquires the newest completed track and the immediately
    previous track before older backlog, then refreshes a feed-local current-day
@@ -45,8 +46,13 @@ are rejected.
 The read-only protocol exposes only retained original source blocks matching:
 
 ```text
-archives/<feed-id>/<YYYYMMDD>/<YYYYMMDDHHMM>-<archive-id>-<feed-id>.mp3
+archives/<feed-id>/<YYYYMMDD>/<YYYYMMDDHHMM>-<source-token>-<feed-id>.mp3
 ```
+
+The middle filename token is provider-supplied but is not necessarily the
+archive ID used by the download URL. A hidden per-day
+`.broadcastify-archive-index.json` records that exact URL/listing identity and
+is propagated with LAN inventories. It contains no account or credential data.
 
 It does **not** expose or synchronize:
 

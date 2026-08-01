@@ -81,8 +81,12 @@ aged out. Never delete or copy a ledger to obtain more capacity.
 
 ## Why earlier tests appeared to hit a much smaller limit
 
-Historical diagnostics found repeated requests caused by an old cache-key
-mismatch and a short two-process overlap. One measured run made 192 archive
+Historical diagnostics found repeated requests caused by old cache-identity
+assumptions, a Library split, and a short two-process overlap. In particular,
+the listing's provider archive ID, its displayed source time, and the downloaded
+filename token are not interchangeable; observed filename timestamps have
+differed from listing timestamps by well over the old narrow fallback window.
+That could make a retained block look absent. One measured run made 192 archive
 endpoint calls; about 23 hours later another run made 55 before receiving 429.
 Those 247 tracked calls, plus manual activity outside telemetry, are consistent
 with a 250-request rolling window. The apparent 55-request limit was remaining
@@ -90,7 +94,11 @@ rolling capacity, not a separate daily quota.
 
 The fixes now in place are:
 
-- cache identity uses the archive source timestamp and feed timezone;
+- each retained block is indexed by the exact provider archive ID; legacy
+  blocks use a bounded source-time fallback once, while complete unambiguous
+  days can use conservative chronological reconciliation, and are then
+  migrated;
+- duplicate provider IDs in one listing are collapsed before acquisition;
 - local and trusted-LAN cache checks occur before request admission;
 - native and Web/NAS schedulers bind each claimed job to the currently selected
   Library, overriding stale saved paths that could otherwise fetch an archive
@@ -107,6 +115,8 @@ one producer for a feed/day, reducing duplicate downloads. The transient
 quota result carries the producer's next-safe delay, preventing followers from
 repeating the request until that rolling slot arrives. Completed old-day
 manifests may still be retained for the configured 24-hour result lifetime.
+The exact provider-ID mapping travels with an inventoried or completed block,
+so receiving it from a peer does not discard its cache identity.
 
 LAN coordination does **not** merge request ledgers, credentials, or provider
 allowances. Each installed desktop or service retains its own 240-request

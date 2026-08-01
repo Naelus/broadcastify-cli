@@ -17,6 +17,12 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import requests
 from bs4 import BeautifulSoup
 
+from .archive_cache import (
+    archive_identity_for_filename,
+    cached_archive_for_id,
+    reconcile_complete_legacy_day,
+    remember_archive_identity,
+)
 from .models import FeedSearchResult
 from .quota import ArchiveRequestBudgetExceeded, ArchiveRequestLedger
 
@@ -613,7 +619,7 @@ class BroadcastifyClient:
             self._archive_filename_prefixes.update(
                 self.parse_archive_filename_prefixes(payload)
             )
-            return self.parse_archive_payload(payload)
+            return list(dict.fromkeys(self.parse_archive_payload(payload)))
         except (ValueError, AttributeError, TypeError) as exc:
             raise BroadcastifyError("Broadcastify returned an invalid archive listing.") from exc
 
@@ -679,9 +685,18 @@ class BroadcastifyClient:
         admit_download: Callable[[], None] | None = None,
     ) -> list[Path]:
         self.authenticate()
-        archive_ids = self.get_archive_ids(feed_id, archive_date)
+        archive_ids = list(
+            dict.fromkeys(self.get_archive_ids(feed_id, archive_date))
+        )
         day_dir = Path(output_dir) / feed_id / archive_date.strftime("%Y%m%d")
         day_dir.mkdir(parents=True, exist_ok=True)
+        reconcile_complete_legacy_day(
+            day_dir,
+            feed_id,
+            archive_date,
+            archive_ids,
+            self._archive_filename_prefixes,
+        )
 
         if not archive_ids:
             if progress:
@@ -845,7 +860,9 @@ class BroadcastifyClient:
         # initial snapshot so a track finalized while an older backlog was
         # downloading is not omitted from the completed manifest.
         if self._is_current_archive_date(feed_id, archive_date):
-            refreshed_ids = self.get_archive_ids(feed_id, archive_date)
+            refreshed_ids = list(
+                dict.fromkeys(self.get_archive_ids(feed_id, archive_date))
+            )
             known_ids = set(archive_ids)
             new_ids = [
                 archive_id
@@ -908,8 +925,17 @@ class BroadcastifyClient:
         """
 
         self.authenticate()
-        archive_ids = self.get_archive_ids(feed_id, archive_date)
+        archive_ids = list(
+            dict.fromkeys(self.get_archive_ids(feed_id, archive_date))
+        )
         day_dir = Path(output_dir) / feed_id / archive_date.strftime("%Y%m%d")
+        reconcile_complete_legacy_day(
+            day_dir,
+            feed_id,
+            archive_date,
+            archive_ids,
+            self._archive_filename_prefixes,
+        )
         cached: list[Path] = []
         for archive_id in archive_ids:
             existing = self._existing_archive(
@@ -941,6 +967,14 @@ class BroadcastifyClient:
             self._archive_filename_prefixes.get(archive_id),
         )
         if existing is not None:
+            remember_archive_identity(
+                day_dir,
+                feed_id,
+                archive_date,
+                archive_id,
+                existing,
+                listing_prefix=self._archive_filename_prefixes.get(archive_id),
+            )
             return existing
         url = f"{self.ARCHIVE_DOWNLOAD_URL}/{archive_id}"
         request_throttle = throttle or _DownloadThrottle(
@@ -1029,6 +1063,16 @@ class BroadcastifyClient:
                         filename = self._download_filename(response, archive_id)
                         output_path = day_dir / filename
                         if output_path.exists() and output_path.stat().st_size > 0:
+                            remember_archive_identity(
+                                day_dir,
+                                feed_id,
+                                archive_date,
+                                archive_id,
+                                output_path,
+                                listing_prefix=self._archive_filename_prefixes.get(
+                                    archive_id
+                                ),
+                            )
                             return output_path
 
                         partial_path = output_path.with_suffix(output_path.suffix + ".part")
@@ -1041,6 +1085,16 @@ class BroadcastifyClient:
                         finally:
                             if partial_path.exists():
                                 partial_path.unlink()
+                        remember_archive_identity(
+                            day_dir,
+                            feed_id,
+                            archive_date,
+                            archive_id,
+                            output_path,
+                            listing_prefix=self._archive_filename_prefixes.get(
+                                archive_id
+                            ),
+                        )
                         return output_path
                 except (requests.ConnectionError, requests.Timeout) as exc:
                     if request_id is not None:
@@ -1138,6 +1192,9 @@ class BroadcastifyClient:
             for value in (day_dir / f"{archive_id}.mp3",)
             if value.exists()
         )
+        indexed = cached_archive_for_id(day_dir, feed_id, archive_id)
+        if indexed is not None:
+            candidates.insert(0, indexed)
         # Current download URL IDs and Content-Disposition filenames contain
         # different identifiers. The archive-list payload supplies startTs and
         # the feed's IANA timezone, which together form the exact file prefix.
@@ -1147,10 +1204,18 @@ class BroadcastifyClient:
                 day_dir.name,
             ):
                 candidates.extend(day_dir.glob(f"{prefix}-*-{feed_id}.mp3"))
-        return next(
-            (value for value in candidates if value.is_file() and value.stat().st_size > 0),
-            None,
-        )
+        for value in dict.fromkeys(candidates):
+            if not value.is_file() or value.stat().st_size <= 0:
+                continue
+            mapped_id, _mapped_prefix, mapping_valid = archive_identity_for_filename(
+                day_dir,
+                feed_id,
+                value.name,
+            )
+            if mapped_id and (mapped_id != archive_id or not mapping_valid):
+                continue
+            return value
+        return None
 
     @staticmethod
     def _neighboring_archive_prefixes(filename_prefix: str, day_name: str) -> list[str]:
