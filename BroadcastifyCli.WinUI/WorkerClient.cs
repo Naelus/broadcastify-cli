@@ -1088,11 +1088,13 @@ internal sealed class WorkerClient
             }
         }
         Directory.CreateDirectory(AppSettingsStore.LocalDataDirectory);
+        var libraryDirectory = Volatile.Read(ref _libraryDirectory);
         startInfo.Environment["BROADCASTIFY_QUOTA_LEDGER"] = Path.Combine(
             AppSettingsStore.LocalDataDirectory,
             "archive-quota.sqlite3");
+        startInfo.Environment["BROADCASTIFY_LIBRARY_ROOT"] = libraryDirectory;
         startInfo.Environment["BROADCASTIFY_SECURE_ANALYSIS_DB"] = Path.Combine(
-            Volatile.Read(ref _libraryDirectory),
+            libraryDirectory,
             "broadcastify-analysis.sqlite3");
         foreach (var argument in _python.PrefixArguments.Concat(arguments))
         {

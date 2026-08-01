@@ -1,6 +1,6 @@
 # Broadcastify archive request limits
 
-Last reviewed: July 23, 2026.
+Last reviewed: August 1, 2026.
 
 ## Authorization comes first
 
@@ -92,6 +92,9 @@ The fixes now in place are:
 
 - cache identity uses the archive source timestamp and feed timezone;
 - local and trusted-LAN cache checks occur before request admission;
+- native and Web/NAS schedulers bind each claimed job to the currently selected
+  Library, overriding stale saved paths that could otherwise fetch an archive
+  ID again into a second local root;
 - the SQLite ledger uses an atomic write transaction across local processes;
 - every actual retry is separately charged;
 - all 429 responses are terminal for the current run; and

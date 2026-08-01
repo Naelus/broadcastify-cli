@@ -531,6 +531,7 @@ class AnalysisStore:
         self,
         *,
         now: datetime | None = None,
+        output_dir: str | Path | None = None,
     ) -> dict[str, Any] | None:
         current = self._aware_local(now)
         current_utc = current.astimezone(timezone.utc)
@@ -577,6 +578,22 @@ class AnalysisStore:
             "download_jobs": 1,
             "keep_originals": True,
         }
+        if output_dir is not None:
+            # The process hosting the scheduler owns the active Library
+            # selection. It must win over an older absolute path saved in the
+            # schedule; otherwise changing Library settings can make the next
+            # run fetch the same upstream archive IDs into a second root.
+            job["output_dir"] = str(Path(output_dir).expanduser().resolve())
+        else:
+            configured_output = Path(str(job.get("output_dir") or "archives"))
+            if not configured_output.is_absolute():
+                # Older desktop schedules saved the literal relative value
+                # ``archives``. Installed workers run from a private data
+                # directory, so replaying that value can silently split one
+                # library across two roots. The evidence database already
+                # identifies the canonical library for this schedule; resolve
+                # legacy relative values there.
+                job["output_dir"] = str(self.path.resolve().parent)
         schedule["state"] = "running"
         schedule["due"] = False
         schedule["due_date"] = due_date.isoformat()

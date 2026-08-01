@@ -3338,6 +3338,9 @@ public sealed partial class MainWindow : Window
             };
         request = request with
         {
+            // Storage follows the currently selected Library even when the
+            // schedule keeps its saved model and accelerator profile.
+            OutputDirectory = PersistedOutputDirectory(),
             Combine = combineBox.IsChecked == true,
             KeepOriginals = true,
             Transcribe = transcribeBox.IsChecked == true,

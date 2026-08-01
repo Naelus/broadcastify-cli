@@ -57,6 +57,7 @@ def test_claim_is_atomic_and_quota_wait_reopens_at_next_rolling_slot(
         assert claimed["due_date"] == "2026-07-23"
         assert claimed["job"]["start_date"] == "2026-07-22"
         assert claimed["job"]["end_date"] == "2026-07-23"
+        assert claimed["job"]["output_dir"] == str(tmp_path.resolve())
 
     with AnalysisStore(database) as second:
         assert second.claim_due_feed_schedule(now=now) is None
@@ -92,6 +93,43 @@ def test_disabled_schedule_does_not_claim_and_can_be_removed(tmp_path: Path) -> 
         assert store.claim_due_feed_schedule(now=now) is None
         assert store.delete_feed_schedule(int(saved["id"])) is True
         assert store.list_feed_schedules(now=now) == []
+
+
+def test_claim_preserves_an_explicit_absolute_library(tmp_path: Path) -> None:
+    database = tmp_path / "database" / "analysis.sqlite3"
+    library = (tmp_path / "selected library").resolve()
+    payload = _payload()
+    payload["job"] = {**dict(payload["job"]), "output_dir": str(library)}
+    now = datetime(2026, 7, 23, 3, 0, tzinfo=timezone.utc)
+
+    with AnalysisStore(database) as store:
+        store.save_feed_schedule(payload)
+        claimed = store.claim_due_feed_schedule(now=now)
+
+    assert claimed is not None
+    assert claimed["job"]["output_dir"] == str(library)
+
+
+def test_claim_runtime_library_overrides_stale_absolute_path(tmp_path: Path) -> None:
+    database = tmp_path / "database" / "analysis.sqlite3"
+    old_library = (tmp_path / "old library").resolve()
+    selected_library = (tmp_path / "selected library").resolve()
+    payload = _payload()
+    payload["job"] = {
+        **dict(payload["job"]),
+        "output_dir": str(old_library),
+    }
+    now = datetime(2026, 7, 23, 3, 0, tzinfo=timezone.utc)
+
+    with AnalysisStore(database) as store:
+        store.save_feed_schedule(payload)
+        claimed = store.claim_due_feed_schedule(
+            now=now,
+            output_dir=selected_library,
+        )
+
+    assert claimed is not None
+    assert claimed["job"]["output_dir"] == str(selected_library)
 
 
 def test_existing_schedule_can_update_timing_processing_and_enabled_state(

@@ -385,8 +385,11 @@ def save_feed_schedule() -> int:
 
 
 def claim_due_feed_schedule() -> int:
+    library_root = str(os.getenv("BROADCASTIFY_LIBRARY_ROOT") or "").strip()
     with AnalysisStore(DEFAULT_DATABASE) as store:
-        schedule = store.claim_due_feed_schedule()
+        schedule = store.claim_due_feed_schedule(
+            output_dir=library_root or None,
+        )
     emit(
         {
             "type": "feed_schedule_claim",

@@ -51,10 +51,12 @@ def test_installed_worker_uses_bundled_runtime_and_writable_data_root() -> None:
     assert 'startInfo.Environment["PYTHONDONTWRITEBYTECODE"] = "1"' in worker
     assert 'startInfo.Environment["FFMPEG_PATH"] = ffmpeg' in worker
     assert 'startInfo.Environment["BROADCASTIFY_SECURE_ANALYSIS_DB"]' in worker
+    assert 'startInfo.Environment["BROADCASTIFY_LIBRARY_ROOT"]' in worker
     assert "_worker.SetLibraryDirectory(OutputFolderBox.Text);" in main_window
     assert "_worker?.WorkingDirectory" in main_window
     assert "AppDiagnostics.FindPreviousLibraryDirectory(" in main_window
     assert "OutputDirectory = PersistedOutputDirectory()" in main_window
+    assert "Storage follows the currently selected Library" in main_window
     assert 'const string marker = "Repository: "' in diagnostics
     assert '"broadcastify-analysis.sqlite3"' in diagnostics
 

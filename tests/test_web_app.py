@@ -141,9 +141,12 @@ def test_web_schedule_coordinator_claims_and_finishes_due_feed(
         )
 
     class FakeJobs:
+        output_dir = tmp_path / "selected-library"
+
         def start(self, command: str, payload: dict[str, object]) -> dict[str, object]:
             assert command == "run-scheduled"
             assert payload["job"]["feed_id"] == "90001"  # type: ignore[index]
+            assert payload["job"]["output_dir"] == str(self.output_dir.resolve())  # type: ignore[index]
             return {"id": "scheduled-job"}
 
         def get(self, job_id: str) -> dict[str, object]:

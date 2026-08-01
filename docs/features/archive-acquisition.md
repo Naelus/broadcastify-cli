@@ -84,9 +84,21 @@ credential store, active session, or private environment.
 On Windows, **Manage schedules** can edit the daily time, lookback, enabled
 state, local processing stages, and incident analysis for an existing feed.
 Changing those basics preserves the schedule's saved model, accelerator,
-speaker-tuning, output, and LAN choices. Select the refresh option in the
+speaker-tuning, and LAN choices. The schedule always writes into the Library
+currently selected in Settings. The desktop and Web/NAS scheduler pass that
+canonical root at claim time, so it also replaces a stale absolute path left by
+a previous Library selection. Direct/legacy callers without an active Library
+selection resolve a relative `archives` value against the evidence database
+instead of the installed app's working directory. Both rules prevent a silent
+split that could otherwise fetch the same archive IDs into two roots.
+Select the refresh option in the
 editor to intentionally replace those advanced choices with the current
 Settings page values. Removing a schedule never removes retained evidence.
+
+Area acquisition uses explicit rank first, then measured distance. Older or
+hand-curated profiles that contain neither retain their saved feed order, so a
+name sort cannot redirect scarce archive requests away from the intended
+nearest/highest-priority feed.
 
 ## Trusted-LAN pool
 

@@ -481,6 +481,7 @@ class JobManager:
         environment["BROADCASTIFY_SECURE_ANALYSIS_DB"] = str(
             self.database_path
         )
+        environment["BROADCASTIFY_LIBRARY_ROOT"] = str(self.output_dir)
         environment["PYTHONIOENCODING"] = "utf-8"
         environment["PYTHONUTF8"] = "1"
         environment.update(self.credential_store.worker_environment())
@@ -772,7 +773,9 @@ class FeedScheduleCoordinator:
             return
 
         with AnalysisStore(self.database_path) as store:
-            schedule = store.claim_due_feed_schedule()
+            schedule = store.claim_due_feed_schedule(
+                output_dir=self.jobs.output_dir,
+            )
         if schedule is None:
             return
         try:
