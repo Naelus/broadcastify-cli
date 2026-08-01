@@ -90,7 +90,11 @@ after the complete requested range has no missing days; a LAN-deferred or
 otherwise incomplete result retries shortly rather than being recorded as
 complete. If the rolling archive guard is closed, cached days can still finish
 locally and the missing acquisition is deferred until the ledger's next-safe
-time. The desktop checks schedules while it is open; its
+time. The acquisition runner reads that local ledger before authentication; a
+closed guard permits trusted-LAN/cache reuse and local processing but makes no
+Broadcastify request. A fully cached range therefore completes normally,
+while only genuinely missing days retain the quota deferral. The desktop checks
+schedules while it is open; its
 visible, default-on Windows startup option keeps it available after user
 sign-in. The Web/TrueNAS service owns a background coordinator and can run them
 continuously under its normal service supervisor.

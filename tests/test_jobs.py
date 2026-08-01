@@ -159,6 +159,87 @@ def test_quota_stops_new_requests_but_keeps_complete_cached_days(tmp_path: Path)
     assert "Completed 2/3 requested days" in str(events[-1]["message"])
 
 
+def test_full_rolling_guard_never_authenticates_and_still_uses_cache(
+    tmp_path: Path,
+) -> None:
+    first_day = date(2026, 7, 3)
+    second_day = date(2026, 7, 4)
+    cached_dir = tmp_path / "90001" / first_day.strftime("%Y%m%d")
+    cached_dir.mkdir(parents=True)
+    cached = cached_dir / "202607030000-provider-90001.mp3"
+    cached.write_bytes(b"retained audio")
+    calls: list[str] = []
+
+    class GuardedClient:
+        def archive_quota_status(self) -> dict[str, object]:
+            calls.append("quota")
+            return {"available": False, "next_request_at": "2026-07-05T07:00:00+00:00"}
+
+        def cached_day(
+            self, _feed_id: str, archive_date: date, *_args: object
+        ) -> tuple[list[Path], int]:
+            calls.append(f"cache:{archive_date}")
+            return ([cached], 1) if archive_date == first_day else ([], 1)
+
+        def authenticate(self) -> None:
+            raise AssertionError("A full local guard must prevent authentication.")
+
+        def download_day(self, *_args: object, **_kwargs: object) -> list[Path]:
+            raise AssertionError("A full local guard must prevent archive requests.")
+
+    events: list[dict[str, object]] = []
+    result = JobRunner(
+        JobRequest(
+            feed_id="90001",
+            start_date=first_day,
+            end_date=second_day,
+            output_dir=tmp_path,
+        ),
+        emit=events.append,
+        client=GuardedClient(),  # type: ignore[arg-type]
+    ).run()
+
+    assert calls == ["quota", f"cache:{first_day}", f"cache:{second_day}"]
+    assert result["completed_days"] == 1
+    assert result["missing_days"] == [second_day.isoformat()]
+    assert result["download_limited"] is True
+    assert any("will not be contacted" in str(event.get("message")) for event in events)
+
+
+def test_full_rolling_guard_with_complete_cache_finishes_without_false_limit(
+    tmp_path: Path,
+) -> None:
+    archive_date = date(2026, 7, 3)
+    cached_dir = tmp_path / "90001" / archive_date.strftime("%Y%m%d")
+    cached_dir.mkdir(parents=True)
+    cached = cached_dir / "202607030000-provider-90001.mp3"
+    cached.write_bytes(b"retained audio")
+
+    class GuardedClient:
+        def archive_quota_status(self) -> dict[str, object]:
+            return {"available": False}
+
+        def cached_day(self, *_args: object) -> tuple[list[Path], int]:
+            return [cached], 1
+
+        def authenticate(self) -> None:
+            raise AssertionError("A complete cache must not authenticate.")
+
+    result = JobRunner(
+        JobRequest(
+            feed_id="90001",
+            start_date=archive_date,
+            end_date=archive_date,
+            output_dir=tmp_path,
+        ),
+        client=GuardedClient(),  # type: ignore[arg-type]
+    ).run()
+
+    assert result["completed_days"] == 1
+    assert result["missing_days"] == []
+    assert result["download_limited"] is False
+
+
 def test_lan_source_reuse_runs_before_any_broadcastify_request(
     tmp_path: Path,
 ) -> None:

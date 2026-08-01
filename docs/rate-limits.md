@@ -109,6 +109,9 @@ The fixes now in place are:
 - an optional historical schedule boundary survives quota deferrals and clears
   only after every requested day is complete, so released rolling slots can
   drain a backlog without a second ad-hoc downloader;
+- before Broadcastify authentication, each acquisition reads the local ledger;
+  a closed guard permits trusted-LAN/cache reuse and local processing only, and
+  reports quota-limited only when a requested day is actually still missing;
 - the SQLite ledger uses an atomic write transaction across local processes;
 - every actual retry is separately charged;
 - all 429 responses are terminal for the current run; and

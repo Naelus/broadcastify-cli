@@ -27,7 +27,7 @@ The consumer build layers a portable runtime over the verified native publish:
 Output:
 
 ```text
-dist/windows/BroadcastifyDesktop-0.4.10-win-x64-setup.exe
+dist/windows/BroadcastifyDesktop-0.4.11-win-x64-setup.exe
 ```
 
 The application stage contains:
@@ -95,7 +95,7 @@ machine that previously ran an owner-only private build.
 The recommended silent deployment is:
 
 ```powershell
-.\BroadcastifyDesktop-0.4.10-win-x64-setup.exe `
+.\BroadcastifyDesktop-0.4.11-win-x64-setup.exe `
   /VERYSILENT /SUPPRESSMSGBOXES /NORESTART `
   /ENABLESTARTUP /LAUNCHAFTERINSTALL
 ```

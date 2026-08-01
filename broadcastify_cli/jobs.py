@@ -182,6 +182,25 @@ class JobRunner:
 
         downloaded_days: list[tuple[Any, list[Path]]] = []
         quota_message: str | None = None
+        quota_status = getattr(self.client, "archive_quota_status", None)
+        initial_quota = quota_status() if callable(quota_status) else {}
+        if initial_quota and not bool(initial_quota.get("available", True)):
+            quota_message = (
+                "The local rolling archive-request guard has no automated "
+                "slot available."
+            )
+            self.emit(
+                {
+                    "type": "log",
+                    "stage": "download",
+                    "message": (
+                        "The rolling archive-request guard is full. This job "
+                        "will process complete local or trusted-LAN days only; "
+                        "Broadcastify will not be contacted until the ledger's "
+                        "next safe slot."
+                    ),
+                }
+            )
         authenticated = False
         queue_roles = {
             "leader": 0,
@@ -523,6 +542,13 @@ class JobRunner:
                 }
             )
 
+        completed_dates = {day for day, _files in downloaded_days}
+        missing_days = [
+            value.isoformat()
+            for value in dates
+            if value not in completed_dates
+        ]
+        download_limited = quota_message is not None and bool(missing_days)
         result = {
             "feed_id": self.request.feed_id,
             "feed_name": self.request.feed_name,
@@ -530,12 +556,8 @@ class JobRunner:
             "days": day_results,
             "requested_days": len(dates),
             "completed_days": len(day_results),
-            "download_limited": quota_message is not None,
-            "missing_days": [
-                value.isoformat()
-                for value in dates
-                if value not in {day for day, _files in downloaded_days}
-            ],
+            "download_limited": download_limited,
+            "missing_days": missing_days,
             "lan_sync": {
                 "enabled": self.lan_sync.enabled,
                 "blocks_copied": sum(
@@ -550,7 +572,7 @@ class JobRunner:
                 "acquisition_queue": queue_roles,
             },
         }
-        if quota_message is None:
+        if not download_limited:
             message = "All operations completed."
         else:
             message = (
