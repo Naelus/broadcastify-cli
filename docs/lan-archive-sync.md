@@ -21,7 +21,7 @@ public peer-to-peer network:
 6. every copy verifies the advertised byte length and SHA-256 while streaming to a
    unique temporary file;
 7. the leader atomically publishes each file and reports the exact completed
-   filename/size/SHA-256 manifest plus its optional provider archive identity;
+   filename/size/SHA-256 manifest plus its optional provider archive identities;
    followers assemble and verify that manifest from any combination of peers,
    retain the same identity mapping, then process the day without contacting
    Broadcastify;
@@ -51,8 +51,10 @@ archives/<feed-id>/<YYYYMMDD>/<YYYYMMDDHHMM>-<source-token>-<feed-id>.mp3
 
 The middle filename token is provider-supplied but is not necessarily the
 archive ID used by the download URL. A hidden per-day
-`.broadcastify-archive-index.json` records that exact URL/listing identity and
-is propagated with LAN inventories. It contains no account or credential data.
+`.broadcastify-archive-index.json` records those exact URL/listing identities
+and is propagated with LAN inventories. More than one identity may be attached
+to a file only when authenticated download responses proved that the provider
+IDs are aliases. The index contains no account or credential data.
 
 It does **not** expose or synchronize:
 

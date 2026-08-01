@@ -299,6 +299,71 @@ def test_download_archive_persists_exact_provider_identity(tmp_path: Path) -> No
     assert second.archive_quota_status()["used"] == 0
 
 
+def test_provider_confirmed_archive_aliases_reuse_one_retained_file(
+    tmp_path: Path,
+) -> None:
+    day_dir = tmp_path / "90001" / "20260712"
+    day_dir.mkdir(parents=True)
+    shared_filename = "202607120035-777-90001.mp3"
+    session = _QueuedSession(
+        [
+            _response(
+                200,
+                headers={
+                    "Content-Type": "audio/mpeg",
+                    "Content-Disposition": f'attachment; filename="{shared_filename}"',
+                },
+                content=b"same audio",
+            ),
+            _response(
+                200,
+                headers={
+                    "Content-Type": "audio/mpeg",
+                    "Content-Disposition": f'attachment; filename="{shared_filename}"',
+                },
+                content=b"same audio",
+            ),
+        ]
+    )
+    first = BroadcastifyClient(
+        download_request_interval=0,
+        quota_ledger=_ledger(tmp_path / "first", limit=2),
+    )
+    first.session = session  # type: ignore[assignment]
+    first._archive_filename_prefixes.update(
+        {
+            "provider-first": "202607120000",
+            "provider-alias": "202607121500",
+        }
+    )
+
+    initial = first.download_archive(
+        "90001", date(2026, 7, 12), "provider-first", day_dir
+    )
+    alias = first.download_archive(
+        "90001", date(2026, 7, 12), "provider-alias", day_dir
+    )
+
+    assert initial == alias == day_dir / shared_filename
+    assert len(session.calls) == 2
+    assert cached_archive_for_id(day_dir, "90001", "provider-first") == initial
+    assert cached_archive_for_id(day_dir, "90001", "provider-alias") == initial
+
+    no_network = _QueuedSession([])
+    second = BroadcastifyClient(
+        download_request_interval=0,
+        quota_ledger=_ledger(tmp_path / "second", limit=2),
+    )
+    second.session = no_network  # type: ignore[assignment]
+    assert second.download_archive(
+        "90001", date(2026, 7, 12), "provider-first", day_dir
+    ) == initial
+    assert second.download_archive(
+        "90001", date(2026, 7, 12), "provider-alias", day_dir
+    ) == initial
+    assert no_network.calls == []
+
+
 def test_exact_identity_prevents_one_file_from_satisfying_two_archives(
     tmp_path: Path,
 ) -> None:

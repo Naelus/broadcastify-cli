@@ -960,6 +960,9 @@ class BroadcastifyClient:
         notice: Callable[[str], None] | None = None,
         admit_download: Callable[[], None] | None = None,
     ) -> Path:
+        indexed_existing = cached_archive_for_id(day_dir, feed_id, archive_id)
+        if indexed_existing is not None:
+            return indexed_existing
         existing = self._existing_archive(
             day_dir,
             feed_id,
@@ -1072,6 +1075,7 @@ class BroadcastifyClient:
                                 listing_prefix=self._archive_filename_prefixes.get(
                                     archive_id
                                 ),
+                                allow_filename_alias=True,
                             )
                             return output_path
 
@@ -1094,6 +1098,7 @@ class BroadcastifyClient:
                             listing_prefix=self._archive_filename_prefixes.get(
                                 archive_id
                             ),
+                            allow_filename_alias=True,
                         )
                         return output_path
                 except (requests.ConnectionError, requests.Timeout) as exc:
@@ -1194,7 +1199,7 @@ class BroadcastifyClient:
         )
         indexed = cached_archive_for_id(day_dir, feed_id, archive_id)
         if indexed is not None:
-            candidates.insert(0, indexed)
+            return indexed
         # Current download URL IDs and Content-Disposition filenames contain
         # different identifiers. The archive-list payload supplies startTs and
         # the feed's IANA timezone, which together form the exact file prefix.

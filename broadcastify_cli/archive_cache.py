@@ -136,6 +136,45 @@ def archive_identity_for_filename(
     return "", "", False
 
 
+def archive_identities_for_filename(
+    day_directory: str | Path,
+    feed_id: str,
+    filename: str,
+) -> tuple[tuple[str, str], ...]:
+    """Return every exact provider identity proven for one retained file.
+
+    Broadcastify can expose more than one archive-list ID whose authenticated
+    download resolves to the same retained MP3 filename. Those are aliases,
+    not duplicate audio files. Only identities whose indexed size still
+    matches the local file are returned.
+    """
+
+    if Path(filename).name != filename:
+        return ()
+    payload = _load_index(day_directory, feed_id)
+    try:
+        source = Path(day_directory) / filename
+        if source.is_symlink() or not source.is_file():
+            return ()
+        actual_size = source.stat().st_size
+    except OSError:
+        return ()
+    identities: list[tuple[str, str]] = []
+    for archive_id, raw in payload["archives"].items():
+        if not isinstance(raw, dict) or str(raw.get("filename") or "") != filename:
+            continue
+        try:
+            expected_size = int(raw.get("size") or 0)
+        except (TypeError, ValueError):
+            continue
+        if expected_size <= 0 or expected_size != actual_size:
+            continue
+        identities.append(
+            (str(archive_id), str(raw.get("listing_prefix") or ""))
+        )
+    return tuple(identities)
+
+
 def remember_archive_identity(
     day_directory: str | Path,
     feed_id: str,
@@ -144,6 +183,7 @@ def remember_archive_identity(
     source_file: str | Path,
     *,
     listing_prefix: str | None = None,
+    allow_filename_alias: bool = False,
 ) -> None:
     """Atomically retain the exact website-ID-to-file relationship.
 
@@ -151,6 +191,9 @@ def remember_archive_identity(
     interchangeable identifiers.  Some feeds have exhibited offsets of more
     than thirty minutes.  Keeping the provider ID beside the retained MP3 is
     the only safe way to prove that a later cache hit is the same request.
+    ``allow_filename_alias`` is reserved for an authenticated media response
+    (or a hash-verified LAN copy of one) that proves multiple IDs resolve to
+    the same retained file.
     """
 
     day = Path(day_directory)
@@ -178,13 +221,14 @@ def remember_archive_identity(
         payload["feed_id"] = str(feed_id)
         payload["archive_date"] = archive_date.isoformat()
         payload["updated_at_unix"] = round(time.time(), 6)
-        for existing_id, raw in list(payload["archives"].items()):
-            if (
-                existing_id != normalized_id
-                and isinstance(raw, dict)
-                and str(raw.get("filename") or "") == source.name
-            ):
-                del payload["archives"][existing_id]
+        if not allow_filename_alias:
+            for existing_id, raw in list(payload["archives"].items()):
+                if (
+                    existing_id != normalized_id
+                    and isinstance(raw, dict)
+                    and str(raw.get("filename") or "") == source.name
+                ):
+                    del payload["archives"][existing_id]
         payload["archives"][normalized_id] = {
             "filename": source.name,
             "listing_prefix": str(listing_prefix or "")[:12],

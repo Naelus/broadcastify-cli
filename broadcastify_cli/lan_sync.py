@@ -26,7 +26,10 @@ from urllib.parse import quote, urlparse, urlunparse
 
 import requests
 
-from .archive_cache import archive_identity_for_filename, remember_archive_identity
+from .archive_cache import (
+    archive_identities_for_filename,
+    remember_archive_identity,
+)
 
 LAN_PROTOCOL = "radio-archive-lan/1"
 LAN_DISCOVERY_MAGIC = b"RADIO-ARCHIVE-LAN-DISCOVER/1 "
@@ -188,6 +191,27 @@ def configured_peer_urls(
 
 
 @dataclass(frozen=True)
+class ArchiveIdentity:
+    archive_id: str
+    listing_prefix: str = ""
+
+    @classmethod
+    def from_mapping(cls, value: Mapping[str, Any]) -> "ArchiveIdentity":
+        identity = cls(
+            archive_id=str(value.get("archive_id") or ""),
+            listing_prefix=str(value.get("listing_prefix") or ""),
+        )
+        identity.validate()
+        return identity
+
+    def validate(self) -> None:
+        if not re.fullmatch(r"[A-Za-z0-9_.-]{1,200}", self.archive_id):
+            raise LanSyncError("A LAN peer advertised an invalid archive identity.")
+        if self.listing_prefix and not re.fullmatch(r"\d{12}", self.listing_prefix):
+            raise LanSyncError("A LAN peer advertised an invalid archive timestamp.")
+
+
+@dataclass(frozen=True)
 class ArchiveBlock:
     feed_id: str
     archive_date: str
@@ -197,6 +221,7 @@ class ArchiveBlock:
     modified_ns: int
     archive_id: str = ""
     listing_prefix: str = ""
+    archive_identities: tuple[ArchiveIdentity, ...] = ()
 
     @classmethod
     def from_mapping(
@@ -206,6 +231,20 @@ class ArchiveBlock:
         expected_feed_id: str,
         expected_date: date,
     ) -> "ArchiveBlock":
+        raw_identities = value.get("archive_identities") or ()
+        if isinstance(raw_identities, (str, bytes)) or not isinstance(
+            raw_identities, Sequence
+        ):
+            raise LanSyncError("A LAN peer advertised invalid archive identities.")
+        if len(raw_identities) > 64:
+            raise LanSyncError("A LAN peer advertised too many archive identities.")
+        identities = tuple(
+            ArchiveIdentity.from_mapping(raw)
+            for raw in raw_identities
+            if isinstance(raw, Mapping)
+        )
+        if len(identities) != len(raw_identities):
+            raise LanSyncError("A LAN peer advertised invalid archive identities.")
         block = cls(
             feed_id=str(value.get("feed_id") or ""),
             archive_date=str(value.get("archive_date") or ""),
@@ -215,6 +254,7 @@ class ArchiveBlock:
             modified_ns=int(value.get("modified_ns") or 0),
             archive_id=str(value.get("archive_id") or ""),
             listing_prefix=str(value.get("listing_prefix") or ""),
+            archive_identities=identities,
         )
         block.validate(expected_feed_id=expected_feed_id, expected_date=expected_date)
         return block
@@ -238,9 +278,74 @@ class ArchiveBlock:
             raise LanSyncError("A LAN peer advertised an invalid archive identity.")
         if self.listing_prefix and not re.fullmatch(r"\d{12}", self.listing_prefix):
             raise LanSyncError("A LAN peer advertised an invalid archive timestamp.")
+        if len(self.archive_identities) > 64:
+            raise LanSyncError("A LAN peer advertised too many archive identities.")
+        for identity in self.archive_identities:
+            identity.validate()
+        identity_ids = [value.archive_id for value in self.archive_identities]
+        if len(identity_ids) != len(set(identity_ids)):
+            raise LanSyncError("A LAN peer advertised duplicate archive identities.")
+        if (
+            self.archive_identities
+            and self.archive_id
+            and self.archive_identities[0].archive_id != self.archive_id
+        ):
+            raise LanSyncError("A LAN peer advertised conflicting archive identities.")
+        if (
+            self.archive_identities
+            and self.listing_prefix
+            and self.archive_identities[0].listing_prefix != self.listing_prefix
+        ):
+            raise LanSyncError("A LAN peer advertised conflicting archive timestamps.")
+
+    def identities(self) -> tuple[ArchiveIdentity, ...]:
+        if self.archive_identities:
+            return self.archive_identities
+        if self.archive_id:
+            return (ArchiveIdentity(self.archive_id, self.listing_prefix),)
+        return ()
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+def _block_archive_identities(
+    day_directory: Path,
+    feed_id: str,
+    filename: str,
+) -> tuple[str, str, tuple[ArchiveIdentity, ...]]:
+    identities = tuple(
+        ArchiveIdentity(archive_id, listing_prefix)
+        for archive_id, listing_prefix in archive_identities_for_filename(
+            day_directory,
+            feed_id,
+            filename,
+        )
+    )
+    if not identities:
+        return "", "", ()
+    return identities[0].archive_id, identities[0].listing_prefix, identities
+
+
+def _remember_block_archive_identities(
+    day_directory: Path,
+    feed_id: str,
+    archive_date: date,
+    block: ArchiveBlock,
+    source_file: Path,
+) -> None:
+    for identity in block.identities():
+        # The peer supplied this identity with a hash- and size-verified block.
+        # Preserve aliases when multiple provider IDs resolve to that same MP3.
+        remember_archive_identity(
+            day_directory,
+            feed_id,
+            archive_date,
+            identity.archive_id,
+            source_file,
+            listing_prefix=identity.listing_prefix,
+            allow_filename_alias=True,
+        )
 
 
 @dataclass(frozen=True)
@@ -767,14 +872,11 @@ class LanArchiveCatalog:
             stat = resolved.stat()
             if not 0 < stat.st_size <= MAX_ARCHIVE_BLOCK_BYTES:
                 continue
-            archive_id, listing_prefix, identity_valid = archive_identity_for_filename(
+            archive_id, listing_prefix, archive_identities = _block_archive_identities(
                 day_dir,
                 feed_id,
                 path.name,
             )
-            if not identity_valid:
-                archive_id = ""
-                listing_prefix = ""
             blocks.append(
                 ArchiveBlock(
                     feed_id=feed_id,
@@ -785,6 +887,7 @@ class LanArchiveCatalog:
                     modified_ns=stat.st_mtime_ns,
                     archive_id=archive_id,
                     listing_prefix=listing_prefix,
+                    archive_identities=archive_identities,
                 )
             )
             if len(blocks) >= MAX_BLOCKS_PER_DAY:
@@ -817,14 +920,11 @@ class LanArchiveCatalog:
         stat = path.stat()
         if not 0 < stat.st_size <= MAX_ARCHIVE_BLOCK_BYTES:
             raise FileNotFoundError(filename)
-        archive_id, listing_prefix, identity_valid = archive_identity_for_filename(
+        archive_id, listing_prefix, archive_identities = _block_archive_identities(
             day_dir,
             feed_id,
             filename,
         )
-        if not identity_valid:
-            archive_id = ""
-            listing_prefix = ""
         block = ArchiveBlock(
             feed_id=feed_id,
             archive_date=archive_date.isoformat(),
@@ -834,6 +934,7 @@ class LanArchiveCatalog:
             modified_ns=stat.st_mtime_ns,
             archive_id=archive_id,
             listing_prefix=listing_prefix,
+            archive_identities=archive_identities,
         )
         return path, block
 
@@ -1401,15 +1502,13 @@ class LanArchiveSyncClient:
                         and self.hashes.sha256(target) == expected.sha256
                     ):
                         already_local += 1
-                        if expected.archive_id:
-                            remember_archive_identity(
-                                day_dir,
-                                feed_id,
-                                archive_date,
-                                expected.archive_id,
-                                target,
-                                listing_prefix=expected.listing_prefix,
-                            )
+                        _remember_block_archive_identities(
+                            day_dir,
+                            feed_id,
+                            archive_date,
+                            expected,
+                            target,
+                        )
                     else:
                         conflicts += 1
                         failures.append(
@@ -1429,15 +1528,13 @@ class LanArchiveSyncClient:
                     copied += 1
                     copied_bytes += transferred
                     copied_from_peer = True
-                    if block.archive_id:
-                        remember_archive_identity(
-                            day_dir,
-                            feed_id,
-                            archive_date,
-                            block.archive_id,
-                            target,
-                            listing_prefix=block.listing_prefix,
-                        )
+                    _remember_block_archive_identities(
+                        day_dir,
+                        feed_id,
+                        archive_date,
+                        block,
+                        target,
+                    )
                     if progress:
                         progress(
                             f"Copied archive block {filename} from LAN peer "
@@ -2066,14 +2163,11 @@ class LanArchiveSyncClient:
                     "A completed acquisition contains a duplicate source block."
                 )
             names.add(path.name)
-            archive_id, listing_prefix, identity_valid = archive_identity_for_filename(
+            archive_id, listing_prefix, archive_identities = _block_archive_identities(
                 path.parent,
                 feed_id,
                 path.name,
             )
-            if not identity_valid:
-                archive_id = ""
-                listing_prefix = ""
             blocks.append(
                 ArchiveBlock(
                     feed_id=feed_id,
@@ -2084,6 +2178,7 @@ class LanArchiveSyncClient:
                     modified_ns=stat.st_mtime_ns,
                     archive_id=archive_id,
                     listing_prefix=listing_prefix,
+                    archive_identities=archive_identities,
                 )
             )
         if len(blocks) > MAX_BLOCKS_PER_DAY:
@@ -2125,15 +2220,13 @@ class LanArchiveSyncClient:
                     or self.hashes.sha256(path) != block.sha256
                 ):
                     return []
-                if block.archive_id:
-                    remember_archive_identity(
-                        day_dir,
-                        feed_id,
-                        archive_date,
-                        block.archive_id,
-                        path,
-                        listing_prefix=block.listing_prefix,
-                    )
+                _remember_block_archive_identities(
+                    day_dir,
+                    feed_id,
+                    archive_date,
+                    block,
+                    path,
+                )
                 verified.append(path.resolve())
         except (LanSyncError, OSError):
             return []

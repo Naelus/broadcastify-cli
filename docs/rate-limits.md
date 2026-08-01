@@ -98,6 +98,9 @@ The fixes now in place are:
   blocks use a bounded source-time fallback once, while complete unambiguous
   days can use conservative chronological reconciliation, and are then
   migrated;
+- distinct provider IDs that an authenticated media response proves resolve
+  to one retained filename are stored as aliases, while timestamp-only matches
+  remain one-to-one;
 - duplicate provider IDs in one listing are collapsed before acquisition;
 - local and trusted-LAN cache checks occur before request admission;
 - native and Web/NAS schedulers bind each claimed job to the currently selected
@@ -115,8 +118,9 @@ one producer for a feed/day, reducing duplicate downloads. The transient
 quota result carries the producer's next-safe delay, preventing followers from
 repeating the request until that rolling slot arrives. Completed old-day
 manifests may still be retained for the configured 24-hour result lifetime.
-The exact provider-ID mapping travels with an inventoried or completed block,
-so receiving it from a peer does not discard its cache identity.
+All exact provider-ID mappings for an inventoried or completed block travel
+with it, so receiving a response-confirmed alias from a peer does not discard
+that no-request cache identity.
 
 LAN coordination does **not** merge request ledgers, credentials, or provider
 allowances. Each installed desktop or service retains its own 240-request

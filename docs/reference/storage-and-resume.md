@@ -92,8 +92,9 @@ not synchronized over LAN.
 
 Each expensive stage has an independent cache contract:
 
-- archive blocks: exact provider archive ID, retained filename/size, and a
-  bounded feed-timezone/source-time migration path for older unindexed files;
+- archive blocks: exact provider archive ID(s), retained filename/size,
+  response-confirmed aliases, and a bounded feed-timezone/source-time migration
+  path for older unindexed files;
 - combined audio: exact ordered source list, modification times, and timeline
   manifest;
 - ASR: audio/model/engine/backend plus rendered-text integrity;

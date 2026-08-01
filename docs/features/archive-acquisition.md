@@ -37,10 +37,13 @@ rather than guessed. A range job:
    while the run was active.
 
 Repeated archive IDs in one listing are collapsed before progress accounting
-or acquisition. An indexed filename can satisfy only its mapped provider ID,
-and its recorded byte size must still match. These rules prevent a retained
-block from being counted twice or a second listing identity from borrowing the
-wrong file.
+or acquisition. A filename normally satisfies only its mapped provider ID and
+its recorded byte size must still match. Broadcastify can, however, publish
+distinct listing IDs whose authenticated download responses resolve to the
+same retained filename. The client records those IDs as explicit aliases only
+after the media response proves the relationship; bounded timestamp guesses
+cannot create an alias. This prevents both false cache hits and repeated daily
+requests for provider aliases.
 
 The live block cannot be downloaded until Broadcastify publishes it as an
 archive. Each ready message says **cached locally** or **downloaded from
@@ -120,8 +123,10 @@ The optional LAN node shares original archive MP3 blocks, not credentials,
 transcripts, analysis, or combined audio. One renewable producer lease owns a
 feed/day upstream acquisition; followers assemble the exact completion manifest
 from any peer and verify size plus SHA-256. Inventories and completion manifests
-also carry the optional exact provider ID and listing prefix, so a copied block
-retains the same no-request cache identity on the receiving node.
+also carry all optional exact provider IDs and listing prefixes for a block,
+including response-confirmed aliases, so a copied block retains the same
+no-request cache identities on the receiving node. Older peers that understand
+only one identity remain compatible.
 
 Broadcastify source labels can drift slightly across midnight even when the
 track belongs to the prior website archive page. LAN manifests accept that
