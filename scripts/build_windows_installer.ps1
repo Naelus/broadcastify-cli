@@ -181,6 +181,8 @@ $bundleValue = if ($BundleLocalEnv) { "true" } else { "false" }
     -o $application `
     "-p:BundleLocalEnv=$bundleValue" `
     "-p:Version=$Version" `
+    "-p:FileVersion=$numericVersion" `
+    "-p:AssemblyVersion=$numericVersion" `
     "-p:SelfContained=true" `
     "-p:DebugType=None" `
     "-p:DebugSymbols=false"
@@ -206,6 +208,29 @@ $requiredDesktopFiles = @(
 foreach ($relativePath in $requiredDesktopFiles) {
     if (-not (Test-Path -LiteralPath (Join-Path $application $relativePath) -PathType Leaf)) {
         throw "The native publish is missing $relativePath."
+    }
+}
+
+$nativeVersionFiles = @(
+    (Join-Path $application "Broadcastify Desktop.exe"),
+    (Join-Path $application "windowsml\BroadcastifyCli.WindowsML.exe")
+)
+foreach ($nativeVersionFile in $nativeVersionFiles) {
+    $versionInfo = (Get-Item -LiteralPath $nativeVersionFile).VersionInfo
+    if ($versionInfo.FileVersion -ne $numericVersion) {
+        throw (
+            "The native publish has stale FileVersion $($versionInfo.FileVersion) " +
+            "in $nativeVersionFile; expected $numericVersion."
+        )
+    }
+    if (-not $versionInfo.ProductVersion.StartsWith(
+            $Version,
+            [StringComparison]::Ordinal
+        )) {
+        throw (
+            "The native publish has stale ProductVersion $($versionInfo.ProductVersion) " +
+            "in $nativeVersionFile; expected $Version."
+        )
     }
 }
 

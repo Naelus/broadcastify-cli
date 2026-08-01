@@ -17,8 +17,8 @@
     <EnableMsixTooling>false</EnableMsixTooling>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <Version>0.4.7</Version>
-    <FileVersion>0.4.7.0</FileVersion>
+    <Version>0.4.8</Version>
+    <FileVersion>0.4.8.0</FileVersion>
     <BundleLocalEnv Condition="'$(BundleLocalEnv)' == ''">false</BundleLocalEnv>
     <WindowsMLProjectPath>$(MSBuildProjectDirectory)\..\BroadcastifyCli.WindowsML\BroadcastifyCli.WindowsML.csproj</WindowsMLProjectPath>
     <WindowsMLTargetFramework>net10.0-windows10.0.26100.0</WindowsMLTargetFramework>
@@ -42,7 +42,7 @@
           Condition="'$(DesignTimeBuild)' != 'true'">
     <MSBuild Projects="$(WindowsMLProjectPath)"
              Targets="Build"
-             Properties="Configuration=$(Configuration);RuntimeIdentifier=$(RuntimeIdentifier);SelfContained=true;DebugType=None;DebugSymbols=false"
+             Properties="Configuration=$(Configuration);RuntimeIdentifier=$(RuntimeIdentifier);SelfContained=true;DebugType=None;DebugSymbols=false;Version=$(Version);FileVersion=$(FileVersion);AssemblyVersion=$(AssemblyVersion)"
              RemoveProperties="OutDir;OutputPath;PublishDir;BundleLocalEnv;Platform" />
   </Target>
 
