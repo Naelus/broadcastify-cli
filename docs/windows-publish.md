@@ -27,7 +27,7 @@ The consumer build layers a portable runtime over the verified native publish:
 Output:
 
 ```text
-dist/windows/BroadcastifyDesktop-0.4.12-win-x64-setup.exe
+dist/windows/BroadcastifyDesktop-0.4.13-win-x64-setup.exe
 ```
 
 The application stage contains:
@@ -64,8 +64,9 @@ installed worker is launched portably as a module through the bundled
 Python 3.12.10 and the FFmpeg 8.1.2 essentials archive are SHA-256 pinned.
 Python wheel versions are exact in
 `installer/windows-runtime-constraints.txt`. The package includes Windows ML,
-Qwen3-ASR, and portable Sherpa diarization dependencies but excludes the
-multi-gigabyte CUDA/PyTorch stack. Models are not bundled.
+Qwen3-ASR, portable Sherpa diarization, and IANA timezone data used to map
+archive listings to feed-local cache identities, but excludes the multi-
+gigabyte CUDA/PyTorch stack. Models are not bundled.
 
 ## Installer behavior
 
@@ -95,7 +96,7 @@ machine that previously ran an owner-only private build.
 The recommended silent deployment is:
 
 ```powershell
-.\BroadcastifyDesktop-0.4.12-win-x64-setup.exe `
+.\BroadcastifyDesktop-0.4.13-win-x64-setup.exe `
   /VERYSILENT /SUPPRESSMSGBOXES /NORESTART `
   /ENABLESTARTUP /LAUNCHAFTERINSTALL
 ```

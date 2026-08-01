@@ -370,7 +370,8 @@ try {
     $env:FFMPEG_PATH = Join-Path $toolsRoot "ffmpeg.exe"
     & $embeddedPython -B -c (
         "import broadcastify_cli, cryptography, requests, sherpa_onnx; " +
-        "import onnxruntime_genai; print('portable-runtime-ready')"
+        "import onnxruntime_genai; from zoneinfo import ZoneInfo; " +
+        "ZoneInfo('America/Chicago'); print('portable-runtime-ready')"
     )
     if ($LASTEXITCODE -ne 0) {
         throw "The embedded Python import smoke test failed with exit code $LASTEXITCODE."

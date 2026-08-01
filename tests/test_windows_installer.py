@@ -105,6 +105,10 @@ def test_public_installer_build_rejects_private_environment_and_pins_downloads()
     workflow = (
         ROOT / ".github" / "workflows" / "windows-release.yml"
     ).read_text(encoding="utf-8")
+    project = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    constraints = (
+        ROOT / "installer" / "windows-runtime-constraints.txt"
+    ).read_text(encoding="utf-8")
 
     assert "4ACBED6DD1C744B0376E3B1CF57CE906F9DC9E95E68824584C8099A63025A3C3" in build
     assert "DB580001CAA24AC104C8CB856CD113A87B0A443F7BDF47D8C12B1D740584A2EC" in build
@@ -123,6 +127,9 @@ def test_public_installer_build_rejects_private_environment_and_pins_downloads()
     assert '"-p:SelfContained=true"' in build
     assert '"-p:DebugType=None"' in build
     assert '"windowsml\\hostfxr.dll"' in build
+    assert "tzdata>=2026.3,<2027" in project
+    assert "tzdata==2026.3" in constraints
+    assert "ZoneInfo('America/Chicago')" in build
     assert "$unexpectedPdbFiles.Count -gt 0" in build
     assert 'tags:' in workflow
     assert '"v*"' in workflow
