@@ -227,6 +227,9 @@ class AreaAcquisitionRunner:
             dict.fromkeys(str(value).strip() for value in self.payload.get("feed_ids", []))
         )
         available = {str(feed["feed_id"]): dict(feed) for feed in profile_feeds}
+        saved_order = {
+            str(feed["feed_id"]): index for index, feed in enumerate(profile_feeds)
+        }
         if requested_ids:
             unknown = [value for value in requested_ids if value not in available]
             if unknown:
@@ -236,15 +239,34 @@ class AreaAcquisitionRunner:
             feeds = [available[value] for value in requested_ids]
         else:
             feeds = list(available.values())
-        feeds.sort(
-            key=lambda feed: (
-                int(feed.get("priority_rank") or len(feeds) + 1),
-                float(feed["distance_miles"])
-                if feed.get("distance_miles") is not None
-                else float("inf"),
-                str(feed.get("name") or "").lower(),
+        has_explicit_priority = any(feed.get("priority_rank") is not None for feed in feeds)
+        if has_explicit_priority:
+            feeds.sort(
+                key=lambda feed: (
+                    int(feed["priority_rank"])
+                    if feed.get("priority_rank") is not None
+                    else len(profile_feeds) + saved_order[str(feed["feed_id"])] + 1,
+                    float(feed["distance_miles"])
+                    if feed.get("distance_miles") is not None
+                    else float("inf"),
+                    saved_order[str(feed["feed_id"])],
+                )
             )
-        )
+        elif any(feed.get("distance_miles") is not None for feed in feeds):
+            feeds.sort(
+                key=lambda feed: (
+                    float(feed["distance_miles"])
+                    if feed.get("distance_miles") is not None
+                    else float("inf"),
+                    saved_order[str(feed["feed_id"])],
+                )
+            )
+        else:
+            # Hand-curated and legacy profiles may have neither a calculated
+            # distance nor an explicit rank. Their saved order is intentional;
+            # alphabetical resorting can send the scarce upstream allowance to
+            # a lower-priority feed first.
+            feeds.sort(key=lambda feed: saved_order[str(feed["feed_id"])])
         for index, feed in enumerate(feeds, start=1):
             feed["priority_rank"] = index
         return feeds
