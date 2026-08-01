@@ -17,8 +17,8 @@
     <EnableMsixTooling>false</EnableMsixTooling>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <Version>0.4.5</Version>
-    <FileVersion>0.4.5.0</FileVersion>
+    <Version>0.4.6</Version>
+    <FileVersion>0.4.6.0</FileVersion>
     <BundleLocalEnv Condition="'$(BundleLocalEnv)' == ''">false</BundleLocalEnv>
     <WindowsMLProjectPath>$(MSBuildProjectDirectory)\..\BroadcastifyCli.WindowsML\BroadcastifyCli.WindowsML.csproj</WindowsMLProjectPath>
     <WindowsMLTargetFramework>net10.0-windows10.0.26100.0</WindowsMLTargetFramework>
