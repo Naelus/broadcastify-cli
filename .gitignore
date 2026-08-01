@@ -60,6 +60,10 @@ MANIFEST
 *.manifest
 *.spec
 
+# The native WinUI executable manifest is authored source, not a generated
+# PyInstaller sidecar. Clean release runners must receive it.
+!BroadcastifyCli.WinUI/app.manifest
+
 # Installer logs
 pip-log.txt
 pip-delete-this-directory.txt
