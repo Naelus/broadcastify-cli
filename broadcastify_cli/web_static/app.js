@@ -53,6 +53,7 @@ const state = {
   bootstrap: { days: [], profiles: [], schedules: [], summary: {}, runtime: {} },
   selectedDay: null,
   selectedDayDetail: null,
+  editingSchedule: null,
   incidentExpanded: false,
   transcript: { segments: [], offset: 0, total: 0, hasMore: false, query: "" },
   selectedFeed: null,
@@ -607,10 +608,15 @@ function renderFeedSchedules() {
     target.innerHTML = '<div class="empty-compact">No feed schedules yet.</div>';
     return;
   }
-  target.innerHTML = schedules.map((schedule) => `<div class="result-row">
-    <div><strong>${html(schedule.feed_name)}</strong><small>Feed ${html(schedule.feed_id)} · daily ${html(schedule.run_time_local)} · latest ${html(schedule.lookback_days)} day${Number(schedule.lookback_days) === 1 ? "" : "s"}</small><small>${html(words(schedule.state))}${schedule.message ? ` · ${html(schedule.message)}` : ""}</small></div>
-    <button class="button subtle small" type="button" data-delete-schedule="${html(schedule.id)}">Remove</button>
-  </div>`).join("");
+  target.innerHTML = schedules.map((schedule) => {
+    const catchUp = schedule.backfill_start_date
+      ? ` · catching up from ${html(schedule.backfill_start_date)}`
+      : "";
+    return `<div class="result-row">
+      <div><strong>${html(schedule.feed_name)}</strong><small>Feed ${html(schedule.feed_id)} · daily ${html(schedule.run_time_local)} · latest ${html(schedule.lookback_days)} day${Number(schedule.lookback_days) === 1 ? "" : "s"}${catchUp}</small><small>${schedule.enabled ? "Enabled" : "Disabled"} · ${html(words(schedule.state))}${schedule.message ? ` · ${html(schedule.message)}` : ""}</small></div>
+      <div class="button-row"><button class="button subtle small" type="button" data-edit-schedule="${html(schedule.id)}">Edit</button><button class="button subtle small" type="button" data-delete-schedule="${html(schedule.id)}">Remove</button></div>
+    </div>`;
+  }).join("");
 }
 
 function renderArchiveQuota() {
@@ -1377,6 +1383,8 @@ document.addEventListener("click", async (event) => {
     const results = JSON.parse(byId("feedSearchResults").dataset.results || "[]");
     state.selectedFeed = results.find((value) => String(value.feed_id) === button.dataset.selectFeed);
     if (state.selectedFeed) {
+      state.editingSchedule = null;
+      byId("saveFeedScheduleButton").textContent = "Schedule selected feed daily";
       byId("archiveFeedId").value = state.selectedFeed.feed_id;
       byId("selectedFeedLabel").textContent = `${state.selectedFeed.name} · feed ${state.selectedFeed.feed_id}`;
       renderFeedResults(results);
@@ -1579,6 +1587,23 @@ byId("saveFeedScheduleButton").addEventListener("click", async () => {
   const feedId = byId("archiveFeedId").value;
   if (!feedId) return toast("Select the feed to schedule first.", true);
   const lookback = Math.max(1, Math.min(14, Number(byId("scheduleLookbackDays").value) || 2));
+  const editing = state.editingSchedule?.feed_id === feedId
+    ? state.editingSchedule
+    : null;
+  const job = editing
+    ? {
+        ...(editing.job || {}),
+        combine: byId("archiveCombine").checked,
+        transcribe: byId("archiveTranscribe").checked,
+        diarize: byId("archiveDiarize").checked,
+      }
+    : {
+        combine: byId("archiveCombine").checked,
+        transcribe: byId("archiveTranscribe").checked,
+        diarize: byId("archiveDiarize").checked,
+        ...processingPayload(),
+        ...providerPayload(),
+      };
   try {
     await api("/api/schedules", {
       method: "POST",
@@ -1587,17 +1612,14 @@ byId("saveFeedScheduleButton").addEventListener("click", async () => {
         feed_name: state.selectedFeed?.name || `Feed ${feedId}`,
         run_time_local: byId("scheduleRunTime").value || "02:00",
         lookback_days: lookback,
+        backfill_start_date: byId("scheduleBackfillStartDate").value || "",
         analyze: byId("archiveAnalyze").checked,
-        enabled: true,
-        job: {
-          combine: byId("archiveCombine").checked,
-          transcribe: byId("archiveTranscribe").checked,
-          diarize: byId("archiveDiarize").checked,
-          ...processingPayload(),
-          ...providerPayload(),
-        },
+        enabled: byId("scheduleEnabled").checked,
+        job,
       }),
     });
+    state.editingSchedule = null;
+    byId("saveFeedScheduleButton").textContent = "Schedule selected feed daily";
     await refreshBootstrap();
     toast(`Daily schedule saved for ${state.selectedFeed?.name || `feed ${feedId}`}.`);
   } catch (error) {
@@ -1606,6 +1628,28 @@ byId("saveFeedScheduleButton").addEventListener("click", async () => {
 });
 
 byId("feedScheduleList").addEventListener("click", async (event) => {
+  const editButton = event.target.closest("[data-edit-schedule]");
+  if (editButton) {
+    const schedule = (state.bootstrap.schedules || []).find(
+      (value) => String(value.id) === editButton.dataset.editSchedule,
+    );
+    if (!schedule) return toast("That schedule is no longer available.", true);
+    state.editingSchedule = schedule;
+    state.selectedFeed = { feed_id: schedule.feed_id, name: schedule.feed_name };
+    byId("archiveFeedId").value = schedule.feed_id;
+    byId("selectedFeedLabel").textContent = `${schedule.feed_name} · feed ${schedule.feed_id}`;
+    byId("scheduleRunTime").value = schedule.run_time_local || "02:00";
+    byId("scheduleLookbackDays").value = Number(schedule.lookback_days) || 2;
+    byId("scheduleBackfillStartDate").value = schedule.backfill_start_date || "";
+    byId("scheduleEnabled").checked = Boolean(schedule.enabled);
+    byId("archiveCombine").checked = Boolean(schedule.job?.combine);
+    byId("archiveTranscribe").checked = Boolean(schedule.job?.transcribe);
+    byId("archiveDiarize").checked = Boolean(schedule.job?.diarize);
+    byId("archiveAnalyze").checked = Boolean(schedule.analyze);
+    byId("saveFeedScheduleButton").textContent = "Update selected feed schedule";
+    toast(`Editing the saved schedule for ${schedule.feed_name}.`);
+    return;
+  }
   const button = event.target.closest("[data-delete-schedule]");
   if (!button) return;
   try {
@@ -1613,6 +1657,10 @@ byId("feedScheduleList").addEventListener("click", async (event) => {
       method: "POST",
       body: "{}",
     });
+    if (String(state.editingSchedule?.id || "") === button.dataset.deleteSchedule) {
+      state.editingSchedule = null;
+      byId("saveFeedScheduleButton").textContent = "Schedule selected feed daily";
+    }
     await refreshBootstrap();
   } catch (error) {
     toast(error.message, true);

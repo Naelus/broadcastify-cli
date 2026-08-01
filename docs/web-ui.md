@@ -50,8 +50,9 @@ The payload is never included in the returned job snapshot. Still treat payload 
 - priority-first incident cards with quotes, timestamps, play-at-time, and exact clip preparation
 - paged/searchable speaker-labeled transcript viewing
 - website-backed feed search and guarded inclusive archive jobs
-- persistent daily schedules for explicitly selected feeds, with a recent-day
-  lookback, cache/stage reuse, service-start recovery, and rolling-quota resume
+- persistent daily schedules for explicitly selected feeds, with editable
+  time, enable state, recent-day lookback, optional self-clearing historical
+  catch-up, cache/stage reuse, service-start recovery, and rolling-quota resume
 - visible installation-local 240-of-250 rolling request status with a
   10-request manual reserve and next-safe time
 - trusted-LAN source-block pooling before website access, with optional discovery or explicit private peer URLs and one renewable upstream producer lease per quota-scope/feed/day

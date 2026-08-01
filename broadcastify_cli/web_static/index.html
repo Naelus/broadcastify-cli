@@ -108,7 +108,9 @@
                   <div class="form-grid two">
                     <label><span>Run at local time</span><input id="scheduleRunTime" type="time" value="02:00" step="300"></label>
                     <label><span>Revisit latest days</span><input id="scheduleLookbackDays" type="number" min="1" max="14" value="2"></label>
+                    <label><span>Catch up from (optional)</span><input id="scheduleBackfillStartDate" type="date"></label>
                   </div>
+                  <label class="check-row"><input id="scheduleEnabled" type="checkbox" checked><span><strong>Schedule enabled</strong><small>Disabled schedules remain saved but do not run.</small></span></label>
                   <button class="button secondary" id="saveFeedScheduleButton" type="button">Schedule selected feed daily</button>
                   <div id="feedScheduleList" class="result-list"><div class="empty-compact">No feed schedules yet.</div></div>
                 </div>
@@ -338,6 +340,6 @@
   </aside>
 
   <div class="toast-region" id="toastRegion" aria-live="polite"></div>
-  <script src="/static/app.js?v=33" defer></script>
+  <script src="/static/app.js?v=34" defer></script>
 </body>
 </html>

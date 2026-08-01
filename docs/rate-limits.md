@@ -106,6 +106,9 @@ The fixes now in place are:
 - native and Web/NAS schedulers bind each claimed job to the currently selected
   Library, overriding stale saved paths that could otherwise fetch an archive
   ID again into a second local root;
+- an optional historical schedule boundary survives quota deferrals and clears
+  only after every requested day is complete, so released rolling slots can
+  drain a backlog without a second ad-hoc downloader;
 - the SQLite ledger uses an atomic write transaction across local processes;
 - every actual retry is separately charged;
 - all 429 responses are terminal for the current run; and

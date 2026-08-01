@@ -749,11 +749,20 @@ class FeedScheduleCoordinator:
                 result = event.get("result") if isinstance(event, dict) else {}
                 result = result if isinstance(result, dict) else {}
                 limited = bool(result.get("download_limited"))
+                incomplete = bool(result.get("missing_days"))
                 quota = ArchiveRequestLedger(base_dir=self.working_dir).status()
-                status = "waiting_quota" if limited else "complete"
+                status = (
+                    "waiting_quota"
+                    if limited
+                    else "deferred"
+                    if incomplete
+                    else "complete"
+                )
                 message = (
                     "Waiting for the next rolling archive-request slot."
                     if limited
+                    else "Some archive days were deferred; retrying retained work shortly."
+                    if incomplete
                     else "Scheduled feed run completed."
                 )
                 next_request_at = str(quota.get("next_request_at") or "") if limited else ""

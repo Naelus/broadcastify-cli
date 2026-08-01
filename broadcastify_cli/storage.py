@@ -236,6 +236,7 @@ class AnalysisStore:
                 feed_name TEXT NOT NULL,
                 run_time_local TEXT NOT NULL,
                 lookback_days INTEGER NOT NULL DEFAULT 2,
+                backfill_start_date TEXT NOT NULL DEFAULT '',
                 job_json TEXT NOT NULL,
                 analyze INTEGER NOT NULL DEFAULT 1,
                 enabled INTEGER NOT NULL DEFAULT 1,
@@ -341,6 +342,17 @@ class AnalysisStore:
             self.connection.execute(
                 "ALTER TABLE area_profiles ADD COLUMN coverage_json TEXT NOT NULL DEFAULT '{}'"
             )
+        feed_schedule_columns = {
+            str(row["name"])
+            for row in self.connection.execute(
+                "PRAGMA table_info(feed_schedules)"
+            ).fetchall()
+        }
+        if "backfill_start_date" not in feed_schedule_columns:
+            self.connection.execute(
+                "ALTER TABLE feed_schedules ADD COLUMN "
+                "backfill_start_date TEXT NOT NULL DEFAULT ''"
+            )
         row = self.connection.execute("SELECT version FROM schema_info LIMIT 1").fetchone()
         if row is None:
             self.connection.execute(
@@ -419,6 +431,7 @@ class AnalysisStore:
             "feed_name": str(row["feed_name"]),
             "run_time_local": str(row["run_time_local"]),
             "lookback_days": int(row["lookback_days"]),
+            "backfill_start_date": str(row["backfill_start_date"] or ""),
             "job": json.loads(str(row["job_json"])),
             "analyze": bool(row["analyze"]),
             "enabled": bool(row["enabled"]),
@@ -439,6 +452,15 @@ class AnalysisStore:
         feed_name = str(payload.get("feed_name") or f"Feed {feed_id}").strip()[:200]
         run_time = self._schedule_time(str(payload.get("run_time_local") or "02:00"))
         lookback_days = max(1, min(14, int(payload.get("lookback_days") or 2)))
+        backfill_start_date = str(payload.get("backfill_start_date") or "").strip()
+        if backfill_start_date:
+            try:
+                parsed_backfill = date.fromisoformat(backfill_start_date)
+            except ValueError as exc:
+                raise ValueError("Catch-up start date must use YYYY-MM-DD.") from exc
+            if parsed_backfill > date.today():
+                raise ValueError("Catch-up start date cannot be in the future.")
+            backfill_start_date = parsed_backfill.isoformat()
         job = dict(payload.get("job") or {})
         for key in (
             "feed_id",
@@ -457,13 +479,15 @@ class AnalysisStore:
                 """
                 INSERT INTO feed_schedules(
                     feed_id, feed_name, run_time_local, lookback_days,
+                    backfill_start_date,
                     job_json, analyze, enabled, state, message,
                     created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'scheduled', '', ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'scheduled', '', ?, ?)
                 ON CONFLICT(feed_id) DO UPDATE SET
                     feed_name=excluded.feed_name,
                     run_time_local=excluded.run_time_local,
                     lookback_days=excluded.lookback_days,
+                    backfill_start_date=excluded.backfill_start_date,
                     job_json=excluded.job_json,
                     analyze=excluded.analyze,
                     enabled=excluded.enabled,
@@ -480,6 +504,7 @@ class AnalysisStore:
                     feed_name,
                     run_time,
                     lookback_days,
+                    backfill_start_date,
                     json.dumps(job, sort_keys=True),
                     int(bool(payload.get("analyze", True))),
                     int(bool(payload.get("enabled", True))),
@@ -569,11 +594,17 @@ class AnalysisStore:
             raise
         due_date = current.date()
         lookback = int(schedule["lookback_days"])
+        start_date = due_date - timedelta(days=lookback - 1)
+        backfill_start = str(schedule.get("backfill_start_date") or "")
+        if backfill_start:
+            parsed_backfill = date.fromisoformat(backfill_start)
+            if parsed_backfill < start_date:
+                start_date = parsed_backfill
         job = {
             **dict(schedule["job"]),
             "feed_id": schedule["feed_id"],
             "feed_name": schedule["feed_name"],
-            "start_date": (due_date - timedelta(days=lookback - 1)).isoformat(),
+            "start_date": start_date.isoformat(),
             "end_date": due_date.isoformat(),
             "download_jobs": 1,
             "keep_originals": True,
@@ -632,6 +663,9 @@ class AnalysisStore:
                 UPDATE feed_schedules
                 SET state=?, message=?,
                     last_run_date=CASE WHEN ?='' THEN last_run_date ELSE ? END,
+                    backfill_start_date=CASE
+                        WHEN ?='complete' THEN '' ELSE backfill_start_date
+                    END,
                     last_finished_at=?, not_before=?, lease_until='', updated_at=?
                 WHERE id=?
                 """,
@@ -640,6 +674,7 @@ class AnalysisStore:
                     str(message)[:1000],
                     last_run_date,
                     last_run_date,
+                    status,
                     finished,
                     not_before,
                     finished,

@@ -246,6 +246,10 @@ def test_windows_startup_is_visible_configurable_and_recovery_aware() -> None:
     assert "_pauseScheduledJobsForSetup" in window
     assert "presenter.Minimize();" in window
     assert "Recovered {recovered} interrupted scheduled feed" in window
+    assert 'Header = "Catch up from (optional)"' in window
+    assert "BackfillStartDate = backfillPicker.Date" in window
+    assert "result?.MissingDays.Count" in window
+    assert 'Status = waitingForQuota' in window
     assert "Task<int> RecoverFeedSchedulesAsync" in worker
     assert window.index("await ApplyLaunchBehaviorAsync();") < window.index(
         "ConfigureFeedScheduleTimer();"

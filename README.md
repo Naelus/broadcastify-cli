@@ -24,8 +24,9 @@ a browser UI for Windows, Linux, macOS, and TrueNAS, plus command-line tools.
   resumable jobs, a durable 240-of-250 rolling-window guard, and optional
   trusted-LAN sharing.
 - Saves daily schedules for explicitly selected feeds; each run revisits a
-  short recent window, resumes retained work, and continues at rolling quota
-  release times instead of sleeping for a fixed day.
+  short recent window, can retain an older catch-up boundary until every gap
+  is complete, and continues at rolling quota release times instead of
+  sleeping for a fixed day.
 - Combines each feed-day into one continuous timeline before transcription and
   speaker labeling.
 - Runs local Whisper-family ASR, Community-1 or a fast CPU speaker preview, BGE

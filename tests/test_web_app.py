@@ -172,6 +172,61 @@ def test_web_schedule_coordinator_claims_and_finishes_due_feed(
     assert result["last_run_date"] == date.today().isoformat()
 
 
+def test_web_schedule_coordinator_retries_deferred_missing_days(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = tmp_path / "analysis.sqlite3"
+    monkeypatch.setenv(
+        "BROADCASTIFY_QUOTA_LEDGER", str(tmp_path / "quota.sqlite3")
+    )
+    with AnalysisStore(database) as store:
+        store.save_feed_schedule(
+            {
+                "feed_id": "90001",
+                "feed_name": "Example Public Safety",
+                "run_time_local": "00:00",
+                "lookback_days": 1,
+                "backfill_start_date": "2026-07-03",
+                "job": {"combine": False, "transcribe": False},
+            }
+        )
+
+    class FakeJobs:
+        output_dir = tmp_path / "selected-library"
+
+        def start(self, command: str, payload: dict[str, object]) -> dict[str, object]:
+            assert command == "run-scheduled"
+            assert payload["job"]["start_date"] == "2026-07-03"  # type: ignore[index]
+            return {"id": "scheduled-job"}
+
+        def get(self, job_id: str) -> dict[str, object]:
+            assert job_id == "scheduled-job"
+            return {
+                "status": "completed",
+                "result": {
+                    "type": "scheduled_complete",
+                    "result": {
+                        "download_limited": False,
+                        "missing_days": ["2026-07-04"],
+                    },
+                },
+            }
+
+    coordinator = FeedScheduleCoordinator(  # type: ignore[arg-type]
+        FakeJobs(), database, tmp_path, poll_seconds=0.05
+    )
+    coordinator.check_once()
+    coordinator.check_once()
+
+    with AnalysisStore(database) as store:
+        result = store.list_feed_schedules()[0]
+    assert result["state"] == "deferred"
+    assert result["last_run_date"] == ""
+    assert result["backfill_start_date"] == "2026-07-03"
+    assert result["due"] is False
+
+
 def test_loopback_web_app_serves_library_transcript_and_media(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -196,9 +251,11 @@ def test_loopback_web_app_serves_library_transcript_and_media(
         assert cookie.startswith("radio_archive_session=")
         assert token_match is not None
         assert b'id="areaPublicSafetyOnly"' in body
-        assert b'/static/app.js?v=33' in body
+        assert b'/static/app.js?v=34' in body
         assert b'id="archiveQuotaNotice"' in body
         assert b'id="saveFeedScheduleButton"' in body
+        assert b'id="scheduleBackfillStartDate"' in body
+        assert b'id="scheduleEnabled"' in body
         assert b'id="accessScopeStatus"' in body
         assert b'value="qwen3-asr"' in body
         assert b'qwen3-asr-0.6b-int8' in body
@@ -225,10 +282,12 @@ def test_loopback_web_app_serves_library_transcript_and_media(
         assert response.getheader("Content-Type") == "image/svg+xml"
         assert b"<svg" in body
 
-        response, body = _request(connection, "GET", "/static/app.js?v=33")
+        response, body = _request(connection, "GET", "/static/app.js?v=34")
         assert response.status == 200
         assert b"areaSelectedStoryIndex" in body
         assert b"data-area-story-index" in body
+        assert b"data-edit-schedule" in body
+        assert b"backfill_start_date" in body
         assert b"story-browser" in body
         assert b"analysis_device: state.settings.analysisDevice" in body
         assert b'analysis-self-test' in body

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -45,6 +46,50 @@ def test_feed_schedule_is_specific_persistent_and_forces_safe_acquisition(
         )
 
 
+def test_existing_schedule_database_adds_historical_catch_up_column(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "analysis.sqlite3"
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            """
+            CREATE TABLE feed_schedules (
+                id INTEGER PRIMARY KEY,
+                feed_id TEXT NOT NULL UNIQUE,
+                feed_name TEXT NOT NULL,
+                run_time_local TEXT NOT NULL,
+                lookback_days INTEGER NOT NULL DEFAULT 2,
+                job_json TEXT NOT NULL,
+                analyze INTEGER NOT NULL DEFAULT 1,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                state TEXT NOT NULL DEFAULT 'scheduled',
+                message TEXT NOT NULL DEFAULT '',
+                last_run_date TEXT NOT NULL DEFAULT '',
+                last_started_at TEXT NOT NULL DEFAULT '',
+                last_finished_at TEXT NOT NULL DEFAULT '',
+                not_before TEXT NOT NULL DEFAULT '',
+                lease_until TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+
+    with AnalysisStore(database) as store:
+        columns = {
+            str(row["name"])
+            for row in store.connection.execute(
+                "PRAGMA table_info(feed_schedules)"
+            ).fetchall()
+        }
+        saved = store.save_feed_schedule(
+            {**_payload(), "backfill_start_date": "2026-07-03"}
+        )
+
+    assert "backfill_start_date" in columns
+    assert saved["backfill_start_date"] == "2026-07-03"
+
+
 def test_claim_is_atomic_and_quota_wait_reopens_at_next_rolling_slot(
     tmp_path: Path,
 ) -> None:
@@ -83,6 +128,57 @@ def test_claim_is_atomic_and_quota_wait_reopens_at_next_rolling_slot(
         )
         assert completed["last_run_date"] == "2026-07-23"
         assert second.claim_due_feed_schedule(now=now + timedelta(hours=1)) is None
+
+
+def test_historical_catch_up_survives_quota_wait_and_clears_only_when_complete(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "analysis.sqlite3"
+    now = datetime(2026, 7, 23, 3, 0, tzinfo=timezone(timedelta(hours=-5)))
+    payload = _payload()
+    payload["backfill_start_date"] = "2026-07-03"
+
+    with AnalysisStore(database) as store:
+        saved = store.save_feed_schedule(payload)
+        claimed = store.claim_due_feed_schedule(now=now)
+        assert claimed is not None
+        assert claimed["backfill_start_date"] == "2026-07-03"
+        assert claimed["job"]["start_date"] == "2026-07-03"
+        assert claimed["job"]["end_date"] == "2026-07-23"
+
+        release = (now + timedelta(minutes=20)).astimezone(timezone.utc)
+        waiting = store.finish_feed_schedule(
+            int(saved["id"]),
+            due_date="2026-07-23",
+            status="waiting_quota",
+            next_request_at=release.isoformat(),
+            now=now,
+        )
+        assert waiting["backfill_start_date"] == "2026-07-03"
+
+        retried = store.claim_due_feed_schedule(now=now + timedelta(minutes=21))
+        assert retried is not None
+        assert retried["job"]["start_date"] == "2026-07-03"
+        completed = store.finish_feed_schedule(
+            int(saved["id"]),
+            due_date="2026-07-23",
+            status="complete",
+            now=now + timedelta(minutes=22),
+        )
+        assert completed["backfill_start_date"] == ""
+
+
+def test_schedule_rejects_a_future_historical_catch_up_date(tmp_path: Path) -> None:
+    payload = _payload()
+    payload["backfill_start_date"] = (datetime.now().date() + timedelta(days=1)).isoformat()
+
+    with AnalysisStore(tmp_path / "analysis.sqlite3") as store:
+        try:
+            store.save_feed_schedule(payload)
+        except ValueError as exc:
+            assert "cannot be in the future" in str(exc)
+        else:
+            raise AssertionError("A future catch-up date should be rejected.")
 
 
 def test_disabled_schedule_does_not_claim_and_can_be_removed(tmp_path: Path) -> None:

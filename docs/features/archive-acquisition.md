@@ -78,14 +78,19 @@ hardcoded locality. It stores:
 - the feed ID and display name;
 - one local wall-clock time;
 - a one-to-fourteen-day lookback, including the current day;
+- an optional fixed historical catch-up start date;
 - the selected combination, ASR, speaker, analysis, and LAN settings; and
 - enabled, last-run, retry, and recovery state.
 
 At the scheduled time the job revisits that recent range. Exact source blocks
 and valid processing stages are reused, so overlap is intentional and does not
-repeat completed work. If the rolling archive guard is closed, cached days can
-still finish locally and the missing acquisition is deferred until the
-ledger's next-safe time. The desktop checks schedules while it is open; its
+repeat completed work. When a historical catch-up date is set, it remains the
+range start across rolling-quota retries and day changes. It clears itself only
+after the complete requested range has no missing days; a LAN-deferred or
+otherwise incomplete result retries shortly rather than being recorded as
+complete. If the rolling archive guard is closed, cached days can still finish
+locally and the missing acquisition is deferred until the ledger's next-safe
+time. The desktop checks schedules while it is open; its
 visible, default-on Windows startup option keeps it available after user
 sign-in. The Web/TrueNAS service owns a background coordinator and can run them
 continuously under its normal service supervisor.
@@ -98,8 +103,10 @@ local worker job runs at a time. Stored schedule JSON removes direct Hugging
 Face and analysis API-key values; those secrets must remain in the platform
 credential store, active session, or private environment.
 
-On Windows, **Manage schedules** can edit the daily time, lookback, enabled
-state, local processing stages, and incident analysis for an existing feed.
+On Windows, **Manage schedules** can edit the daily time, lookback, historical
+catch-up date, enabled state, local processing stages, and incident analysis
+for an existing feed. The Web/TrueNAS schedule list exposes the same edit and
+enable/disable controls rather than requiring removal and recreation.
 Changing those basics preserves the schedule's saved model, accelerator,
 speaker-tuning, and LAN choices. The schedule always writes into the Library
 currently selected in Settings. The desktop and Web/NAS scheduler pass that

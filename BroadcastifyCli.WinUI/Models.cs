@@ -716,6 +716,9 @@ internal sealed record FeedSchedule
     [JsonPropertyName("lookback_days")]
     public int LookbackDays { get; init; } = 2;
 
+    [JsonPropertyName("backfill_start_date")]
+    public string BackfillStartDate { get; init; } = "";
+
     [JsonPropertyName("job")]
     public JobRequest Job { get; init; } = new();
 
@@ -740,8 +743,9 @@ internal sealed record FeedSchedule
     [JsonPropertyName("due_date")]
     public string DueDate { get; init; } = "";
 
-    public string ScheduleSummary =>
-        $"Daily at {RunTimeLocal} · revisit {LookbackDays} day{(LookbackDays == 1 ? "" : "s")}";
+    public string ScheduleSummary => string.IsNullOrWhiteSpace(BackfillStartDate)
+        ? $"Daily at {RunTimeLocal} · revisit {LookbackDays} day{(LookbackDays == 1 ? "" : "s")}"
+        : $"Daily at {RunTimeLocal} · revisit {LookbackDays} day{(LookbackDays == 1 ? "" : "s")} · catch up from {BackfillStartDate}";
 
     public string StateSummary => string.IsNullOrWhiteSpace(Message)
         ? State.Replace('_', ' ')
@@ -761,6 +765,9 @@ internal sealed record FeedScheduleSaveRequest
 
     [JsonPropertyName("lookback_days")]
     public int LookbackDays { get; init; } = 2;
+
+    [JsonPropertyName("backfill_start_date")]
+    public string BackfillStartDate { get; init; } = "";
 
     [JsonPropertyName("job")]
     public JobRequest Job { get; init; } = new();

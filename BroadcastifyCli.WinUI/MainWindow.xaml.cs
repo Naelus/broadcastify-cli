@@ -3202,6 +3202,17 @@ public sealed partial class MainWindow : Window
             Value = existing?.LookbackDays ?? 2,
             SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Inline,
         };
+        var backfillPicker = new CalendarDatePicker
+        {
+            Header = "Catch up from (optional)",
+            PlaceholderText = "No historical catch-up",
+            Date = DateTimeOffset.TryParse(
+                existing?.BackfillStartDate,
+                out var savedBackfillDate)
+                ? savedBackfillDate
+                : null,
+            MaxDate = DateTimeOffset.Now,
+        };
         var enabledBox = new CheckBox
         {
             Content = "Schedule enabled",
@@ -3277,6 +3288,7 @@ public sealed partial class MainWindow : Window
         var explanation = new TextBlock
         {
             Text = "The schedule reuses retained work and waits for rolling request slots. "
+                + "An optional catch-up date keeps older gaps in scope until every day is complete, then clears itself. "
                 + "Changing only the time or processing stages keeps its saved model and hardware choices.",
             TextWrapping = TextWrapping.Wrap,
         };
@@ -3288,6 +3300,7 @@ public sealed partial class MainWindow : Window
         content.Children.Add(explanation);
         content.Children.Add(timePicker);
         content.Children.Add(lookbackBox);
+        content.Children.Add(backfillPicker);
         content.Children.Add(enabledBox);
         content.Children.Add(new TextBlock
         {
@@ -3354,6 +3367,7 @@ public sealed partial class MainWindow : Window
                 FeedName = feedName,
                 RunTimeLocal = $"{timePicker.Time.Hours:00}:{timePicker.Time.Minutes:00}",
                 LookbackDays = RequiredInteger(lookbackBox.Value, 2),
+                BackfillStartDate = backfillPicker.Date?.ToString("yyyy-MM-dd") ?? "",
                 Job = request,
                 Analyze = analyzeBox.IsChecked == true,
                 Enabled = enabledBox.IsChecked == true,
@@ -3577,17 +3591,24 @@ public sealed partial class MainWindow : Window
             AppendLog($"Scheduled run starting for {schedule.FeedName} ({schedule.FeedId}).");
             var result = await RunAndAnalyzeJobAsync(schedule.Job, schedule.Analyze);
             var quota = await _worker.GetArchiveQuotaStatusAsync(CancellationToken.None);
-            var waiting = result?.DownloadLimited == true;
+            var waitingForQuota = result?.DownloadLimited == true;
+            var incomplete = (result?.MissingDays.Count ?? 0) > 0;
             await _worker.FinishFeedScheduleAsync(
                 new FeedScheduleFinishRequest
                 {
                     ScheduleId = schedule.Id,
                     DueDate = schedule.DueDate,
-                    Status = waiting ? "waiting_quota" : "complete",
-                    Message = waiting
+                    Status = waitingForQuota
+                        ? "waiting_quota"
+                        : incomplete
+                            ? "deferred"
+                            : "complete",
+                    Message = waitingForQuota
                         ? "Waiting for the next rolling archive-request slot."
-                        : "Scheduled feed run completed.",
-                    NextRequestAt = waiting ? quota?.NextRequestAt ?? "" : "",
+                        : incomplete
+                            ? "Some archive days were deferred; retrying retained work shortly."
+                            : "Scheduled feed run completed.",
+                    NextRequestAt = waitingForQuota ? quota?.NextRequestAt ?? "" : "",
                 },
                 CancellationToken.None);
         }
