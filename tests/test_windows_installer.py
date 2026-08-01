@@ -61,6 +61,15 @@ def test_installed_worker_uses_bundled_runtime_and_writable_data_root() -> None:
     assert '"broadcastify-analysis.sqlite3"' in diagnostics
 
 
+def test_native_publish_restores_the_sibling_windows_ml_helper() -> None:
+    project = (
+        ROOT / "BroadcastifyCli.WinUI" / "BroadcastifyCli.WinUI.csproj"
+    ).read_text(encoding="utf-8")
+
+    assert 'Projects="$(WindowsMLProjectPath)"' in project
+    assert 'Targets="Restore;Build"' in project
+
+
 def test_installer_is_per_user_upgrade_safe_and_preserves_app_data() -> None:
     installer = (
         ROOT / "installer" / "BroadcastifyDesktop.iss"
