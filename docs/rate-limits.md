@@ -50,6 +50,16 @@ new attempt is counted, stops immediately, and advances the block to the next
 known local release. Scheduled jobs preserve this deferral and resume then;
 they never poll the archive-media endpoint while the ledger is closed.
 
+A successfully verified feed-day also gets a local
+`.broadcastify-archive-complete.json` snapshot containing the exact provider
+IDs that were satisfied. While the rolling guard is closed, the runner reads
+only that snapshot and the exact local identity index, revalidates every
+retained file by name and size, and makes no authentication, archive-list, or
+archive-media request. A directory that merely contains MP3s is not treated as
+complete: if its proof is missing or invalid, the day remains safely deferred
+until an eligible online pass or a hash-verified LAN completion can establish
+one.
+
 The desktop and browser UIs show used, remaining, reserve, next-safe time, and a
 short form of the installation identity. The Windows package keeps its ledger
 under the app's local data directory. Web/CLI deployments default to
@@ -110,8 +120,9 @@ The fixes now in place are:
   only after every requested day is complete, so released rolling slots can
   drain a backlog without a second ad-hoc downloader;
 - before Broadcastify authentication, each acquisition reads the local ledger;
-  a closed guard permits trusted-LAN/cache reuse and local processing only, and
-  reports quota-limited only when a requested day is actually still missing;
+  a closed guard permits trusted-LAN reuse and locally proven completion
+  snapshots only, never authenticates or loads a listing, and reports
+  quota-limited only when a requested day is actually still missing;
 - the SQLite ledger uses an atomic write transaction across local processes;
 - every actual retry is separately charged;
 - all 429 responses are terminal for the current run; and

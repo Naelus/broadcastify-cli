@@ -47,6 +47,7 @@ archives/
   5318/
     20260713/
       .broadcastify-archive-index.json
+      .broadcastify-archive-complete.json
       202607130000-…-5318.mp3
       combined_5318_20260713.mp3
       combined_5318_20260713.manifest.json
@@ -95,6 +96,9 @@ Each expensive stage has an independent cache contract:
 - archive blocks: exact provider archive ID(s), retained filename/size,
   response-confirmed aliases, and a bounded feed-timezone/source-time migration
   path for older unindexed files;
+- feed-day completion: an atomic exact-ID snapshot written only after the full
+  authenticated listing or a hash-verified LAN completion manifest is present;
+  every referenced local block is revalidated before offline reuse;
 - combined audio: exact ordered source list, modification times, and timeline
   manifest;
 - ASR: audio/model/engine/backend plus rendered-text integrity;

@@ -13,6 +13,8 @@ from typing import Any
 
 ARCHIVE_CACHE_INDEX_FILENAME = ".broadcastify-archive-index.json"
 ARCHIVE_CACHE_INDEX_SCHEMA_VERSION = 1
+ARCHIVE_CACHE_COMPLETION_FILENAME = ".broadcastify-archive-complete.json"
+ARCHIVE_CACHE_COMPLETION_SCHEMA_VERSION = 1
 
 _INDEX_WRITE_LOCK = threading.RLock()
 
@@ -36,6 +38,10 @@ def _write_index(path: Path, payload: dict[str, Any]) -> None:
 
 def _index_path(day_directory: str | Path) -> Path:
     return Path(day_directory) / ARCHIVE_CACHE_INDEX_FILENAME
+
+
+def _completion_path(day_directory: str | Path) -> Path:
+    return Path(day_directory) / ARCHIVE_CACHE_COMPLETION_FILENAME
 
 
 def _empty_index(feed_id: str, archive_date: date) -> dict[str, Any]:
@@ -173,6 +179,95 @@ def archive_identities_for_filename(
             (str(archive_id), str(raw.get("listing_prefix") or ""))
         )
     return tuple(identities)
+
+
+def remember_complete_archive_day(
+    day_directory: str | Path,
+    feed_id: str,
+    archive_date: date,
+    archive_ids: Sequence[str],
+) -> bool:
+    """Persist a locally verifiable, network-free completion snapshot.
+
+    An exact identity index can represent either a partial or a complete day.
+    This separate marker is therefore written only after an authenticated
+    listing has been satisfied in full, or after an exact trusted-LAN
+    completion manifest has been assembled. Every referenced identity is
+    revalidated against its retained file before the marker is published.
+    """
+
+    normalized_ids = list(
+        dict.fromkeys(str(value).strip() for value in archive_ids)
+    )
+    if (
+        len(normalized_ids) > 1_000
+        or any(not value or len(value) > 200 for value in normalized_ids)
+    ):
+        return False
+    day = Path(day_directory)
+    with _INDEX_WRITE_LOCK:
+        for archive_id in normalized_ids:
+            if cached_archive_for_id(day, feed_id, archive_id) is None:
+                return False
+        day.mkdir(parents=True, exist_ok=True)
+        _write_index(
+            _completion_path(day),
+            {
+                "schema_version": ARCHIVE_CACHE_COMPLETION_SCHEMA_VERSION,
+                "feed_id": str(feed_id),
+                "archive_date": archive_date.isoformat(),
+                "archive_ids": normalized_ids,
+                "completed_at_unix": round(time.time(), 6),
+            },
+        )
+    return True
+
+
+def complete_cached_archive_day(
+    day_directory: str | Path,
+    feed_id: str,
+    archive_date: date,
+) -> tuple[list[Path], int] | None:
+    """Return a proven complete snapshot using local files only.
+
+    ``None`` means no valid completion proof is available. ``([], 0)`` is a
+    valid authenticated empty-day snapshot. Multiple provider identities may
+    intentionally resolve to one retained file, so the returned paths are
+    unique while the integer is the completed identity count.
+    """
+
+    day = Path(day_directory)
+    try:
+        payload = json.loads(
+            _completion_path(day).read_text(encoding="utf-8")
+        )
+    except (OSError, TypeError, ValueError, json.JSONDecodeError):
+        return None
+    if (
+        not isinstance(payload, dict)
+        or payload.get("schema_version")
+        != ARCHIVE_CACHE_COMPLETION_SCHEMA_VERSION
+        or str(payload.get("feed_id") or "") != str(feed_id)
+        or str(payload.get("archive_date") or "") != archive_date.isoformat()
+        or not isinstance(payload.get("archive_ids"), list)
+    ):
+        return None
+    raw_ids = payload["archive_ids"]
+    if len(raw_ids) > 1_000 or any(
+        not isinstance(value, str) or not value or len(value) > 200
+        for value in raw_ids
+    ):
+        return None
+    archive_ids = list(dict.fromkeys(raw_ids))
+    if len(archive_ids) != len(raw_ids):
+        return None
+    files: list[Path] = []
+    for archive_id in archive_ids:
+        cached = cached_archive_for_id(day, feed_id, archive_id)
+        if cached is None:
+            return None
+        files.append(cached)
+    return sorted(dict.fromkeys(files)), len(archive_ids)
 
 
 def remember_archive_identity(

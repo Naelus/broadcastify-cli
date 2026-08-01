@@ -27,7 +27,15 @@ are matched once using the feed timezone and bounded source-timestamp fallback,
 then migrated to the exact index. A complete legacy day can also be reconciled
 chronologically when listing/file counts, timestamp ordering, clock drift, and
 any already-known mappings all agree; partial or ambiguous days are rejected
-rather than guessed. A range job:
+rather than guessed.
+
+After an authenticated listing has been satisfied in full, the day also gets
+an atomic `.broadcastify-archive-complete.json` snapshot of every listed
+provider ID. This is deliberately separate from the identity index because an
+index may describe only a partially downloaded day. The snapshot is accepted
+without networking only when every identity still resolves to its retained
+file at the recorded size. A hash-verified trusted-LAN completion manifest can
+establish the same local proof. A range job:
 
 1. resolves the requested listings;
 2. reuses exact local or trusted-LAN blocks;
@@ -91,10 +99,11 @@ otherwise incomplete result retries shortly rather than being recorded as
 complete. If the rolling archive guard is closed, cached days can still finish
 locally and the missing acquisition is deferred until the ledger's next-safe
 time. The acquisition runner reads that local ledger before authentication; a
-closed guard permits trusted-LAN/cache reuse and local processing but makes no
-Broadcastify request. A fully cached range therefore completes normally,
-while only genuinely missing days retain the quota deferral. The desktop checks
-schedules while it is open; its
+closed guard permits trusted-LAN reuse, local processing, and cache reuse only
+for days with a valid local completion snapshot. It does not authenticate,
+load archive listings, or request archive media. A locally proven range
+therefore completes normally, while a merely partial or unproven day retains
+the quota deferral. The desktop checks schedules while it is open; its
 visible, default-on Windows startup option keeps it available after user
 sign-in. The Web/TrueNAS service owns a background coordinator and can run them
 continuously under its normal service supervisor.
@@ -137,7 +146,9 @@ from any peer and verify size plus SHA-256. Inventories and completion manifests
 also carry all optional exact provider IDs and listing prefixes for a block,
 including response-confirmed aliases, so a copied block retains the same
 no-request cache identities on the receiving node. Older peers that understand
-only one identity remain compatible.
+only one identity remain compatible. Once the exact completed manifest is
+assembled and hash-verified, the receiving node writes its own local completion
+snapshot; the snapshot itself does not need to be shared.
 
 Broadcastify source labels can drift slightly across midnight even when the
 track belongs to the prior website archive page. LAN manifests accept that

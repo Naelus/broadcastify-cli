@@ -14,7 +14,9 @@ from broadcastify_cli.broadcastify import (
 )
 from broadcastify_cli.archive_cache import (
     cached_archive_for_id,
+    complete_cached_archive_day,
     reconcile_complete_legacy_day,
+    remember_complete_archive_day,
     remember_archive_identity,
 )
 from broadcastify_cli.quota import ArchiveRequestLedger
@@ -431,6 +433,92 @@ def test_exact_identity_rejects_changed_or_unsafe_cached_file(tmp_path: Path) ->
     assert cached_archive_for_id(day_dir, "90001", "exact-provider-id") is None
 
 
+def test_completion_snapshot_requires_and_revalidates_every_exact_identity(
+    tmp_path: Path,
+) -> None:
+    archive_date = date(2026, 7, 12)
+    day_dir = tmp_path / "90001" / "20260712"
+    day_dir.mkdir(parents=True)
+    first = day_dir / "202607120000-111-90001.mp3"
+    second = day_dir / "202607120030-222-90001.mp3"
+    first.write_bytes(b"first")
+    second.write_bytes(b"second")
+    remember_archive_identity(
+        day_dir,
+        "90001",
+        archive_date,
+        "provider-first",
+        first,
+        listing_prefix="202607120000",
+    )
+    remember_archive_identity(
+        day_dir,
+        "90001",
+        archive_date,
+        "provider-alias",
+        first,
+        listing_prefix="202607120100",
+        allow_filename_alias=True,
+    )
+    remember_archive_identity(
+        day_dir,
+        "90001",
+        archive_date,
+        "provider-second",
+        second,
+        listing_prefix="202607120030",
+    )
+
+    assert remember_complete_archive_day(
+        day_dir,
+        "90001",
+        archive_date,
+        ["provider-first", "provider-alias", "provider-second"],
+    )
+    cached = complete_cached_archive_day(day_dir, "90001", archive_date)
+    assert cached == ([first, second], 3)
+
+    second.write_bytes(b"changed-size")
+    assert complete_cached_archive_day(day_dir, "90001", archive_date) is None
+
+
+def test_completion_snapshot_refuses_partial_identity_set(tmp_path: Path) -> None:
+    archive_date = date(2026, 7, 12)
+    day_dir = tmp_path / "90001" / "20260712"
+    day_dir.mkdir(parents=True)
+    source = day_dir / "202607120000-111-90001.mp3"
+    source.write_bytes(b"audio")
+    remember_archive_identity(
+        day_dir,
+        "90001",
+        archive_date,
+        "provider-first",
+        source,
+        listing_prefix="202607120000",
+    )
+
+    assert not remember_complete_archive_day(
+        day_dir,
+        "90001",
+        archive_date,
+        ["provider-first", "provider-missing"],
+    )
+    assert complete_cached_archive_day(day_dir, "90001", archive_date) is None
+
+
+def test_completion_snapshot_supports_proven_empty_day(tmp_path: Path) -> None:
+    archive_date = date(2026, 7, 12)
+    day_dir = tmp_path / "90001" / "20260712"
+
+    assert remember_complete_archive_day(
+        day_dir,
+        "90001",
+        archive_date,
+        (),
+    )
+    assert complete_cached_archive_day(day_dir, "90001", archive_date) == ([], 0)
+
+
 def test_complete_legacy_day_reconciles_large_filename_clock_drift(
     tmp_path: Path,
 ) -> None:
@@ -660,6 +748,50 @@ def test_download_day_progress_distinguishes_cache_from_website_download(
     assert "Ready 1/2 — cached locally: cached.mp3" in messages
     assert "Ready 2/2 — downloaded from Broadcastify: fresh.mp3" in messages
     assert not any("cached or downloaded" in message for message in messages)
+
+
+def test_successful_download_day_persists_local_completion_snapshot(
+    tmp_path: Path,
+) -> None:
+    archive_date = date(2026, 7, 12)
+    client = BroadcastifyClient(download_request_interval=0)
+    client.authenticate = lambda force=False: None  # type: ignore[method-assign]
+    client.get_archive_ids = lambda feed_id, requested_date: [  # type: ignore[method-assign]
+        "provider-first",
+        "provider-second",
+    ]
+
+    def fake_download(
+        feed_id: str,
+        requested_date: date,
+        archive_id: str,
+        target: Path,
+        *_args: object,
+        **_kwargs: object,
+    ) -> Path:
+        source = target / f"{archive_id}.mp3"
+        source.write_bytes(archive_id.encode("utf-8"))
+        remember_archive_identity(
+            target,
+            feed_id,
+            requested_date,
+            archive_id,
+            source,
+        )
+        return source
+
+    client.download_archive = fake_download  # type: ignore[method-assign]
+    downloaded = client.download_day(
+        "90001",
+        archive_date,
+        tmp_path,
+    )
+
+    assert complete_cached_archive_day(
+        tmp_path / "90001" / "20260712",
+        "90001",
+        archive_date,
+    ) == (downloaded, 2)
 
 
 def test_download_day_returns_unique_paths_when_archive_ids_share_file(

@@ -18,9 +18,12 @@ import requests
 from bs4 import BeautifulSoup
 
 from .archive_cache import (
+    archive_identities_for_filename,
     archive_identity_for_filename,
     cached_archive_for_id,
+    complete_cached_archive_day,
     reconcile_complete_legacy_day,
+    remember_complete_archive_day,
     remember_archive_identity,
 )
 from .models import FeedSearchResult
@@ -699,6 +702,15 @@ class BroadcastifyClient:
         )
 
         if not archive_ids:
+            if not remember_complete_archive_day(
+                day_dir,
+                feed_id,
+                archive_date,
+                (),
+            ):
+                raise BroadcastifyError(
+                    f"Could not record the empty archive day {archive_date.isoformat()} as complete."
+                )
             if progress:
                 progress(0, 0, f"No archives found for {archive_date.isoformat()}.")
             return []
@@ -896,6 +908,13 @@ class BroadcastifyClient:
                             refreshed=True,
                         ),
                     )
+            archive_ids.extend(new_ids)
+        remember_complete_archive_day(
+            day_dir,
+            feed_id,
+            archive_date,
+            archive_ids,
+        )
         return sorted(dict.fromkeys(downloaded))
 
     def _is_current_archive_date(
@@ -917,11 +936,13 @@ class BroadcastifyClient:
         archive_date: date,
         output_dir: str | Path,
     ) -> tuple[list[Path], int]:
-        """Return a complete cached day without touching download endpoints.
+        """Return a complete cache after an authenticated listing check.
 
         The second value is the number of archives Broadcastify currently
         lists for the day. An empty file list with a positive total means the
         cache is incomplete; ``([], 0)`` is a legitimately empty archive day.
+        This method can authenticate and load archive-list metadata, but it
+        never calls an archive-media download endpoint.
         """
 
         self.authenticate()
@@ -946,8 +967,63 @@ class BroadcastifyClient:
             )
             if existing is None:
                 return [], len(archive_ids)
+            remember_archive_identity(
+                day_dir,
+                feed_id,
+                archive_date,
+                archive_id,
+                existing,
+                listing_prefix=self._archive_filename_prefixes.get(archive_id),
+            )
             cached.append(existing)
-        return sorted(cached), len(archive_ids)
+        if not remember_complete_archive_day(
+            day_dir,
+            feed_id,
+            archive_date,
+            archive_ids,
+        ):
+            return [], len(archive_ids)
+        return sorted(dict.fromkeys(cached)), len(archive_ids)
+
+    def cached_day_local(
+        self,
+        feed_id: str,
+        archive_date: date,
+        output_dir: str | Path,
+    ) -> tuple[list[Path], int] | None:
+        """Return a proven complete day without authentication or networking."""
+
+        day_dir = Path(output_dir) / feed_id / archive_date.strftime("%Y%m%d")
+        return complete_cached_archive_day(day_dir, feed_id, archive_date)
+
+    def remember_cached_day_complete(
+        self,
+        feed_id: str,
+        archive_date: date,
+        output_dir: str | Path,
+        audio_files: Sequence[Path],
+    ) -> bool:
+        """Retain completion proved by an exact trusted-LAN manifest."""
+
+        day_dir = Path(output_dir) / feed_id / archive_date.strftime("%Y%m%d")
+        archive_ids: list[str] = []
+        for source in audio_files:
+            if Path(source).parent.resolve() != day_dir.resolve():
+                return False
+            identities = archive_identities_for_filename(
+                day_dir,
+                feed_id,
+                Path(source).name,
+            )
+            if not identities:
+                return False
+            archive_ids.extend(value[0] for value in identities)
+        return remember_complete_archive_day(
+            day_dir,
+            feed_id,
+            archive_date,
+            archive_ids,
+        )
 
     def download_archive(
         self,

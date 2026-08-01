@@ -223,19 +223,26 @@ class JobRunner:
         for day_number, archive_date in enumerate(dates, start=1):
             day_label = archive_date.isoformat()
             if quota_message is not None:
-                cached, expected = self.client.cached_day(
-                    self.request.feed_id,
-                    archive_date,
-                    self.request.output_dir,
+                local_cache = getattr(self.client, "cached_day_local", None)
+                cache_state = (
+                    local_cache(
+                        self.request.feed_id,
+                        archive_date,
+                        self.request.output_dir,
+                    )
+                    if callable(local_cache)
+                    else None
                 )
-                if cached or expected == 0:
+                if cache_state is not None:
+                    cached, expected = cache_state
                     downloaded_days.append((archive_date, cached))
                     self.emit(
                         {
                             "type": "log",
                             "message": (
-                                f"Reusing complete local cache for {day_label} "
-                                f"({len(cached)}/{expected} archives)."
+                                f"Reusing a locally proven completion snapshot for "
+                                f"{day_label} ({expected} archive identities in "
+                                f"{len(cached)} retained source files)."
                             ),
                         }
                     )
@@ -294,6 +301,28 @@ class JobRunner:
                 )
             if turn.role == "completed":
                 downloaded_days.append((archive_date, list(turn.audio_files)))
+                remember_complete = getattr(
+                    self.client,
+                    "remember_cached_day_complete",
+                    None,
+                )
+                if callable(remember_complete) and not remember_complete(
+                    self.request.feed_id,
+                    archive_date,
+                    self.request.output_dir,
+                    turn.audio_files,
+                ):
+                    self.emit(
+                        {
+                            "type": "log",
+                            "stage": "lan_queue",
+                            "message": (
+                                f"The LAN completion for {day_label} is usable now, "
+                                "but its local completion snapshot could not be "
+                                "persisted for an offline retry."
+                            ),
+                        }
+                    )
                 completion_kind = (
                     "rolling current-day snapshot"
                     if turn.rolling

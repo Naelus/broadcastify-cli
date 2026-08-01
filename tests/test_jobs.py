@@ -2,9 +2,14 @@ from datetime import date
 from pathlib import Path
 
 from broadcastify_cli.jobs import JobRunner
-from broadcastify_cli.broadcastify import DownloadLimitExceeded
+from broadcastify_cli.archive_cache import (
+    remember_archive_identity,
+    remember_complete_archive_day,
+)
+from broadcastify_cli.broadcastify import BroadcastifyClient, DownloadLimitExceeded
 from broadcastify_cli.models import JobRequest
 from broadcastify_cli.lan_sync import LanDownloadTurn, LanSyncResult
+from broadcastify_cli.quota import ArchiveRequestLedger
 
 
 class FakeClient:
@@ -131,9 +136,9 @@ def test_quota_stops_new_requests_but_keeps_complete_cached_days(tmp_path: Path)
                 raise DownloadLimitExceeded("archive download quota is exhausted")
             return [source_for(archive_date)]
 
-        def cached_day(
+        def cached_day_local(
             self, _feed_id: str, archive_date: date, *_args: object
-        ) -> tuple[list[Path], int]:
+        ) -> tuple[list[Path], int] | None:
             calls.append(f"cache:{archive_date}")
             assert archive_date == third_day
             return [source_for(archive_date)], 1
@@ -175,11 +180,14 @@ def test_full_rolling_guard_never_authenticates_and_still_uses_cache(
             calls.append("quota")
             return {"available": False, "next_request_at": "2026-07-05T07:00:00+00:00"}
 
-        def cached_day(
+        def cached_day_local(
             self, _feed_id: str, archive_date: date, *_args: object
-        ) -> tuple[list[Path], int]:
+        ) -> tuple[list[Path], int] | None:
             calls.append(f"cache:{archive_date}")
-            return ([cached], 1) if archive_date == first_day else ([], 1)
+            return ([cached], 1) if archive_date == first_day else None
+
+        def cached_day(self, *_args: object) -> tuple[list[Path], int]:
+            raise AssertionError("The network-capable cache check must not run.")
 
         def authenticate(self) -> None:
             raise AssertionError("A full local guard must prevent authentication.")
@@ -219,8 +227,13 @@ def test_full_rolling_guard_with_complete_cache_finishes_without_false_limit(
         def archive_quota_status(self) -> dict[str, object]:
             return {"available": False}
 
-        def cached_day(self, *_args: object) -> tuple[list[Path], int]:
+        def cached_day_local(
+            self, *_args: object
+        ) -> tuple[list[Path], int] | None:
             return [cached], 1
+
+        def cached_day(self, *_args: object) -> tuple[list[Path], int]:
+            raise AssertionError("The network-capable cache check must not run.")
 
         def authenticate(self) -> None:
             raise AssertionError("A complete cache must not authenticate.")
@@ -235,6 +248,73 @@ def test_full_rolling_guard_with_complete_cache_finishes_without_false_limit(
         client=GuardedClient(),  # type: ignore[arg-type]
     ).run()
 
+    assert result["completed_days"] == 1
+    assert result["missing_days"] == []
+    assert result["download_limited"] is False
+
+
+def test_real_client_full_guard_uses_completion_snapshot_without_session_calls(
+    tmp_path: Path,
+) -> None:
+    archive_date = date(2026, 7, 3)
+    feed_id = "90001"
+    day_dir = tmp_path / feed_id / archive_date.strftime("%Y%m%d")
+    day_dir.mkdir(parents=True)
+    cached = day_dir / "202607030000-provider-90001.mp3"
+    cached.write_bytes(b"retained audio")
+    remember_archive_identity(
+        day_dir,
+        feed_id,
+        archive_date,
+        "90001-provider-id",
+        cached,
+        listing_prefix="202607030000",
+    )
+    assert remember_complete_archive_day(
+        day_dir,
+        feed_id,
+        archive_date,
+        ["90001-provider-id"],
+    )
+
+    ledger = ArchiveRequestLedger(
+        tmp_path / "quota.sqlite3",
+        limit=1,
+        provider_limit=2,
+    )
+    request_id = ledger.reserve(
+        feed_id=feed_id,
+        archive_date=archive_date.isoformat(),
+        archive_id="already-used",
+    )
+    ledger.finish(request_id, outcome="http_200", http_status=200)
+    session_calls: list[str] = []
+
+    class NoNetworkSession:
+        def get(self, *_args: object, **_kwargs: object) -> None:
+            session_calls.append("get")
+            raise AssertionError("A closed guard must not make a GET request.")
+
+        def post(self, *_args: object, **_kwargs: object) -> None:
+            session_calls.append("post")
+            raise AssertionError("A closed guard must not make a POST request.")
+
+        def close(self) -> None:
+            session_calls.append("close")
+
+    client = BroadcastifyClient(quota_ledger=ledger)
+    client.session = NoNetworkSession()  # type: ignore[assignment]
+    result = JobRunner(
+        JobRequest(
+            feed_id=feed_id,
+            start_date=archive_date,
+            end_date=archive_date,
+            output_dir=tmp_path,
+        ),
+        client=client,
+    ).run()
+
+    assert session_calls == []
     assert result["completed_days"] == 1
     assert result["missing_days"] == []
     assert result["download_limited"] is False
@@ -305,6 +385,7 @@ def test_completed_lan_queue_day_skips_every_broadcastify_request(
     day.mkdir(parents=True)
     source = day / "202607120000-123456-90001.mp3"
     source.write_bytes(b"peer-completed audio")
+    completion_calls: list[tuple[str, date, Path, tuple[Path, ...]]] = []
 
     class CompletedLanQueue:
         enabled = True
@@ -326,6 +407,18 @@ def test_completed_lan_queue_day_skips_every_broadcastify_request(
             )
 
     class ForbiddenWebsiteClient:
+        def remember_cached_day_complete(
+            self,
+            feed_id: str,
+            requested_date: date,
+            output_dir: Path,
+            audio_files: tuple[Path, ...],
+        ) -> bool:
+            completion_calls.append(
+                (feed_id, requested_date, output_dir, audio_files)
+            )
+            return True
+
         def authenticate(self) -> None:
             raise AssertionError("A follower must not authenticate.")
 
@@ -347,6 +440,9 @@ def test_completed_lan_queue_day_skips_every_broadcastify_request(
 
     assert result["days"][0]["audio_files"] == [str(source)]
     assert result["lan_sync"]["acquisition_queue"]["completed"] == 1
+    assert completion_calls == [
+        ("90001", archive_date, tmp_path, (source,))
+    ]
 
 
 def test_lan_queue_leader_publishes_completion_after_one_upstream_download(
