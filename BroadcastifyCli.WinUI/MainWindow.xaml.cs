@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Collections.ObjectModel;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -21,8 +22,8 @@ public sealed partial class MainWindow : Window
 {
     private const string DefaultAnalysisModel = "ggml-org/gemma-4-12B-it-GGUF:Q4_0";
     private const int NearestAreaFeedShortcutCount = 3;
-    private const int MaximumVisibleActivityLogCharacters = 120_000;
-    private const int RetainedVisibleActivityLogCharacters = 90_000;
+    private const int MaximumVisibleActivityLogCharacters = 24_000;
+    private const int RetainedVisibleActivityLogCharacters = 16_000;
     private const string VisibleActivityLogTrimMarker =
         "[Earlier activity remains available in the on-disk activity log.]";
     private readonly ObservableCollection<FeedSearchResult> _feeds = [];
@@ -87,6 +88,8 @@ public sealed partial class MainWindow : Window
     private bool _updatingStartupPreference;
     private bool _pauseScheduledJobsForSetup;
     private readonly StringBuilder _visibleActivityLog = new();
+    private readonly ConcurrentQueue<JsonElement> _pendingWorkerMessages = new();
+    private int _workerMessageDrainScheduled;
 
     public MainWindow(
         bool startupLaunch = false,
@@ -5282,14 +5285,57 @@ public sealed partial class MainWindow : Window
 
     private void HandleWorkerMessage(JsonElement message)
     {
-        DispatcherQueue.TryEnqueue(() =>
+        var snapshot = message.Clone();
+        var text = snapshot.TryGetProperty("message", out var messageValue)
+            ? messageValue.GetString() ?? ""
+            : "";
+        if (!string.IsNullOrWhiteSpace(text))
         {
-            var type = message.TryGetProperty("type", out var typeValue) ? typeValue.GetString() : "";
-            var text = message.TryGetProperty("message", out var messageValue) ? messageValue.GetString() ?? "" : "";
+            // Preserve every worker event in the complete diagnostic log on
+            // the output-reader thread. The UI only needs a bounded recent
+            // window and must never backpressure a multi-day worker burst.
+            AppDiagnostics.AppendActivity(text);
+        }
+        _pendingWorkerMessages.Enqueue(snapshot);
+        ScheduleWorkerMessageDrain();
+    }
+
+    private void ScheduleWorkerMessageDrain()
+    {
+        if (Interlocked.CompareExchange(
+                ref _workerMessageDrainScheduled,
+                1,
+                0) != 0)
+        {
+            return;
+        }
+        if (!DispatcherQueue.TryEnqueue(DrainWorkerMessages))
+        {
+            Interlocked.Exchange(ref _workerMessageDrainScheduled, 0);
+        }
+    }
+
+    private void DrainWorkerMessages()
+    {
+        string? latestStatus = null;
+        var visibleLogChanged = false;
+        var sawProgress = false;
+        var progressCurrent = 0;
+        var progressTotal = 0;
+        var sawComplete = false;
+        while (_pendingWorkerMessages.TryDequeue(out var message))
+        {
+            var type = message.TryGetProperty("type", out var typeValue)
+                ? typeValue.GetString()
+                : "";
+            var text = message.TryGetProperty("message", out var messageValue)
+                ? messageValue.GetString() ?? ""
+                : "";
             if (!string.IsNullOrWhiteSpace(text))
             {
-                StatusText.Text = text;
-                AppendLog(text);
+                latestStatus = text;
+                AppendVisibleLog(text);
+                visibleLogChanged = true;
             }
             if (!_broadcastifyRateLimitObserved
                 && (text.Contains("HTTP 429", StringComparison.OrdinalIgnoreCase)
@@ -5297,24 +5343,59 @@ public sealed partial class MainWindow : Window
                     || text.Contains("quota is exhausted", StringComparison.OrdinalIgnoreCase)))
             {
                 _broadcastifyRateLimitObserved = true;
-                AppendLog(
+                var protectionMessage =
                     "Rate-limit protection enabled: future archive jobs in this app session "
-                    + "will start with one download at a time.");
+                    + "will start with one download at a time.";
+                AppendVisibleLog(protectionMessage);
+                AppDiagnostics.AppendActivity(protectionMessage);
+                visibleLogChanged = true;
             }
             if (type == "progress")
             {
-                var current = message.TryGetProperty("current", out var currentValue) ? currentValue.GetInt32() : 0;
-                var total = message.TryGetProperty("total", out var totalValue) ? totalValue.GetInt32() : 0;
-                JobProgress.IsIndeterminate = total <= 0;
-                JobProgress.Maximum = Math.Max(1, total);
-                JobProgress.Value = Math.Clamp(current, 0, Math.Max(1, total));
+                sawProgress = true;
+                progressCurrent = message.TryGetProperty(
+                    "current", out var currentValue)
+                    ? currentValue.GetInt32()
+                    : 0;
+                progressTotal = message.TryGetProperty(
+                    "total", out var totalValue)
+                    ? totalValue.GetInt32()
+                    : 0;
             }
             else if (type == "complete")
             {
-                JobProgress.IsIndeterminate = false;
-                JobProgress.Value = JobProgress.Maximum;
+                sawComplete = true;
             }
-        });
+        }
+
+        if (latestStatus is not null)
+        {
+            StatusText.Text = latestStatus;
+        }
+        if (visibleLogChanged)
+        {
+            RefreshVisibleLog();
+        }
+        if (sawProgress)
+        {
+            JobProgress.IsIndeterminate = progressTotal <= 0;
+            JobProgress.Maximum = Math.Max(1, progressTotal);
+            JobProgress.Value = Math.Clamp(
+                progressCurrent,
+                0,
+                Math.Max(1, progressTotal));
+        }
+        if (sawComplete)
+        {
+            JobProgress.IsIndeterminate = false;
+            JobProgress.Value = JobProgress.Maximum;
+        }
+
+        Interlocked.Exchange(ref _workerMessageDrainScheduled, 0);
+        if (!_pendingWorkerMessages.IsEmpty)
+        {
+            ScheduleWorkerMessageDrain();
+        }
     }
 
     private void SetBusy(bool busy, string? status = null, bool jobRunning = false)
@@ -5381,6 +5462,13 @@ public sealed partial class MainWindow : Window
 
     private void AppendLog(string message)
     {
+        AppendVisibleLog(message);
+        RefreshVisibleLog();
+        AppDiagnostics.AppendActivity(message);
+    }
+
+    private void AppendVisibleLog(string message)
+    {
         _visibleActivityLog.Append(
             $"[{DateTime.Now:HH:mm:ss}] {message}{Environment.NewLine}");
         if (_visibleActivityLog.Length > MaximumVisibleActivityLogCharacters)
@@ -5400,9 +5488,12 @@ public sealed partial class MainWindow : Window
             _visibleActivityLog.Append(Environment.NewLine);
             _visibleActivityLog.Append(retained);
         }
+    }
+
+    private void RefreshVisibleLog()
+    {
         LogBox.Text = _visibleActivityLog.ToString();
         LogBox.Select(_visibleActivityLog.Length, 0);
-        AppDiagnostics.AppendActivity(message);
     }
 
     private async Task ShowErrorAsync(Exception exception)

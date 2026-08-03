@@ -137,6 +137,9 @@ def test_native_visible_activity_log_is_bounded_without_truncating_disk_history(
     native = (
         ROOT / "BroadcastifyCli.WinUI" / "MainWindow.xaml.cs"
     ).read_text(encoding="utf-8")
+    worker = (
+        ROOT / "BroadcastifyCli.WinUI" / "WorkerClient.cs"
+    ).read_text(encoding="utf-8")
 
     assert "MaximumVisibleActivityLogCharacters" in native
     assert "RetainedVisibleActivityLogCharacters" in native
@@ -144,6 +147,13 @@ def test_native_visible_activity_log_is_bounded_without_truncating_disk_history(
     assert "_visibleActivityLog.Clear();" in native
     assert "AppDiagnostics.AppendActivity(message);" in native
     assert "LogBox.Text +=" not in native
+    assert "ConcurrentQueue<JsonElement> _pendingWorkerMessages" in native
+    assert "ScheduleWorkerMessageDrain" in native
+    assert "DrainWorkerMessages" in native
+    assert "while (_pendingWorkerMessages.TryDequeue" in native
+    assert "Task.Run(async () =>" in worker
+    assert "ReadLineAsync(" in worker
+    assert "ConfigureAwait(false)" in worker
 
 
 def test_native_library_can_recheck_source_audio_for_complete_days() -> None:

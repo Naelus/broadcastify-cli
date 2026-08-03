@@ -61,7 +61,7 @@ See [evidence analysis](docs/features/evidence-analysis.md),
 
 | Capability | Status | Notes |
 |---|---|---|
-| Native WinUI 3 shell | Validated | Task navigation for Library, New Archive, Review & Ask, Area Watch, and Settings; the visible activity pane retains a bounded recent window while the complete rotating diagnostic log stays on disk, preventing multi-day background runs from backpressuring workers. |
+| Native WinUI 3 shell | Validated | Task navigation for Library, New Archive, Review & Ask, Area Watch, and Settings; worker output is read away from the UI thread and burst-coalesced into a bounded recent activity window, while every message remains in the complete rotating diagnostic log on disk. |
 | Local Library | Validated | Five-stage timeline, playback, transcript preview, stale-result detection, retained-versus-temporary storage, safe orphan cleanup, and exact resume/upgrade/review action. |
 | Area Watch | Validated | Profile discovery, queue, coverage-aware ranked leads, selected evidence, clips and exports. |
 | Neighborhood subscription delivery | Foundation | Story eligibility and neighborhood/topic tags exist; opt-in delivery is explicitly low priority in [#5](https://github.com/Naelus/broadcastify-cli/issues/5). |

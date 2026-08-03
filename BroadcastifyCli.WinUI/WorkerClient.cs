@@ -1082,31 +1082,39 @@ internal sealed class WorkerClient
 
         if (stdin is not null)
         {
-            await process.StandardInput.WriteAsync(stdin.AsMemory(), cancellationToken);
+            await process.StandardInput.WriteAsync(
+                stdin.AsMemory(), cancellationToken).ConfigureAwait(false);
         }
         process.StandardInput.Close();
 
         var stderrTask = process.StandardError.ReadToEndAsync(cancellationToken);
-        string? workerError = null;
-        while (await process.StandardOutput.ReadLineAsync(cancellationToken) is { } line)
+        var workerError = await Task.Run(async () =>
         {
-            if (string.IsNullOrWhiteSpace(line))
+            string? reportedError = null;
+            while (await process.StandardOutput.ReadLineAsync(
+                       cancellationToken).ConfigureAwait(false) is { } line)
             {
-                continue;
+                if (string.IsNullOrWhiteSpace(line))
+                {
+                    continue;
+                }
+                using var document = JsonDocument.Parse(line);
+                var message = document.RootElement.Clone();
+                if (message.TryGetProperty("type", out var type)
+                    && type.GetString() == "error")
+                {
+                    reportedError = message.TryGetProperty(
+                        "message", out var value)
+                        ? value.GetString()
+                        : "Python worker failed.";
+                }
+                onMessage(message);
             }
-            using var document = JsonDocument.Parse(line);
-            var message = document.RootElement.Clone();
-            if (message.TryGetProperty("type", out var type) && type.GetString() == "error")
-            {
-                workerError = message.TryGetProperty("message", out var value)
-                    ? value.GetString()
-                    : "Python worker failed.";
-            }
-            onMessage(message);
-        }
+            return reportedError;
+        }, CancellationToken.None).ConfigureAwait(false);
 
-        await process.WaitForExitAsync(cancellationToken);
-        var stderr = await stderrTask;
+        await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
+        var stderr = await stderrTask.ConfigureAwait(false);
         if (process.ExitCode != 0)
         {
             throw new InvalidOperationException(

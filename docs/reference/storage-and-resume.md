@@ -31,10 +31,12 @@ Native secrets are separate from these files. Windows Credential Locker stores
 the Broadcastify password, Hugging Face token, and any explicitly remembered
 analysis key for the current account.
 
-The native activity pane intentionally keeps only a bounded recent window so a
-multi-day background run cannot slow the UI or its worker progress stream. The
-complete diagnostic history is appended to `activity.log`, with the previous
-file retained as `activity.previous.log` when the current log reaches 5 MiB.
+The native activity pane intentionally keeps only a bounded recent window. Worker
+output is read away from the UI thread and bursts are applied in one UI refresh,
+so a multi-day cached-file scan cannot starve window input or backpressure the
+worker progress stream. Every message is still appended to `activity.log`, with
+the previous file retained as `activity.previous.log` when the current log
+reaches 5 MiB.
 
 Linux service defaults:
 
