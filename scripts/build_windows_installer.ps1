@@ -14,12 +14,16 @@ $repositoryRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 $project = Join-Path $repositoryRoot "BroadcastifyCli.WinUI\BroadcastifyCli.WinUI.csproj"
 $innoScript = Join-Path $repositoryRoot "installer\BroadcastifyDesktop.iss"
 $constraints = Join-Path $repositoryRoot "installer\windows-runtime-constraints.txt"
+$cudaRequirementsSource = Join-Path $repositoryRoot "installer\windows-managed-cuda-lock.txt"
 $pythonVersion = "3.12.10"
 $pythonSha256 = "4ACBED6DD1C744B0376E3B1CF57CE906F9DC9E95E68824584C8099A63025A3C3"
 $pythonUrl = "https://www.python.org/ftp/python/$pythonVersion/python-$pythonVersion-embed-amd64.zip"
 $ffmpegVersion = "8.1.2"
 $ffmpegSha256 = "DB580001CAA24AC104C8CB856CD113A87B0A443F7BDF47D8C12B1D740584A2EC"
 $ffmpegUrl = "https://www.gyan.dev/ffmpeg/builds/packages/ffmpeg-$ffmpegVersion-essentials_build.zip"
+$uvVersion = "0.12.1"
+$uvWheelSha256 = "BD02F2DA212E6A983115DC64A6FC94E9256C2D60E056D6B669DE0A6025AAEC05"
+$uvWheelUrl = "https://files.pythonhosted.org/packages/0d/a4/467c99c76fefa8b1259a1d382a5e49f73068f38a2d58db401504a783ed2c/uv-0.12.1-py3-none-win_amd64.whl"
 
 function Assert-ChildPath {
     param(
@@ -168,6 +172,7 @@ $application = Join-Path $stageRoot "app"
 $pythonRoot = Join-Path $application "runtime\python"
 $sitePackages = Join-Path $pythonRoot "Lib\site-packages"
 $toolsRoot = Join-Path $application "runtime\tools"
+$bootstrapRoot = Join-Path $application "runtime\bootstrap"
 
 if (Test-Path -LiteralPath $stageRoot) {
     Remove-Item -LiteralPath $stageRoot -Recurse -Force
@@ -326,6 +331,117 @@ if (Test-Path -LiteralPath $generatedLauncherDirectory) {
     throw "The portable runtime still contains non-portable pip launchers."
 }
 
+New-Item -ItemType Directory -Force -Path $bootstrapRoot | Out-Null
+& $builder -m pip wheel `
+    --disable-pip-version-check `
+    --no-input `
+    --no-deps `
+    --no-build-isolation `
+    --wheel-dir $bootstrapRoot `
+    $repositoryRoot
+if ($LASTEXITCODE -ne 0) {
+    throw "Building the managed-runtime application wheel failed with exit code $LASTEXITCODE."
+}
+$appWheels = @(
+    Get-ChildItem -LiteralPath $bootstrapRoot `
+        -Filter "broadcastify_cli-$Version-*.whl" -File
+)
+if ($appWheels.Count -ne 1) {
+    throw "Expected one managed-runtime application wheel; found $($appWheels.Count)."
+}
+$appWheel = $appWheels[0]
+$appWheelSha256 = (Get-FileHash -LiteralPath $appWheel.FullName -Algorithm SHA256).Hash
+
+if (-not (Test-Path -LiteralPath $cudaRequirementsSource -PathType Leaf)) {
+    throw "The checksum-locked Windows CUDA requirements file is missing."
+}
+$packagedCudaRequirements = Join-Path $bootstrapRoot "windows-managed-cuda-lock.txt"
+Copy-Item -LiteralPath $cudaRequirementsSource -Destination $packagedCudaRequirements
+$cudaRequirementsSha256 = (
+    Get-FileHash -LiteralPath $packagedCudaRequirements -Algorithm SHA256
+).Hash
+
+$uvWheel = Get-VerifiedDownload `
+    -Uri $uvWheelUrl `
+    -Destination (Join-Path $cache "uv-$uvVersion-py3-none-win_amd64.zip") `
+    -Sha256 $uvWheelSha256
+$uvExtract = Join-Path $stageRoot "uv"
+New-Item -ItemType Directory -Force -Path $uvExtract | Out-Null
+Expand-Archive -LiteralPath $uvWheel -DestinationPath $uvExtract -Force
+$uvExecutables = @(
+    Get-ChildItem -LiteralPath $uvExtract -Filter uv.exe -Recurse -File
+)
+if ($uvExecutables.Count -ne 1) {
+    throw "Expected one uv.exe in the verified wheel; found $($uvExecutables.Count)."
+}
+$uvExecutable = $uvExecutables[0]
+$packagedUv = Join-Path $bootstrapRoot "uv.exe"
+Copy-Item -LiteralPath $uvExecutable.FullName -Destination $packagedUv
+$uvExecutableSha256 = (Get-FileHash -LiteralPath $packagedUv -Algorithm SHA256).Hash
+$uvLicenses = @(
+    Get-ChildItem -LiteralPath $uvExtract -Filter "LICENSE-*" -Recurse -File
+)
+if ($uvLicenses.Count -lt 2) {
+    throw "The verified uv wheel did not contain its Apache-2.0 and MIT licenses."
+}
+foreach ($license in $uvLicenses) {
+    Copy-Item -LiteralPath $license.FullName -Destination (
+        Join-Path $bootstrapRoot "uv-$($license.Name)"
+    )
+}
+
+$managedRuntimeManifest = [ordered]@{
+    schema_version = 1
+    app_version = $Version
+    uv = [ordered]@{
+        version = $uvVersion
+        path = "uv.exe"
+        sha256 = $uvExecutableSha256.ToLowerInvariant()
+        source_url = $uvWheelUrl
+        source_wheel_sha256 = $uvWheelSha256.ToLowerInvariant()
+        licenses = @("Apache-2.0", "MIT")
+    }
+    app_wheel = [ordered]@{
+        path = $appWheel.Name
+        sha256 = $appWheelSha256.ToLowerInvariant()
+    }
+    cuda_requirements = [ordered]@{
+        path = "windows-managed-cuda-lock.txt"
+        sha256 = $cudaRequirementsSha256.ToLowerInvariant()
+    }
+    profiles = [ordered]@{
+        cuda = [ordered]@{
+            revision = "cuda-cu128-py312-r1"
+            display_name = "NVIDIA CUDA transcription and speaker labels"
+            python_version = $pythonVersion
+            requirements_artifact = "cuda_requirements"
+            estimated_installed_bytes = 5900000000
+            packages = @(
+                "faster-whisper==1.2.1",
+                "pyannote.audio==4.0.7",
+                "torch==2.11.0",
+                "torchaudio==2.11.0"
+            )
+            source_urls = @(
+                "https://pypi.org/",
+                "https://download.pytorch.org/whl/cu128",
+                "https://github.com/astral-sh/uv"
+            )
+            licenses = @(
+                "Package licenses are retained in each installed wheel's metadata.",
+                "uv: Apache-2.0 OR MIT",
+                "PyTorch: BSD-3-Clause",
+                "faster-whisper: MIT",
+                "pyannote.audio: MIT"
+            )
+        }
+    }
+}
+$managedRuntimeManifest | ConvertTo-Json -Depth 8 |
+    Set-Content -LiteralPath (
+        Join-Path $bootstrapRoot "managed-runtime.json"
+    ) -Encoding UTF8
+
 $ffmpegArchive = Get-VerifiedDownload `
     -Uri $ffmpegUrl `
     -Destination (Join-Path $cache "ffmpeg-$ffmpegVersion-essentials_build.zip") `
@@ -354,6 +470,7 @@ Bundled runtime notices
 Python ${pythonVersion}: https://www.python.org/
 FFmpeg ${ffmpegVersion} essentials build: https://www.gyan.dev/ffmpeg/builds/
 FFmpeg source revision: https://github.com/FFmpeg/FFmpeg/commit/38b88335f9
+uv ${uvVersion}: https://github.com/astral-sh/uv (Apache-2.0 OR MIT)
 
 FFmpeg's bundled Windows essentials build is GPLv3. The application's GPLv3
 license is included as LICENSE. Python package license files remain alongside
@@ -405,6 +522,14 @@ $manifest = [ordered]@{
         version = $ffmpegVersion
         archive_sha256 = $ffmpegSha256
         source_revision = "38b88335f9"
+    }
+    managed_runtime = [ordered]@{
+        uv_version = $uvVersion
+        uv_executable_sha256 = $uvExecutableSha256
+        uv_source_wheel_sha256 = $uvWheelSha256
+        app_wheel_sha256 = $appWheelSha256
+        cuda_requirements_sha256 = $cudaRequirementsSha256
+        profiles = @("cuda")
     }
     private_environment = [bool]$BundleLocalEnv
     built_utc = [DateTime]::UtcNow.ToString("o")

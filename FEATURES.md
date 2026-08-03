@@ -72,7 +72,8 @@ See [evidence analysis](docs/features/evidence-analysis.md),
 | TrueNAS App | Validated | Persistent host-path data, trusted-LAN UI, AMD Vulkan, unprivileged/read-only container boundary. |
 | Verified Windows publish | Validated | WinUI resources, namespaced Windows ML helper, normal/private environment isolation. |
 | Standalone Windows installer | Validated | Per-user Inno Setup package with self-contained .NET app/helper, embedded Python, FFmpeg, Windows ML and portable inference runtimes; public stages reject PDBs/private state, install/upgrade/uninstall preserve application data, interactive setup discloses default-on login startup, and silent setup requires explicit startup/launch flags. |
-| Accelerator add-on/model manager | Foundation | First-use managed models exist; a signed release and optional CUDA/OpenVINO/Vulkan add-on lifecycle remain packaging work. |
+| Packaged CUDA runtime manager | Validated | Explicit isolated Python/CUDA install from a fully hashed Windows lock; source/license/size/path disclosure, progress, cancellation, retained cache, safe resume, atomic promotion, app-update reuse, and clean staged-package ASR/Community-1 execution are proven. |
+| Additional accelerator add-ons | Foundation | OpenVINO/Vulkan packaged dependency lifecycles and release signing remain future work; their source/runtime paths continue to work when explicitly configured. |
 
 See [Library and Review](docs/features/library-and-review.md),
 [Area Watch](docs/features/area-watch.md),

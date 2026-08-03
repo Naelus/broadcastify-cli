@@ -17,6 +17,8 @@ Native Windows state:
 - archive request ledger: `%LOCALAPPDATA%\Broadcastify Desktop\archive-quota.sqlite3`
 - installed default library: `%LOCALAPPDATA%\Broadcastify Desktop\archives`
 - managed model root: `%LOCALAPPDATA%\Broadcastify Desktop\models`
+- managed accelerator profiles, partials, and wheel cache:
+  `%LOCALAPPDATA%\Broadcastify Desktop\managed-runtimes`
 - program runtime: `%LOCALAPPDATA%\Programs\Broadcastify Desktop`
 
 The program runtime is replaceable and is removed by uninstall. The data
@@ -134,6 +136,10 @@ A later stage cannot make an earlier stale stage look complete.
   avoidance minute and resumes from retained work. Windows login startup runs
   this recovery before claiming scheduled work.
 - Native settings are atomically written; activity/crash logs append.
+- A managed CUDA install retains its checksum-verified download cache and
+  partial environment after cancellation; an exclusive lock prevents two app
+  processes from mutating it, and only a verified profile is atomically
+  promoted for selection.
 
 An application or machine interruption may leave a partial/checkpoint, but it
 must not overwrite the last known-good final artifact.

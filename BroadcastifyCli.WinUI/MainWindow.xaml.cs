@@ -78,6 +78,7 @@ public sealed partial class MainWindow : Window
     private bool _huggingFaceTokenConfigured;
     private bool _cudaAvailable;
     private ProfileSetupAction? _profileRecoveryAction;
+    private ManagedRuntimeStatus? _managedCudaRuntime;
     private int _diagnosticsLoadVersion;
     private string _configuredPythonRuntimePath = "";
     private bool _pythonRuntimeInputReady;
@@ -205,6 +206,7 @@ public sealed partial class MainWindow : Window
     {
         RefreshStorageReadiness();
         await RefreshArchiveQuotaStatusAsync();
+        await RefreshManagedRuntimeStatusAsync();
         await TryAutoSignInAsync();
         await LoadDiagnosticsAndDaysAsync();
         await RefreshLibraryAsync();
@@ -1420,6 +1422,10 @@ public sealed partial class MainWindow : Window
                 SettingsTabView.SelectedItem = AnalysisSettingsTab;
                 AnalysisProviderComboBox.Focus(FocusState.Programmatic);
                 break;
+            case "install-managed-cuda-runtime":
+                SettingsTabView.SelectedItem = ProcessingSettingsTab;
+                ManagedRuntimeInstall_Click(sender, e);
+                break;
             default:
                 SettingsTabView.SelectedItem = ProcessingSettingsTab;
                 AdvancedProcessingExpander.IsExpanded = true;
@@ -2608,6 +2614,191 @@ public sealed partial class MainWindow : Window
                 _selectedLibraryDay,
                 forceSourceCheck: true);
         }
+    }
+
+    private async Task RefreshManagedRuntimeStatusAsync()
+    {
+        if (_worker is null
+            || ManagedRuntimeStateText is null
+            || ManagedRuntimeDetailText is null
+            || ManagedRuntimeSourceText is null
+            || ManagedRuntimeInstallButton is null)
+        {
+            return;
+        }
+        if (!_worker.HasBundledManagedRuntime)
+        {
+            _managedCudaRuntime = null;
+            ManagedRuntimeStateText.Text = "Not packaged";
+            ManagedRuntimeDetailText.Text =
+                "Managed setup is available in the installed Windows package.";
+            ManagedRuntimeInstallButton.Content = "Unavailable";
+            ManagedRuntimeInstallButton.IsEnabled = false;
+            return;
+        }
+        try
+        {
+            _managedCudaRuntime = await _worker.GetManagedRuntimeStatusAsync(
+                "cuda",
+                CancellationToken.None);
+            if (_managedCudaRuntime is null)
+            {
+                throw new InvalidOperationException(
+                    "The managed runtime worker returned no status.");
+            }
+            ApplyManagedRuntimeStatus(_managedCudaRuntime);
+        }
+        catch (Exception exception)
+        {
+            _managedCudaRuntime = null;
+            ManagedRuntimeStateText.Text = "Needs attention";
+            ManagedRuntimeDetailText.Text = exception.Message;
+            ManagedRuntimeInstallButton.Content = "Retry check";
+            ManagedRuntimeInstallButton.IsEnabled = true;
+            AppendLog($"Managed runtime: {exception.Message}");
+        }
+    }
+
+    private void ApplyManagedRuntimeStatus(ManagedRuntimeStatus status)
+    {
+        _managedCudaRuntime = status;
+        ManagedRuntimeStateText.Text = status.Ready
+            ? "Installed"
+            : status.Partial
+                ? "Resumable"
+                : "Optional";
+        ManagedRuntimeDetailText.Text = status.Ready
+            ? $"{status.Message} Installed size: {status.InstalledStorage}. "
+              + $"Storage: {status.StoragePath}"
+            : $"{status.Message} Allow about {status.EstimatedStorage}. "
+              + $"Storage: {status.StoragePath}";
+        var sources = status.SourceUrls.Count == 0
+            ? "packaged manifest"
+            : string.Join(", ", status.SourceUrls);
+        var licenses = status.Licenses.Count == 0
+            ? "package metadata"
+            : string.Join("; ", status.Licenses);
+        ManagedRuntimeSourceText.Text =
+            $"Sources: {sources}. Licenses: {licenses}. "
+            + "The packaged bootstrap and app wheel are SHA-256 verified before use.";
+        ManagedRuntimeInstallButton.Content = status.Ready
+            ? "Use runtime"
+            : status.Partial
+                ? "Resume install"
+                : "Install runtime";
+        ManagedRuntimeInstallButton.IsEnabled = _operationCancellation is null;
+    }
+
+    private async void ManagedRuntimeInstall_Click(
+        object sender,
+        RoutedEventArgs e)
+    {
+        if (_worker is null || _operationCancellation is not null)
+        {
+            return;
+        }
+        if (_managedCudaRuntime is null)
+        {
+            await RefreshManagedRuntimeStatusAsync();
+        }
+        var current = _managedCudaRuntime;
+        if (current is null)
+        {
+            return;
+        }
+        if (current.Ready)
+        {
+            SelectManagedRuntime(current);
+            await ShowMessageAsync(
+                "Restart to use the managed runtime",
+                "The packaged CUDA runtime is selected. Restart Broadcastify Desktop, "
+                + "then use Verify profile to prove transcription, speaker labels, and "
+                + "analysis on this GPU.");
+            return;
+        }
+
+        var action = current.Partial ? "Resume" : "Install";
+        var confirmation = new ContentDialog
+        {
+            XamlRoot = ((FrameworkElement)Content).XamlRoot,
+            Title = $"{action} packaged CUDA runtime?",
+            Content =
+                $"This explicit setup uses about {current.EstimatedStorage} in "
+                + $"{current.StoragePath}. It downloads an isolated Python runtime and "
+                + "pinned binary wheels from the sources shown on this page. Package "
+                + "licenses are retained. Cancel stops the process and keeps its verified "
+                + "cache so a later retry can resume. No Broadcastify request is made.",
+            PrimaryButtonText = action,
+            CloseButtonText = "Not now",
+            DefaultButton = ContentDialogButton.Primary,
+        };
+        if (await confirmation.ShowAsync() != ContentDialogResult.Primary)
+        {
+            return;
+        }
+
+        _operationCancellation = new CancellationTokenSource();
+        var activity = current.Partial ? "Resuming" : "Installing";
+        SetBusy(
+            true,
+            $"{activity} the managed CUDA runtime…",
+            jobRunning: true);
+        JobProgress.IsIndeterminate = true;
+        try
+        {
+            var installed = await _worker.InstallManagedRuntimeAsync(
+                "cuda",
+                HandleWorkerMessage,
+                _operationCancellation.Token);
+            if (installed is null || !installed.Ready)
+            {
+                throw new InvalidOperationException(
+                    "The managed runtime installer ended without a verified environment.");
+            }
+            ApplyManagedRuntimeStatus(installed);
+            SelectManagedRuntime(installed);
+            StatusText.Text = "Managed CUDA runtime installed";
+            AppendLog(
+                $"Managed CUDA runtime retained at {installed.StoragePath}; "
+                + "restart required before execution verification.");
+            await ShowMessageAsync(
+                "CUDA runtime installed",
+                "Restart Broadcastify Desktop to activate the managed runtime. "
+                + "After restart, choose NVIDIA CUDA and run Verify profile before "
+                + "starting an unattended archive job.");
+        }
+        catch (OperationCanceledException)
+        {
+            StatusText.Text = "Managed runtime installation paused";
+            AppendLog(
+                "Managed runtime installation cancelled; partial work and the "
+                + "verified download cache remain resumable.");
+        }
+        catch (Exception exception)
+        {
+            await ShowErrorAsync(exception);
+        }
+        finally
+        {
+            _operationCancellation.Dispose();
+            _operationCancellation = null;
+            JobProgress.IsIndeterminate = false;
+            SetBusy(false);
+            await RefreshManagedRuntimeStatusAsync();
+        }
+    }
+
+    private void SelectManagedRuntime(ManagedRuntimeStatus status)
+    {
+        if (!status.Ready || string.IsNullOrWhiteSpace(status.PythonPath))
+        {
+            return;
+        }
+        _configuredPythonRuntimePath = status.PythonPath;
+        PythonRuntimePathBox.Text = status.PythonPath;
+        PythonRuntimeStatusText.Text =
+            "Managed CUDA runtime selected. Restart the app to activate and verify it.";
+        PersistUserSettings(logFailure: true);
     }
 
     private async void LibraryOpenFolder_Click(object sender, RoutedEventArgs e)
@@ -5154,6 +5345,9 @@ public sealed partial class MainWindow : Window
         AsrPrepareButton.IsEnabled = !busy && _worker is not null;
         AsrSelfTestButton.IsEnabled = !busy && _worker is not null;
         DiarizationSelfTestButton.IsEnabled = !busy && _worker is not null;
+        ManagedRuntimeInstallButton.IsEnabled = !busy
+            && _worker is not null
+            && _worker.HasBundledManagedRuntime;
         SetupAccountActionButton.IsEnabled = !busy && _worker is not null;
         SetupTranscriptionActionButton.IsEnabled = !busy && _worker is not null;
         SetupDiarizationActionButton.IsEnabled = !busy && _worker is not null;

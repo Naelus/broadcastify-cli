@@ -1037,6 +1037,73 @@ internal sealed record LibraryResponse
     public LibrarySummary Summary { get; init; } = new();
 }
 
+internal sealed record ManagedRuntimeStatus
+{
+    [JsonPropertyName("profile")]
+    public string Profile { get; init; } = "";
+
+    [JsonPropertyName("display_name")]
+    public string DisplayName { get; init; } = "";
+
+    [JsonPropertyName("revision")]
+    public string Revision { get; init; } = "";
+
+    [JsonPropertyName("ready")]
+    public bool Ready { get; init; }
+
+    [JsonPropertyName("partial")]
+    public bool Partial { get; init; }
+
+    [JsonPropertyName("python_path")]
+    public string PythonPath { get; init; } = "";
+
+    [JsonPropertyName("storage_path")]
+    public string StoragePath { get; init; } = "";
+
+    [JsonPropertyName("cache_path")]
+    public string CachePath { get; init; } = "";
+
+    [JsonPropertyName("estimated_installed_bytes")]
+    public long EstimatedInstalledBytes { get; init; }
+
+    [JsonPropertyName("installed_bytes")]
+    public long InstalledBytes { get; init; }
+
+    [JsonPropertyName("packages")]
+    public List<string> Packages { get; init; } = [];
+
+    [JsonPropertyName("source_urls")]
+    public List<string> SourceUrls { get; init; } = [];
+
+    [JsonPropertyName("licenses")]
+    public List<string> Licenses { get; init; } = [];
+
+    [JsonPropertyName("message")]
+    public string Message { get; init; } = "";
+
+    [JsonPropertyName("installed_at")]
+    public string InstalledAt { get; init; } = "";
+
+    [JsonPropertyName("cuda_available_at_install")]
+    public bool CudaAvailableAtInstall { get; init; }
+
+    public string EstimatedStorage => FormatBytes(EstimatedInstalledBytes);
+    public string InstalledStorage => FormatBytes(InstalledBytes);
+
+    private static string FormatBytes(long bytes)
+    {
+        string[] units = ["B", "KB", "MB", "GB", "TB"];
+        var display = (double)Math.Max(0, bytes);
+        var unit = 0;
+        while (display >= 1024 && unit < units.Length - 1)
+        {
+            display /= 1024;
+            unit++;
+        }
+        return $"{display:0.#} {units[unit]}";
+    }
+}
+
 public sealed record ProfileSetupAction
 {
     [JsonPropertyName("stage")]

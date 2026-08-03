@@ -81,6 +81,11 @@ from .library import (
     require_current_range_evidence,
     scan_local_library,
 )
+from .managed_runtime import (
+    ManagedRuntimeError,
+    install_managed_runtime,
+    managed_runtime_status,
+)
 from .models import JobRequest
 from .storage import AnalysisStore, sha256_file
 from .transcription import LocalTranscriber, decoded_diarization_audio
@@ -374,6 +379,38 @@ def archive_quota_status() -> int:
     return 0
 
 
+def packaged_managed_runtime_status(profile_id: str) -> dict[str, Any] | None:
+    try:
+        return managed_runtime_status(profile_id)
+    except (ManagedRuntimeError, OSError, ValueError):
+        return None
+
+
+def managed_runtime_status_command(profile_id: str) -> int:
+    result = managed_runtime_status(profile_id)
+    emit({"type": "managed_runtime_status", "result": result})
+    return 0
+
+
+def install_managed_runtime_command() -> int:
+    payload = json.load(sys.stdin)
+    profile_id = str(payload.get("profile") or "").strip()
+    if not profile_id:
+        raise ValueError("A managed runtime profile is required.")
+    result = install_managed_runtime(
+        profile_id,
+        emit_progress=emit,
+    )
+    emit(
+        {
+            "type": "managed_runtime_installed",
+            "result": result,
+            "message": result["message"],
+        }
+    )
+    return 0
+
+
 def list_feed_schedules() -> int:
     with AnalysisStore(DEFAULT_DATABASE) as store:
         schedules = store.list_feed_schedules()
@@ -517,6 +554,9 @@ def diagnostics(settings: dict[str, Any] | None = None) -> int:
         "analysis_database": str(DEFAULT_DATABASE.resolve()),
         "analysis_stats": {},
         "archive_quota": ArchiveRequestLedger().status(),
+        "managed_runtimes": {
+            "cuda": packaged_managed_runtime_status("cuda"),
+        },
     }
     try:
         import torch
@@ -1075,6 +1115,28 @@ def _profile_recovery_action(
                 ),
             }
     elif not module_available("faster_whisper") or not module_available("torch"):
+        managed_cuda = packaged_managed_runtime_status("cuda")
+        if sys.platform == "win32" and managed_cuda is not None:
+            if managed_cuda["ready"]:
+                return {
+                    "stage": stage,
+                    "kind": "install-managed-cuda-runtime",
+                    "label": "Use managed CUDA runtime",
+                    "message": (
+                        f"{message} The packaged CUDA runtime is already installed; "
+                        "select it and restart the app before retrying."
+                    ),
+                }
+            resume = "Resume" if managed_cuda["partial"] else "Install"
+            return {
+                "stage": stage,
+                "kind": "install-managed-cuda-runtime",
+                "label": f"{resume} CUDA runtime",
+                "message": (
+                    f"{message} {resume} the packaged, checksum-verified CUDA "
+                    "runtime. Its persistent cache survives cancellation and app updates."
+                ),
+            }
         return {
             "stage": stage,
             "kind": "configure-transcription",
@@ -1807,6 +1869,9 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("run-scheduled")
     subparsers.add_parser("authenticate")
     subparsers.add_parser("quota-status")
+    managed_status = subparsers.add_parser("managed-runtime-status")
+    managed_status.add_argument("--profile", required=True)
+    subparsers.add_parser("install-managed-runtime")
     subparsers.add_parser("schedules")
     subparsers.add_parser("save-schedule")
     subparsers.add_parser("claim-due-schedule")
@@ -1909,6 +1974,10 @@ def main() -> int:
             return authenticate()
         if arguments.command == "quota-status":
             return archive_quota_status()
+        if arguments.command == "managed-runtime-status":
+            return managed_runtime_status_command(arguments.profile)
+        if arguments.command == "install-managed-runtime":
+            return install_managed_runtime_command()
         if arguments.command == "schedules":
             return list_feed_schedules()
         if arguments.command == "save-schedule":

@@ -1,0 +1,7 @@
+# The Windows reference runtime uses official CUDA 12.8 Torch wheels while
+# TorchCodec remains on its Windows-compatible PyPI wheel. Applying uv's
+# blanket --torch-backend setting would incorrectly request a Linux-only
+# +cu128 TorchCodec artifact.
+torch @ https://download-r2.pytorch.org/whl/cu128/torch-2.11.0%2Bcu128-cp312-cp312-win_amd64.whl#sha256=7c78215c3af4f62e63f2b2e360f1722fc719b0853c7ac22666483d9810613a4c
+torchaudio @ https://download-r2.pytorch.org/whl/cu128/torchaudio-2.11.0%2Bcu128-cp312-cp312-win_amd64.whl#sha256=e0203d44b6dcf4c59f2ce38f997616e663b2a23a9e0b20ebb90ea0c787b5e86a
+torchcodec==0.14.0

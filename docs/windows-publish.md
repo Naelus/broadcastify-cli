@@ -27,7 +27,7 @@ The consumer build layers a portable runtime over the verified native publish:
 Output:
 
 ```text
-dist/windows/BroadcastifyDesktop-0.4.15-win-x64-setup.exe
+dist/windows/BroadcastifyDesktop-<version>-win-x64-setup.exe
 ```
 
 The application stage contains:
@@ -36,6 +36,11 @@ The application stage contains:
 Broadcastify Desktop.exe
 windowsml/
 runtime/
+  bootstrap/
+    managed-runtime.json
+    uv.exe
+    broadcastify_cli-<version>-py3-none-any.whl
+    windows-managed-cuda-lock.txt
   python/
     python.exe
     Lib/site-packages/
@@ -66,7 +71,21 @@ Python wheel versions are exact in
 `installer/windows-runtime-constraints.txt`. The package includes Windows ML,
 Qwen3-ASR, portable Sherpa diarization, and IANA timezone data used to map
 archive listings to feed-local cache identities, but excludes the multi-
-gigabyte CUDA/PyTorch stack. Models are not bundled.
+gigabyte CUDA/PyTorch stack. Models are not bundled. Instead, the bootstrap
+describes an explicit managed NVIDIA profile and SHA-256 verifies uv, the
+current app wheel, and a fully hashed 105-package Windows lock before any
+optional install begins. CUDA Torch and Torchaudio are pinned to their official
+Windows CPython 3.12 CUDA 12.8 wheels; TorchCodec remains on its compatible
+ordinary Windows wheel rather than inheriting a Linux-only backend suffix.
+
+The managed environment lives under the retained per-user data directory, not
+the replaceable program directory. It uses an isolated uv-managed Python,
+binary wheels only, a persistent download cache, a partial profile directory,
+an install lock, and atomic final promotion. Cancelling the native operation
+kills the complete worker tree but leaves the partial environment and verified
+cache for **Resume install**. A later app version supplies its current worker
+wheel through `PYTHONPATH`, so an app upgrade does not require reinstalling an
+unchanged CUDA dependency revision.
 
 ## Installer behavior
 
@@ -96,7 +115,7 @@ machine that previously ran an owner-only private build.
 The recommended silent deployment is:
 
 ```powershell
-.\BroadcastifyDesktop-0.4.15-win-x64-setup.exe `
+.\BroadcastifyDesktop-<version>-win-x64-setup.exe `
   /VERYSILENT /SUPPRESSMSGBOXES /NORESTART `
   /ENABLESTARTUP /LAUNCHAFTERINSTALL
 ```
@@ -111,6 +130,16 @@ The retained lifecycle test completed install, native launch with the bundled
 Python child, same-version upgrade, uninstall, and clean reinstall. Settings and
 all data files were unchanged; the corrected uninstall removed the complete
 program directory; and the clean launch generated no Python cache directories.
+
+The packaged CUDA bootstrap was also exercised from the staged public package,
+not the source virtual environment. It installed 105 checksum-locked dependency
+wheels and the packaged app wheel into an isolated profile occupying
+5,050,001,971 bytes, detected CUDA 12.8, and retained exact package identity.
+The same managed interpreter then passed faster-whisper `turbo` on generated
+silence in 3.2 seconds and Community-1 on generated audio in 6.1 seconds on the
+reference GPU. Pyannote receives an in-memory waveform decoded by the bundled
+FFmpeg path, so its optional TorchCodec file loader and shared-FFmpeg DLLs are
+not part of the production diarization path.
 
 The current local installer is unsigned. A release certificate can be added
 without changing the layout; signing should cover the application executable

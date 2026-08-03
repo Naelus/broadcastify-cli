@@ -846,6 +846,28 @@
                                                     <Button x:Name="DiagnosticsRefreshButton" Grid.Column="3" Content="Refresh check"
                                                             Click="RefreshDiagnostics_Click" />
                                                 </Grid>
+                                                <Border BorderThickness="1" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                                        CornerRadius="8" Padding="12">
+                                                    <Grid ColumnSpacing="12">
+                                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                                        <StackPanel Spacing="3">
+                                                            <Grid ColumnSpacing="8">
+                                                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                                                <TextBlock Text="Packaged CUDA runtime" FontWeight="SemiBold" />
+                                                                <TextBlock x:Name="ManagedRuntimeStateText" Grid.Column="1" Text="Checking"
+                                                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                            </Grid>
+                                                            <TextBlock x:Name="ManagedRuntimeDetailText"
+                                                                       Text="An explicit managed install removes the source checkout and separate Python requirement."
+                                                                       TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                            <TextBlock x:Name="ManagedRuntimeSourceText"
+                                                                       Text="Pinned wheels from PyPI and the official PyTorch CUDA 12.8 index; package licenses and SHA-256 provenance are retained."
+                                                                       TextWrapping="Wrap" FontSize="12" Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                                                        </StackPanel>
+                                                        <Button x:Name="ManagedRuntimeInstallButton" Grid.Column="1" Content="Check runtime"
+                                                                Click="ManagedRuntimeInstall_Click" VerticalAlignment="Center" />
+                                                    </Grid>
+                                                </Border>
                                             </StackPanel>
                                         </Border>
 

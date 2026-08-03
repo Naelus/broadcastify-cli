@@ -14,7 +14,7 @@ Refreshing hardware does not download a model or execution provider and never pr
 
 | Profile | Transcription | Diarization | Analysis | Evidence |
 |---|---|---|---|---|
-| Windows CUDA | faster-whisper CUDA | pyannote CUDA | llama.cpp auto-offload | Full retained-day reference workflow; current Windows App SDK 2.3.1 private publish completed joined native verification in 14.9 seconds on RTX 3090 |
+| Windows CUDA | faster-whisper CUDA | pyannote CUDA | llama.cpp auto-offload | Full retained-day reference workflow; the clean packaged manager installed and verified its isolated CUDA runtime, then passed generated ASR and speaker proofs in 3.2/6.1 seconds on RTX 3090 |
 | CPU | faster-whisper INT8 or whisper.cpp CPU | pyannote CPU or sherpa-onnx preview | llama.cpp CPU | Protected 30-second all-CPU Web job validated; portable speaker preview measured over 23.9 hours; general full-day CPU ASR/LLM benchmarking is not currently prioritized |
 | AMD Vulkan/Linux | whisper.cpp Vulkan | sherpa-onnx CPU preview; Community-1 upgrade | llama.cpp Vulkan | A retained validation revision completed the current preview profile in 9.199 seconds on Radeon 890M; its 23.9-hour speaker run completed at 0.0227 RTF with 91.05% Community-relative speech coverage, and a retained validation revision passed a real chunk-resume proof |
 | OpenVINO | OpenVINO GenAI AUTO/CPU | sherpa-onnx CPU preview; Community-1 upgrade | llama.cpp SYCL/auto/CPU | Earlier Community-1 joined verification completed in 13.8 seconds; a retained validation revision protected 60-second job completed all stages in 31 seconds; the current preview is locally execution-tested |
@@ -23,6 +23,34 @@ Refreshing hardware does not download a model or execution provider and never pr
 | macOS | whisper.cpp Metal or CPU | sherpa-onnx CPU preview; Community-1 upgrade | llama.cpp Metal or CPU | Explicit profile and detection exist; a real Mac install and model run remain required |
 
 The official [whisper.cpp project](https://github.com/ggml-org/whisper.cpp) documents Windows, Linux, macOS, Docker, quantized models, Metal, OpenVINO, and `GGML_VULKAN=1`. The official [llama.cpp project](https://github.com/ggml-org/llama.cpp) documents native packages/releases, Vulkan and SYCL backends, quantized GGUF models, and its OpenAI-compatible server.
+
+## Packaged Windows CUDA runtime
+
+The installed WinUI app exposes **Settings → Setup → Packaged CUDA runtime**.
+This is an explicit add-on, not a hidden install and not a dependency on the
+source checkout. The base package carries uv 0.12.1, the current application
+wheel, their licenses, and `windows-managed-cuda-lock.txt`. SHA-256 metadata in
+the packaged manifest is checked before execution. The lock contains hashes for
+all 105 resolved Windows CPython 3.12 wheels and direct official CUDA 12.8 URLs
+for Torch 2.11.0 and Torchaudio 2.11.0. TorchCodec 0.14.0 is deliberately pinned
+to its Windows PyPI wheel; applying uv's blanket CUDA-backend selection would
+incorrectly request a Linux-only TorchCodec artifact.
+
+The add-on creates an isolated Python under the app's retained per-user data
+root and never alters system Python. Its partial environment, wheel cache, and
+exclusive install lock survive app cancellation or restart; only a verified
+environment is atomically promoted. A clean staged-package proof occupied
+5,050,001,971 bytes, reported CUDA 12.8 available, imported faster-whisper 1.2.1
+and pyannote.audio 4.0.7, decoded generated silence with faster-whisper `turbo`
+on CUDA in 3.2 seconds, and completed Community-1 on generated audio in 6.1
+seconds. These are execution proofs, not radio-accuracy measurements.
+
+Importing pyannote can warn that TorchCodec cannot find shared FFmpeg DLLs in
+the base static FFmpeg distribution. The production path intentionally does not
+give filenames to that optional loader: bundled FFmpeg decodes to temporary
+float32 PCM, PyTorch memory-maps it, and pyannote receives a `waveform` and
+`sample_rate` dictionary. The packaged Community-1 execution proof exercises
+that exact path.
 
 ## Current model and runtime decision
 

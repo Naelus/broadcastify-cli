@@ -51,8 +51,10 @@ See [FEATURES.md](FEATURES.md) for the current capability matrix.
 Download `BroadcastifyDesktop-<version>-win-x64-setup.exe` from
 [Releases](https://github.com/Naelus/broadcastify-cli/releases). The per-user
 installer includes the native WinUI app, Python worker, FFmpeg, Windows ML
-helper, the .NET desktop runtime, and portable CPU/Qwen/Sherpa runtimes. It preserves application data
-across upgrades and uninstall. Models remain explicit first-use downloads.
+helper, the .NET desktop runtime, portable CPU/Qwen/Sherpa runtimes, and a
+checksum-verified installer for the optional NVIDIA CUDA audio runtime. It
+preserves application data across upgrades and uninstall. Large dependencies
+and models remain explicit first-use downloads.
 Public releases contain no `.env`, account password, API token, or saved
 session. Credentials entered in the app are encrypted for the current Windows
 account and remain outside the installation directory.
@@ -81,7 +83,9 @@ In the app:
    Hugging Face read token. Windows encrypts them for the current account and
    shows only a short prefix afterward.
 2. Open **Settings → Setup**, review **Start with Windows**, and configure
-   storage, processing, and analysis.
+   storage, processing, and analysis. For the NVIDIA profile, explicitly choose
+   **Install runtime** in the **Packaged CUDA runtime** card; allow about 5.9 GB.
+   Cancellation retains a verified cache and **Resume install** continues it.
 3. Use **Verify profile** to execute all three model stages on generated local
    input without consuming archive quota.
 4. Open **New archive**, search for a feed, and select an inclusive date range.

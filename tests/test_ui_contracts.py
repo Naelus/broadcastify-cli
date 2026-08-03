@@ -267,3 +267,29 @@ def test_windows_startup_is_visible_configurable_and_recovery_aware() -> None:
     assert window.index("await ApplyLaunchBehaviorAsync();") < window.index(
         "ConfigureFeedScheduleTimer();"
     )
+
+
+def test_native_exposes_explicit_resumable_packaged_cuda_runtime() -> None:
+    root = ElementTree.parse(
+        ROOT / "BroadcastifyCli.WinUI" / "MainWindow.xaml"
+    ).getroot()
+    names = {
+        element.attrib.get(XAML_NAME): element
+        for element in root.iter()
+        if element.attrib.get(XAML_NAME)
+    }
+
+    button = names["ManagedRuntimeInstallButton"]
+    assert button.attrib["Click"] == "ManagedRuntimeInstall_Click"
+    assert button.attrib["Content"] == "Check runtime"
+
+    window = (
+        ROOT / "BroadcastifyCli.WinUI" / "MainWindow.xaml.cs"
+    ).read_text(encoding="utf-8")
+    worker = (
+        ROOT / "BroadcastifyCli.WinUI" / "WorkerClient.cs"
+    ).read_text(encoding="utf-8")
+    assert "Resume install" in window
+    assert "No Broadcastify request is made" in window
+    assert "process.Kill(entireProcessTree: true)" in worker
+    assert '"BROADCASTIFY_MANAGED_RUNTIME_ROOT"' in worker

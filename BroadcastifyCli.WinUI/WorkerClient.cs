@@ -31,6 +31,12 @@ internal sealed class WorkerClient
     public string? PythonRuntimeWarning { get; }
     public string BundledEnvironmentPath { get; }
     public bool HasBundledEnvironment => File.Exists(BundledEnvironmentPath);
+    public string BundledManagedRuntimeManifestPath { get; }
+    public string BundledWorkerWheelPath { get; }
+    public string ManagedRuntimeRoot { get; }
+    public bool HasBundledManagedRuntime =>
+        File.Exists(BundledManagedRuntimeManifestPath)
+        && File.Exists(BundledWorkerWheelPath);
     public string BundledWindowsMlHelperPath { get; }
     public bool HasBundledWindowsMlHelper => File.Exists(BundledWindowsMlHelperPath);
 
@@ -48,11 +54,30 @@ internal sealed class WorkerClient
             : RepositoryRoot;
         Directory.CreateDirectory(WorkingDirectory);
         SetLibraryDirectory("archives");
+        var bootstrapDirectory = Path.Combine(
+            AppContext.BaseDirectory,
+            "runtime",
+            "bootstrap");
+        BundledManagedRuntimeManifestPath = Path.Combine(
+            bootstrapDirectory,
+            "managed-runtime.json");
+        BundledWorkerWheelPath = Directory.Exists(bootstrapDirectory)
+            ? Directory.GetFiles(
+                    bootstrapDirectory,
+                    "broadcastify_cli-*.whl",
+                    SearchOption.TopDirectoryOnly)
+                .OrderByDescending(value => value, StringComparer.OrdinalIgnoreCase)
+                .FirstOrDefault() ?? ""
+            : "";
+        ManagedRuntimeRoot = Path.Combine(
+            AppSettingsStore.LocalDataDirectory,
+            "managed-runtimes");
         var pythonResolution = ResolvePython(
             RepositoryRoot,
             WorkingDirectory,
             IsBundledRuntime ? bundledPython : null,
-            preferredPython);
+            preferredPython,
+            BundledWorkerWheelPath);
         _python = pythonResolution.Command;
         PythonRuntimeWarning = pythonResolution.Warning;
         BundledEnvironmentPath = Path.Combine(AppContext.BaseDirectory, "broadcastify-desktop.env");
@@ -863,6 +888,53 @@ internal sealed class WorkerClient
         return result;
     }
 
+    public async Task<ManagedRuntimeStatus?> GetManagedRuntimeStatusAsync(
+        string profile,
+        CancellationToken cancellationToken)
+    {
+        ManagedRuntimeStatus? result = null;
+        await RunWorkerAsync(
+            [
+                "-m", "broadcastify_cli.worker", "managed-runtime-status",
+                "--profile", profile,
+            ],
+            null,
+            message =>
+            {
+                if (message.TryGetProperty("type", out var type)
+                    && type.GetString() == "managed_runtime_status"
+                    && message.TryGetProperty("result", out var value))
+                {
+                    result = value.Deserialize<ManagedRuntimeStatus>(JsonOptions);
+                }
+            },
+            cancellationToken);
+        return result;
+    }
+
+    public async Task<ManagedRuntimeStatus?> InstallManagedRuntimeAsync(
+        string profile,
+        Action<JsonElement> onMessage,
+        CancellationToken cancellationToken)
+    {
+        ManagedRuntimeStatus? result = null;
+        await RunWorkerAsync(
+            ["-m", "broadcastify_cli.worker", "install-managed-runtime"],
+            JsonSerializer.Serialize(new { profile }, JsonOptions),
+            message =>
+            {
+                if (message.TryGetProperty("type", out var type)
+                    && type.GetString() == "managed_runtime_installed"
+                    && message.TryGetProperty("result", out var value))
+                {
+                    result = value.Deserialize<ManagedRuntimeStatus>(JsonOptions);
+                }
+                onMessage(message);
+            },
+            cancellationToken);
+        return result;
+    }
+
     public async Task<AsrModelPreparationStatus?> PrepareAsrModelAsync(
         AsrSelfTestRequest request,
         Action<JsonElement> onMessage,
@@ -1088,6 +1160,22 @@ internal sealed class WorkerClient
             }
         }
         Directory.CreateDirectory(AppSettingsStore.LocalDataDirectory);
+        if (HasBundledManagedRuntime)
+        {
+            startInfo.Environment["BROADCASTIFY_MANAGED_RUNTIME_ROOT"] =
+                ManagedRuntimeRoot;
+            startInfo.Environment["BROADCASTIFY_MANAGED_RUNTIME_MANIFEST"] =
+                BundledManagedRuntimeManifestPath;
+            var inheritedPythonPath = startInfo.Environment.TryGetValue(
+                "PYTHONPATH",
+                out var currentPythonPath)
+                ? currentPythonPath ?? ""
+                : "";
+            startInfo.Environment["PYTHONPATH"] = string.IsNullOrWhiteSpace(
+                inheritedPythonPath)
+                ? BundledWorkerWheelPath
+                : BundledWorkerWheelPath + Path.PathSeparator + inheritedPythonPath;
+        }
         var libraryDirectory = Volatile.Read(ref _libraryDirectory);
         startInfo.Environment["BROADCASTIFY_QUOTA_LEDGER"] = Path.Combine(
             AppSettingsStore.LocalDataDirectory,
@@ -1163,7 +1251,8 @@ internal sealed class WorkerClient
         string repositoryRoot,
         string workingDirectory,
         string? bundledPython,
-        string? preferredPython)
+        string? preferredPython,
+        string? workerWheel)
     {
         var warnings = new List<string>();
         var configured = Environment.GetEnvironmentVariable(
@@ -1174,13 +1263,15 @@ internal sealed class WorkerClient
             warnings,
             preferredPython,
             workingDirectory,
-            "saved Python runtime");
+            "saved Python runtime",
+            workerWheel);
         AddConfiguredCandidate(
             candidates,
             warnings,
             configured,
             workingDirectory,
-            "BROADCASTIFY_PYTHON");
+            "BROADCASTIFY_PYTHON",
+            workerWheel);
         if (!string.IsNullOrWhiteSpace(bundledPython))
         {
             candidates.Add(new PythonCommand(
@@ -1195,7 +1286,7 @@ internal sealed class WorkerClient
 
         foreach (var candidate in candidates)
         {
-            if (CanRunWorker(candidate, workingDirectory))
+            if (CanRunWorker(candidate, workingDirectory, workerWheel))
             {
                 return new PythonResolution(
                     candidate,
@@ -1215,7 +1306,8 @@ internal sealed class WorkerClient
         ICollection<string> warnings,
         string? value,
         string workingDirectory,
-        string source)
+        string source,
+        string? workerWheel)
     {
         if (string.IsNullOrWhiteSpace(value))
         {
@@ -1233,7 +1325,7 @@ internal sealed class WorkerClient
                 path,
                 [],
                 $"{source}: {path}");
-            if (CanRunWorker(candidate, workingDirectory))
+            if (CanRunWorker(candidate, workingDirectory, workerWheel))
             {
                 candidates.Add(candidate);
             }
@@ -1256,7 +1348,8 @@ internal sealed class WorkerClient
 
     private static bool CanRunWorker(
         PythonCommand candidate,
-        string workingDirectory)
+        string workingDirectory,
+        string? workerWheel)
     {
         try
         {
@@ -1275,6 +1368,11 @@ internal sealed class WorkerClient
             foreach (var argument in candidate.PrefixArguments)
             {
                 process.StartInfo.ArgumentList.Add(argument);
+            }
+            if (!string.IsNullOrWhiteSpace(workerWheel)
+                && File.Exists(workerWheel))
+            {
+                process.StartInfo.Environment["PYTHONPATH"] = workerWheel;
             }
             process.StartInfo.ArgumentList.Add("-c");
             process.StartInfo.ArgumentList.Add("import broadcastify_cli");

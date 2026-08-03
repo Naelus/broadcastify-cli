@@ -16,22 +16,34 @@ The package includes:
 - embedded Python 3.12 and the application worker;
 - FFmpeg and FFprobe;
 - Windows ML model-build dependencies;
-- portable Qwen3-ASR and Sherpa ONNX speaker runtimes.
+- portable Qwen3-ASR and Sherpa ONNX speaker runtimes; and
+- a verified bootstrap, application wheel, and fully hashed dependency lock for
+  an optional managed NVIDIA CUDA audio runtime.
 
-It deliberately does not bundle multi-gigabyte models, llama.cpp, PyTorch, or
-CUDA. Model acquisition remains an explicit action in Setup. The portable CPU
-profile works without a system Python installation; CUDA, Community-1,
-OpenVINO, Vulkan, and local Gemma have the boundaries documented in
-[hardware backends](../hardware-backends.md).
+It deliberately does not put multi-gigabyte models, llama.cpp, PyTorch, or CUDA
+wheels into the base installer. Their acquisition remains explicit. The
+portable CPU profile works without a system Python installation. The packaged
+NVIDIA path can install its own isolated Python, CUDA PyTorch, faster-whisper,
+and Community-1 dependencies without a source checkout or separate virtual
+environment. OpenVINO, Vulkan, and local Gemma retain the boundaries documented
+in [hardware backends](../hardware-backends.md).
 
-For CUDA faster-whisper or Community-1, **Settings → Processing → Optional
-Python runtime** can select `python.exe` from an environment where this project
-and its `transcription` optional dependencies are installed. The saved path is
-validated on the next app start; an invalid environment falls back to the
-bundled portable runtime with a visible warning. `BROADCASTIFY_PYTHON` remains
-the headless equivalent. Archive jobs load the selected local audio stack
-before contacting Broadcastify, so a missing dependency or model cannot spend
-archive requests before failing.
+For CUDA faster-whisper or Community-1, choose **Settings → Setup → Packaged
+CUDA runtime → Install runtime**. The confirmation discloses the persistent
+storage path, approximately 5.9 GB of installed storage, package sources, and
+licenses. The app verifies its bundled bootstrap, application wheel, and locked
+requirements before use; uv then accepts only binary wheels whose hashes match
+the lock. Cancellation kills the worker tree but retains the partial environment
+and download cache, so **Resume install** continues safely. After installation,
+the app selects the managed `python.exe`; restart and run **Verify profile**.
+
+Advanced users can still select another compatible `python.exe` under
+**Settings → Processing → Optional Python runtime**. The saved path is validated
+on the next app start; an invalid environment falls back to the bundled portable
+runtime with a visible warning. `BROADCASTIFY_PYTHON` remains the headless
+equivalent. Archive jobs load the selected local audio stack before contacting
+Broadcastify, so a missing dependency or model cannot spend archive requests
+before failing.
 
 The current installer is unsigned. Windows can show an unknown-publisher or
 SmartScreen warning until code signing is configured. Starting trusted-LAN
@@ -100,7 +112,8 @@ model cache can later run offline.
 2. Open **Settings → Setup**. The overview distinguishes detected,
    configured, and execution-verified stages.
 3. Choose the hardware profile. The packaged portable paths are available on
-   a clean machine; install optional accelerator dependencies only when needed.
+   a clean machine. For NVIDIA CUDA, use the adjacent packaged-runtime card to
+   install or resume the optional accelerator dependencies.
 4. Use **Verify profile**. It runs generated-input transcription, speaker
    labeling, and analysis without consuming Broadcastify archive quota.
 5. Open **New archive**, find a feed, select an inclusive date range, and keep
@@ -122,6 +135,8 @@ The installed application uses:
 - program files: `%LOCALAPPDATA%\Programs\Broadcastify Desktop`
 - settings, quota ledger, logs, and managed models:
   `%LOCALAPPDATA%\Broadcastify Desktop`
+- managed accelerator environments and their resumable wheel cache:
+  `%LOCALAPPDATA%\Broadcastify Desktop\managed-runtimes`
 - default installed library:
   `%LOCALAPPDATA%\Broadcastify Desktop\archives`
 
@@ -164,8 +179,11 @@ Install the pinned Inno Setup compiler once, then build:
 The public artifact is written to
 `dist\windows\BroadcastifyDesktop-<version>-win-x64-setup.exe`. Verified Python
 and FFmpeg archives plus an exact Python dependency constraints file make the
-portable runtime repeatable. Tagged `v*` pushes run the Windows release
-workflow and attach this asset to the existing GitHub release.
+portable runtime repeatable. The optional CUDA environment additionally uses
+`installer/windows-managed-cuda-lock.txt`, whose direct Windows CUDA Torch
+wheels and every transitive dependency carry SHA-256 hashes. Tagged `v*` pushes
+run the Windows release workflow and attach this asset to the existing GitHub
+release.
 
 For a private local build only:
 
