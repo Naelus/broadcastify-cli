@@ -51,13 +51,16 @@ archives/<feed-id>/<YYYYMMDD>/<YYYYMMDDHHMM>-<source-token>-<feed-id>.mp3
 
 The middle filename token is provider-supplied but is not necessarily the
 archive ID used by the download URL. A hidden per-day
-`.broadcastify-archive-index.json` records those exact URL/listing identities
-and is propagated with LAN inventories. More than one identity may be attached
-to a file only when authenticated download responses proved that the provider
-IDs are aliases. After a follower assembles and hash-verifies a completed
+`.broadcastify-archive-index.json` records the exact URL/listing identity for
+each timeline file and is propagated with LAN inventories. One block may carry
+at most one identity: equal bytes or a repeated provider filename do not make
+two points on the archive timeline interchangeable. A legacy manifest that
+attaches several identities to one block is rejected rather than spreading an
+incomplete day. After a follower assembles and hash-verifies a completed
 manifest, it writes its own `.broadcastify-archive-complete.json` proof from
-those identities. This completion file is local bookkeeping rather than a
-separately shared object. Neither file contains account or credential data.
+those one-to-one identities. This completion file is local bookkeeping rather
+than a separately shared object. Neither file contains account or credential
+data.
 
 It does **not** expose or synchronize:
 

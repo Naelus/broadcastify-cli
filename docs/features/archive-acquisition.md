@@ -45,13 +45,21 @@ establish the same local proof. A range job:
    while the run was active.
 
 Repeated archive IDs in one listing are collapsed before progress accounting
-or acquisition. A filename normally satisfies only its mapped provider ID and
-its recorded byte size must still match. Broadcastify can, however, publish
-distinct listing IDs whose authenticated download responses resolve to the
-same retained filename. The client records those IDs as explicit aliases only
-after the media response proves the relationship; bounded timestamp guesses
-cannot create an alias. This prevents both false cache hits and repeated daily
-requests for provider aliases.
+or acquisition. Distinct IDs, however, remain distinct timeline positions and
+must each have a local filename whose recorded byte size still matches. Even
+if two authenticated responses use the same `Content-Disposition` filename or
+contain equal bytes, the second position is materialized under a deterministic
+alternate raw-archive filename. Equal content is not evidence that one point
+in time can replace another.
+
+Before workers check a partial legacy day, exact timestamp matches are claimed
+in one pass. This prevents a neighboring one-hour fallback from racing ahead
+and assigning a source file to the wrong archive ID. Older indexes that already
+map several IDs to one filename are treated as incomplete: the Library hides
+their stale combined/review output, identifies the day as needing archive
+timeline repair, and a normal network-enabled retry downloads only the missing
+positions before rebuilding downstream stages. Existing source files are
+preserved.
 
 The live block cannot be downloaded until Broadcastify publishes it as an
 archive. Each ready message says **cached locally** or **downloaded from
@@ -143,10 +151,10 @@ The optional LAN node shares original archive MP3 blocks, not credentials,
 transcripts, analysis, or combined audio. One renewable producer lease owns a
 feed/day upstream acquisition; followers assemble the exact completion manifest
 from any peer and verify size plus SHA-256. Inventories and completion manifests
-also carry all optional exact provider IDs and listing prefixes for a block,
-including response-confirmed aliases, so a copied block retains the same
-no-request cache identities on the receiving node. Older peers that understand
-only one identity remain compatible. Once the exact completed manifest is
+carry the one optional exact provider ID and listing prefix for each block, so
+a copied block retains its no-request cache identity on the receiving node. A
+legacy peer manifest that collapses multiple positions into one block is
+rejected and must be repaired by an updated producer. Once the exact completed manifest is
 assembled and hash-verified, the receiving node writes its own local completion
 snapshot; the snapshot itself does not need to be shared.
 

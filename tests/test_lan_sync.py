@@ -148,6 +148,11 @@ def test_hash_verified_peer_sync_copies_missing_blocks_without_a_session(
         listing_prefix="202607120101",
         allow_filename_alias=True,
     )
+    assert cached_archive_for_id(
+        source_day,
+        "90001",
+        "90001-provider-alias",
+    ) is None
     monkeypatch.setenv("BROADCASTIFY_LAN_SHARING", "true")
     monkeypatch.setenv("BROADCASTIFY_LAN_SYNC_KEY", "shared-test-key")
     monkeypatch.setenv("BROADCASTIFY_LAN_DISCOVERY_ENABLED", "false")
@@ -188,7 +193,7 @@ def test_hash_verified_peer_sync_copies_missing_blocks_without_a_session(
             target / "90001" / "20260712",
             "90001",
             "90001-provider-alias",
-        ) == target / "90001" / "20260712" / raw[0].name
+        ) is None
 
         wrong_key = LanArchiveSyncClient(
             enabled=True,

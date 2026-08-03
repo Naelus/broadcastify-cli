@@ -5,6 +5,7 @@ from datetime import date
 from pathlib import Path
 
 from broadcastify_cli.analysis import PROMPT_VERSION
+from broadcastify_cli.archive_cache import remember_archive_identity
 from broadcastify_cli.library import (
     LocalProcessingRequest,
     prepare_local_day,
@@ -577,6 +578,49 @@ def test_library_does_not_present_older_combined_timeline_as_current(
     assert state["status"] == "New audio pending combine"
     assert state["next_step"] == "Refresh archive day"
     assert state["primary_action"] == "resume_download"
+    assert state["needs_network"] is True
+
+
+def test_library_hides_timeline_with_collapsed_archive_identities(
+    tmp_path: Path,
+) -> None:
+    archive_date = date(2026, 7, 31)
+    day = _day(tmp_path, "90001", archive_date.isoformat())
+    source = day / "202607310027-111-90001.mp3"
+    source.write_bytes(b"source")
+    combined = day / "combined_90001_20260731.mp3"
+    combined.write_bytes(b"combined")
+    combined.with_suffix(".manifest.json").write_text(
+        json.dumps({"sources": [{"source_file": source.name}]}),
+        encoding="utf-8",
+    )
+    remember_archive_identity(
+        day,
+        "90001",
+        archive_date,
+        "at-0027",
+        source,
+        listing_prefix="202607310027",
+    )
+    index = day / ".broadcastify-archive-index.json"
+    payload = json.loads(index.read_text(encoding="utf-8"))
+    payload["archives"]["at-0127"] = {
+        "filename": source.name,
+        "listing_prefix": "202607310127",
+        "size": source.stat().st_size,
+    }
+    index.write_text(json.dumps(payload), encoding="utf-8")
+
+    state = scan_local_library(tmp_path)[0]
+
+    assert state["collapsed_identity_count"] == 1
+    assert state["has_stale_combined"] is True
+    assert state["has_combined"] is False
+    assert state["can_open_review"] is False
+    assert state["is_complete"] is False
+    assert state["status"] == "Archive timeline repair required"
+    assert state["next_step"] == "Verify & repair archive day"
+    assert "collapsed onto another retained filename" in state["status_detail"]
     assert state["needs_network"] is True
 
 

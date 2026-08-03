@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import random
@@ -23,6 +24,7 @@ from .archive_cache import (
     cached_archive_for_id,
     complete_cached_archive_day,
     reconcile_complete_legacy_day,
+    reconcile_unambiguous_legacy_day,
     remember_complete_archive_day,
     remember_archive_identity,
 )
@@ -174,6 +176,7 @@ class BroadcastifyClient:
         self._authenticated = False
         self._download_throttle: _DownloadThrottle | None = None
         self._download_throttle_lock = threading.Lock()
+        self._archive_cache_lock = threading.RLock()
         self._archive_filename_prefixes: dict[str, str] = {}
         self._archive_timezones: dict[str, ZoneInfo] = {}
         self._county_feed_cache: dict[str, list[FeedSearchResult]] = {}
@@ -700,6 +703,13 @@ class BroadcastifyClient:
             archive_ids,
             self._archive_filename_prefixes,
         )
+        reconcile_unambiguous_legacy_day(
+            day_dir,
+            feed_id,
+            archive_date,
+            archive_ids,
+            self._archive_filename_prefixes,
+        )
 
         if not archive_ids:
             if not remember_complete_archive_day(
@@ -909,13 +919,22 @@ class BroadcastifyClient:
                         ),
                     )
             archive_ids.extend(new_ids)
-        remember_complete_archive_day(
+        unique_downloaded = sorted(dict.fromkeys(downloaded))
+        if len(unique_downloaded) != len(archive_ids):
+            raise BroadcastifyError(
+                "Archive cache integrity failed: distinct provider timeline "
+                "positions resolved to the same local filename."
+            )
+        if not remember_complete_archive_day(
             day_dir,
             feed_id,
             archive_date,
             archive_ids,
-        )
-        return sorted(dict.fromkeys(downloaded))
+        ):
+            raise BroadcastifyError(
+                "Archive cache integrity failed while recording the complete day."
+            )
+        return unique_downloaded
 
     def _is_current_archive_date(
         self,
@@ -957,25 +976,33 @@ class BroadcastifyClient:
             archive_ids,
             self._archive_filename_prefixes,
         )
+        reconcile_unambiguous_legacy_day(
+            day_dir,
+            feed_id,
+            archive_date,
+            archive_ids,
+            self._archive_filename_prefixes,
+        )
         cached: list[Path] = []
-        for archive_id in archive_ids:
-            existing = self._existing_archive(
-                day_dir,
-                feed_id,
-                archive_id,
-                self._archive_filename_prefixes.get(archive_id),
-            )
-            if existing is None:
-                return [], len(archive_ids)
-            remember_archive_identity(
-                day_dir,
-                feed_id,
-                archive_date,
-                archive_id,
-                existing,
-                listing_prefix=self._archive_filename_prefixes.get(archive_id),
-            )
-            cached.append(existing)
+        with self._archive_cache_lock:
+            for archive_id in archive_ids:
+                existing = self._existing_archive(
+                    day_dir,
+                    feed_id,
+                    archive_id,
+                    self._archive_filename_prefixes.get(archive_id),
+                )
+                if existing is None:
+                    return [], len(archive_ids)
+                remember_archive_identity(
+                    day_dir,
+                    feed_id,
+                    archive_date,
+                    archive_id,
+                    existing,
+                    listing_prefix=self._archive_filename_prefixes.get(archive_id),
+                )
+                cached.append(existing)
         if not remember_complete_archive_day(
             day_dir,
             feed_id,
@@ -1036,25 +1063,26 @@ class BroadcastifyClient:
         notice: Callable[[str], None] | None = None,
         admit_download: Callable[[], None] | None = None,
     ) -> Path:
-        indexed_existing = cached_archive_for_id(day_dir, feed_id, archive_id)
-        if indexed_existing is not None:
-            return indexed_existing
-        existing = self._existing_archive(
-            day_dir,
-            feed_id,
-            archive_id,
-            self._archive_filename_prefixes.get(archive_id),
-        )
-        if existing is not None:
-            remember_archive_identity(
+        with self._archive_cache_lock:
+            indexed_existing = cached_archive_for_id(day_dir, feed_id, archive_id)
+            if indexed_existing is not None:
+                return indexed_existing
+            existing = self._existing_archive(
                 day_dir,
                 feed_id,
-                archive_date,
                 archive_id,
-                existing,
-                listing_prefix=self._archive_filename_prefixes.get(archive_id),
+                self._archive_filename_prefixes.get(archive_id),
             )
-            return existing
+            if existing is not None:
+                remember_archive_identity(
+                    day_dir,
+                    feed_id,
+                    archive_date,
+                    archive_id,
+                    existing,
+                    listing_prefix=self._archive_filename_prefixes.get(archive_id),
+                )
+                return existing
         url = f"{self.ARCHIVE_DOWNLOAD_URL}/{archive_id}"
         request_throttle = throttle or _DownloadThrottle(
             1, self.download_request_interval
@@ -1140,22 +1168,19 @@ class BroadcastifyClient:
                                 "Broadcastify returned an HTML page instead of archive audio."
                             )
                         filename = self._download_filename(response, archive_id)
-                        output_path = day_dir / filename
-                        if output_path.exists() and output_path.stat().st_size > 0:
-                            remember_archive_identity(
+                        with self._archive_cache_lock:
+                            output_path = self._archive_output_path(
                                 day_dir,
                                 feed_id,
                                 archive_date,
                                 archive_id,
-                                output_path,
-                                listing_prefix=self._archive_filename_prefixes.get(
-                                    archive_id
-                                ),
-                                allow_filename_alias=True,
+                                filename,
+                                self._archive_filename_prefixes.get(archive_id),
                             )
-                            return output_path
-
-                        partial_path = output_path.with_suffix(output_path.suffix + ".part")
+                        partial_path = output_path.with_name(
+                            f".{output_path.name}.{os.getpid()}."
+                            f"{threading.get_ident()}.part"
+                        )
                         try:
                             with partial_path.open("wb") as handle:
                                 for chunk in response.iter_content(chunk_size=1024 * 256):
@@ -1165,17 +1190,17 @@ class BroadcastifyClient:
                         finally:
                             if partial_path.exists():
                                 partial_path.unlink()
-                        remember_archive_identity(
-                            day_dir,
-                            feed_id,
-                            archive_date,
-                            archive_id,
-                            output_path,
-                            listing_prefix=self._archive_filename_prefixes.get(
-                                archive_id
-                            ),
-                            allow_filename_alias=True,
-                        )
+                        with self._archive_cache_lock:
+                            remember_archive_identity(
+                                day_dir,
+                                feed_id,
+                                archive_date,
+                                archive_id,
+                                output_path,
+                                listing_prefix=self._archive_filename_prefixes.get(
+                                    archive_id
+                                ),
+                            )
                         return output_path
                 except (requests.ConnectionError, requests.Timeout) as exc:
                     if request_id is not None:
@@ -1259,6 +1284,76 @@ class BroadcastifyClient:
             return max(0.0, (parsed - current).total_seconds())
         except (TypeError, ValueError, OverflowError):
             return None
+
+    @staticmethod
+    def _archive_output_path(
+        day_dir: Path,
+        feed_id: str,
+        archive_date: date,
+        archive_id: str,
+        provider_filename: str,
+        listing_prefix: str | None,
+    ) -> Path:
+        """Keep one filename per provider timeline identity.
+
+        A repeated Content-Disposition filename can mean equal bytes, but it
+        cannot collapse two archive-list positions. When the provider name is
+        already owned, use a deterministic raw-archive filename for this ID.
+        """
+
+        provider_path = day_dir / Path(provider_filename).name
+        if not provider_path.exists():
+            return provider_path
+        mapped_id, _mapped_prefix, mapping_valid = archive_identity_for_filename(
+            day_dir,
+            feed_id,
+            provider_path.name,
+        )
+        if mapped_id == archive_id and mapping_valid:
+            return provider_path
+
+        prefix = str(listing_prefix or "")
+        if not re.fullmatch(r"\d{12}", prefix):
+            match = re.match(r"^(\d{12})-", provider_path.name)
+            prefix = (
+                match.group(1)
+                if match is not None
+                else archive_date.strftime("%Y%m%d0000")
+            )
+        numeric_parts = re.findall(r"\d+", str(archive_id))
+        identity_token = numeric_parts[-1].lstrip("0") if numeric_parts else ""
+        if not identity_token:
+            identity_token = str(
+                int(hashlib.sha256(str(archive_id).encode("utf-8")).hexdigest()[:15], 16)
+            )
+        candidate = day_dir / f"{prefix}-{identity_token}-{feed_id}.mp3"
+        if candidate == provider_path:
+            identity_token = str(
+                int(
+                    hashlib.sha256(
+                        f"{archive_id}:collision".encode("utf-8")
+                    ).hexdigest()[:15],
+                    16,
+                )
+            )
+            candidate = day_dir / f"{prefix}-{identity_token}-{feed_id}.mp3"
+        if candidate.exists():
+            candidate_id, _prefix, candidate_valid = archive_identity_for_filename(
+                day_dir,
+                feed_id,
+                candidate.name,
+            )
+            if candidate_id not in {"", archive_id} or not candidate_valid:
+                identity_token = str(
+                    int(
+                        hashlib.sha256(
+                            f"{archive_id}:{provider_filename}".encode("utf-8")
+                        ).hexdigest()[:15],
+                        16,
+                    )
+                )
+                candidate = day_dir / f"{prefix}-{identity_token}-{feed_id}.mp3"
+        return candidate
 
     @staticmethod
     def _existing_archive(

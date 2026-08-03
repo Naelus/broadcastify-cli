@@ -29,6 +29,11 @@ Native secrets are separate from these files. Windows Credential Locker stores
 the Broadcastify password, Hugging Face token, and any explicitly remembered
 analysis key for the current account.
 
+The native activity pane intentionally keeps only a bounded recent window so a
+multi-day background run cannot slow the UI or its worker progress stream. The
+complete diagnostic history is appended to `activity.log`, with the previous
+file retained as `activity.previous.log` when the current log reaches 5 MiB.
+
 Linux service defaults:
 
 - data/working directory: `~/.local/share/radio-archive`
@@ -93,9 +98,10 @@ not synchronized over LAN.
 
 Each expensive stage has an independent cache contract:
 
-- archive blocks: exact provider archive ID(s), retained filename/size,
-  response-confirmed aliases, and a bounded feed-timezone/source-time migration
-  path for older unindexed files;
+- archive blocks: one exact provider archive ID per retained timeline
+  filename/size, deterministic alternate names for repeated provider
+  filenames, and bounded feed-timezone/source-time migration for older
+  unindexed files;
 - feed-day completion: an atomic exact-ID snapshot written only after the full
   authenticated listing or a hash-verified LAN completion manifest is present;
   every referenced local block is revalidated before offline reuse;

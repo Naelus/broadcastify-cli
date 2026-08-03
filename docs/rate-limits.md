@@ -108,9 +108,11 @@ The fixes now in place are:
   blocks use a bounded source-time fallback once, while complete unambiguous
   days can use conservative chronological reconciliation, and are then
   migrated;
-- distinct provider IDs that an authenticated media response proves resolve
-  to one retained filename are stored as aliases, while timestamp-only matches
-  remain one-to-one;
+- distinct provider IDs always retain distinct timeline filenames, including
+  when authenticated responses repeat a filename or contain equal bytes;
+- exact partial-day legacy matches are claimed before worker cache checks, and
+  already-collapsed legacy indexes are marked for targeted repair instead of
+  being accepted as complete;
 - duplicate provider IDs in one listing are collapsed before acquisition;
 - local and trusted-LAN cache checks occur before request admission;
 - native and Web/NAS schedulers bind each claimed job to the currently selected
@@ -135,9 +137,9 @@ one producer for a feed/day, reducing duplicate downloads. The transient
 quota result carries the producer's next-safe delay, preventing followers from
 repeating the request until that rolling slot arrives. Completed old-day
 manifests may still be retained for the configured 24-hour result lifetime.
-All exact provider-ID mappings for an inventoried or completed block travel
-with it, so receiving a response-confirmed alias from a peer does not discard
-that no-request cache identity.
+The one exact provider-ID mapping for each inventoried or completed block
+travels with it. Legacy peer blocks that claim several timeline identities are
+rejected so a damaged cache cannot spread across the LAN.
 
 LAN coordination does **not** merge request ledgers, credentials, or provider
 allowances. Each installed desktop or service retains its own 240-request

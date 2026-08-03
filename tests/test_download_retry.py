@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import date, datetime, timedelta, timezone
 from email.utils import format_datetime
 from pathlib import Path
@@ -14,8 +15,10 @@ from broadcastify_cli.broadcastify import (
 )
 from broadcastify_cli.archive_cache import (
     cached_archive_for_id,
+    collapsed_archive_identity_count,
     complete_cached_archive_day,
     reconcile_complete_legacy_day,
+    reconcile_unambiguous_legacy_day,
     remember_complete_archive_day,
     remember_archive_identity,
 )
@@ -301,7 +304,7 @@ def test_download_archive_persists_exact_provider_identity(tmp_path: Path) -> No
     assert second.archive_quota_status()["used"] == 0
 
 
-def test_provider_confirmed_archive_aliases_reuse_one_retained_file(
+def test_repeated_provider_filename_materializes_each_timeline_position(
     tmp_path: Path,
 ) -> None:
     day_dir = tmp_path / "90001" / "20260712"
@@ -346,10 +349,14 @@ def test_provider_confirmed_archive_aliases_reuse_one_retained_file(
         "90001", date(2026, 7, 12), "provider-alias", day_dir
     )
 
-    assert initial == alias == day_dir / shared_filename
+    assert initial == day_dir / shared_filename
+    assert alias != initial
+    assert alias.name.startswith("202607121500-")
+    assert alias.name.endswith("-90001.mp3")
+    assert initial.read_bytes() == alias.read_bytes() == b"same audio"
     assert len(session.calls) == 2
     assert cached_archive_for_id(day_dir, "90001", "provider-first") == initial
-    assert cached_archive_for_id(day_dir, "90001", "provider-alias") == initial
+    assert cached_archive_for_id(day_dir, "90001", "provider-alias") == alias
 
     no_network = _QueuedSession([])
     second = BroadcastifyClient(
@@ -362,7 +369,7 @@ def test_provider_confirmed_archive_aliases_reuse_one_retained_file(
     ) == initial
     assert second.download_archive(
         "90001", date(2026, 7, 12), "provider-alias", day_dir
-    ) == initial
+    ) == alias
     assert no_network.calls == []
 
 
@@ -433,7 +440,7 @@ def test_exact_identity_rejects_changed_or_unsafe_cached_file(tmp_path: Path) ->
     assert cached_archive_for_id(day_dir, "90001", "exact-provider-id") is None
 
 
-def test_completion_snapshot_requires_and_revalidates_every_exact_identity(
+def test_completion_snapshot_requires_one_file_per_exact_identity(
     tmp_path: Path,
 ) -> None:
     archive_date = date(2026, 7, 12)
@@ -441,8 +448,10 @@ def test_completion_snapshot_requires_and_revalidates_every_exact_identity(
     day_dir.mkdir(parents=True)
     first = day_dir / "202607120000-111-90001.mp3"
     second = day_dir / "202607120030-222-90001.mp3"
+    alias = day_dir / "202607120100-333-90001.mp3"
     first.write_bytes(b"first")
     second.write_bytes(b"second")
+    alias.write_bytes(b"first")
     remember_archive_identity(
         day_dir,
         "90001",
@@ -460,6 +469,17 @@ def test_completion_snapshot_requires_and_revalidates_every_exact_identity(
         listing_prefix="202607120100",
         allow_filename_alias=True,
     )
+    assert cached_archive_for_id(
+        day_dir, "90001", "provider-alias"
+    ) is None
+    remember_archive_identity(
+        day_dir,
+        "90001",
+        archive_date,
+        "provider-alias",
+        alias,
+        listing_prefix="202607120100",
+    )
     remember_archive_identity(
         day_dir,
         "90001",
@@ -476,7 +496,7 @@ def test_completion_snapshot_requires_and_revalidates_every_exact_identity(
         ["provider-first", "provider-alias", "provider-second"],
     )
     cached = complete_cached_archive_day(day_dir, "90001", archive_date)
-    assert cached == ([first, second], 3)
+    assert cached == ([first, second, alias], 3)
 
     second.write_bytes(b"changed-size")
     assert complete_cached_archive_day(day_dir, "90001", archive_date) is None
@@ -589,6 +609,85 @@ def test_complete_legacy_day_refuses_partial_or_conflicting_migration(
         == 0
     )
     assert cached_archive_for_id(day_dir, "90001", "provider-first") == second
+
+
+def test_partial_legacy_reconciliation_claims_exact_files_before_neighbors(
+    tmp_path: Path,
+) -> None:
+    archive_date = date(2026, 7, 31)
+    day_dir = tmp_path / "90001" / "20260731"
+    day_dir.mkdir(parents=True)
+    first = day_dir / "202607310027-111-90001.mp3"
+    second = day_dir / "202607310057-222-90001.mp3"
+    first.write_bytes(b"first")
+    second.write_bytes(b"second")
+    archive_ids = ["at-0127", "at-0057", "at-0157", "at-0027"]
+    prefixes = {
+        "at-0027": "202607310027",
+        "at-0057": "202607310057",
+        "at-0127": "202607310127",
+        "at-0157": "202607310157",
+    }
+
+    added = reconcile_unambiguous_legacy_day(
+        day_dir,
+        "90001",
+        archive_date,
+        archive_ids,
+        prefixes,
+    )
+
+    assert added == 2
+    assert cached_archive_for_id(day_dir, "90001", "at-0027") == first
+    assert cached_archive_for_id(day_dir, "90001", "at-0057") == second
+    assert cached_archive_for_id(day_dir, "90001", "at-0127") is None
+    assert cached_archive_for_id(day_dir, "90001", "at-0157") is None
+
+
+def test_legacy_many_to_one_index_is_sanitized_and_never_complete(
+    tmp_path: Path,
+) -> None:
+    archive_date = date(2026, 7, 31)
+    day_dir = tmp_path / "90001" / "20260731"
+    day_dir.mkdir(parents=True)
+    source = day_dir / "202607310027-111-90001.mp3"
+    source.write_bytes(b"audio")
+    remember_archive_identity(
+        day_dir,
+        "90001",
+        archive_date,
+        "at-0027",
+        source,
+        listing_prefix="202607310027",
+    )
+    index = day_dir / ".broadcastify-archive-index.json"
+    payload = json.loads(index.read_text(encoding="utf-8"))
+    payload["archives"]["at-0127"] = {
+        "filename": source.name,
+        "listing_prefix": "202607310127",
+        "size": source.stat().st_size,
+    }
+    index.write_text(json.dumps(payload), encoding="utf-8")
+
+    assert cached_archive_for_id(day_dir, "90001", "at-0027") == source
+    assert cached_archive_for_id(day_dir, "90001", "at-0127") is None
+    assert not remember_complete_archive_day(
+        day_dir,
+        "90001",
+        archive_date,
+        ["at-0027", "at-0127"],
+    )
+
+    reconcile_unambiguous_legacy_day(
+        day_dir,
+        "90001",
+        archive_date,
+        ["at-0027", "at-0127"],
+        {"at-0027": "202607310027", "at-0127": "202607310127"},
+    )
+    repaired = json.loads(index.read_text(encoding="utf-8"))
+    assert set(repaired["archives"]) == {"at-0027", "at-0127"}
+    assert collapsed_archive_identity_count(day_dir, "90001") == 1
 
 
 def test_serialized_throttle_is_reused_across_days_in_one_job() -> None:
@@ -733,6 +832,9 @@ def test_download_day_progress_distinguishes_cache_from_website_download(
         result = target / f"{archive_id}.mp3"
         if not result.exists():
             result.write_bytes(b"downloaded audio")
+        remember_archive_identity(
+            target, feed_id, archive_date, archive_id, result
+        )
         return result
 
     client.download_archive = fake_download  # type: ignore[method-assign]
@@ -794,7 +896,7 @@ def test_successful_download_day_persists_local_completion_snapshot(
     ) == (downloaded, 2)
 
 
-def test_download_day_returns_unique_paths_when_archive_ids_share_file(
+def test_download_day_rejects_archive_ids_that_share_one_file(
     tmp_path: Path,
 ) -> None:
     client = BroadcastifyClient(download_request_interval=0)
@@ -818,9 +920,8 @@ def test_download_day_returns_unique_paths_when_archive_ids_share_file(
 
     client.download_archive = fake_download  # type: ignore[method-assign]
 
-    result = client.download_day("90001", date(2026, 7, 12), tmp_path)
-
-    assert result == [tmp_path / "90001" / "20260712" / "shared.mp3"]
+    with pytest.raises(BroadcastifyError, match="distinct provider timeline"):
+        client.download_day("90001", date(2026, 7, 12), tmp_path)
 
 
 def test_download_day_deduplicates_repeated_listing_ids(tmp_path: Path) -> None:
@@ -845,6 +946,9 @@ def test_download_day_deduplicates_repeated_listing_ids(tmp_path: Path) -> None:
         calls.append(archive_id)
         result = target / f"{archive_id}.mp3"
         result.write_bytes(b"audio")
+        remember_archive_identity(
+            target, feed_id, archive_date, archive_id, result
+        )
         return result
 
     client.download_archive = fake_download  # type: ignore[method-assign]
@@ -884,6 +988,9 @@ def test_download_day_acquires_current_and_previous_before_older_backlog(
         calls.append(archive_id)
         result = day_dir / f"{archive_id}.mp3"
         result.write_bytes(b"audio")
+        remember_archive_identity(
+            day_dir, feed_id, archive_date, archive_id, result
+        )
         return result
 
     client.download_archive = fake_download  # type: ignore[method-assign]
@@ -929,6 +1036,9 @@ def test_download_day_refreshes_a_growing_current_day_once(
         calls.append(archive_id)
         result = day_dir / f"{archive_id}.mp3"
         result.write_bytes(b"audio")
+        remember_archive_identity(
+            day_dir, feed_id, archive_date, archive_id, result
+        )
         return result
 
     client.download_archive = fake_download  # type: ignore[method-assign]

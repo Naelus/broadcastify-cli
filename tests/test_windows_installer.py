@@ -129,6 +129,8 @@ def test_public_installer_build_rejects_private_environment_and_pins_downloads()
     assert '"windowsml\\hostfxr.dll"' in build
     assert "tzdata>=2026.3,<2027" in project
     assert "tzdata==2026.3" in constraints
+    assert '"numpy>=1.26,<2.5"' in project
+    assert "numpy==2.4.3" in constraints
     assert "ZoneInfo('America/Chicago')" in build
     assert "$unexpectedPdbFiles.Count -gt 0" in build
     assert 'tags:' in workflow

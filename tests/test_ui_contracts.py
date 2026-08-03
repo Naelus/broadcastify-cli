@@ -133,6 +133,19 @@ def test_native_releases_media_handles_before_archive_mutation() -> None:
     assert "await Task.Delay(150);" in native
 
 
+def test_native_visible_activity_log_is_bounded_without_truncating_disk_history() -> None:
+    native = (
+        ROOT / "BroadcastifyCli.WinUI" / "MainWindow.xaml.cs"
+    ).read_text(encoding="utf-8")
+
+    assert "MaximumVisibleActivityLogCharacters" in native
+    assert "RetainedVisibleActivityLogCharacters" in native
+    assert "Earlier activity remains available in the on-disk activity log" in native
+    assert "_visibleActivityLog.Clear();" in native
+    assert "AppDiagnostics.AppendActivity(message);" in native
+    assert "LogBox.Text +=" not in native
+
+
 def test_native_library_can_recheck_source_audio_for_complete_days() -> None:
     root = ElementTree.parse(
         ROOT / "BroadcastifyCli.WinUI" / "MainWindow.xaml"

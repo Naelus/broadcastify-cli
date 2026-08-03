@@ -78,6 +78,59 @@ def _load_index(
     return payload
 
 
+def _filename_timestamp(filename: str) -> datetime | None:
+    match = re.match(r"^(\d{12})-", filename)
+    if match is None:
+        return None
+    try:
+        return datetime.strptime(match.group(1), "%Y%m%d%H%M")
+    except ValueError:
+        return None
+
+
+def _canonical_archive_id_for_filename(
+    archives: Mapping[str, Any],
+    filename: str,
+) -> str | None:
+    """Choose the one identity a timeline file may represent.
+
+    Older builds allowed several provider IDs to point at one filename. That
+    collapsed distinct half-hour timeline positions whenever cache discovery
+    mistook a neighboring file for the requested archive. Preserve the
+    identity whose listing timestamp best matches the filename, but refuse an
+    ambiguous legacy alias set.
+    """
+
+    matches = [
+        (str(archive_id), raw)
+        for archive_id, raw in archives.items()
+        if isinstance(raw, dict) and str(raw.get("filename") or "") == filename
+    ]
+    if len(matches) == 1:
+        return matches[0][0]
+    if not matches:
+        return None
+    filename_time = _filename_timestamp(filename)
+    if filename_time is None:
+        return None
+    scored: list[tuple[float, str]] = []
+    for archive_id, raw in matches:
+        prefix = str(raw.get("listing_prefix") or "")
+        if not re.fullmatch(r"\d{12}", prefix):
+            continue
+        try:
+            listing_time = datetime.strptime(prefix, "%Y%m%d%H%M")
+        except ValueError:
+            continue
+        scored.append((abs((listing_time - filename_time).total_seconds()), archive_id))
+    if not scored:
+        return None
+    scored.sort()
+    if len(scored) > 1 and scored[0][0] == scored[1][0]:
+        return None
+    return scored[0][1]
+
+
 def cached_archive_for_id(
     day_directory: str | Path,
     feed_id: str,
@@ -92,6 +145,10 @@ def cached_archive_for_id(
         return None
     filename = str(raw.get("filename") or "")
     if not filename or Path(filename).name != filename:
+        return None
+    if _canonical_archive_id_for_filename(payload["archives"], filename) != str(
+        archive_id
+    ):
         return None
     candidate = day / filename
     try:
@@ -119,9 +176,9 @@ def archive_identity_for_filename(
     if Path(filename).name != filename:
         return "", "", False
     payload = _load_index(day_directory, feed_id)
-    for archive_id, raw in payload["archives"].items():
-        if not isinstance(raw, dict) or str(raw.get("filename") or "") != filename:
-            continue
+    archive_id = _canonical_archive_id_for_filename(payload["archives"], filename)
+    raw = payload["archives"].get(archive_id) if archive_id is not None else None
+    if isinstance(raw, dict):
         valid = False
         try:
             source = Path(day_directory) / filename
@@ -134,11 +191,7 @@ def archive_identity_for_filename(
             )
         except (OSError, TypeError, ValueError):
             pass
-        return (
-            str(archive_id),
-            str(raw.get("listing_prefix") or ""),
-            valid,
-        )
+        return (archive_id, str(raw.get("listing_prefix") or ""), valid)
     return "", "", False
 
 
@@ -147,12 +200,11 @@ def archive_identities_for_filename(
     feed_id: str,
     filename: str,
 ) -> tuple[tuple[str, str], ...]:
-    """Return every exact provider identity proven for one retained file.
+    """Return the one exact provider identity proven for a timeline file.
 
-    Broadcastify can expose more than one archive-list ID whose authenticated
-    download resolves to the same retained MP3 filename. Those are aliases,
-    not duplicate audio files. Only identities whose indexed size still
-    matches the local file are returned.
+    Equal MP3 bytes do not imply equal timeline positions. Every provider ID
+    must therefore have its own local filename, even when the filesystem can
+    later deduplicate the underlying bytes.
     """
 
     if Path(filename).name != filename:
@@ -165,20 +217,53 @@ def archive_identities_for_filename(
         actual_size = source.stat().st_size
     except OSError:
         return ()
-    identities: list[tuple[str, str]] = []
-    for archive_id, raw in payload["archives"].items():
-        if not isinstance(raw, dict) or str(raw.get("filename") or "") != filename:
+    archive_id = _canonical_archive_id_for_filename(payload["archives"], filename)
+    raw = payload["archives"].get(archive_id) if archive_id is not None else None
+    if not isinstance(raw, dict):
+        return ()
+    try:
+        expected_size = int(raw.get("size") or 0)
+    except (TypeError, ValueError):
+        return ()
+    if expected_size <= 0 or expected_size != actual_size:
+        return ()
+    return ((archive_id, str(raw.get("listing_prefix") or "")),)
+
+
+def collapsed_archive_identity_count(
+    day_directory: str | Path,
+    feed_id: str,
+) -> int:
+    """Count provider timeline positions collapsed onto another filename."""
+
+    day = Path(day_directory)
+    payload = _load_index(day, feed_id)
+    by_filename: dict[str, list[dict[str, Any]]] = {}
+    for raw in payload["archives"].values():
+        if not isinstance(raw, dict):
+            continue
+        filename = str(raw.get("filename") or "")
+        if not filename or Path(filename).name != filename:
+            continue
+        by_filename.setdefault(filename, []).append(raw)
+    collapsed = 0
+    for filename, mappings in by_filename.items():
+        if len(mappings) < 2:
             continue
         try:
-            expected_size = int(raw.get("size") or 0)
-        except (TypeError, ValueError):
+            source = day / filename
+            actual_size = source.stat().st_size
+        except OSError:
             continue
-        if expected_size <= 0 or expected_size != actual_size:
-            continue
-        identities.append(
-            (str(archive_id), str(raw.get("listing_prefix") or ""))
-        )
-    return tuple(identities)
+        valid = 0
+        for raw in mappings:
+            try:
+                if int(raw.get("size") or 0) == actual_size > 0:
+                    valid += 1
+            except (TypeError, ValueError):
+                continue
+        collapsed += max(0, valid - 1)
+    return collapsed
 
 
 def remember_complete_archive_day(
@@ -206,9 +291,12 @@ def remember_complete_archive_day(
         return False
     day = Path(day_directory)
     with _INDEX_WRITE_LOCK:
+        retained_names: set[str] = set()
         for archive_id in normalized_ids:
-            if cached_archive_for_id(day, feed_id, archive_id) is None:
+            cached = cached_archive_for_id(day, feed_id, archive_id)
+            if cached is None or cached.name in retained_names:
                 return False
+            retained_names.add(cached.name)
         day.mkdir(parents=True, exist_ok=True)
         _write_index(
             _completion_path(day),
@@ -231,9 +319,8 @@ def complete_cached_archive_day(
     """Return a proven complete snapshot using local files only.
 
     ``None`` means no valid completion proof is available. ``([], 0)`` is a
-    valid authenticated empty-day snapshot. Multiple provider identities may
-    intentionally resolve to one retained file, so the returned paths are
-    unique while the integer is the completed identity count.
+    valid authenticated empty-day snapshot. Every provider identity must map
+    to a distinct timeline filename.
     """
 
     day = Path(day_directory)
@@ -262,12 +349,14 @@ def complete_cached_archive_day(
     if len(archive_ids) != len(raw_ids):
         return None
     files: list[Path] = []
+    retained_names: set[str] = set()
     for archive_id in archive_ids:
         cached = cached_archive_for_id(day, feed_id, archive_id)
-        if cached is None:
+        if cached is None or cached.name in retained_names:
             return None
+        retained_names.add(cached.name)
         files.append(cached)
-    return sorted(dict.fromkeys(files)), len(archive_ids)
+    return sorted(files), len(archive_ids)
 
 
 def remember_archive_identity(
@@ -286,9 +375,8 @@ def remember_archive_identity(
     interchangeable identifiers.  Some feeds have exhibited offsets of more
     than thirty minutes.  Keeping the provider ID beside the retained MP3 is
     the only safe way to prove that a later cache hit is the same request.
-    ``allow_filename_alias`` is reserved for an authenticated media response
-    (or a hash-verified LAN copy of one) that proves multiple IDs resolve to
-    the same retained file.
+    ``allow_filename_alias`` is retained for call compatibility only. Distinct
+    IDs are timeline positions and are never allowed to share one filename.
     """
 
     day = Path(day_directory)
@@ -316,20 +404,127 @@ def remember_archive_identity(
         payload["feed_id"] = str(feed_id)
         payload["archive_date"] = archive_date.isoformat()
         payload["updated_at_unix"] = round(time.time(), 6)
-        if not allow_filename_alias:
-            for existing_id, raw in list(payload["archives"].items()):
-                if (
-                    existing_id != normalized_id
-                    and isinstance(raw, dict)
-                    and str(raw.get("filename") or "") == source.name
-                ):
-                    del payload["archives"][existing_id]
+        conflicting_ids = [
+            str(existing_id)
+            for existing_id, raw in payload["archives"].items()
+            if (
+                str(existing_id) != normalized_id
+                and isinstance(raw, dict)
+                and str(raw.get("filename") or "") == source.name
+            )
+        ]
+        if conflicting_ids:
+            # Never steal a timeline file from its first exact identity. A
+            # caller handling a provider filename collision must materialize a
+            # second filename before it records the new identity.
+            return
         payload["archives"][normalized_id] = {
             "filename": source.name,
             "listing_prefix": str(listing_prefix or "")[:12],
             "size": source.stat().st_size,
         }
         _write_index(path, payload)
+
+
+def reconcile_unambiguous_legacy_day(
+    day_directory: str | Path,
+    feed_id: str,
+    archive_date: date,
+    archive_ids: Sequence[str],
+    listing_prefixes: Mapping[str, str],
+) -> int:
+    """Claim exact timestamp matches before concurrent cache checks begin.
+
+    A partial legacy day cannot safely use the broad clock-drift migration,
+    but filenames within one minute of a listing timestamp are unambiguous.
+    Mapping those first prevents a neighboring archive ID from racing to
+    claim the same retained file.
+    """
+
+    normalized_ids = list(dict.fromkeys(str(value).strip() for value in archive_ids))
+    if not normalized_ids or any(not value for value in normalized_ids):
+        return 0
+    day = Path(day_directory)
+    if not day.is_dir():
+        return 0
+    pattern = re.compile(
+        rf"^(?P<stamp>\d{{12}})-.+-{re.escape(str(feed_id))}\.mp3$",
+        re.IGNORECASE,
+    )
+    sources: dict[str, tuple[datetime, Path]] = {}
+    try:
+        for source in day.glob("*.mp3"):
+            match = pattern.fullmatch(source.name)
+            if match is None or source.is_symlink() or not source.is_file():
+                continue
+            if source.stat().st_size <= 0:
+                continue
+            sources[source.name] = (
+                datetime.strptime(match.group("stamp"), "%Y%m%d%H%M"),
+                source,
+            )
+    except (OSError, ValueError):
+        return 0
+
+    path = _index_path(day)
+    with _INDEX_WRITE_LOCK:
+        payload = _load_index(day, feed_id, archive_date)
+        archives = payload["archives"]
+        changed = False
+
+        claimed_names = {
+            str(raw.get("filename") or "")
+            for raw in archives.values()
+            if isinstance(raw, dict)
+        }
+        candidates: dict[str, list[tuple[float, Path]]] = {}
+        for archive_id in normalized_ids:
+            if archive_id in archives:
+                continue
+            prefix = str(listing_prefixes.get(archive_id) or "")
+            if not re.fullmatch(r"\d{12}", prefix):
+                continue
+            try:
+                listing_time = datetime.strptime(prefix, "%Y%m%d%H%M")
+            except ValueError:
+                continue
+            matches = [
+                (abs((source_time - listing_time).total_seconds()), source)
+                for filename, (source_time, source) in sources.items()
+                if filename not in claimed_names
+                and abs((source_time - listing_time).total_seconds()) <= 60
+            ]
+            if matches:
+                candidates[archive_id] = sorted(matches, key=lambda value: value[0])
+
+        requested_by_filename: dict[str, list[str]] = {}
+        for archive_id, matches in candidates.items():
+            if len(matches) == 1:
+                requested_by_filename.setdefault(matches[0][1].name, []).append(archive_id)
+        added = 0
+        for archive_id, matches in candidates.items():
+            if len(matches) != 1:
+                continue
+            source = matches[0][1]
+            if len(requested_by_filename.get(source.name, ())) != 1:
+                continue
+            archives[archive_id] = {
+                "filename": source.name,
+                "listing_prefix": str(listing_prefixes.get(archive_id) or "")[:12],
+                "size": source.stat().st_size,
+            }
+            claimed_names.add(source.name)
+            added += 1
+            changed = True
+
+        if changed:
+            payload["schema_version"] = ARCHIVE_CACHE_INDEX_SCHEMA_VERSION
+            payload["feed_id"] = str(feed_id)
+            payload["archive_date"] = archive_date.isoformat()
+            payload["updated_at_unix"] = round(time.time(), 6)
+            day.mkdir(parents=True, exist_ok=True)
+            _write_index(path, payload)
+        return added
 
 
 def reconcile_complete_legacy_day(

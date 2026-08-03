@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .analysis import PROMPT_VERSION
+from .archive_cache import collapsed_archive_identity_count
 from .audio import combined_output_is_current
 from .portable_diarization import (
     COMMUNITY_DIARIZATION_ENGINE,
@@ -199,6 +200,10 @@ def _state_for_day(
                 raw_files.append(path)
         raw_files.sort()
     has_combined_file = combined.is_file() and combined.stat().st_size > 0
+    collapsed_identity_count = collapsed_archive_identity_count(
+        day_directory,
+        feed_id,
+    )
     # Imported/legacy combined recordings may legitimately have no retained raw
     # blocks.  When raw blocks are present, however, the manifest must describe
     # that exact set.  Otherwise an interrupted refresh can leave an older MP3,
@@ -206,8 +211,13 @@ def _state_for_day(
     # waiting to be combined.
     has_stale_combined = bool(
         has_combined_file
-        and raw_files
-        and not combined_output_is_current(combined, manifest, raw_files)
+        and (
+            collapsed_identity_count > 0
+            or (
+                raw_files
+                and not combined_output_is_current(combined, manifest, raw_files)
+            )
+        )
     )
     has_combined = has_combined_file and not has_stale_combined
     transcript_file_exists = bool(
@@ -272,7 +282,18 @@ def _state_for_day(
         else 0
     )
 
-    if has_stale_combined:
+    if collapsed_identity_count > 0:
+        next_step = "Verify & repair archive day"
+        action = "resume_download"
+        status = "Archive timeline repair required"
+        status_detail = (
+            f"{collapsed_identity_count} archive timeline position"
+            f"{'s were' if collapsed_identity_count != 1 else ' was'} "
+            "collapsed onto another retained filename by an older cache; "
+            "the previous recording is preserved but hidden until the exact "
+            "missing source positions are restored"
+        )
+    elif has_stale_combined:
         next_step = "Refresh archive day"
         action = "resume_download"
         status = "New audio pending combine"
@@ -367,6 +388,7 @@ def _state_for_day(
         "archive_date": archive_date.isoformat(),
         "day_directory": str(day_directory.resolve()),
         "raw_file_count": len(raw_files),
+        "collapsed_identity_count": collapsed_identity_count,
         "combined_path": str(combined.resolve()) if has_combined else "",
         "transcript_path": str(transcript.resolve()) if has_transcript else "",
         "manifest_path": str(manifest.resolve()) if manifest.is_file() else "",

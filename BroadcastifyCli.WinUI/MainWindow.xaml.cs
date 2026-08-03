@@ -21,6 +21,10 @@ public sealed partial class MainWindow : Window
 {
     private const string DefaultAnalysisModel = "ggml-org/gemma-4-12B-it-GGUF:Q4_0";
     private const int NearestAreaFeedShortcutCount = 3;
+    private const int MaximumVisibleActivityLogCharacters = 120_000;
+    private const int RetainedVisibleActivityLogCharacters = 90_000;
+    private const string VisibleActivityLogTrimMarker =
+        "[Earlier activity remains available in the on-disk activity log.]";
     private readonly ObservableCollection<FeedSearchResult> _feeds = [];
     private readonly ObservableCollection<FeedSearchResult> _areaFeeds = [];
     private List<FeedSearchResult> _allAreaFeeds = [];
@@ -81,6 +85,7 @@ public sealed partial class MainWindow : Window
     private readonly bool _promptForSetup;
     private bool _updatingStartupPreference;
     private bool _pauseScheduledJobsForSetup;
+    private readonly StringBuilder _visibleActivityLog = new();
 
     public MainWindow(
         bool startupLaunch = false,
@@ -5182,8 +5187,27 @@ public sealed partial class MainWindow : Window
 
     private void AppendLog(string message)
     {
-        LogBox.Text += $"[{DateTime.Now:HH:mm:ss}] {message}{Environment.NewLine}";
-        LogBox.Select(LogBox.Text.Length, 0);
+        _visibleActivityLog.Append(
+            $"[{DateTime.Now:HH:mm:ss}] {message}{Environment.NewLine}");
+        if (_visibleActivityLog.Length > MaximumVisibleActivityLogCharacters)
+        {
+            var overflow = _visibleActivityLog.Length
+                - RetainedVisibleActivityLogCharacters;
+            var current = _visibleActivityLog.ToString();
+            var lineBreak = current.IndexOf(
+                Environment.NewLine,
+                overflow,
+                StringComparison.Ordinal);
+            var retained = lineBreak >= 0
+                ? current[(lineBreak + Environment.NewLine.Length)..]
+                : current[^RetainedVisibleActivityLogCharacters..];
+            _visibleActivityLog.Clear();
+            _visibleActivityLog.Append(VisibleActivityLogTrimMarker);
+            _visibleActivityLog.Append(Environment.NewLine);
+            _visibleActivityLog.Append(retained);
+        }
+        LogBox.Text = _visibleActivityLog.ToString();
+        LogBox.Select(_visibleActivityLog.Length, 0);
         AppDiagnostics.AppendActivity(message);
     }
 

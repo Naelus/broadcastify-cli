@@ -278,8 +278,10 @@ class ArchiveBlock:
             raise LanSyncError("A LAN peer advertised an invalid archive identity.")
         if self.listing_prefix and not re.fullmatch(r"\d{12}", self.listing_prefix):
             raise LanSyncError("A LAN peer advertised an invalid archive timestamp.")
-        if len(self.archive_identities) > 64:
-            raise LanSyncError("A LAN peer advertised too many archive identities.")
+        if len(self.archive_identities) > 1:
+            raise LanSyncError(
+                "A LAN peer collapsed multiple archive timeline positions into one file."
+            )
         for identity in self.archive_identities:
             identity.validate()
         identity_ids = [value.archive_id for value in self.archive_identities]
@@ -336,7 +338,7 @@ def _remember_block_archive_identities(
 ) -> None:
     for identity in block.identities():
         # The peer supplied this identity with a hash- and size-verified block.
-        # Preserve aliases when multiple provider IDs resolve to that same MP3.
+        # Equal bytes still need a distinct filename for each timeline position.
         remember_archive_identity(
             day_directory,
             feed_id,
@@ -344,7 +346,6 @@ def _remember_block_archive_identities(
             identity.archive_id,
             source_file,
             listing_prefix=identity.listing_prefix,
-            allow_filename_alias=True,
         )
 
 

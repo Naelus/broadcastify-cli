@@ -1,6 +1,6 @@
 # Feature inventory
 
-Last updated: August 1, 2026
+Last updated: August 3, 2026
 
 Status labels: **Validated**, **Implemented**, **Evaluated**, **Foundation**, or
 **Planned**. Detailed behavior and retained validation evidence belong in
@@ -13,7 +13,7 @@ Status labels: **Validated**, **Implemented**, **Evaluated**, **Foundation**, or
 |---|---|---|
 | Website-login feed search | Validated | Agency/place/ZIP search through Broadcastify website endpoints, not the official API. |
 | Radius and ordered-ZIP profiles | Validated | Approximate ZCTA radius expansion, county-directory parsing, public-safety filter, explicit feed review. |
-| Cache-aware archive acquisition | Validated | Exact provider-ID index with legacy timestamp migration, duplicate-listing suppression, sequential pacing, newest/previous priority, current-day refresh, process-safe 240-of-250 rolling ledger, and immediate 429 stop. |
+| Cache-aware archive acquisition | Validated | One-to-one provider-ID/timeline index with legacy collapse detection and targeted repair, duplicate-listing suppression, sequential pacing, newest/previous priority, current-day refresh, process-safe 240-of-250 rolling ledger, and immediate 429 stop. |
 | Source-specific progress | Validated | Each ready block reports local cache versus Broadcastify download; LAN copies name the exact peer-sourced block. |
 | Nearest-first area queue | Validated | Persists stop points, skips complete feeds, resumes partial work, stops lower priorities on quota exhaustion. |
 | Per-feed daily schedules | Validated | Explicitly selected feeds retain their processing profile, recent-day lookback, and optional self-clearing historical catch-up boundary; visible default-on Windows startup keeps the desktop scheduler available, interrupted/incomplete runs resume retained work, Web/NAS runs continuously, quota deferrals resume at the next known rolling slot, and every scheduler binds jobs to its currently selected Library so a stale path cannot re-fetch the same archive IDs into another root. |
@@ -61,7 +61,7 @@ See [evidence analysis](docs/features/evidence-analysis.md),
 
 | Capability | Status | Notes |
 |---|---|---|
-| Native WinUI 3 shell | Validated | Task navigation for Library, New Archive, Review & Ask, Area Watch, and Settings. |
+| Native WinUI 3 shell | Validated | Task navigation for Library, New Archive, Review & Ask, Area Watch, and Settings; the visible activity pane retains a bounded recent window while the complete rotating diagnostic log stays on disk, preventing multi-day background runs from backpressuring workers. |
 | Local Library | Validated | Five-stage timeline, playback, transcript preview, stale-result detection, retained-versus-temporary storage, safe orphan cleanup, and exact resume/upgrade/review action. |
 | Area Watch | Validated | Profile discovery, queue, coverage-aware ranked leads, selected evidence, clips and exports. |
 | Neighborhood subscription delivery | Foundation | Story eligibility and neighborhood/topic tags exist; opt-in delivery is explicitly low priority in [#5](https://github.com/Naelus/broadcastify-cli/issues/5). |
