@@ -1,5 +1,7 @@
+import io
 import json
 import os
+import sys
 import time
 from contextlib import nullcontext
 from datetime import date
@@ -23,11 +25,27 @@ from broadcastify_cli.worker import (
     archive_quota_status,
     asr_self_test,
     diarization_self_test,
+    emit,
     load_worker_environment,
     latest_area_digest,
     prepare_asr_model_command,
     profile_self_test,
 )
+
+
+def test_emit_is_safe_on_a_legacy_windows_console(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    buffer = io.BytesIO()
+    console = io.TextIOWrapper(buffer, encoding="cp1252", newline="\n")
+    monkeypatch.setattr(sys, "stdout", console)
+
+    emit({"message": "quota reached \u2192 resume later"})
+    console.flush()
+
+    encoded = buffer.getvalue().decode("cp1252")
+    assert "\\u2192" in encoded
+    assert json.loads(encoded)["message"] == "quota reached \u2192 resume later"
 
 
 def test_archive_quota_status_mints_one_persistent_installation_identity(

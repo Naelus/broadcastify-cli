@@ -93,7 +93,12 @@ LOADED_ENVIRONMENT_FILE: Path | None = None
 
 
 def emit(value: dict[str, Any]) -> None:
-    print(json.dumps(value, ensure_ascii=False), flush=True)
+    # The worker protocol is line-delimited JSON and is consumed by WinUI,
+    # browser/server processes, and direct shell automation.  Escape non-ASCII
+    # code points so a Windows console using a legacy code page (commonly
+    # cp1252) cannot crash while emitting a saved message that contains Unicode
+    # punctuation.  JSON consumers reconstruct the original text unchanged.
+    print(json.dumps(value, ensure_ascii=True), flush=True)
 
 
 def search_feeds(query: str) -> int:
