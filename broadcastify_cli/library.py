@@ -3,14 +3,20 @@ from __future__ import annotations
 import json
 import re
 import shutil
+import time
 import uuid
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
 
 from .analysis import PROMPT_VERSION
-from .archive_cache import collapsed_archive_identity_count
+from .archive_cache import (
+    ARCHIVE_CACHE_COMPLETION_FILENAME,
+    ARCHIVE_CACHE_COMPLETION_SCHEMA_VERSION,
+    cached_archive_for_id,
+    collapsed_archive_identity_count,
+)
 from .audio import combined_output_is_current
 from .portable_diarization import (
     COMMUNITY_DIARIZATION_ENGINE,
@@ -31,18 +37,261 @@ from .workfiles import (
 RAW_ARCHIVE_PATTERN = re.compile(r"^\d{12}-\d+-(\d+)\.mp3$", re.IGNORECASE)
 DAY_DIRECTORY_PATTERN = re.compile(r"^\d{8}$")
 PENDING_DELETE_PATTERN = re.compile(r"^\.deleting-\d+-[0-9a-f]{32}$")
+CURRENT_DAY_SOURCE_REFRESH = timedelta(minutes=30)
+DELETE_DETACH_RETRY_SECONDS = (0.0, 0.15, 0.3, 0.6, 1.0, 1.5)
+
+
+def _schedule_target_dates(
+    schedule: dict[str, Any],
+    today: date,
+) -> list[date]:
+    if not bool(schedule.get("enabled", True)):
+        return []
+    lookback = max(1, min(14, int(schedule.get("lookback_days") or 2)))
+    start = today - timedelta(days=lookback - 1)
+    backfill = str(schedule.get("backfill_start_date") or "").strip()
+    if backfill:
+        try:
+            start = min(start, date.fromisoformat(backfill))
+        except ValueError:
+            pass
+    return [
+        start + timedelta(days=offset)
+        for offset in range((today - start).days + 1)
+    ]
+
+
+def build_library_feed_coverage(
+    days: list[dict[str, Any]],
+    schedules: list[dict[str, Any]] | None = None,
+    *,
+    today: date | None = None,
+) -> list[dict[str, Any]]:
+    """Summarize retained and scheduled coverage without website access."""
+
+    current = today or date.today()
+    schedule_by_feed = {
+        str(value.get("feed_id") or ""): value
+        for value in schedules or []
+        if str(value.get("feed_id") or "")
+    }
+    days_by_feed: dict[str, list[dict[str, Any]]] = {}
+    for value in days:
+        feed_id = str(value.get("feed_id") or "")
+        if feed_id:
+            days_by_feed.setdefault(feed_id, []).append(value)
+    feed_ids = sorted(set(days_by_feed) | set(schedule_by_feed))
+    results: list[dict[str, Any]] = []
+    for feed_id in feed_ids:
+        retained = days_by_feed.get(feed_id, [])
+        schedule = schedule_by_feed.get(feed_id)
+        target_dates = _schedule_target_dates(schedule, current) if schedule else []
+        target_values = {value.isoformat() for value in target_dates}
+        retained_by_date = {
+            str(value.get("archive_date") or ""): value
+            for value in retained
+            if str(value.get("archive_date") or "")
+        }
+        missing_dates = [
+            value.isoformat()
+            for value in target_dates
+            if value.isoformat() not in retained_by_date
+        ]
+        target_days = (
+            [retained_by_date[value] for value in sorted(target_values & set(retained_by_date))]
+            if target_values
+            else list(retained)
+        )
+        incomplete = [value for value in target_days if not bool(value.get("is_complete"))]
+        source_due = [
+            value
+            for value in target_days
+            if bool(value.get("source_check_due"))
+        ]
+        network_days = {
+            str(value.get("archive_date") or "")
+            for value in target_days
+            if bool(value.get("needs_network"))
+            or bool(value.get("source_check_due"))
+        }
+        network_days.update(missing_dates)
+        local_processing_dates = {
+            str(value.get("archive_date") or "")
+            for value in incomplete
+            if not bool(value.get("needs_network"))
+        }
+        local_dates = sorted(retained_by_date)
+        latest_local = local_dates[-1] if local_dates else ""
+        latest_date = date.fromisoformat(latest_local) if latest_local else None
+        days_behind = max(0, (current - latest_date).days) if latest_date else None
+        expected_count = len(target_dates) if target_dates else len(retained)
+        progress_points = sum(
+            max(0, min(100, int(value.get("pipeline_percent") or 0)))
+            for value in target_days
+        )
+        progress_percent = (
+            round(progress_points / expected_count)
+            if expected_count
+            else 0
+        )
+        names = [
+            str(value.get("feed_name") or "").strip()
+            for value in retained
+            if str(value.get("feed_name") or "").strip()
+        ]
+        feed_name = str((schedule or {}).get("feed_name") or "").strip()
+        if not feed_name and names:
+            feed_name = names[0]
+        if not feed_name:
+            feed_name = f"Feed {feed_id}"
+        checked_values = sorted(
+            str(value.get("source_checked_at") or "")
+            for value in retained
+            if str(value.get("source_checked_at") or "")
+        )
+        known_source_blocks = sum(
+            int(value.get("known_source_count") or 0)
+            for value in target_days
+        )
+        retained_source_blocks = sum(
+            int(value.get("retained_source_count") or 0)
+            for value in target_days
+        )
+        missing_source_blocks = sum(
+            int(value.get("missing_source_count") or 0)
+            for value in target_days
+        )
+        scheduled = bool(schedule and schedule.get("enabled", True))
+        backlog_count = len(set(missing_dates) | network_days | local_processing_dates)
+        if scheduled and backlog_count == 0:
+            status = "Caught up for the scheduled range"
+        elif scheduled:
+            status = f"{backlog_count} scheduled day{'s' if backlog_count != 1 else ''} need work"
+        elif incomplete:
+            status = f"{len(incomplete)} retained day{'s' if len(incomplete) != 1 else ''} need local work"
+        elif latest_date is None:
+            status = "No retained days yet"
+        elif days_behind == 0:
+            status = "Newest retained day is today"
+        else:
+            status = f"Newest retained day is {days_behind} day{'s' if days_behind != 1 else ''} old"
+        results.append(
+            {
+                "feed_id": feed_id,
+                "feed_name": feed_name,
+                "scheduled": scheduled,
+                "schedule_enabled": bool(schedule and schedule.get("enabled", True)),
+                "target_start_date": target_dates[0].isoformat() if target_dates else "",
+                "target_end_date": target_dates[-1].isoformat() if target_dates else "",
+                "target_day_count": expected_count,
+                "retained_day_count": len(target_days) if target_dates else len(retained),
+                "ready_day_count": sum(bool(value.get("is_complete")) for value in target_days),
+                "incomplete_day_count": len(incomplete),
+                "missing_day_count": len(missing_dates),
+                "missing_dates": missing_dates,
+                "source_check_due_count": len(source_due),
+                "network_day_count": len(network_days),
+                "local_processing_day_count": len(local_processing_dates),
+                "backlog_count": backlog_count,
+                "latest_local_date": latest_local,
+                "days_behind_today": days_behind,
+                "last_source_check_at": checked_values[-1] if checked_values else "",
+                "known_source_block_count": known_source_blocks,
+                "retained_source_block_count": retained_source_blocks,
+                "missing_source_block_count": missing_source_blocks,
+                "progress_percent": progress_percent,
+                "status": status,
+            }
+        )
+    return sorted(
+        results,
+        key=lambda value: (
+            not bool(value["scheduled"]),
+            -int(value["backlog_count"]),
+            str(value["feed_name"]).lower(),
+        ),
+    )
+
+
+def _missing_resume_day(
+    feed_id: str,
+    feed_name: str,
+    archive_date: str,
+) -> dict[str, Any]:
+    return {
+        "feed_id": feed_id,
+        "feed_name": feed_name,
+        "archive_date": archive_date,
+        "status": "Scheduled day missing",
+        "status_detail": "No retained source audio exists for this scheduled day",
+        "next_step": "Acquire scheduled archive day",
+        "primary_action": "resume_download",
+        "pipeline_percent": 0,
+        "pipeline_summary": "Audio missing  ·  Not combined  ·  Not transcribed  ·  Not diarized  ·  Not analyzed",
+        "is_complete": False,
+        "needs_local_processing": False,
+        "needs_network": True,
+        "source_check_due": True,
+        "scheduled_missing": True,
+    }
 
 
 def build_library_resume_plan(
     days: list[dict[str, Any]],
     quota_status: dict[str, Any],
+    schedules: list[dict[str, Any]] | None = None,
+    *,
+    today: date | None = None,
 ) -> dict[str, Any]:
     """Return a deterministic local-first queue without starting any work."""
 
-    incomplete = [value for value in days if not bool(value.get("is_complete"))]
+    coverage = build_library_feed_coverage(days, schedules, today=today)
+    candidates = [
+        dict(value)
+        for value in days
+        if not bool(value.get("is_complete"))
+        or bool(value.get("source_check_due"))
+    ]
+    existing_keys = {
+        (str(value.get("feed_id") or ""), str(value.get("archive_date") or ""))
+        for value in candidates
+    }
+    for feed in coverage:
+        for archive_value in feed["missing_dates"]:
+            key = (str(feed["feed_id"]), archive_value)
+            if key in existing_keys:
+                continue
+            candidates.append(
+                _missing_resume_day(
+                    str(feed["feed_id"]),
+                    str(feed["feed_name"]),
+                    archive_value,
+                )
+            )
+            existing_keys.add(key)
+    for value in candidates:
+        value["needs_local_processing"] = bool(
+            not value.get("is_complete")
+            and not value.get("needs_network")
+        )
+        if bool(value.get("source_check_due")):
+            value["needs_network"] = True
+            if bool(value.get("is_complete")):
+                value.update(
+                    {
+                        "status": "Source refresh due",
+                        "status_detail": (
+                            "The retained processing is complete, but the latest "
+                            "source listing snapshot may have grown"
+                        ),
+                        "next_step": "Check for new source audio",
+                        "primary_action": "resume_download",
+                    }
+                )
     ordered = sorted(
-        incomplete,
+        candidates,
         key=lambda value: (
+            not bool(value.get("needs_local_processing")),
             bool(value.get("needs_network")),
             str(value.get("archive_date") or ""),
             str(value.get("feed_id") or ""),
@@ -50,7 +299,10 @@ def build_library_resume_plan(
     )
     return {
         "days": ordered,
-        "local_count": sum(not bool(value.get("needs_network")) for value in ordered),
+        "feeds": coverage,
+        "local_count": sum(
+            bool(value.get("needs_local_processing")) for value in ordered
+        ),
         "network_count": sum(bool(value.get("needs_network")) for value in ordered),
         "quota": dict(quota_status),
     }
@@ -80,7 +332,24 @@ def delete_local_library_feed(
         if feed_directory.resolve().parent != output_root:
             raise ValueError("The feed library path escapes the selected library root.")
         tombstone = output_root / f".deleting-{normalized}-{uuid.uuid4().hex}"
-        feed_directory.rename(tombstone)
+        last_error: PermissionError | None = None
+        for delay in DELETE_DETACH_RETRY_SECONDS:
+            if delay:
+                time.sleep(delay)
+            try:
+                feed_directory.rename(tombstone)
+                last_error = None
+                break
+            except PermissionError as exc:
+                last_error = exc
+        if last_error is not None:
+            raise PermissionError(
+                f"Feed {normalized} is still in use by audio playback, an archive "
+                "worker, File Explorer, or another process. Playback was released "
+                "and the detach was retried, but Windows still denied it. Close "
+                "anything using that feed folder and choose Delete feed again; no "
+                "library records or files were removed."
+            ) from last_error
 
     try:
         with AnalysisStore(database_path) as store:
@@ -213,6 +482,76 @@ def _manifest_feed_name(path: Path) -> str:
     return str(payload.get("feed_name") or "").strip()[:200]
 
 
+def _archive_source_snapshot(
+    day_directory: Path,
+    feed_id: str,
+    archive_date: date,
+    *,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Describe the last authenticated listing snapshot using local files only."""
+
+    path = day_directory / ARCHIVE_CACHE_COMPLETION_FILENAME
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, TypeError, ValueError, json.JSONDecodeError):
+        payload = None
+    valid = bool(
+        isinstance(payload, dict)
+        and payload.get("schema_version")
+        == ARCHIVE_CACHE_COMPLETION_SCHEMA_VERSION
+        and str(payload.get("feed_id") or "") == str(feed_id)
+        and str(payload.get("archive_date") or "") == archive_date.isoformat()
+        and isinstance(payload.get("archive_ids"), list)
+    )
+    archive_ids: list[str] = []
+    checked_at = ""
+    checked_value: datetime | None = None
+    if valid and isinstance(payload, dict):
+        raw_ids = payload.get("archive_ids") or []
+        if (
+            len(raw_ids) <= 1_000
+            and all(
+                isinstance(value, str) and value and len(value) <= 200
+                for value in raw_ids
+            )
+            and len(set(raw_ids)) == len(raw_ids)
+        ):
+            archive_ids = list(raw_ids)
+        else:
+            valid = False
+        try:
+            timestamp = float(payload.get("completed_at_unix") or 0)
+            if timestamp > 0:
+                checked_value = datetime.fromtimestamp(timestamp, timezone.utc)
+                checked_at = checked_value.isoformat(timespec="seconds")
+        except (OSError, OverflowError, TypeError, ValueError):
+            checked_value = None
+            checked_at = ""
+    retained = 0
+    if valid:
+        retained = sum(
+            cached_archive_for_id(day_directory, feed_id, archive_id) is not None
+            for archive_id in archive_ids
+        )
+    current_local = now or datetime.now().astimezone()
+    if current_local.tzinfo is None:
+        current_local = current_local.astimezone()
+    current_utc = current_local.astimezone(timezone.utc)
+    source_check_due = archive_date >= current_local.date() and (
+        checked_value is None
+        or current_utc - checked_value >= CURRENT_DAY_SOURCE_REFRESH
+    )
+    return {
+        "known_source_count": len(archive_ids) if valid else 0,
+        "retained_source_count": retained if valid else 0,
+        "missing_source_count": max(0, len(archive_ids) - retained) if valid else 0,
+        "source_checked_at": checked_at,
+        "source_snapshot_complete": bool(valid and retained == len(archive_ids)),
+        "source_check_due": source_check_due,
+    }
+
+
 def _transcript_is_current(audio: Path, transcript: Path) -> bool:
     """Reject results created before the combined recording was refreshed."""
 
@@ -297,6 +636,11 @@ def _state_for_day(
             if match and match.group(1) == feed_id:
                 raw_files.append(path)
         raw_files.sort()
+    source_snapshot = _archive_source_snapshot(
+        day_directory,
+        feed_id,
+        archive_date,
+    )
     has_combined_file = combined.is_file() and combined.stat().st_size > 0
     collapsed_identity_count = collapsed_archive_identity_count(
         day_directory,
@@ -380,7 +724,17 @@ def _state_for_day(
         else 0
     )
 
-    if collapsed_identity_count > 0:
+    if int(source_snapshot["missing_source_count"]) > 0:
+        next_step = "Restore missing source audio"
+        action = "resume_download"
+        status = "Archive source repair required"
+        status_detail = (
+            f"The last authenticated listing contained "
+            f"{source_snapshot['known_source_count']} source segments, but "
+            f"{source_snapshot['missing_source_count']} retained segment"
+            f"{'s are' if source_snapshot['missing_source_count'] != 1 else ' is'} missing"
+        )
+    elif collapsed_identity_count > 0:
         next_step = "Verify & repair archive day"
         action = "resume_download"
         status = "Archive timeline repair required"
@@ -521,7 +875,16 @@ def _state_for_day(
         "primary_action": action,
         "can_open_review": has_analysis,
         "is_complete": has_diarization and has_analysis,
-        "needs_network": not has_combined,
+        "needs_network": (
+            not has_combined
+            or int(source_snapshot["missing_source_count"]) > 0
+        ),
+        "known_source_count": int(source_snapshot["known_source_count"]),
+        "retained_source_count": int(source_snapshot["retained_source_count"]),
+        "missing_source_count": int(source_snapshot["missing_source_count"]),
+        "source_checked_at": str(source_snapshot["source_checked_at"]),
+        "source_snapshot_complete": bool(source_snapshot["source_snapshot_complete"]),
+        "source_check_due": bool(source_snapshot["source_check_due"]),
     }
 
 

@@ -77,6 +77,7 @@ from .geography import CENSUS_ZCTA_YEAR, ZipCentroidCatalog
 from .jobs import JobRunner
 from .library import (
     LocalProcessingRequest,
+    build_library_feed_coverage,
     build_library_resume_plan,
     delete_local_library_feed,
     prepare_local_day,
@@ -1293,21 +1294,28 @@ def analysis_days(feed_id: str | None) -> int:
             and not state["has_imported_transcript"]
         )
         if state:
+            day["feed_name"] = str(state.get("feed_name") or "")
             day["segment_count"] = int(state["segment_count"])
             day["incident_count"] = int(state["incident_count"])
             day["has_diarization"] = int(bool(state["has_diarization"]))
+        if not str(day.get("feed_name") or "").strip():
+            day["feed_name"] = f"Feed {day['feed_id']}"
     emit({"type": "analysis_days", "days": days})
     return 0
 
 
 def library_days(output_dir: str) -> int:
     days = scan_local_library(Path(output_dir), DEFAULT_DATABASE)
+    with AnalysisStore(DEFAULT_DATABASE) as store:
+        schedules = store.list_feed_schedules()
+    feeds = build_library_feed_coverage(days, schedules)
     emit(
         {
             "type": "library_days",
             "days": days,
+            "feeds": feeds,
             "summary": {
-                "feed_count": len({value["feed_id"] for value in days}),
+                "feed_count": len(feeds),
                 "day_count": len(days),
                 "complete_count": sum(bool(value["is_complete"]) for value in days),
                 "attention_count": sum(not bool(value["is_complete"]) for value in days),
@@ -1315,6 +1323,9 @@ def library_days(output_dir: str) -> int:
                 "working_storage_bytes": sum(
                     int(value["working_storage_bytes"]) for value in days
                 ),
+                "backlog_count": sum(int(value["backlog_count"]) for value in feeds),
+                "missing_day_count": sum(int(value["missing_day_count"]) for value in feeds),
+                "network_day_count": sum(int(value["network_day_count"]) for value in feeds),
             },
         }
     )
@@ -1323,7 +1334,13 @@ def library_days(output_dir: str) -> int:
 
 def library_resume_plan(output_dir: str) -> int:
     days = scan_local_library(Path(output_dir), DEFAULT_DATABASE)
-    result = build_library_resume_plan(days, ArchiveRequestLedger().status())
+    with AnalysisStore(DEFAULT_DATABASE) as store:
+        schedules = store.list_feed_schedules()
+    result = build_library_resume_plan(
+        days,
+        ArchiveRequestLedger().status(),
+        schedules,
+    )
     emit({"type": "library_resume_plan", **result})
     return 0
 
@@ -1701,6 +1718,9 @@ def ask_archive() -> int:
     question = str(payload["question"]).strip()
     if not question:
         raise ValueError("A question is required.")
+    history = payload.get("history")
+    if not isinstance(history, list):
+        history = []
     provider = AnalysisProviderConfig.from_mapping(payload)
     emit(
         {
@@ -1725,7 +1745,13 @@ def ask_archive() -> int:
                 store,
                 client,
                 indexer=indexer,
-            ).ask(feed_id, start_date, end_date, question)
+            ).ask(
+                feed_id,
+                start_date,
+                end_date,
+                question,
+                history=[value for value in history if isinstance(value, dict)],
+            )
     emit({"type": "answer", "message": "Question answered.", "result": result})
     return 0
 

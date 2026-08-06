@@ -4,10 +4,16 @@ import time
 from datetime import date
 from pathlib import Path
 
+import pytest
+
 from broadcastify_cli.analysis import PROMPT_VERSION
-from broadcastify_cli.archive_cache import remember_archive_identity
+from broadcastify_cli.archive_cache import (
+    remember_archive_identity,
+    remember_complete_archive_day,
+)
 from broadcastify_cli.library import (
     LocalProcessingRequest,
+    build_library_feed_coverage,
     build_library_resume_plan,
     cleanup_pending_library_deletions,
     delete_local_library_feed,
@@ -55,6 +61,171 @@ def test_library_resume_plan_is_local_first_and_never_starts_acquisition() -> No
     assert result["local_count"] == 1
     assert result["network_count"] == 1
     assert result["quota"] == quota
+
+
+def test_library_coverage_and_resume_plan_include_missing_scheduled_days() -> None:
+    days = [
+        {
+            "feed_id": "90001",
+            "feed_name": "Example Public Safety",
+            "archive_date": "2026-08-05",
+            "is_complete": True,
+            "needs_network": False,
+            "source_check_due": False,
+            "pipeline_percent": 100,
+        }
+    ]
+    schedules = [
+        {
+            "feed_id": "90001",
+            "feed_name": "Example Public Safety",
+            "enabled": True,
+            "lookback_days": 3,
+            "backfill_start_date": "",
+        }
+    ]
+
+    feeds = build_library_feed_coverage(
+        days,
+        schedules,
+        today=date(2026, 8, 6),
+    )
+    plan = build_library_resume_plan(
+        days,
+        {"available": True, "remaining": 12},
+        schedules,
+        today=date(2026, 8, 6),
+    )
+
+    assert feeds[0]["target_start_date"] == "2026-08-04"
+    assert feeds[0]["target_end_date"] == "2026-08-06"
+    assert feeds[0]["missing_dates"] == ["2026-08-04", "2026-08-06"]
+    assert feeds[0]["backlog_count"] == 2
+    assert [value["archive_date"] for value in plan["days"]] == [
+        "2026-08-04",
+        "2026-08-06",
+    ]
+    assert plan["network_count"] == 2
+    assert all(value["scheduled_missing"] for value in plan["days"])
+
+
+def test_current_day_source_snapshot_becomes_resume_candidate_when_stale(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    day = _day(tmp_path, "90001", date.today().isoformat())
+    source = day / f"{date.today():%Y%m%d}0000-1-90001.mp3"
+    source.write_bytes(b"source")
+    combined = day / f"combined_90001_{date.today():%Y%m%d}.mp3"
+    combined.write_bytes(b"combined")
+    combined.with_suffix(".manifest.json").write_text(
+        json.dumps({"sources": [{"source_file": source.name}]}),
+        encoding="utf-8",
+    )
+    remember_archive_identity(
+        day,
+        "90001",
+        date.today(),
+        "archive-1",
+        source,
+    )
+    assert remember_complete_archive_day(
+        day,
+        "90001",
+        date.today(),
+        ["archive-1"],
+    )
+    completion = day / ".broadcastify-archive-complete.json"
+    payload = json.loads(completion.read_text(encoding="utf-8"))
+    payload["completed_at_unix"] = time.time() - 3_600
+    completion.write_text(json.dumps(payload), encoding="utf-8")
+
+    state = scan_local_library(tmp_path, tmp_path / "analysis.sqlite3")[0]
+    plan = build_library_resume_plan(
+        [state],
+        {"available": True, "remaining": 12},
+    )
+
+    assert state["known_source_count"] == 1
+    assert state["retained_source_count"] == 1
+    assert state["source_check_due"] is True
+    assert plan["days"][0]["needs_local_processing"] is True
+    assert plan["days"][0]["needs_network"] is True
+    assert plan["local_count"] == 1
+    assert plan["network_count"] == 1
+
+
+def test_delete_feed_retries_a_transient_windows_directory_lock(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    feed = _day(tmp_path, "90001", "2026-08-05").parent
+    (feed / "20260805" / "retained.txt").write_text("saved", encoding="utf-8")
+    database = tmp_path / "analysis.sqlite3"
+    with AnalysisStore(database):
+        pass
+    original_rename = Path.rename
+    attempts = 0
+
+    def flaky_rename(source: Path, target: Path) -> Path:
+        nonlocal attempts
+        if source == feed and attempts < 2:
+            attempts += 1
+            raise PermissionError(5, "Access is denied")
+        return original_rename(source, target)
+
+    monkeypatch.setattr(Path, "rename", flaky_rename)
+    monkeypatch.setattr(
+        "broadcastify_cli.library.DELETE_DETACH_RETRY_SECONDS",
+        (0.0, 0.0, 0.0),
+    )
+
+    result = delete_local_library_feed(tmp_path, database, "90001")
+
+    assert attempts == 2
+    assert result["directory_deleted"] is True
+    assert not feed.exists()
+
+
+def test_delete_feed_preserves_files_and_records_when_windows_lock_persists(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    day = _day(tmp_path, "90001", "2026-08-05")
+    audio = day / "combined_90001_20260805.mp3"
+    transcript = day / "transcripts" / "combined_90001_20260805.json"
+    audio.write_bytes(b"audio")
+    transcript.parent.mkdir()
+    transcript.write_text(
+        json.dumps(
+            {
+                "segments": [
+                    {"start": 0.0, "end": 1.0, "text": "retained"}
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    database = tmp_path / "analysis.sqlite3"
+    with AnalysisStore(database) as store:
+        store.import_transcript("90001", date(2026, 8, 5), transcript, audio)
+
+    def locked_rename(_source: Path, _target: Path) -> Path:
+        raise PermissionError(5, "Access is denied")
+
+    monkeypatch.setattr(Path, "rename", locked_rename)
+    monkeypatch.setattr(
+        "broadcastify_cli.library.DELETE_DETACH_RETRY_SECONDS",
+        (0.0, 0.0),
+    )
+
+    with pytest.raises(PermissionError, match="still in use"):
+        delete_local_library_feed(tmp_path, database, "90001")
+
+    assert audio.is_file()
+    assert transcript.is_file()
+    with AnalysisStore(database) as store:
+        assert len(store.list_days("90001")) == 1
 
 
 def test_delete_local_library_feed_removes_only_selected_feed_and_schedule(

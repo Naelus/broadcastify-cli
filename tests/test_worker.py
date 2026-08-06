@@ -80,6 +80,19 @@ def test_library_resume_planning_reads_only_local_state_and_quota(
         def __init__(self, *_args: object, **_kwargs: object) -> None:
             raise AssertionError("resume planning must not create a website client")
 
+    class FakeStore:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            pass
+
+        def list_feed_schedules(self) -> list[dict[str, object]]:
+            return []
+
     monkeypatch.setattr(
         "broadcastify_cli.worker.scan_local_library",
         lambda *_args: [
@@ -92,6 +105,7 @@ def test_library_resume_planning_reads_only_local_state_and_quota(
         ],
     )
     monkeypatch.setattr("broadcastify_cli.worker.ArchiveRequestLedger", FakeLedger)
+    monkeypatch.setattr("broadcastify_cli.worker.AnalysisStore", FakeStore)
     monkeypatch.setattr(
         "broadcastify_cli.worker.BroadcastifyClient",
         ForbiddenBroadcastifyClient,
