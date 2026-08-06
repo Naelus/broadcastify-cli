@@ -38,6 +38,14 @@ worker progress stream. Every message is still appended to `activity.log`, with
 the previous file retained as `activity.previous.log` when the current log
 reaches 5 MiB.
 
+Long-running acquisition/processing uses a background pipeline rather than a
+window-wide busy state. Read-only SQLite consumers and unrelated-feed deletion
+can continue through WAL mode with a 30-second busy timeout. Same-feed playback
+and file mutation are held while that feed is being refreshed so Windows media
+handles cannot prevent atomic replacement or deletion. Local model-backed
+analysis is serialized separately from download/ASR work, allowing archive chat
+to run during those stages without loading a second competing Gemma server.
+
 Linux service defaults:
 
 - data/working directory: `~/.local/share/radio-archive`

@@ -61,6 +61,7 @@
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
                             <RowDefinition Height="*" />
                         </Grid.RowDefinitions>
 
@@ -76,7 +77,7 @@
                             </StackPanel>
                             <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8"
                                         VerticalAlignment="Center">
-                                <Button x:Name="ResumeAllLibraryButton" Content="Resume all"
+                                <Button x:Name="ResumeAllLibraryButton" Content="Resume / prioritize…"
                                         Click="ResumeAllLibrary_Click"
                                         ToolTipService.ToolTip="Finish local-only work first, then use the guarded rolling archive allowance one day at a time." />
                                 <Button x:Name="RefreshLibraryButton" Content="Refresh library"
@@ -98,14 +99,53 @@
                                 <StackPanel Spacing="3"><TextBlock Text="Local days" Foreground="{ThemeResource TextFillColorSecondaryBrush}" /><TextBlock x:Name="LibraryDayCountText" Text="—" FontSize="24" FontWeight="SemiBold" /></StackPanel>
                             </Border>
                             <Border Grid.Column="2" Style="{StaticResource CardBorderStyle}" Padding="16">
-                                <StackPanel Spacing="3"><TextBlock Text="Need a next step" Foreground="{ThemeResource TextFillColorSecondaryBrush}" /><TextBlock x:Name="LibraryAttentionCountText" Text="—" FontSize="24" FontWeight="SemiBold" /></StackPanel>
+                                <StackPanel Spacing="3"><TextBlock Text="Backlog" Foreground="{ThemeResource TextFillColorSecondaryBrush}" /><TextBlock x:Name="LibraryAttentionCountText" Text="—" FontSize="24" FontWeight="SemiBold" /></StackPanel>
                             </Border>
                             <Border Grid.Column="3" Style="{StaticResource CardBorderStyle}" Padding="16">
                                 <StackPanel Spacing="3"><TextBlock Text="Ready to review" Foreground="{ThemeResource TextFillColorSecondaryBrush}" /><TextBlock x:Name="LibraryCompleteCountText" Text="—" FontSize="24" FontWeight="SemiBold" /></StackPanel>
                             </Border>
                         </Grid>
 
-                        <Grid Grid.Row="2" ColumnSpacing="10">
+                        <Expander Grid.Row="2" Header="Feed coverage and backlog" IsExpanded="True">
+                            <Grid RowSpacing="8" Padding="0,8,0,2">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+                                <TextBlock x:Name="LibraryBacklogSummaryText"
+                                           Text="Coverage is calculated locally from scheduled target ranges and retained source snapshots."
+                                           TextWrapping="Wrap"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                <ListView x:Name="LibraryFeedCoverageList" Grid.Row="1"
+                                          SelectionMode="Single" MaxHeight="190"
+                                          SelectionChanged="LibraryFeedCoverage_SelectionChanged">
+                                    <ListView.ItemTemplate>
+                                        <DataTemplate x:DataType="local:LibraryFeedCoverage">
+                                            <Grid Padding="10,7" ColumnSpacing="12">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="5*" />
+                                                    <ColumnDefinition Width="4*" />
+                                                </Grid.ColumnDefinitions>
+                                                <StackPanel Spacing="3">
+                                                    <TextBlock Text="{x:Bind FeedLabel}" Style="{StaticResource BodyStrongTextBlockStyle}"
+                                                               MaxLines="1" TextTrimming="CharacterEllipsis" />
+                                                    <TextBlock Text="{x:Bind TargetSummary}" TextWrapping="Wrap"
+                                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                </StackPanel>
+                                                <StackPanel Grid.Column="1" Spacing="4">
+                                                    <TextBlock Text="{x:Bind WorkSummary}" TextWrapping="Wrap" />
+                                                    <TextBlock Text="{x:Bind SourceSummary}" TextWrapping="Wrap"
+                                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                    <ProgressBar Minimum="0" Maximum="100" Value="{x:Bind ProgressPercent}" />
+                                                </StackPanel>
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ListView.ItemTemplate>
+                                </ListView>
+                            </Grid>
+                        </Expander>
+
+                        <Grid Grid.Row="3" ColumnSpacing="10">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="220" />
@@ -121,7 +161,7 @@
                             </ComboBox>
                         </Grid>
 
-                        <Border Grid.Row="3" Style="{StaticResource CardBorderStyle}" Padding="0">
+                        <Border Grid.Row="4" Style="{StaticResource CardBorderStyle}" Padding="0">
                             <Grid ColumnSpacing="0">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="5*" MinWidth="330" />
@@ -205,6 +245,8 @@
                                                         <StackPanel Spacing="10">
                                                             <ProgressBar x:Name="LibraryDetailProgress" Minimum="0" Maximum="100" />
                                                             <TextBlock x:Name="LibraryDetailStatusText" TextWrapping="Wrap"
+                                                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                            <TextBlock x:Name="LibrarySourceCoverageText" TextWrapping="Wrap"
                                                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                                             <Border Padding="12,8" CornerRadius="6" Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}">
                                                                 <StackPanel Spacing="8">
@@ -385,7 +427,13 @@
                             <Border Style="{StaticResource CardBorderStyle}">
                                 <Grid RowSpacing="10">
                                     <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
-                                    <TextBox x:Name="AnalysisFeedBox" Header="Feed ID" PlaceholderText="Numeric feed ID" />
+                                    <StackPanel Spacing="0">
+                                        <ComboBox x:Name="AnalysisFeedCombo" Header="Feed"
+                                                  DisplayMemberPath="FeedLabel" HorizontalAlignment="Stretch"
+                                                  PlaceholderText="Choose a retained or scheduled feed"
+                                                  SelectionChanged="AnalysisFeedCombo_SelectionChanged" />
+                                        <TextBox x:Name="AnalysisFeedBox" Visibility="Collapsed" />
+                                    </StackPanel>
                                     <Button x:Name="RefreshAnalysisButton" Grid.Row="1" Content="Refresh saved days" Click="RefreshAnalysis_Click" />
                                     <ListView x:Name="AnalysisDaysList" Grid.Row="2" SelectionMode="Single" SelectionChanged="AnalysisDays_SelectionChanged">
                                         <ListView.ItemTemplate>
@@ -474,16 +522,58 @@
                                 </TabViewItem>
                                 <TabViewItem Header="Ask the archive" IsClosable="False">
                                     <ScrollViewer Padding="8">
-                                        <StackPanel Spacing="14" MaxWidth="900" HorizontalAlignment="Left">
-                                            <TextBlock Text="Ask across a date range" Style="{StaticResource SubtitleTextBlockStyle}" />
+                                        <StackPanel Spacing="12" MaxWidth="900" HorizontalAlignment="Stretch">
+                                            <Grid ColumnSpacing="10">
+                                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                                <StackPanel Spacing="3">
+                                                    <TextBlock Text="Chat with this feed's retained evidence" Style="{StaticResource SubtitleTextBlockStyle}" />
+                                                    <TextBlock x:Name="ArchiveChatFeedText" Text="Choose a named feed on the left."
+                                                               TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                </StackPanel>
+                                                <Button x:Name="ClearArchiveChatButton" Grid.Column="1" Content="New chat"
+                                                        VerticalAlignment="Center" Click="ClearArchiveChat_Click" />
+                                            </Grid>
                                             <Grid ColumnSpacing="10">
                                                 <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
                                                 <DatePicker x:Name="QuestionStartDatePicker" Header="Start date" />
                                                 <DatePicker x:Name="QuestionEndDatePicker" Grid.Column="1" Header="End date" />
-                                                <TextBox x:Name="QuestionBox" Grid.Column="2" Header="Question" MinWidth="360" PlaceholderText="What were the most serious reported events?" />
+                                                <TextBlock Grid.Column="2" Text="Answers use the configured analysis provider (local Gemma 4 12B Q4 by default), retrieved transcript passages, and saved incident records."
+                                                           TextWrapping="Wrap" VerticalAlignment="Bottom"
+                                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                             </Grid>
-                                            <Button x:Name="AskButton" Content="Ask locally" HorizontalAlignment="Left" Style="{StaticResource AccentButtonStyle}" Click="Ask_Click" />
-                                            <TextBlock x:Name="AnswerText" TextWrapping="Wrap" IsTextSelectionEnabled="True" />
+                                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                                <Button Content="How many shots-fired reports?" Click="AskShotsExample_Click" />
+                                                <Button Content="Craziest reported events" Click="AskCraziestExample_Click" />
+                                                <Button Content="Most important this week" Click="AskImportantExample_Click" />
+                                            </StackPanel>
+                                            <ListView x:Name="ArchiveChatList" SelectionMode="None" MinHeight="240" MaxHeight="440">
+                                                <ListView.ItemTemplate>
+                                                    <DataTemplate x:DataType="local:ArchiveChatMessage">
+                                                        <Border Margin="0,3" Padding="12,9" CornerRadius="8"
+                                                                Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}">
+                                                            <StackPanel Spacing="4">
+                                                                <TextBlock Text="{x:Bind SpeakerLabel}" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                                                                <TextBlock Text="{x:Bind Content}" TextWrapping="Wrap" IsTextSelectionEnabled="True" />
+                                                                <TextBlock Text="{x:Bind EvidenceSummary}" TextWrapping="Wrap"
+                                                                           Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" />
+                                                                <TextBlock Text="{x:Bind LimitationSummary}" TextWrapping="Wrap"
+                                                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                            </StackPanel>
+                                                        </Border>
+                                                    </DataTemplate>
+                                                </ListView.ItemTemplate>
+                                            </ListView>
+                                            <Grid ColumnSpacing="10">
+                                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                                <TextBox x:Name="QuestionBox" Header="Message" MinWidth="360"
+                                                         AcceptsReturn="True" TextWrapping="Wrap" MinHeight="72"
+                                                         PlaceholderText="Ask about reports, patterns, notable events, places, or follow up on the prior answer." />
+                                                <Button x:Name="AskButton" Grid.Column="1" Content="Send"
+                                                        VerticalAlignment="Bottom" Style="{StaticResource AccentButtonStyle}" Click="Ask_Click" />
+                                            </Grid>
+                                            <TextBlock x:Name="ArchiveChatStatusText" Text="No question is running."
+                                                       TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                            <TextBlock x:Name="AnswerText" Visibility="Collapsed" />
                                         </StackPanel>
                                     </ScrollViewer>
                                 </TabViewItem>

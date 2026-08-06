@@ -130,7 +130,7 @@ def test_native_releases_media_handles_before_archive_mutation() -> None:
     assert "private async Task ReleaseMediaForArchiveMutationAsync()" in native
     assert native.count("await ReleaseMediaForArchiveMutationAsync();") == 3
     assert "_libraryMediaPlayer.Source = null;" in native
-    assert "await Task.Delay(150);" in native
+    assert "await Task.Delay(500);" in native
 
 
 def test_native_visible_activity_log_is_bounded_without_truncating_disk_history() -> None:
@@ -187,7 +187,9 @@ def test_native_library_exposes_guarded_feed_delete_and_resume_all() -> None:
         if element.attrib.get(XAML_NAME)
     }
 
-    assert names["ResumeAllLibraryButton"].attrib["Content"] == "Resume all"
+    assert names["ResumeAllLibraryButton"].attrib["Content"] == (
+        "Resume / prioritize…"
+    )
     assert names["ResumeAllLibraryButton"].attrib["Click"] == (
         "ResumeAllLibrary_Click"
     )
@@ -203,12 +205,49 @@ def test_native_library_exposes_guarded_feed_delete_and_resume_all() -> None:
         ROOT / "BroadcastifyCli.WinUI" / "WorkerClient.cs"
     ).read_text(encoding="utf-8")
     assert "DefaultButton = ContentDialogButton.Close" in native
-    assert "Local-only days run first" in native
+    assert "Finish retained local processing" in native
+    assert "Check/download missing source audio now" in native
+    assert "A chosen feed first" in native
+    assert "value.NeedsLocalProcessing" in native
+    assert "finishing its retained local stages now" in native
     assert "if (quota is null || !quota.Available)" in native
     assert "result?.DownloadLimited == true" in native
     assert "DownloadJobs = 1" in native
     assert '"library-resume-plan"' in worker
     assert '"delete-library-feed"' in worker
+
+
+def test_native_library_shows_feed_coverage_and_named_archive_chat() -> None:
+    root = ElementTree.parse(
+        ROOT / "BroadcastifyCli.WinUI" / "MainWindow.xaml"
+    ).getroot()
+    names = {
+        element.attrib.get(XAML_NAME): element
+        for element in root.iter()
+        if element.attrib.get(XAML_NAME)
+    }
+
+    assert names["LibraryFeedCoverageList"].attrib["SelectionMode"] == "Single"
+    assert names["AnalysisFeedCombo"].attrib["DisplayMemberPath"] == "FeedLabel"
+    assert names["ArchiveChatList"].attrib["SelectionMode"] == "None"
+    assert names["AskButton"].attrib["Content"] == "Send"
+
+    native = (
+        ROOT / "BroadcastifyCli.WinUI" / "MainWindow.xaml.cs"
+    ).read_text(encoding="utf-8")
+    models = (
+        ROOT / "BroadcastifyCli.WinUI" / "Models.cs"
+    ).read_text(encoding="utf-8")
+    assert "ShowResumeAllOptionsAsync" in native
+    assert "HandleQuestionWorkerMessage" in native
+    assert "_pipelineCancellation" in native
+    assert "_questionCancellation" in native
+    assert "_analysisOperationGate" in native
+    assert "Analyze = false" in native
+    assert "IsFeedBusy(selected.FeedId)" in native
+    assert "IsFeedPipelineBusy(_selectedLibraryDay.FeedId)" in native
+    assert "Clip playback and export are temporarily held" in native
+    assert 'JsonPropertyName("history")' in models
 
 
 def test_native_and_web_distinguish_working_storage_and_stale_transcripts() -> None:

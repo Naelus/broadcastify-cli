@@ -54,6 +54,15 @@ stale dates are reported explicitly. Saved weekly and area briefs also carry an
 exact source fingerprint and are hidden as stale when a current daily summary,
 incident set, or area profile changes.
 
+The native **Ask the archive** surface selects feeds by friendly name and keeps
+a bounded recent conversation so follow-up phrases can refer to the prior turn.
+Earlier answers are context, never evidence: retrieval runs again for the
+current question and the response must cite the newly supplied E/I records.
+Questions and answers continue to be written to the local Q&A audit table.
+Archive chat shares a single model-operation gate with background incident
+analysis so download/transcription can continue while llama.cpp work is safely
+serialized.
+
 Local Gemma is the default. OpenAI Responses, compatible `/v1` endpoints, and a
 saved-login Codex harness are optional and require explicit consent before
 transcript excerpts leave the machine. See [model providers](../model-providers.md).

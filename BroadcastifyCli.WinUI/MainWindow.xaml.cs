@@ -21,6 +21,11 @@ namespace BroadcastifyCli.WinUI;
 
 public sealed partial class MainWindow : Window
 {
+    private sealed record ResumeAllSelection(
+        List<LibraryDay> Days,
+        bool IncludeLocal,
+        bool IncludeNetwork);
+
     private const string DefaultAnalysisModel = "ggml-org/gemma-4-12B-it-GGUF:Q4_0";
     private const int NearestAreaFeedShortcutCount = 3;
     private const int MaximumVisibleActivityLogCharacters = 24_000;
@@ -37,10 +42,20 @@ public sealed partial class MainWindow : Window
     private readonly ObservableCollection<IncidentRecord> _visibleIncidents = [];
     private readonly ObservableCollection<LibraryDay> _libraryDays = [];
     private readonly ObservableCollection<LibraryDay> _visibleLibraryDays = [];
+    private readonly ObservableCollection<LibraryFeedCoverage> _libraryFeeds = [];
+    private readonly ObservableCollection<ArchiveChatMessage> _archiveChatMessages = [];
     private readonly ObservableCollection<HardwareProfileStatus> _hardwareProfiles = [];
     private WorkerClient? _worker;
     private FeedSearchResult? _selectedFeed;
     private CancellationTokenSource? _operationCancellation;
+    private CancellationTokenSource? _pipelineCancellation;
+    private CancellationTokenSource? _questionCancellation;
+    private bool _exclusiveBusy;
+    private bool _exclusiveJobRunning;
+    private bool _libraryMutationBusy;
+    private readonly HashSet<string> _activePipelineFeedIds = new(StringComparer.Ordinal);
+    private string _activeQuestionFeedId = "";
+    private bool _syncingAnalysisFeedSelection;
     private DayReport? _currentReport;
     private readonly MediaPlayer _incidentMediaPlayer = new();
     private readonly MediaPlayer _areaStoryMediaPlayer = new();
@@ -90,6 +105,7 @@ public sealed partial class MainWindow : Window
     private bool _pauseScheduledJobsForSetup;
     private readonly StringBuilder _visibleActivityLog = new();
     private readonly ConcurrentQueue<JsonElement> _pendingWorkerMessages = new();
+    private readonly SemaphoreSlim _analysisOperationGate = new(1, 1);
     private int _workerMessageDrainScheduled;
 
     public MainWindow(
@@ -113,8 +129,11 @@ public sealed partial class MainWindow : Window
         AreaProfileCombo.ItemsSource = _areaProfiles;
         AreaStoryList.ItemsSource = _areaStories;
         AnalysisDaysList.ItemsSource = _analysisDays;
+        AnalysisFeedCombo.ItemsSource = _libraryFeeds;
+        ArchiveChatList.ItemsSource = _archiveChatMessages;
         IncidentList.ItemsSource = _visibleIncidents;
         LibraryList.ItemsSource = _visibleLibraryDays;
+        LibraryFeedCoverageList.ItemsSource = _libraryFeeds;
         HardwareProfileList.ItemsSource = _hardwareProfiles;
         IncidentPlayer.SetMediaPlayer(_incidentMediaPlayer);
         _incidentMediaPlayer.MediaOpened += IncidentMediaPlayer_MediaOpened;
@@ -665,6 +684,9 @@ public sealed partial class MainWindow : Window
     {
         _settingsSaveTimer?.Stop();
         _feedScheduleTimer?.Stop();
+        _pipelineCancellation?.Cancel();
+        _operationCancellation?.Cancel();
+        _questionCancellation?.Cancel();
         PersistUserSettings(logFailure: true);
         PersistAnalysisCredentialPreference();
         _worker?.StopLanNode();
@@ -2300,9 +2322,157 @@ public sealed partial class MainWindow : Window
     private async void RefreshLibrary_Click(object sender, RoutedEventArgs e) =>
         await RefreshLibraryAsync();
 
+    private async Task<ResumeAllSelection?> ShowResumeAllOptionsAsync(
+        LibraryResumePlan plan)
+    {
+        var localBox = new CheckBox
+        {
+            Content = $"Finish retained local processing ({plan.LocalCount:N0} day(s))",
+            IsChecked = plan.LocalCount > 0,
+            IsEnabled = plan.LocalCount > 0,
+        };
+        var networkBox = new CheckBox
+        {
+            Content = $"Check/download missing source audio now ({plan.NetworkCount:N0} day(s))",
+            IsChecked = plan.NetworkCount > 0,
+            IsEnabled = plan.NetworkCount > 0,
+        };
+        var priorityCombo = new ComboBox
+        {
+            Header = "Order selected work by",
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            SelectedIndex = 0,
+            Items =
+            {
+                new ComboBoxItem { Content = "Local work first (recommended)", Tag = "local-first" },
+                new ComboBoxItem { Content = "A chosen feed first", Tag = "feed-first" },
+                new ComboBoxItem { Content = "Newest days first", Tag = "newest" },
+                new ComboBoxItem { Content = "Oldest days first", Tag = "oldest" },
+            },
+        };
+        var candidateFeedIds = plan.Days
+            .Select(value => value.FeedId)
+            .ToHashSet(StringComparer.Ordinal);
+        var priorityFeeds = plan.Feeds
+            .Where(value => candidateFeedIds.Contains(value.FeedId))
+            .ToList();
+        var priorityFeedCombo = new ComboBox
+        {
+            Header = "Feed to put first",
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            DisplayMemberPath = "FeedLabel",
+            ItemsSource = priorityFeeds,
+            SelectedItem = priorityFeeds.FirstOrDefault(value =>
+                    value.FeedId == _selectedLibraryDay?.FeedId)
+                ?? priorityFeeds.FirstOrDefault(),
+        };
+        priorityFeedCombo.IsEnabled = false;
+        priorityCombo.SelectionChanged += (_, _) =>
+        {
+            priorityFeedCombo.IsEnabled =
+                (priorityCombo.SelectedItem as ComboBoxItem)?.Tag?.ToString()
+                    == "feed-first";
+        };
+
+        var feedChecks = new Dictionary<string, CheckBox>(StringComparer.Ordinal);
+        var feedsPanel = new StackPanel { Spacing = 6 };
+        foreach (var feed in priorityFeeds)
+        {
+            var feedDays = plan.Days.Where(value => value.FeedId == feed.FeedId).ToList();
+            var local = feedDays.Count(value => value.NeedsLocalProcessing);
+            var network = feedDays.Count(value => value.NeedsNetwork);
+            var check = new CheckBox
+            {
+                Content = $"{feed.FeedName} · {local:N0} local / {network:N0} source-network day(s)",
+                IsChecked = true,
+            };
+            feedChecks[feed.FeedId] = check;
+            feedsPanel.Children.Add(check);
+        }
+        var quotaText = plan.NetworkCount == 0
+            ? "No source or archive request is needed by this plan."
+            : plan.Quota.Available
+                ? $"The persistent ledger currently has {plan.Quota.Remaining:N0} guarded archive request(s) available. Each missing media block—not each day—uses one."
+                : "The rolling archive allowance is paused. Local work can still run; selected network work will stop before making a request.";
+        var content = new StackPanel { Spacing = 12, MaxWidth = 560 };
+        content.Children.Add(new TextBlock
+        {
+            Text = $"Choose which feeds and work types to run. A day can appear in both counts when retained local stages are ready but today's source listing is due for refresh. Planning used only local state and did not contact Broadcastify. {quotaText}",
+            TextWrapping = TextWrapping.Wrap,
+        });
+        content.Children.Add(localBox);
+        content.Children.Add(networkBox);
+        content.Children.Add(priorityCombo);
+        content.Children.Add(priorityFeedCombo);
+        content.Children.Add(new TextBlock
+        {
+            Text = "Feeds",
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+        });
+        content.Children.Add(feedsPanel);
+        var dialog = new ContentDialog
+        {
+            XamlRoot = ((FrameworkElement)Content).XamlRoot,
+            Title = $"Resume and prioritize {plan.Days.Count:N0} pending day(s)",
+            Content = new ScrollViewer
+            {
+                MaxHeight = 620,
+                HorizontalScrollMode = ScrollMode.Disabled,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+                Content = content,
+            },
+            PrimaryButtonText = "Start selected work",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Close,
+        };
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary)
+        {
+            return null;
+        }
+        var selectedFeedIds = feedChecks
+            .Where(value => value.Value.IsChecked == true)
+            .Select(value => value.Key)
+            .ToHashSet(StringComparer.Ordinal);
+        var includeLocal = localBox.IsChecked == true;
+        var includeNetwork = networkBox.IsChecked == true;
+        var priorityMode =
+            (priorityCombo.SelectedItem as ComboBoxItem)?.Tag?.ToString()
+            ?? "local-first";
+        var priorityFeedId =
+            (priorityFeedCombo.SelectedItem as LibraryFeedCoverage)?.FeedId
+            ?? "";
+        IEnumerable<LibraryDay> selected = plan.Days
+            .Where(value => selectedFeedIds.Contains(value.FeedId))
+            .Where(value =>
+                (includeLocal && value.NeedsLocalProcessing)
+                || (includeNetwork && value.NeedsNetwork));
+        selected = priorityMode switch
+        {
+            "feed-first" => selected
+                .OrderBy(value => value.FeedId == priorityFeedId ? 0 : 1)
+                .ThenBy(value => value.NeedsNetwork)
+                .ThenByDescending(value => value.ArchiveDate),
+            "newest" => selected
+                .OrderByDescending(value => value.ArchiveDate)
+                .ThenBy(value => value.FeedId),
+            "oldest" => selected
+                .OrderBy(value => value.ArchiveDate)
+                .ThenBy(value => value.FeedId),
+            _ => selected
+                .OrderBy(value => !value.NeedsLocalProcessing)
+                .ThenBy(value => value.NeedsNetwork)
+                .ThenByDescending(value => value.ArchiveDate)
+                .ThenBy(value => value.FeedId),
+        };
+        return new ResumeAllSelection(
+            selected.ToList(),
+            includeLocal,
+            includeNetwork);
+    }
+
     private async void ResumeAllLibrary_Click(object sender, RoutedEventArgs e)
     {
-        if (_worker is null || _operationCancellation is not null)
+        if (_worker is null || _pipelineCancellation is not null)
         {
             return;
         }
@@ -2328,26 +2498,17 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        var quotaText = plan.NetworkCount == 0
-            ? "No Broadcastify archive request is needed."
-            : plan.Quota.Available
-                ? $"The local ledger currently has {plan.Quota.Remaining} guarded archive request(s) available."
-                : "The archive allowance is currently paused; local work will run, then network work will wait.";
-        var confirmation = new ContentDialog
+        var selection = await ShowResumeAllOptionsAsync(plan);
+        if (selection is null)
         {
-            XamlRoot = ((FrameworkElement)Content).XamlRoot,
-            Title = $"Resume {plan.Days.Count:N0} incomplete day(s)?",
-            Content =
-                $"{plan.LocalCount:N0} day(s) can continue entirely from retained files. "
-                + $"{plan.NetworkCount:N0} day(s) still need archive coverage. {quotaText} "
-                + "Local-only days run first. Network days run one at a time and stop "
-                + "before the rolling quota guard permits no further request.",
-            PrimaryButtonText = "Resume all",
-            CloseButtonText = "Cancel",
-            DefaultButton = ContentDialogButton.Close,
-        };
-        if (await confirmation.ShowAsync() != ContentDialogResult.Primary)
+            return;
+        }
+        var selectedDays = selection.Days;
+        if (selectedDays.Count == 0)
         {
+            await ShowMessageAsync(
+                "Nothing selected",
+                "Choose at least one feed and either local processing or guarded downloads.");
             return;
         }
 
@@ -2362,52 +2523,77 @@ public sealed partial class MainWindow : Window
                 "Minimum speakers cannot exceed maximum speakers.");
             return;
         }
+        if (_pipelineCancellation is not null)
+        {
+            await ShowMessageAsync(
+                "Background pipeline already running",
+                "Another archive or transcription pipeline started while these options were open. Let it finish or cancel it, then resume the selected work.");
+            return;
+        }
 
-        _operationCancellation = new CancellationTokenSource();
+        var pipeline = new CancellationTokenSource();
+        _pipelineCancellation = pipeline;
+        _activePipelineFeedIds.UnionWith(selectedDays.Select(value => value.FeedId));
         var attempted = 0;
         var pausedForQuota = false;
-        SetBusy(true, "Resuming incomplete library days…", jobRunning: true);
+        SetPipelineBusy(true, "Resuming selected library work in the background…");
         JobProgress.IsIndeterminate = false;
-        JobProgress.Maximum = Math.Max(1, plan.Days.Count);
+        JobProgress.Maximum = Math.Max(1, selectedDays.Count);
         JobProgress.Value = 0;
         try
         {
-            foreach (var day in plan.Days)
+            foreach (var day in selectedDays)
             {
-                _operationCancellation.Token.ThrowIfCancellationRequested();
+                pipeline.Token.ThrowIfCancellationRequested();
                 if (!DateTime.TryParse(day.ArchiveDate, out var archiveDate))
                 {
                     throw new InvalidOperationException(
                         $"Could not parse library date {day.ArchiveDate}.");
                 }
-                if (day.NeedsNetwork)
+                var useNetwork = day.NeedsNetwork && selection.IncludeNetwork;
+                if (useNetwork)
                 {
                     var quota = await _worker.GetArchiveQuotaStatusAsync(
-                        _operationCancellation.Token);
+                        pipeline.Token);
                     if (quota is null || !quota.Available)
                     {
-                        pausedForQuota = true;
-                        AppendLog(
-                            "Resume all paused before the next network day because "
-                            + "the rolling archive ledger has no safe request available.");
-                        break;
+                        if (selection.IncludeLocal && day.NeedsLocalProcessing)
+                        {
+                            useNetwork = false;
+                            pausedForQuota = true;
+                            AppendLog(
+                                $"The guarded source refresh for {day.FeedName} on "
+                                + $"{day.ArchiveDate} is waiting for quota; finishing its retained local stages now.");
+                        }
+                        else
+                        {
+                            pausedForQuota = true;
+                            AppendLog(
+                                "Resume all paused before the next network day because "
+                                + "the rolling archive ledger has no safe request available.");
+                            break;
+                        }
                     }
                 }
 
                 StatusText.Text =
-                    $"Resuming {attempted + 1:N0}/{plan.Days.Count:N0}: "
+                    $"Resuming {attempted + 1:N0}/{selectedDays.Count:N0}: "
                     + $"{day.FeedName} · {day.ArchiveDate}";
                 AppendLog(
                     $"Resume all: {day.FeedName} on {day.ArchiveDate} "
-                    + (day.NeedsNetwork ? "(guarded archive coverage)." : "(local only)."));
+                    + (useNetwork ? "(guarded archive coverage)." : "(local only)."));
+                var workDay = useNetwork
+                    ? day
+                    : day with { NeedsNetwork = false, SourceCheckDue = false };
                 var result = await ContinueLibraryDayWorkAsync(
-                    day,
+                    workDay,
                     archiveDate.Date,
                     minimumSpeakers,
                     maximumSpeakers,
-                    forceAllStages: true);
+                    forceAllStages: true,
+                    cancellationToken: pipeline.Token);
                 attempted++;
-                JobProgress.Maximum = Math.Max(1, plan.Days.Count);
+                JobProgress.Maximum = Math.Max(1, selectedDays.Count);
                 JobProgress.Value = attempted;
                 if (result?.DownloadLimited == true)
                 {
@@ -2430,10 +2616,14 @@ public sealed partial class MainWindow : Window
         }
         finally
         {
-            _operationCancellation.Dispose();
-            _operationCancellation = null;
+            pipeline.Dispose();
+            if (ReferenceEquals(_pipelineCancellation, pipeline))
+            {
+                _pipelineCancellation = null;
+            }
+            _activePipelineFeedIds.Clear();
             JobProgress.IsIndeterminate = false;
-            SetBusy(false);
+            SetPipelineBusy(false);
             await RefreshLibraryAsync();
             await RefreshAnalysisDaysAsync();
             await RefreshArchiveQuotaStatusAsync();
@@ -2447,7 +2637,7 @@ public sealed partial class MainWindow : Window
                 + "queued locally because the rolling request guard stopped it. "
                 + "Use Resume all later; completed work will not repeat.");
         }
-        else if (attempted == plan.Days.Count)
+        else if (attempted == selectedDays.Count)
         {
             await ShowMessageAsync(
                 "Resume all finished",
@@ -2473,13 +2663,23 @@ public sealed partial class MainWindow : Window
             {
                 _libraryDays.Add(day);
             }
+            _libraryFeeds.Clear();
+            foreach (var feed in result.Feeds)
+            {
+                _libraryFeeds.Add(feed);
+            }
             LibraryFeedCountText.Text = result.Summary.FeedCount.ToString("N0");
             LibraryDayCountText.Text = result.Summary.DayCount.ToString("N0");
-            LibraryAttentionCountText.Text = result.Summary.AttentionCount.ToString("N0");
+            LibraryAttentionCountText.Text = result.Summary.BacklogCount.ToString("N0");
             LibraryCompleteCountText.Text = result.Summary.CompleteCount.ToString("N0");
-            ResumeAllLibraryButton.IsEnabled =
-                result.Summary.AttentionCount > 0 && _operationCancellation is null;
+            LibraryBacklogSummaryText.Text = result.Summary.BacklogCount == 0
+                ? "Every configured target day and retained processing stage is caught up. Source availability is based on the last authenticated listing snapshot; today's snapshot is refreshed at most every 30 minutes when resumed."
+                : $"{result.Summary.BacklogCount:N0} feed-day(s) need work: "
+                    + $"{result.Summary.MissingDayCount:N0} scheduled day(s) are absent and "
+                    + $"{result.Summary.NetworkDayCount:N0} day(s) need a guarded source check or download. Local processing never spends archive requests.";
+            SyncAnalysisFeedSelection();
             ApplyLibraryFilter();
+            UpdateCommandAvailability();
         }
         catch (Exception exception)
         {
@@ -2489,7 +2689,7 @@ public sealed partial class MainWindow : Window
         }
         finally
         {
-            RefreshLibraryButton.IsEnabled = _worker is not null && _operationCancellation is null;
+            UpdateCommandAvailability();
         }
     }
 
@@ -2518,7 +2718,7 @@ public sealed partial class MainWindow : Window
             {
                 "attention" => !day.IsComplete,
                 "complete" => day.IsComplete,
-                "network" => day.NeedsNetwork,
+                "network" => day.NeedsNetwork || day.SourceCheckDue,
                 _ => true,
             }));
         _visibleLibraryDays.Clear();
@@ -2547,7 +2747,7 @@ public sealed partial class MainWindow : Window
     {
         var day = LibraryList.SelectedItem as LibraryDay;
         var selectionVersion = ShowLibraryDetails(day);
-        if (day is not null)
+        if (day is not null && !IsFeedPipelineBusy(day.FeedId))
         {
             await LoadLibraryTranscriptPreviewAsync(day, selectionVersion);
         }
@@ -2565,14 +2765,18 @@ public sealed partial class MainWindow : Window
         if (day is null)
         {
             LibraryTranscriptPreviewText.Text = "";
+            LibrarySourceCoverageText.Text = "";
+            UpdateCommandAvailability();
             return selectionVersion;
         }
 
         LibraryDetailTitleText.Text = day.FeedName;
         LibraryDetailSubtitleText.Text = $"Feed {day.FeedId} · {day.ArchiveDate} · {day.StorageSummary}";
-        LibraryDetailInfoBar.Severity = day.IsComplete
-            ? InfoBarSeverity.Success
-            : day.NeedsNetwork
+        LibraryDetailInfoBar.Severity = day.SourceCheckDue
+            ? InfoBarSeverity.Informational
+            : day.IsComplete
+                ? InfoBarSeverity.Success
+                : day.NeedsNetwork
                 ? InfoBarSeverity.Warning
                 : InfoBarSeverity.Informational;
         LibraryDetailInfoBar.Title = day.Status;
@@ -2580,9 +2784,13 @@ public sealed partial class MainWindow : Window
             $"{day.StatusDetail.TrimEnd('.', ' ')}. Next: {day.NextStep}.";
         LibraryDetailProgress.Value = day.PipelinePercent;
         LibraryDetailStatusText.Text = day.PipelineSummary;
+        LibrarySourceCoverageText.Text = day.SourceCoverageSummary;
 
         LibraryDownloadStageText.Text = day.HasCombined
-            ? day.RawFileCount > 0
+            ? day.SourceSnapshotComplete
+                ? $"✓  1. Archive audio — {day.RetainedSourceCount:N0}/{day.KnownSourceCount:N0} blocks retained from the last source check"
+                    + (day.SourceCheckDue ? "; today's listing is due for refresh" : "")
+                : day.RawFileCount > 0
                 ? $"✓  1. Archive audio — {day.RawFileCount:N0} source segments retained"
                 : "✓  1. Archive audio — verified in the combined recording"
             : day.RawFileCount > 0
@@ -2637,9 +2845,19 @@ public sealed partial class MainWindow : Window
             _worker is not null && _operationCancellation is null;
         LibraryOpenFolderButton.IsEnabled = Directory.Exists(day.DayDirectory);
         LibraryOpenTranscriptButton.IsEnabled =
-            day.HasTranscript && File.Exists(day.TranscriptPath);
+            !IsFeedPipelineBusy(day.FeedId)
+            && day.HasTranscript
+            && File.Exists(day.TranscriptPath);
 
-        if (File.Exists(day.CombinedPath))
+        if (IsFeedPipelineBusy(day.FeedId))
+        {
+            LibraryAudioStatusText.Text =
+                "This feed is being updated by the background pipeline. Playback and transcript-file opening are temporarily held to avoid Windows file locks; other feeds and Review & Ask remain usable.";
+            LibraryAudioPlayer.IsEnabled = false;
+            LibraryTranscriptPreviewText.Text =
+                "Transcript preview is paused while this feed's retained files are being updated.";
+        }
+        else if (File.Exists(day.CombinedPath))
         {
             LibraryAudioStatusText.Text = "Combined day recording — use the transport controls to listen locally.";
             LibraryAudioPlayer.IsEnabled = true;
@@ -2651,11 +2869,15 @@ public sealed partial class MainWindow : Window
             LibraryAudioStatusText.Text = "No combined day recording is available yet.";
             LibraryAudioPlayer.IsEnabled = false;
         }
-        LibraryTranscriptPreviewText.Text = day.HasStaleTranscript
-            ? "The previous transcript is preserved but hidden because the combined recording changed. Finish this day locally to update it."
-            : File.Exists(day.TranscriptPath)
-            ? "Loading timestamped transcript preview…"
-            : "No transcript is available yet. The Processing tab shows the next step.";
+        if (!IsFeedPipelineBusy(day.FeedId))
+        {
+            LibraryTranscriptPreviewText.Text = day.HasStaleTranscript
+                ? "The previous transcript is preserved but hidden because the combined recording changed. Finish this day locally to update it."
+                : File.Exists(day.TranscriptPath)
+                ? "Loading timestamped transcript preview…"
+                : "No transcript is available yet. The Processing tab shows the next step.";
+        }
+        UpdateCommandAvailability();
         return selectionVersion;
     }
 
@@ -2769,6 +2991,29 @@ public sealed partial class MainWindow : Window
         await ContinueLibraryDayAsync(day, diarizationEngineOverride: "community-1");
     }
 
+    private async void LibraryFeedCoverage_SelectionChanged(
+        object sender,
+        SelectionChangedEventArgs e)
+    {
+        if (LibraryFeedCoverageList.SelectedItem is not LibraryFeedCoverage feed)
+        {
+            return;
+        }
+        var day = _visibleLibraryDays.FirstOrDefault(value => value.FeedId == feed.FeedId)
+            ?? _libraryDays.FirstOrDefault(value => value.FeedId == feed.FeedId);
+        if (day is not null)
+        {
+            LibraryList.SelectedItem = day;
+        }
+        else
+        {
+            LibraryList.SelectedItem = null;
+            ShowLibraryDetails(null);
+        }
+        SelectReviewFeed(feed.FeedId, clearChatWhenChanged: false);
+        await RefreshAnalysisDaysAsync();
+    }
+
     private async void LibraryCheckSource_Click(object sender, RoutedEventArgs e)
     {
         if (_selectedLibraryDay is not null)
@@ -2782,9 +3027,17 @@ public sealed partial class MainWindow : Window
     private async void LibraryDeleteFeed_Click(object sender, RoutedEventArgs e)
     {
         if (_worker is null
-            || _operationCancellation is not null
+            || _libraryMutationBusy
             || _selectedLibraryDay is not { } selected)
         {
+            return;
+        }
+        if (IsFeedBusy(selected.FeedId))
+        {
+            await ShowMessageAsync(
+                "Feed is currently in use",
+                $"{selected.FeedName} has an active processing or archive-chat worker. "
+                + "Let that feed finish or cancel it before deleting. Other feeds can still be deleted while background work continues.");
             return;
         }
 
@@ -2846,10 +3099,19 @@ public sealed partial class MainWindow : Window
         {
             return;
         }
+        if (IsFeedBusy(selected.FeedId))
+        {
+            await ShowMessageAsync(
+                "Feed became busy",
+                "A background worker began using this feed while the confirmation was open. Nothing was deleted; retry after that feed finishes.");
+            return;
+        }
 
         LibraryFeedDeleteResult? result = null;
-        _operationCancellation = new CancellationTokenSource();
-        SetBusy(true, $"Deleting {selected.FeedName} from the local Library…");
+        using var deletion = new CancellationTokenSource();
+        _libraryMutationBusy = true;
+        StatusText.Text = $"Deleting {selected.FeedName} from the local Library…";
+        UpdateCommandAvailability();
         try
         {
             await ReleaseMediaForArchiveMutationAsync();
@@ -2857,7 +3119,7 @@ public sealed partial class MainWindow : Window
                 PersistedOutputDirectory(),
                 selected.FeedId,
                 hasSchedule && removeScheduleCheckBox.IsChecked == true,
-                _operationCancellation.Token);
+                deletion.Token);
             if (result is null)
             {
                 throw new InvalidOperationException(
@@ -2882,13 +3144,22 @@ public sealed partial class MainWindow : Window
         }
         catch (Exception exception)
         {
-            await ShowErrorAsync(exception);
+            if (exception.Message.Contains(
+                    "is still in use",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                AppendLog($"Delete feed: {exception.Message}");
+                await ShowMessageAsync("Feed is still in use", exception.Message);
+            }
+            else
+            {
+                await ShowErrorAsync(exception);
+            }
         }
         finally
         {
-            _operationCancellation.Dispose();
-            _operationCancellation = null;
-            SetBusy(false);
+            _libraryMutationBusy = false;
+            UpdateCommandAvailability();
             await RefreshLibraryAsync();
             await RefreshAnalysisDaysAsync();
             await RefreshFeedScheduleStatusAsync();
@@ -3114,6 +3385,12 @@ public sealed partial class MainWindow : Window
         {
             return;
         }
+        if (IsFeedPipelineBusy(_selectedLibraryDay.FeedId))
+        {
+            LibraryDetailStatusText.Text =
+                "This feed is being updated by the background pipeline. Its transcript will be available again when the current day finishes; other feeds remain usable.";
+            return;
+        }
         try
         {
             var transcript = await StorageFile.GetFileFromPathAsync(
@@ -3140,7 +3417,7 @@ public sealed partial class MainWindow : Window
         string? diarizationEngineOverride = null,
         bool forceSourceCheck = false)
     {
-        if (_worker is null)
+        if (_worker is null || _pipelineCancellation is not null)
         {
             return;
         }
@@ -3164,13 +3441,14 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        _operationCancellation = new CancellationTokenSource();
-        SetBusy(
+        var pipeline = new CancellationTokenSource();
+        _pipelineCancellation = pipeline;
+        _activePipelineFeedIds.Add(day.FeedId);
+        SetPipelineBusy(
             true,
             forceSourceCheck
-                ? $"Checking source audio for {day.FeedName} on {day.ArchiveDate}…"
-                : $"Continuing {day.FeedName} for {day.ArchiveDate}…",
-            jobRunning: true);
+                ? $"Checking source audio for {day.FeedName} on {day.ArchiveDate} in the background…"
+                : $"Continuing {day.FeedName} for {day.ArchiveDate} in the background…");
         JobProgress.IsIndeterminate = true;
         try
         {
@@ -3180,7 +3458,8 @@ public sealed partial class MainWindow : Window
                 minimumSpeakers,
                 maximumSpeakers,
                 diarizationEngineOverride,
-                forceSourceCheck);
+                forceSourceCheck,
+                cancellationToken: pipeline.Token);
         }
         catch (OperationCanceledException)
         {
@@ -3193,10 +3472,14 @@ public sealed partial class MainWindow : Window
         }
         finally
         {
-            _operationCancellation.Dispose();
-            _operationCancellation = null;
+            pipeline.Dispose();
+            if (ReferenceEquals(_pipelineCancellation, pipeline))
+            {
+                _pipelineCancellation = null;
+            }
+            _activePipelineFeedIds.Clear();
             JobProgress.IsIndeterminate = false;
-            SetBusy(false);
+            SetPipelineBusy(false);
             await RefreshLibraryAsync();
             await RefreshArchiveQuotaStatusAsync();
         }
@@ -3204,7 +3487,7 @@ public sealed partial class MainWindow : Window
 
     private async Task OpenLibraryDayInReviewAsync(LibraryDay day)
     {
-        AnalysisFeedBox.Text = day.FeedId;
+        SelectReviewFeed(day.FeedId);
         NavigateTo(ReviewNavigationItem);
         await RefreshAnalysisDaysAsync();
         var match = _analysisDays.FirstOrDefault(value =>
@@ -3258,7 +3541,7 @@ public sealed partial class MainWindow : Window
             : $"Selected: {_selectedFeed.Name} · feed {_selectedFeed.FeedId}";
         if (_selectedFeed is not null)
         {
-            AnalysisFeedBox.Text = _selectedFeed.FeedId;
+            SelectReviewFeed(_selectedFeed.FeedId);
         }
     }
 
@@ -3457,9 +3740,10 @@ public sealed partial class MainWindow : Window
         int? maximumSpeakers,
         string? diarizationEngineOverride = null,
         bool forceSourceCheck = false,
-        bool forceAllStages = false)
+        bool forceAllStages = false,
+        CancellationToken cancellationToken = default)
     {
-        if (_worker is null || _operationCancellation is null)
+        if (_worker is null)
         {
             return null;
         }
@@ -3492,10 +3776,11 @@ public sealed partial class MainWindow : Window
             }
             return await RunAndAnalyzeJobAsync(
                 request,
+                cancellationToken,
                 forceAllStages ? true : null);
         }
 
-        var report = await _worker.ContinueLocalDayAsync(
+        await _worker.ContinueLocalDayAsync(
             ApplyAnalysisProvider(new LocalProcessingRequest
             {
                 FeedId = day.FeedId,
@@ -3514,14 +3799,36 @@ public sealed partial class MainWindow : Window
                     DiarizationDeviceComboBox, "auto"),
                 BatchSize = RequiredInteger(BatchSizeBox.Value, 8),
                 Diarize = true,
-                Analyze = true,
+                // Keep model analysis as a separate process so archive chat can
+                // use the shared local model while ASR/diarization is running.
+                Analyze = false,
                 MinimumSpeakers = minimumSpeakers,
                 MaximumSpeakers = maximumSpeakers,
                 HuggingFaceToken = CurrentHuggingFaceToken(),
             }),
             HandleWorkerMessage,
-            _operationCancellation.Token);
-        AnalysisFeedBox.Text = day.FeedId;
+            cancellationToken);
+        AppendLog(
+            $"Waiting for the shared analysis slot for {day.FeedName} on {day.ArchiveDate}; archive chat and this pipeline will not load competing local models.");
+        await _analysisOperationGate.WaitAsync(cancellationToken);
+        DayReport? report;
+        try
+        {
+            report = await _worker.AnalyzeDayAsync(
+                ApplyAnalysisProvider(new AnalysisRequest
+                {
+                    FeedId = day.FeedId,
+                    ArchiveDate = day.ArchiveDate,
+                    OutputDirectory = PersistedOutputDirectory(),
+                }),
+                HandleWorkerMessage,
+                cancellationToken);
+        }
+        finally
+        {
+            _analysisOperationGate.Release();
+        }
+        SelectReviewFeed(day.FeedId, clearChatWhenChanged: false);
         if (report is not null)
         {
             ApplyReport(report);
@@ -3618,7 +3925,7 @@ public sealed partial class MainWindow : Window
 
     private async void Start_Click(object sender, RoutedEventArgs e)
     {
-        if (_worker is null)
+        if (_worker is null || _pipelineCancellation is not null)
         {
             return;
         }
@@ -3648,14 +3955,16 @@ public sealed partial class MainWindow : Window
             _selectedFeed.FeedId, startDate, endDate, minimumSpeakers, maximumSpeakers,
             _selectedFeed.Name);
 
-        _operationCancellation = new CancellationTokenSource();
-        SetBusy(true, "Starting job…", jobRunning: true);
+        var pipeline = new CancellationTokenSource();
+        _pipelineCancellation = pipeline;
+        _activePipelineFeedIds.Add(request.FeedId);
+        SetPipelineBusy(true, "Starting job in the background…");
         JobProgress.IsIndeterminate = true;
         JobProgress.Value = 0;
         AppendLog($"Starting feed {request.FeedId}: {request.StartDate} through {request.EndDate}");
         try
         {
-            await RunAndAnalyzeJobAsync(request);
+            await RunAndAnalyzeJobAsync(request, pipeline.Token);
         }
         catch (OperationCanceledException)
         {
@@ -3668,10 +3977,14 @@ public sealed partial class MainWindow : Window
         }
         finally
         {
-            _operationCancellation.Dispose();
-            _operationCancellation = null;
+            pipeline.Dispose();
+            if (ReferenceEquals(_pipelineCancellation, pipeline))
+            {
+                _pipelineCancellation = null;
+            }
+            _activePipelineFeedIds.Clear();
             JobProgress.IsIndeterminate = false;
-            SetBusy(false);
+            SetPipelineBusy(false);
             await RefreshLibraryAsync();
         }
     }
@@ -3691,6 +4004,7 @@ public sealed partial class MainWindow : Window
                 existing))
         {
             await RefreshFeedScheduleStatusAsync();
+            await RefreshLibraryAsync();
         }
     }
 
@@ -3995,6 +4309,7 @@ public sealed partial class MainWindow : Window
                     editSchedule.FeedName,
                     editSchedule);
                 await RefreshFeedScheduleStatusAsync();
+                await RefreshLibraryAsync();
                 continue;
             }
             if (removeSchedule is not null)
@@ -4015,6 +4330,7 @@ public sealed partial class MainWindow : Window
                         CancellationToken.None);
                     AppendLog($"Removed the schedule for {removeSchedule.FeedName}.");
                     await RefreshFeedScheduleStatusAsync();
+                    await RefreshLibraryAsync();
                 }
                 continue;
             }
@@ -4071,7 +4387,10 @@ public sealed partial class MainWindow : Window
 
     private async Task CheckDueFeedScheduleAsync()
     {
-        if (_worker is null || _checkingFeedSchedule || _operationCancellation is not null)
+        if (_worker is null
+            || _checkingFeedSchedule
+            || _pipelineCancellation is not null
+            || _exclusiveBusy)
         {
             return;
         }
@@ -4097,7 +4416,7 @@ public sealed partial class MainWindow : Window
             {
                 return;
             }
-            if (_operationCancellation is not null)
+            if (_pipelineCancellation is not null)
             {
                 await _worker.FinishFeedScheduleAsync(
                     new FeedScheduleFinishRequest
@@ -4110,12 +4429,17 @@ public sealed partial class MainWindow : Window
                     CancellationToken.None);
                 return;
             }
-            _operationCancellation = new CancellationTokenSource();
+            var pipeline = new CancellationTokenSource();
+            _pipelineCancellation = pipeline;
+            _activePipelineFeedIds.Add(schedule.FeedId);
             ownsOperation = true;
-            SetBusy(true, $"Scheduled feed: {schedule.FeedName}", jobRunning: true);
+            SetPipelineBusy(true, $"Scheduled feed running in the background: {schedule.FeedName}");
             JobProgress.IsIndeterminate = true;
             AppendLog($"Scheduled run starting for {schedule.FeedName} ({schedule.FeedId}).");
-            var result = await RunAndAnalyzeJobAsync(schedule.Job, schedule.Analyze);
+            var result = await RunAndAnalyzeJobAsync(
+                schedule.Job,
+                pipeline.Token,
+                schedule.Analyze);
             var quota = await _worker.GetArchiveQuotaStatusAsync(CancellationToken.None);
             var waitingForQuota = result?.DownloadLimited == true;
             var incomplete = (result?.MissingDays.Count ?? 0) > 0;
@@ -4171,12 +4495,13 @@ public sealed partial class MainWindow : Window
         }
         finally
         {
-            if (ownsOperation && _operationCancellation is not null)
+            if (ownsOperation && _pipelineCancellation is not null)
             {
-                _operationCancellation.Dispose();
-                _operationCancellation = null;
+                _pipelineCancellation.Dispose();
+                _pipelineCancellation = null;
+                _activePipelineFeedIds.Clear();
                 JobProgress.IsIndeterminate = false;
-                SetBusy(false);
+                SetPipelineBusy(false);
                 await RefreshLibraryAsync();
                 await RefreshArchiveQuotaStatusAsync();
             }
@@ -4236,9 +4561,10 @@ public sealed partial class MainWindow : Window
 
     private async Task<JobRunResult?> RunAndAnalyzeJobAsync(
         JobRequest request,
+        CancellationToken cancellationToken,
         bool? analyzeOverride = null)
     {
-        if (_worker is null || _operationCancellation is null)
+        if (_worker is null)
         {
             return null;
         }
@@ -4247,14 +4573,20 @@ public sealed partial class MainWindow : Window
         // whether this PC can own the shared LAN acquisition lease.
         await ConfigureLanSharingAsync();
         var jobResult = await _worker.RunJobAsync(
-            request, HandleWorkerMessage, _operationCancellation.Token);
-        await AnalyzeCompletedJobAsync(request, jobResult, analyzeOverride);
+            request, HandleWorkerMessage, cancellationToken);
+        await AnalyzeCompletedJobAsync(
+            request,
+            jobResult,
+            cancellationToken,
+            analyzeOverride);
         return jobResult;
     }
 
     private async Task ReleaseMediaForArchiveMutationAsync()
     {
-        var hadLibrarySource = _libraryMediaPlayer.Source is not null;
+        var hadMediaSource = _libraryMediaPlayer.Source is not null
+            || _incidentMediaPlayer.Source is not null
+            || _areaStoryMediaPlayer.Source is not null;
         _libraryMediaPlayer.Pause();
         _libraryMediaPlayer.Source = null;
         _incidentMediaPlayer.Pause();
@@ -4262,22 +4594,23 @@ public sealed partial class MainWindow : Window
         _areaStoryMediaPlayer.Pause();
         _areaStoryMediaPlayer.Source = null;
         _pendingIncidentClip = null;
-        if (hadLibrarySource)
+        if (hadMediaSource)
         {
             LibraryAudioStatusText.Text =
                 "Playback released while the archive recording is updated.";
             // Media Foundation releases its Windows file handle asynchronously.
             // Give that close a bounded moment before FFmpeg publishes a refresh.
-            await Task.Delay(150);
+            await Task.Delay(500);
         }
     }
 
     private async Task AnalyzeCompletedJobAsync(
         JobRequest request,
         JobRunResult? jobResult,
+        CancellationToken cancellationToken,
         bool? analyzeOverride = null)
     {
-        if (_worker is null || _operationCancellation is null)
+        if (_worker is null)
         {
             return;
         }
@@ -4294,35 +4627,44 @@ public sealed partial class MainWindow : Window
             .ToList() ?? [];
         foreach (var day in transcriptDays)
         {
-            _operationCancellation.Token.ThrowIfCancellationRequested();
-            AppendLog($"Analyzing feed {request.FeedId} for {day.ArchiveDate}…");
+            cancellationToken.ThrowIfCancellationRequested();
+            AppendLog($"Waiting for the shared analysis slot for feed {request.FeedId} on {day.ArchiveDate}…");
+            await _analysisOperationGate.WaitAsync(cancellationToken);
             try
             {
-                latestReport = await _worker.AnalyzeDayAsync(
-                    ApplyAnalysisProvider(new AnalysisRequest
-                    {
-                        FeedId = request.FeedId,
-                        ArchiveDate = day.ArchiveDate,
-                        OutputDirectory = request.OutputDirectory,
-                    }),
-                    HandleWorkerMessage,
-                    _operationCancellation.Token);
+                AppendLog($"Analyzing feed {request.FeedId} for {day.ArchiveDate}…");
+                try
+                {
+                    latestReport = await _worker.AnalyzeDayAsync(
+                        ApplyAnalysisProvider(new AnalysisRequest
+                        {
+                            FeedId = request.FeedId,
+                            ArchiveDate = day.ArchiveDate,
+                            OutputDirectory = request.OutputDirectory,
+                        }),
+                        HandleWorkerMessage,
+                        cancellationToken);
+                }
+                catch (Exception exception) when (exception is not OperationCanceledException)
+                {
+                    throw new InvalidOperationException(
+                        $"Local incident analysis failed for feed {request.FeedId} on "
+                        + $"{day.ArchiveDate}. Its downloads, combined audio, transcript, "
+                        + "and diarization remain saved and will be reused when you retry. "
+                        + exception.Message,
+                        exception);
+                }
             }
-            catch (Exception exception) when (exception is not OperationCanceledException)
+            finally
             {
-                throw new InvalidOperationException(
-                    $"Local incident analysis failed for feed {request.FeedId} on "
-                    + $"{day.ArchiveDate}. Its downloads, combined audio, transcript, "
-                    + "and diarization remain saved and will be reused when you retry. "
-                    + exception.Message,
-                    exception);
+                _analysisOperationGate.Release();
             }
         }
         if (transcriptDays.Count == 0)
         {
             AppendLog("No completed transcripts were available for analysis.");
         }
-        AnalysisFeedBox.Text = request.FeedId;
+        SelectReviewFeed(request.FeedId, clearChatWhenChanged: false);
         if (latestReport is not null)
         {
             ApplyReport(latestReport);
@@ -4330,7 +4672,12 @@ public sealed partial class MainWindow : Window
         await RefreshAnalysisDaysAsync();
     }
 
-    private void Cancel_Click(object sender, RoutedEventArgs e) => _operationCancellation?.Cancel();
+    private void Cancel_Click(object sender, RoutedEventArgs e)
+    {
+        _pipelineCancellation?.Cancel();
+        _operationCancellation?.Cancel();
+        _questionCancellation?.Cancel();
+    }
 
     private async Task LoadDiagnosticsAndDaysAsync()
     {
@@ -4466,6 +4813,83 @@ public sealed partial class MainWindow : Window
             AppendLog($"Diagnostics: {exception.Message}");
             UpdateSetupSummary();
         }
+    }
+
+    private void SyncAnalysisFeedSelection()
+    {
+        if (AnalysisFeedCombo is null || AnalysisFeedBox is null)
+        {
+            return;
+        }
+        var feedId = AnalysisFeedBox.Text.Trim();
+        var match = _libraryFeeds.FirstOrDefault(value => value.FeedId == feedId)
+            ?? _libraryFeeds.FirstOrDefault();
+        _syncingAnalysisFeedSelection = true;
+        try
+        {
+            AnalysisFeedCombo.SelectedItem = match;
+            if (match is not null)
+            {
+                AnalysisFeedBox.Text = match.FeedId;
+                ArchiveChatFeedText.Text = $"{match.FeedName} · feed {match.FeedId}";
+            }
+            else
+            {
+                ArchiveChatFeedText.Text = "No retained or scheduled feeds are available yet.";
+            }
+        }
+        finally
+        {
+            _syncingAnalysisFeedSelection = false;
+        }
+    }
+
+    private void SelectReviewFeed(
+        string feedId,
+        bool clearChatWhenChanged = true)
+    {
+        var normalized = feedId.Trim();
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            return;
+        }
+        var changed = !string.Equals(
+            AnalysisFeedBox.Text.Trim(),
+            normalized,
+            StringComparison.Ordinal);
+        AnalysisFeedBox.Text = normalized;
+        SyncAnalysisFeedSelection();
+        if (changed && clearChatWhenChanged)
+        {
+            _archiveChatMessages.Clear();
+            ArchiveChatStatusText.Text = "New feed selected; start a new evidence chat.";
+        }
+    }
+
+    private async void AnalysisFeedCombo_SelectionChanged(
+        object sender,
+        SelectionChangedEventArgs e)
+    {
+        if (_syncingAnalysisFeedSelection
+            || AnalysisFeedCombo.SelectedItem is not LibraryFeedCoverage feed)
+        {
+            return;
+        }
+        var changed = !string.Equals(
+            AnalysisFeedBox.Text.Trim(),
+            feed.FeedId,
+            StringComparison.Ordinal);
+        AnalysisFeedBox.Text = feed.FeedId;
+        ArchiveChatFeedText.Text = feed.FeedLabel;
+        _lastReviewFeedId = feed.FeedId;
+        ScheduleSettingsSave();
+        if (changed)
+        {
+            _archiveChatMessages.Clear();
+            ArchiveChatStatusText.Text = "New feed selected; start a new evidence chat.";
+        }
+        await RefreshAnalysisDaysAsync();
+        UpdateCommandAvailability();
     }
 
     private async void RefreshAnalysis_Click(object sender, RoutedEventArgs e) =>
@@ -4622,6 +5046,12 @@ public sealed partial class MainWindow : Window
         {
             return;
         }
+        if (_currentReport is not null && IsFeedPipelineBusy(_currentReport.FeedId))
+        {
+            PlaybackStatusText.Text =
+                "This feed is being updated by the background pipeline. Exact-clip playback is temporarily held to avoid locking its combined audio; other feeds remain playable.";
+            return;
+        }
 
         var button = sender as Button;
         if (button is not null)
@@ -4677,6 +5107,11 @@ public sealed partial class MainWindow : Window
         if (_worker is null)
         {
             return null;
+        }
+        if (_currentReport is not null && IsFeedPipelineBusy(_currentReport.FeedId))
+        {
+            throw new InvalidOperationException(
+                "This feed is being updated by the background pipeline. Clip playback and export are temporarily held so the pipeline can replace its combined audio safely; other feeds remain usable.");
         }
         PlaybackStatusText.Text = includeSurroundingContext
             ? $"Preparing surrounding radio traffic for I{incident.Id}…"
@@ -4736,6 +5171,12 @@ public sealed partial class MainWindow : Window
     {
         if (sender is not FrameworkElement { DataContext: AreaStoryReference reference })
         {
+            return;
+        }
+        if (IsFeedPipelineBusy(reference.FeedId))
+        {
+            AreaPlaybackStatusText.Text =
+                "This feed is being updated by the background pipeline, so its clip is temporarily held to avoid a Windows file lock.";
             return;
         }
         if (!reference.ClipAvailable || string.IsNullOrWhiteSpace(reference.ClipPath)
@@ -4862,7 +5303,7 @@ public sealed partial class MainWindow : Window
 
     private async void Ask_Click(object sender, RoutedEventArgs e)
     {
-        if (_worker is null)
+        if (_worker is null || _questionCancellation is not null)
         {
             return;
         }
@@ -4872,7 +5313,7 @@ public sealed partial class MainWindow : Window
         var endDate = QuestionEndDatePicker.Date.Date;
         if (string.IsNullOrWhiteSpace(feedId) || string.IsNullOrWhiteSpace(question))
         {
-            await ShowMessageAsync("Question incomplete", "Enter a feed ID and a question.");
+            await ShowMessageAsync("Question incomplete", "Choose a named feed and enter a message.");
             return;
         }
         if (startDate > endDate)
@@ -4881,12 +5322,36 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        _operationCancellation = new CancellationTokenSource();
-        SetBusy(true, "Retrieving evidence…", jobRunning: true);
-        JobProgress.IsIndeterminate = true;
-        AnswerText.Text = $"Working with {SelectedAnalysisProviderDisplayName()}…";
+        var history = _archiveChatMessages
+            .TakeLast(8)
+            .Select(value => new ArchiveConversationTurn
+            {
+                Role = value.Role,
+                Content = value.Content,
+            })
+            .ToList();
+        _archiveChatMessages.Add(new ArchiveChatMessage
+        {
+            Role = "user",
+            Content = question,
+        });
+        QuestionBox.Text = "";
+        ArchiveChatList.ScrollIntoView(_archiveChatMessages[^1]);
+        var questionCancellation = new CancellationTokenSource();
+        _questionCancellation = questionCancellation;
+        _activeQuestionFeedId = feedId;
+        ArchiveChatStatusText.Text =
+            $"Retrieving evidence with {SelectedAnalysisProviderDisplayName()}… The archive/transcription pipeline continues independently.";
+        UpdateCommandAvailability();
+        var analysisSlotHeld = false;
         try
         {
+            ArchiveChatStatusText.Text =
+                "Waiting for the shared analysis slot; downloading/transcription continues while local model work is serialized.";
+            await _analysisOperationGate.WaitAsync(questionCancellation.Token);
+            analysisSlotHeld = true;
+            ArchiveChatStatusText.Text =
+                $"Retrieving evidence with {SelectedAnalysisProviderDisplayName()}…";
             var answer = await _worker.AskArchiveAsync(
                 ApplyAnalysisProvider(new ArchiveQuestionRequest
                 {
@@ -4894,31 +5359,81 @@ public sealed partial class MainWindow : Window
                     StartDate = startDate.ToString("yyyy-MM-dd"),
                     EndDate = endDate.ToString("yyyy-MM-dd"),
                     Question = question,
+                    History = history,
                 }),
-                HandleWorkerMessage,
-                _operationCancellation.Token);
-            AnswerText.Text = answer is null
-                ? "No answer was returned."
-                : answer.Answer + (string.IsNullOrWhiteSpace(answer.LimitationsSummary)
-                    ? ""
-                    : Environment.NewLine + Environment.NewLine + answer.LimitationsSummary);
+                HandleQuestionWorkerMessage,
+                questionCancellation.Token);
+            _archiveChatMessages.Add(answer is null
+                ? new ArchiveChatMessage
+                {
+                    Role = "assistant",
+                    Content = "No answer was returned.",
+                }
+                : new ArchiveChatMessage
+                {
+                    Role = "assistant",
+                    Content = answer.Answer,
+                    EvidenceIds = answer.EvidenceIds,
+                    Limitations = answer.Limitations,
+                });
+            ArchiveChatList.ScrollIntoView(_archiveChatMessages[^1]);
+            ArchiveChatStatusText.Text =
+                "Answer complete. Follow-up messages retain the recent chat context but must cite fresh archive evidence.";
         }
         catch (OperationCanceledException)
         {
-            AnswerText.Text = "Question cancelled.";
+            ArchiveChatStatusText.Text = "Question cancelled; the background archive pipeline was not stopped.";
         }
         catch (Exception exception)
         {
-            await ShowErrorAsync(exception);
+            ArchiveChatStatusText.Text = $"Question failed: {exception.Message}";
+            AppendLog($"Archive chat: {exception.Message}");
         }
         finally
         {
-            _operationCancellation.Dispose();
-            _operationCancellation = null;
-            JobProgress.IsIndeterminate = false;
-            SetBusy(false);
-            await RefreshLibraryAsync();
+            if (analysisSlotHeld)
+            {
+                _analysisOperationGate.Release();
+            }
+            questionCancellation.Dispose();
+            if (ReferenceEquals(_questionCancellation, questionCancellation))
+            {
+                _questionCancellation = null;
+            }
+            _activeQuestionFeedId = "";
+            UpdateCommandAvailability();
         }
+    }
+
+    private void ClearArchiveChat_Click(object sender, RoutedEventArgs e)
+    {
+        if (_questionCancellation is not null)
+        {
+            _questionCancellation.Cancel();
+        }
+        _archiveChatMessages.Clear();
+        ArchiveChatStatusText.Text = "New chat ready. Saved evidence and prior Q&A audit records were not deleted.";
+        QuestionBox.Focus(FocusState.Programmatic);
+    }
+
+    private void AskShotsExample_Click(object sender, RoutedEventArgs e)
+    {
+        QuestionBox.Text = "How many distinct reports of shots fired or gunfire were there in this period, and what evidence supports each one?";
+        QuestionBox.Focus(FocusState.Programmatic);
+    }
+
+    private void AskCraziestExample_Click(object sender, RoutedEventArgs e)
+    {
+        QuestionBox.Text = "What were the most unusual or surprising reported events in this period? Separate verified radio reports from uncertain interpretation.";
+        QuestionBox.Focus(FocusState.Programmatic);
+    }
+
+    private void AskImportantExample_Click(object sender, RoutedEventArgs e)
+    {
+        var end = QuestionEndDatePicker.Date.Date;
+        QuestionStartDatePicker.Date = end.AddDays(-6);
+        QuestionBox.Text = "What were the most important reported events in the past week, ranked by public-safety significance with citations and coverage gaps?";
+        QuestionBox.Focus(FocusState.Programmatic);
     }
 
     private async void GenerateWeek_Click(object sender, RoutedEventArgs e)
@@ -5459,7 +5974,7 @@ public sealed partial class MainWindow : Window
 
     private async void ProcessAreaFeeds_Click(object sender, RoutedEventArgs e)
     {
-        if (_worker is null)
+        if (_worker is null || _pipelineCancellation is not null)
         {
             return;
         }
@@ -5491,8 +6006,10 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        _operationCancellation = new CancellationTokenSource();
-        SetBusy(true, "Starting explicit multi-feed area job…", jobRunning: true);
+        var pipeline = new CancellationTokenSource();
+        _pipelineCancellation = pipeline;
+        _activePipelineFeedIds.UnionWith(selected.Select(value => value.FeedId));
+        SetPipelineBusy(true, "Starting explicit multi-feed area job in the background…");
         JobProgress.IsIndeterminate = true;
         JobProgress.Value = 0;
         try
@@ -5510,7 +6027,7 @@ public sealed partial class MainWindow : Window
                     Job = baseRequest,
                 },
                 HandleWorkerMessage,
-                _operationCancellation.Token);
+                pipeline.Token);
             if (result is null)
             {
                 AreaCoverageText.Text = "The area worker returned no queue result.";
@@ -5518,10 +6035,11 @@ public sealed partial class MainWindow : Window
             }
             foreach (var feedResult in result.FeedResults)
             {
-                _operationCancellation.Token.ThrowIfCancellationRequested();
+                pipeline.Token.ThrowIfCancellationRequested();
                 await AnalyzeCompletedJobAsync(
                     baseRequest with { FeedId = feedResult.Feed.FeedId },
-                    feedResult.Result);
+                    feedResult.Result,
+                    pipeline.Token);
             }
             AreaCoverageText.Text = result.DownloadLimited
                 ? $"Queue {result.Id} paused at the archive quota boundary. Resume later; the first incomplete feed stays next and lower-priority feeds made no requests."
@@ -5540,10 +6058,14 @@ public sealed partial class MainWindow : Window
         }
         finally
         {
-            _operationCancellation.Dispose();
-            _operationCancellation = null;
+            pipeline.Dispose();
+            if (ReferenceEquals(_pipelineCancellation, pipeline))
+            {
+                _pipelineCancellation = null;
+            }
+            _activePipelineFeedIds.Clear();
             JobProgress.IsIndeterminate = false;
-            SetBusy(false);
+            SetPipelineBusy(false);
             await RefreshLibraryAsync();
         }
     }
@@ -5608,6 +6130,25 @@ public sealed partial class MainWindow : Window
             JobProgress.IsIndeterminate = false;
             SetBusy(false);
         }
+    }
+
+    private void HandleQuestionWorkerMessage(JsonElement message)
+    {
+        var snapshot = message.Clone();
+        var text = snapshot.TryGetProperty("message", out var messageValue)
+            ? messageValue.GetString() ?? ""
+            : "";
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return;
+        }
+        AppDiagnostics.AppendActivity($"Archive chat: {text}");
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            ArchiveChatStatusText.Text = text;
+            AppendVisibleLog($"Archive chat: {text}");
+            RefreshVisibleLog();
+        });
     }
 
     private void HandleWorkerMessage(JsonElement message)
@@ -5733,64 +6274,120 @@ public sealed partial class MainWindow : Window
             PersistUserSettings();
             PersistAnalysisCredentialPreference();
         }
-        SearchButton.IsEnabled = !busy && _worker is not null;
-        StartButton.IsEnabled = !busy && _worker is not null;
-        ScheduleFeedButton.IsEnabled = !busy && _worker is not null;
-        ManageSchedulesButton.IsEnabled = !busy && _worker is not null;
-        RefreshAnalysisButton.IsEnabled = !busy && _worker is not null;
-        AnalyzeSelectedButton.IsEnabled = !busy && _worker is not null;
-        ReloadReportButton.IsEnabled = !busy && _worker is not null;
-        AskButton.IsEnabled = !busy && _worker is not null;
-        GenerateWeekButton.IsEnabled = !busy && _worker is not null;
-        DiscoverAreaFeedsButton.IsEnabled = !busy && _worker is not null;
-        SaveAreaProfileButton.IsEnabled = !busy && _worker is not null;
-        ProcessAreaFeedsButton.IsEnabled = !busy && _worker is not null;
-        GenerateAreaDigestButton.IsEnabled = !busy && _worker is not null;
-        AnalysisProviderCheckButton.IsEnabled = !busy && _worker is not null;
-        AnalysisModelTestButton.IsEnabled = !busy && _worker is not null;
-        SetupProfileSelfTestButton.IsEnabled = !busy && _worker is not null;
-        ProfileSelfTestButton.IsEnabled = !busy && _worker is not null;
-        AsrPrepareButton.IsEnabled = !busy && _worker is not null;
-        AsrSelfTestButton.IsEnabled = !busy && _worker is not null;
-        DiarizationSelfTestButton.IsEnabled = !busy && _worker is not null;
-        ManagedRuntimeInstallButton.IsEnabled = !busy
-            && _worker is not null
-            && _worker.HasBundledManagedRuntime;
-        SetupAccountActionButton.IsEnabled = !busy && _worker is not null;
-        SetupTranscriptionActionButton.IsEnabled = !busy && _worker is not null;
-        SetupDiarizationActionButton.IsEnabled = !busy && _worker is not null;
-        SetupAnalysisActionButton.IsEnabled = !busy && _worker is not null;
-        AreaProfileCombo.IsEnabled = !busy && _worker is not null;
-        RefreshLibraryButton.IsEnabled = !busy && _worker is not null;
-        ResumeAllLibraryButton.IsEnabled = !busy
-            && _worker is not null
-            && _libraryDays.Any(value => !value.IsComplete);
-        LibraryList.IsEnabled = !busy && _worker is not null;
-        LibraryDetailPrimaryButton.IsEnabled = !busy && _worker is not null
-            && _selectedLibraryDay is not null;
-        LibraryDetailReviewButton.IsEnabled = !busy
-            && _selectedLibraryDay?.CanOpenReview == true;
-        LibraryCheckSourceButton.IsEnabled = !busy
-            && _worker is not null
-            && _selectedLibraryDay is not null;
-        LibraryDeleteFeedButton.IsEnabled = !busy
-            && _worker is not null
-            && _selectedLibraryDay is not null;
-        LibraryOpenFolderButton.IsEnabled = !busy
-            && _selectedLibraryDay is not null
-            && Directory.Exists(_selectedLibraryDay.DayDirectory);
-        LibraryOpenTranscriptButton.IsEnabled = !busy
-            && _selectedLibraryDay is not null
-            && File.Exists(_selectedLibraryDay.TranscriptPath);
-        ClearSavedLoginButton.IsEnabled = !busy && CredentialStore.TryLoad() is not null;
-        SaveHuggingFaceTokenButton.IsEnabled = !busy;
-        ClearHuggingFaceTokenButton.IsEnabled =
-            !busy && CredentialStore.TryLoadHuggingFaceToken() is not null;
-        CancelButton.IsEnabled = busy && jobRunning;
+        _exclusiveBusy = busy;
+        _exclusiveJobRunning = busy && jobRunning;
         if (status is not null)
         {
             StatusText.Text = status;
         }
+        UpdateCommandAvailability();
+    }
+
+    private void SetPipelineBusy(bool busy, string? status = null)
+    {
+        if (busy)
+        {
+            _settingsSaveTimer?.Stop();
+            PersistUserSettings();
+            PersistAnalysisCredentialPreference();
+        }
+        if (status is not null)
+        {
+            StatusText.Text = status;
+        }
+        if (_selectedLibraryDay is not null)
+        {
+            ShowLibraryDetails(_selectedLibraryDay);
+        }
+        UpdateCommandAvailability();
+    }
+
+    private bool IsFeedPipelineBusy(string feedId) =>
+        _activePipelineFeedIds.Contains(feedId);
+
+    private bool IsFeedBusy(string feedId) =>
+        IsFeedPipelineBusy(feedId)
+        || (!string.IsNullOrWhiteSpace(_activeQuestionFeedId)
+            && string.Equals(
+                _activeQuestionFeedId,
+                feedId,
+                StringComparison.Ordinal));
+
+    private void UpdateCommandAvailability()
+    {
+        var ready = _worker is not null;
+        var interactive = ready && !_exclusiveBusy;
+        var pipelineIdle = _pipelineCancellation is null;
+        var selectedDay = _selectedLibraryDay;
+
+        SearchButton.IsEnabled = interactive;
+        StartButton.IsEnabled = interactive && pipelineIdle;
+        ScheduleFeedButton.IsEnabled = interactive;
+        ManageSchedulesButton.IsEnabled = interactive;
+        RefreshAnalysisButton.IsEnabled = interactive;
+        AnalyzeSelectedButton.IsEnabled = interactive && pipelineIdle;
+        ReloadReportButton.IsEnabled = interactive;
+        AskButton.IsEnabled = interactive
+            && _questionCancellation is null
+            && !string.IsNullOrWhiteSpace(AnalysisFeedBox.Text);
+        ClearArchiveChatButton.IsEnabled = interactive;
+        GenerateWeekButton.IsEnabled = interactive
+            && pipelineIdle
+            && _questionCancellation is null;
+        DiscoverAreaFeedsButton.IsEnabled = interactive;
+        SaveAreaProfileButton.IsEnabled = interactive;
+        ProcessAreaFeedsButton.IsEnabled = interactive && pipelineIdle;
+        GenerateAreaDigestButton.IsEnabled = interactive
+            && pipelineIdle
+            && _questionCancellation is null;
+        AnalysisProviderCheckButton.IsEnabled = interactive && pipelineIdle;
+        AnalysisModelTestButton.IsEnabled = interactive && pipelineIdle;
+        SetupProfileSelfTestButton.IsEnabled = interactive && pipelineIdle;
+        ProfileSelfTestButton.IsEnabled = interactive && pipelineIdle;
+        AsrPrepareButton.IsEnabled = interactive && pipelineIdle;
+        AsrSelfTestButton.IsEnabled = interactive && pipelineIdle;
+        DiarizationSelfTestButton.IsEnabled = interactive && pipelineIdle;
+        ManagedRuntimeInstallButton.IsEnabled = interactive
+            && pipelineIdle
+            && _worker?.HasBundledManagedRuntime == true;
+        SetupAccountActionButton.IsEnabled = interactive;
+        SetupTranscriptionActionButton.IsEnabled = interactive && pipelineIdle;
+        SetupDiarizationActionButton.IsEnabled = interactive && pipelineIdle;
+        SetupAnalysisActionButton.IsEnabled = interactive && pipelineIdle;
+        AreaProfileCombo.IsEnabled = interactive;
+        RefreshLibraryButton.IsEnabled = interactive;
+        ResumeAllLibraryButton.IsEnabled = interactive
+            && pipelineIdle
+            && _libraryFeeds.Any(value => value.BacklogCount > 0);
+        LibraryList.IsEnabled = interactive;
+        LibraryFeedCoverageList.IsEnabled = interactive;
+        LibraryDetailPrimaryButton.IsEnabled = interactive
+            && pipelineIdle
+            && selectedDay is not null;
+        LibraryDetailReviewButton.IsEnabled = interactive
+            && selectedDay?.CanOpenReview == true;
+        LibraryCheckSourceButton.IsEnabled = interactive
+            && pipelineIdle
+            && selectedDay is not null;
+        LibraryDeleteFeedButton.IsEnabled = interactive
+            && !_libraryMutationBusy
+            && selectedDay is not null
+            && !IsFeedBusy(selectedDay.FeedId);
+        LibraryOpenFolderButton.IsEnabled = interactive
+            && selectedDay is not null
+            && Directory.Exists(selectedDay.DayDirectory);
+        LibraryOpenTranscriptButton.IsEnabled = interactive
+            && selectedDay is not null
+            && !IsFeedPipelineBusy(selectedDay.FeedId)
+            && File.Exists(selectedDay.TranscriptPath);
+        ClearSavedLoginButton.IsEnabled = interactive
+            && CredentialStore.TryLoad() is not null;
+        SaveHuggingFaceTokenButton.IsEnabled = interactive;
+        ClearHuggingFaceTokenButton.IsEnabled = interactive
+            && CredentialStore.TryLoadHuggingFaceToken() is not null;
+        CancelButton.IsEnabled = _pipelineCancellation is not null
+            || (_exclusiveBusy && _exclusiveJobRunning)
+            || _questionCancellation is not null;
     }
 
     private void AppendLog(string message)

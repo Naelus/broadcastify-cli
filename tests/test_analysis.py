@@ -13,6 +13,7 @@ from broadcastify_cli.analysis import (
     LlamaServerError,
     LlamaServerProcess,
     PROMPT_VERSION,
+    RangeQuestionAnswerer,
     WINDOW_PROMPT_VERSION,
     WeeklySummaryAnalyzer,
     archive_datetime_for_offset,
@@ -29,6 +30,62 @@ from broadcastify_cli.analysis import (
     resolve_local_llama_model,
 )
 from broadcastify_cli.storage import AnalysisStore
+
+
+def test_range_question_followup_includes_bounded_chat_context(
+    tmp_path: Path,
+) -> None:
+    archive_date = date(2026, 8, 5)
+    transcript = tmp_path / "transcript.json"
+    transcript.write_text(
+        json.dumps(
+            {
+                "model": "test",
+                "segments": [
+                    {
+                        "start": 10.0,
+                        "end": 15.0,
+                        "text": "Dispatch received one report of possible shots fired.",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class ChatClient:
+        model = "fake-gemma-chat"
+
+        def __init__(self) -> None:
+            self.user = ""
+
+        def chat_json(self, **kwargs: object) -> dict[str, object]:
+            self.user = str(kwargs["user"])
+            return {
+                "answer": "One report was retained [E1].",
+                "evidence_ids": ["E1"],
+                "limitations": [],
+            }
+
+    client = ChatClient()
+    with AnalysisStore(tmp_path / "analysis.sqlite3") as store:
+        store.import_transcript("90001", archive_date, transcript)
+        result = RangeQuestionAnswerer(store, client).ask(
+            "90001",
+            archive_date,
+            archive_date,
+            "How many were there?",
+            history=[
+                {"role": "user", "content": "Were any shots reported?"},
+                {"role": "assistant", "content": "There was one possible report."},
+            ],
+        )
+
+    assert result["answer"] == "One report was retained [E1]."
+    assert "EARLIER CHAT:" in client.user
+    assert "USER: Were any shots reported?" in client.user
+    assert "CURRENT QUESTION: How many were there?" in client.user
+    assert "RETRIEVED TRANSCRIPT EVIDENCE:" in client.user
 
 
 def test_managed_llama_cpu_device_disables_every_gpu_layer() -> None:

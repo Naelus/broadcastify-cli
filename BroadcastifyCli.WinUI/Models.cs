@@ -976,10 +976,40 @@ public sealed record LibraryDay
     [JsonPropertyName("needs_network")]
     public bool NeedsNetwork { get; init; }
 
+    [JsonPropertyName("needs_local_processing")]
+    public bool NeedsLocalProcessing { get; init; }
+
+    [JsonPropertyName("known_source_count")]
+    public int KnownSourceCount { get; init; }
+
+    [JsonPropertyName("retained_source_count")]
+    public int RetainedSourceCount { get; init; }
+
+    [JsonPropertyName("missing_source_count")]
+    public int MissingSourceCount { get; init; }
+
+    [JsonPropertyName("source_checked_at")]
+    public string SourceCheckedAt { get; init; } = "";
+
+    [JsonPropertyName("source_snapshot_complete")]
+    public bool SourceSnapshotComplete { get; init; }
+
+    [JsonPropertyName("source_check_due")]
+    public bool SourceCheckDue { get; init; }
+
+    [JsonPropertyName("scheduled_missing")]
+    public bool ScheduledMissing { get; init; }
+
     public string FeedAndDate => $"{FeedName} · feed {FeedId} · {ArchiveDate}";
     public string DateAndStatus => $"{ArchiveDate} · {Status}";
     public string StatusAndNext => $"{Status} · Next: {NextStep}";
     public string ProgressSummary => $"{PipelinePercent}% · {NextStep}";
+    public string SourceCoverageSummary => SourceSnapshotComplete
+        ? $"Last source check: {RetainedSourceCount:N0}/{KnownSourceCount:N0} blocks retained"
+            + (SourceCheckDue ? " · refresh due" : "")
+        : SourceCheckDue
+            ? "Current source availability has not been checked recently"
+            : "No complete source-list snapshot is retained";
     public string PrimaryButtonLabel => PrimaryAction switch
     {
         "resume_download" => "Verify & resume",
@@ -1007,6 +1037,99 @@ public sealed record LibraryDay
     }
 }
 
+public sealed record LibraryFeedCoverage
+{
+    [JsonPropertyName("feed_id")]
+    public string FeedId { get; init; } = "";
+
+    [JsonPropertyName("feed_name")]
+    public string FeedName { get; init; } = "";
+
+    [JsonPropertyName("scheduled")]
+    public bool Scheduled { get; init; }
+
+    [JsonPropertyName("target_start_date")]
+    public string TargetStartDate { get; init; } = "";
+
+    [JsonPropertyName("target_end_date")]
+    public string TargetEndDate { get; init; } = "";
+
+    [JsonPropertyName("target_day_count")]
+    public int TargetDayCount { get; init; }
+
+    [JsonPropertyName("retained_day_count")]
+    public int RetainedDayCount { get; init; }
+
+    [JsonPropertyName("ready_day_count")]
+    public int ReadyDayCount { get; init; }
+
+    [JsonPropertyName("incomplete_day_count")]
+    public int IncompleteDayCount { get; init; }
+
+    [JsonPropertyName("missing_day_count")]
+    public int MissingDayCount { get; init; }
+
+    [JsonPropertyName("missing_dates")]
+    public List<string> MissingDates { get; init; } = [];
+
+    [JsonPropertyName("source_check_due_count")]
+    public int SourceCheckDueCount { get; init; }
+
+    [JsonPropertyName("network_day_count")]
+    public int NetworkDayCount { get; init; }
+
+    [JsonPropertyName("local_processing_day_count")]
+    public int LocalProcessingDayCount { get; init; }
+
+    [JsonPropertyName("backlog_count")]
+    public int BacklogCount { get; init; }
+
+    [JsonPropertyName("latest_local_date")]
+    public string LatestLocalDate { get; init; } = "";
+
+    [JsonPropertyName("days_behind_today")]
+    public int? DaysBehindToday { get; init; }
+
+    [JsonPropertyName("last_source_check_at")]
+    public string LastSourceCheckAt { get; init; } = "";
+
+    [JsonPropertyName("known_source_block_count")]
+    public int KnownSourceBlockCount { get; init; }
+
+    [JsonPropertyName("retained_source_block_count")]
+    public int RetainedSourceBlockCount { get; init; }
+
+    [JsonPropertyName("missing_source_block_count")]
+    public int MissingSourceBlockCount { get; init; }
+
+    [JsonPropertyName("progress_percent")]
+    public int ProgressPercent { get; init; }
+
+    [JsonPropertyName("status")]
+    public string Status { get; init; } = "";
+
+    public string FeedLabel => $"{FeedName} · feed {FeedId}";
+    public string TargetSummary => Scheduled
+        ? $"Scheduled {TargetStartDate} through {TargetEndDate} · {RetainedDayCount}/{TargetDayCount} days retained"
+        : $"{RetainedDayCount} retained day{(RetainedDayCount == 1 ? "" : "s")} · no active target range";
+    public string WorkSummary => BacklogCount == 0
+        ? Status
+        : $"{Status} · {LocalProcessingDayCount} local · {NetworkDayCount} source/network";
+    public string SourceSummary => KnownSourceBlockCount > 0
+        ? $"Last-known provider blocks: {RetainedSourceBlockCount:N0}/{KnownSourceBlockCount:N0} retained"
+            + (MissingSourceBlockCount > 0
+                ? $" · {MissingSourceBlockCount:N0} missing"
+                : "")
+            + (string.IsNullOrWhiteSpace(LastSourceCheckDisplay)
+                ? ""
+                : $" · checked {LastSourceCheckDisplay}")
+        : "No authenticated source-list snapshot is retained for this target range";
+    private string LastSourceCheckDisplay =>
+        DateTimeOffset.TryParse(LastSourceCheckAt, out var parsed)
+            ? parsed.ToLocalTime().ToString("g")
+            : LastSourceCheckAt;
+}
+
 internal sealed record LibrarySummary
 {
     [JsonPropertyName("feed_count")]
@@ -1026,12 +1149,24 @@ internal sealed record LibrarySummary
 
     [JsonPropertyName("working_storage_bytes")]
     public long WorkingStorageBytes { get; init; }
+
+    [JsonPropertyName("backlog_count")]
+    public int BacklogCount { get; init; }
+
+    [JsonPropertyName("missing_day_count")]
+    public int MissingDayCount { get; init; }
+
+    [JsonPropertyName("network_day_count")]
+    public int NetworkDayCount { get; init; }
 }
 
 internal sealed record LibraryResponse
 {
     [JsonPropertyName("days")]
     public List<LibraryDay> Days { get; init; } = [];
+
+    [JsonPropertyName("feeds")]
+    public List<LibraryFeedCoverage> Feeds { get; init; } = [];
 
     [JsonPropertyName("summary")]
     public LibrarySummary Summary { get; init; } = new();
@@ -1041,6 +1176,9 @@ internal sealed record LibraryResumePlan
 {
     [JsonPropertyName("days")]
     public List<LibraryDay> Days { get; init; } = [];
+
+    [JsonPropertyName("feeds")]
+    public List<LibraryFeedCoverage> Feeds { get; init; } = [];
 
     [JsonPropertyName("local_count")]
     public int LocalCount { get; init; }
@@ -1276,6 +1414,9 @@ public sealed record AnalysisDay
     [JsonPropertyName("feed_id")]
     public string FeedId { get; init; } = "";
 
+    [JsonPropertyName("feed_name")]
+    public string FeedName { get; init; } = "";
+
     [JsonPropertyName("archive_date")]
     public string ArchiveDate { get; init; } = "";
 
@@ -1306,7 +1447,7 @@ public sealed record AnalysisDay
     [JsonPropertyName("has_diarization")]
     public int HasDiarizationValue { get; init; }
 
-    public string FeedAndDate => $"Feed {FeedId} · {ArchiveDate}";
+    public string FeedAndDate => $"{(string.IsNullOrWhiteSpace(FeedName) ? $"Feed {FeedId}" : FeedName)} · {ArchiveDate}";
     public string ProcessingSummary => TranscriptImportRequired
         ? $"Current transcript awaits database import · saved analysis hidden · {DurationSeconds / 3600:0.0} hours"
         : $"{SegmentCount:N0} segments · {IncidentCount:N0} incidents · {DurationSeconds / 3600:0.0} hours"
@@ -1516,6 +1657,33 @@ internal sealed record ArchiveQuestionRequest : AnalysisProviderRequest
 
     [JsonPropertyName("question")]
     public string Question { get; init; } = "";
+
+    [JsonPropertyName("history")]
+    public List<ArchiveConversationTurn> History { get; init; } = [];
+}
+
+internal sealed record ArchiveConversationTurn
+{
+    [JsonPropertyName("role")]
+    public string Role { get; init; } = "";
+
+    [JsonPropertyName("content")]
+    public string Content { get; init; } = "";
+}
+
+public sealed record ArchiveChatMessage
+{
+    public string Role { get; init; } = "";
+    public string Content { get; init; } = "";
+    public List<string> EvidenceIds { get; init; } = [];
+    public List<string> Limitations { get; init; } = [];
+    public string SpeakerLabel => Role == "user" ? "You" : "Archive assistant";
+    public string EvidenceSummary => EvidenceIds.Count == 0
+        ? ""
+        : "Evidence: " + string.Join(", ", EvidenceIds);
+    public string LimitationSummary => Limitations.Count == 0
+        ? ""
+        : "Limitations: " + string.Join("; ", Limitations);
 }
 
 public sealed record ArchiveAnswer

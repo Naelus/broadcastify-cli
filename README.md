@@ -33,8 +33,11 @@ a browser UI for Windows, Linux, macOS, and TrueNAS, plus command-line tools.
   retrieval, and quantized Gemma analysis by default.
 - Stores audio, transcripts, speaker turns, incidents, summaries, evidence
   clips, and processing state locally and independently.
-- Provides a local library, exact-clip review, range questions, seven-day briefs,
-  and evidence-backed regional story leads.
+- Provides a local library with per-feed backlog/last-known source coverage,
+  selector-driven quota-safe resume, exact-clip review, named-feed evidence
+  chat, seven-day briefs, and evidence-backed regional story leads.
+- Keeps acquisition, transcription, and diarization in a background pipeline so
+  non-conflicting Library, review, schedule, and chat actions remain usable.
 
 See [FEATURES.md](FEATURES.md) for the current capability matrix.
 
@@ -92,11 +95,12 @@ In the app:
 5. Optionally choose **Schedule this feed** to save a daily time and recent-day
    lookback for that specific result.
 6. Leave combination enabled when transcribing or adding speaker labels.
-7. Review completed or interrupted days in **Local library**. Resume one day or
-   use **Resume all** to finish cached work first and guarded network gaps next;
-   a confirmed **Delete feed** action removes a feed's local evidence.
-8. Use **Review & Ask** or **Area watch** for cited incidents, clips, questions,
-   weekly briefs, and regional leads.
+7. Review completed or interrupted days in **Local library**. Expand feed
+   coverage to see scheduled gaps and last-known provider blocks, or use
+   **Resume / prioritize…** to select feeds, local work, guarded downloads, and
+   ordering; a confirmed **Delete feed** action removes a feed's local evidence.
+8. Use **Review & Ask** to choose a feed by name and chat with cited evidence,
+   or use **Area watch** for clips, weekly briefs, and regional leads.
 
 The full prerequisite, first-run, model, and private-build instructions are in
 [docs/guides/windows-setup.md](docs/guides/windows-setup.md).

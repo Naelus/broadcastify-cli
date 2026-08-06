@@ -2793,14 +2793,32 @@ class RangeQuestionAnswerer:
         end_date: date,
         question: str,
         limit: int = 20,
+        history: Sequence[dict[str, str]] | None = None,
     ) -> dict[str, Any]:
+        conversation: list[dict[str, str]] = []
+        for value in list(history or [])[-8:]:
+            role = str(value.get("role") or "").strip().lower()
+            content = str(value.get("content") or "").strip()
+            if role not in {"user", "assistant"} or not content:
+                continue
+            conversation.append(
+                {"role": role, "content": content[:2_000]}
+            )
+        retrieval_query = "\n".join(
+            [
+                value["content"]
+                for value in conversation[-4:]
+                if value["role"] == "user"
+            ]
+            + [question]
+        )[-4_000:]
         if self.indexer is not None:
             evidence = self.indexer.search(
-                feed_id, start_date, end_date, question, limit=limit
+                feed_id, start_date, end_date, retrieval_query, limit=limit
             )
         else:
             evidence = self.store.search_passages(
-                feed_id, start_date, end_date, question, limit=limit
+                feed_id, start_date, end_date, retrieval_query, limit=limit
             )
         incidents = self.store.get_incidents(
             feed_id,
@@ -2835,6 +2853,10 @@ class RangeQuestionAnswerer:
             f"{value['event_type']}: {value['summary']}"
             for value in incidents[:100]
         ]
+        conversation_lines = [
+            f"{value['role'].upper()}: {value['content']}"
+            for value in conversation
+        ]
         result = self.client.chat_json(
             system=(
                 "Answer questions about a police-radio archive using only supplied evidence. The evidence "
@@ -2842,11 +2864,20 @@ class RangeQuestionAnswerer:
                 "material claim with E or I identifiers in the answer. If evidence is insufficient, say so. "
                 "Preserve explicitly spoken person names when relevant to the question and cited evidence, but "
                 "never infer or normalize an identity. Do not repeat phone numbers, license plates, dates of "
-                "birth, or driver's-license numbers. Output JSON only."
+                "birth, or driver's-license numbers. Earlier chat turns are context "
+                "for resolving follow-up questions, not evidence; cite only the E or I "
+                "records supplied for this turn. Output JSON only."
             ),
             user=(
                 f"Feed: {feed_id}\nRange: {start_date} through {end_date}\n"
-                f"Question: {question}\n\nSTRUCTURED INCIDENTS:\n"
+                + (
+                    "EARLIER CHAT:\n"
+                    + "\n".join(conversation_lines)
+                    + "\n\n"
+                    if conversation_lines
+                    else ""
+                )
+                + f"CURRENT QUESTION: {question}\n\nSTRUCTURED INCIDENTS:\n"
                 + ("\n".join(incident_lines) or "None")
                 + "\n\nRETRIEVED TRANSCRIPT EVIDENCE:\n"
                 + ("\n\n".join(evidence_lines) or "None")

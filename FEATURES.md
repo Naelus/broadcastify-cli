@@ -1,6 +1,6 @@
 # Feature inventory
 
-Last updated: August 3, 2026
+Last updated: August 6, 2026
 
 Status labels: **Validated**, **Implemented**, **Evaluated**, **Foundation**, or
 **Planned**. Detailed behavior and retained validation evidence belong in
@@ -49,7 +49,7 @@ See [audio processing](docs/features/audio-processing.md),
 | Evidence-gated incidents | Validated | Exact citations, critical-concept support, bounded gaps, outcome rejection, category/priority correction. |
 | Cited-name private review | Validated | Spoken names preserved; inferred/normalized identities forbidden; high-risk identifiers masked. |
 | Daily and weekly briefs | Validated | Current-version incidents only, explicit coverage gaps and grounding checks. |
-| Range Q&A | Validated | Structured plus retrieved evidence with required E/I citations. |
+| Range Q&A | Validated | Friendly-name feed picker, structured plus retrieved evidence with required E/I citations, bounded multi-turn follow-ups, starter questions, and local Q&A audit persistence; quantized Gemma 4 12B remains the default provider. |
 | Evidence clips and export | Validated | Exact hashed citation clip plus separately labeled surrounding context. |
 | External provider contracts | Validated | OpenAI Responses, compatible `/v1`, and saved-login Codex behind explicit transcript-sharing consent. |
 
@@ -61,8 +61,8 @@ See [evidence analysis](docs/features/evidence-analysis.md),
 
 | Capability | Status | Notes |
 |---|---|---|
-| Native WinUI 3 shell | Validated | Task navigation for Library, New Archive, Review & Ask, Area Watch, and Settings; worker output is read away from the UI thread and burst-coalesced into a bounded recent activity window, while every message remains in the complete rotating diagnostic log on disk. |
-| Local Library | Validated | Five-stage timeline, playback, transcript preview, stale-result detection, retained-versus-temporary storage, guarded whole-feed deletion, local-first quota-safe Resume all, safe orphan cleanup, and exact per-day resume/upgrade/review actions. |
+| Native WinUI 3 shell | Validated | Task navigation for Library, New Archive, Review & Ask, Area Watch, and Settings; acquisition/transcription runs as a background pipeline while non-conflicting review/chat/library actions remain available, same-feed file handles are guarded, model analysis is serialized, and bursty worker output remains off the UI thread and in the rotating diagnostic log. |
+| Local Library | Validated | Five-stage timeline, playback, transcript preview, stale-result detection, retained-versus-temporary storage, schedule-aware feed backlog/last-known source coverage, guarded retrying whole-feed deletion, selector-driven quota-safe Resume/prioritize, safe orphan cleanup, and exact per-day resume/upgrade/review actions. |
 | Area Watch | Validated | Profile discovery, queue, coverage-aware ranked leads, selected evidence, clips and exports. |
 | Neighborhood subscription delivery | Foundation | Story eligibility and neighborhood/topic tags exist; opt-in delivery is explicitly low priority in [#5](https://github.com/Naelus/broadcastify-cli/issues/5). |
 | Cross-platform browser UI | Validated | Windows/Linux desktop and mobile validation; loopback default and explicit trusted-LAN mode. |

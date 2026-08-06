@@ -12,17 +12,34 @@ The Library is a master/detail view over every retained feed-day. It shows:
 - local paths; and
 - the exact next action.
 
+The expandable **Feed coverage and backlog** section groups those days by the
+friendly feed name. For an enabled schedule it compares the schedule's recent
+lookback plus any retained catch-up boundary with locally retained days through
+today. It reports missing days, local processing work, guarded source/network
+days, newest retained date, and pipeline percentage. It also compares retained
+raw blocks with the last authenticated provider-list snapshot. This view is
+read-only: refreshing the Library never signs in, loads an archive listing, or
+spends an archive-media request. Today's snapshot becomes eligible for a
+refresh after 30 minutes; it is refreshed only by an explicit/scheduled guarded
+resume.
+
 The five stages are archive audio, combination, transcription, speaker labels,
 and analysis. Each stage is detected from completion evidence, not merely from a
 requested flag or filename.
 
 ## Resume actions
 
-- **Resume all** builds a fresh read-only plan, skips ready days, finishes every
-  local-only day first, and then handles network-needed days sequentially. It
-  checks the persistent rolling ledger before each network day and stops on the
-  first unavailable slot or explicit provider limit. Planning and local stages
-  never contact Broadcastify, and completed checkpoints are reused.
+- **Resume / prioritize…** builds a fresh read-only plan, synthesizes missing
+  days from enabled feed schedules, and skips work already current. Before
+  execution, the user chooses feeds, local-only work, whether to check/download
+  missing source audio now, and one of local-first, selected-feed-first,
+  newest-first, or oldest-first ordering. Network-needed days remain sequential.
+  The app checks the persistent rolling ledger before each network day and
+  stops on the first unavailable slot or explicit provider limit. Planning and
+  local stages never contact Broadcastify, and completed checkpoints are reused.
+  A current day can appear in both categories: if its refresh is quota-blocked,
+  selected retained local stages still finish and its guarded source refresh
+  remains queued for the next pass.
 
 - **Verify & resume** contacts the guarded archive path only when source
   completeness needs verification.
@@ -55,6 +72,13 @@ leaves an ignored tombstone that a later Library refresh safely retries. Saved
 Area Watch profiles and acquisition history remain configuration/audit records;
 running one of those profiles can intentionally acquire the feed again.
 
+On Windows, playback is released before detaching the directory and transient
+sharing violations are retried with bounded backoff. If another worker, File
+Explorer window, media handle, or outside process still owns the folder, the
+operation reports that the feed is in use and removes neither files nor database
+records. A feed currently used by the background pipeline or archive chat is
+blocked before confirmation; a different feed can still be deleted.
+
 An older combined MP3 is not considered current when its manifest differs from
 the retained raw blocks. That day is labeled **New audio pending combine**; the
 older recording is preserved, while its obsolete transcript/review state is
@@ -85,8 +109,24 @@ weekly-summary surfaces enforce the same gate.
 
 Review supports priority filters plus all-priority search, daily briefs,
 timestamped source quotes, exact and surrounding-context playback, local clip
-export, and range questions. Incident playback seeks within the generated clip,
-not an unrelated offset in the full day.
+export, and range questions. The feed picker displays retained/scheduled feed
+names rather than requiring a numeric ID. **Ask the archive** is a multi-turn
+chat over one named feed and date range, with starter questions for shots
+reports, unusual events, and the most important events in a week. Recent turns
+help resolve follow-ups, but every new material claim must cite fresh E/I
+evidence for that turn. The configured provider is used—quantized local Gemma 4
+12B through llama.cpp by default—and each answer remains in the existing local
+Q&A audit history. Incident playback seeks within the generated clip, not an
+unrelated offset in the full day.
+
+Archive acquisition, combination, ASR, diarization, and incident extraction run
+as a background pipeline. Navigation, Library browsing, reviewing completed
+feeds, feed search, schedule management, and archive chat remain available.
+Actions that would mutate or hold files for a feed currently being updated are
+disabled for that feed only. Model-backed archive chat and pipeline analysis
+share one analysis slot, preventing two competing local Gemma servers; chat can
+run during download/transcription, and whichever model request reaches the slot
+second waits without blocking the window.
 
 Speaker labels are anonymous acoustic clusters. They provide conversation
 structure but do not identify officers, dispatchers, callers, or radio units.

@@ -60,6 +60,13 @@ complete: if its proof is missing or invalid, the day remains safely deferred
 until an eligible online pass or a hash-verified LAN completion can establish
 one.
 
+The native Library's feed-backlog view and **Resume / prioritize…** planner read
+those snapshots, enabled schedule ranges, and the rolling ledger locally. They
+do not authenticate or load provider metadata. Only after explicit confirmation
+can selected source/network days enter the normal sequential guarded runner;
+the user can instead select local processing only and spend zero archive
+requests.
+
 The desktop and browser UIs show used, remaining, reserve, next-safe time, and a
 short form of the installation identity. The Windows package keeps its ledger
 under the app's local data directory. Web/CLI deployments default to
