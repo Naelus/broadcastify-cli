@@ -147,3 +147,11 @@ def test_public_installer_build_rejects_private_environment_and_pins_downloads()
     assert '"v*"' in workflow
     assert "gh release upload" in workflow
     assert "gh release create" in workflow
+
+
+def test_tagged_release_uses_the_shipped_windows_product_name() -> None:
+    workflow = (
+        ROOT / ".github" / "workflows" / "windows-release.yml"
+    ).read_text(encoding="utf-8")
+
+    assert '--title "Broadcastify Desktop ${{ steps.version.outputs.value }}"' in workflow
