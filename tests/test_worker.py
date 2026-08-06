@@ -28,6 +28,7 @@ from broadcastify_cli.worker import (
     emit,
     load_worker_environment,
     latest_area_digest,
+    library_resume_plan,
     prepare_asr_model_command,
     profile_self_test,
 )
@@ -64,6 +65,43 @@ def test_archive_quota_status_mints_one_persistent_installation_identity(
     assert statuses[0]["instance_id"] == statuses[1]["instance_id"]
     assert statuses[0]["automated_limit"] == 240
     assert statuses[0]["user_reserve"] == 10
+
+
+def test_library_resume_planning_reads_only_local_state_and_quota(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    emitted: list[dict[str, object]] = []
+
+    class FakeLedger:
+        def status(self) -> dict[str, object]:
+            return {"available": False, "remaining": 0}
+
+    class ForbiddenBroadcastifyClient:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            raise AssertionError("resume planning must not create a website client")
+
+    monkeypatch.setattr(
+        "broadcastify_cli.worker.scan_local_library",
+        lambda *_args: [
+            {
+                "feed_id": "90001",
+                "archive_date": "2026-07-12",
+                "is_complete": False,
+                "needs_network": True,
+            }
+        ],
+    )
+    monkeypatch.setattr("broadcastify_cli.worker.ArchiveRequestLedger", FakeLedger)
+    monkeypatch.setattr(
+        "broadcastify_cli.worker.BroadcastifyClient",
+        ForbiddenBroadcastifyClient,
+    )
+    monkeypatch.setattr("broadcastify_cli.worker.emit", emitted.append)
+
+    assert library_resume_plan("unused") == 0
+    assert emitted[0]["type"] == "library_resume_plan"
+    assert emitted[0]["network_count"] == 1
+    assert emitted[0]["quota"] == {"available": False, "remaining": 0}
 
 
 def test_asr_self_test_uses_selected_engine_without_returning_transcript_text(

@@ -128,7 +128,7 @@ def test_native_releases_media_handles_before_archive_mutation() -> None:
     ).read_text(encoding="utf-8")
 
     assert "private async Task ReleaseMediaForArchiveMutationAsync()" in native
-    assert native.count("await ReleaseMediaForArchiveMutationAsync();") == 2
+    assert native.count("await ReleaseMediaForArchiveMutationAsync();") == 3
     assert "_libraryMediaPlayer.Source = null;" in native
     assert "await Task.Delay(150);" in native
 
@@ -175,6 +175,40 @@ def test_native_library_can_recheck_source_audio_for_complete_days() -> None:
     ).read_text(encoding="utf-8")
     assert "forceSourceCheck: true" in native
     assert "day.NeedsNetwork || forceSourceCheck" in native
+
+
+def test_native_library_exposes_guarded_feed_delete_and_resume_all() -> None:
+    root = ElementTree.parse(
+        ROOT / "BroadcastifyCli.WinUI" / "MainWindow.xaml"
+    ).getroot()
+    names = {
+        element.attrib.get(XAML_NAME): element
+        for element in root.iter()
+        if element.attrib.get(XAML_NAME)
+    }
+
+    assert names["ResumeAllLibraryButton"].attrib["Content"] == "Resume all"
+    assert names["ResumeAllLibraryButton"].attrib["Click"] == (
+        "ResumeAllLibrary_Click"
+    )
+    assert names["LibraryDeleteFeedButton"].attrib["Content"] == "Delete feed"
+    assert names["LibraryDeleteFeedButton"].attrib["Click"] == (
+        "LibraryDeleteFeed_Click"
+    )
+
+    native = (
+        ROOT / "BroadcastifyCli.WinUI" / "MainWindow.xaml.cs"
+    ).read_text(encoding="utf-8")
+    worker = (
+        ROOT / "BroadcastifyCli.WinUI" / "WorkerClient.cs"
+    ).read_text(encoding="utf-8")
+    assert "DefaultButton = ContentDialogButton.Close" in native
+    assert "Local-only days run first" in native
+    assert "if (quota is null || !quota.Available)" in native
+    assert "result?.DownloadLimited == true" in native
+    assert "DownloadJobs = 1" in native
+    assert '"library-resume-plan"' in worker
+    assert '"delete-library-feed"' in worker
 
 
 def test_native_and_web_distinguish_working_storage_and_stale_transcripts() -> None:

@@ -1037,6 +1037,48 @@ internal sealed record LibraryResponse
     public LibrarySummary Summary { get; init; } = new();
 }
 
+internal sealed record LibraryResumePlan
+{
+    [JsonPropertyName("days")]
+    public List<LibraryDay> Days { get; init; } = [];
+
+    [JsonPropertyName("local_count")]
+    public int LocalCount { get; init; }
+
+    [JsonPropertyName("network_count")]
+    public int NetworkCount { get; init; }
+
+    [JsonPropertyName("quota")]
+    public ArchiveQuotaStatus Quota { get; init; } = new();
+}
+
+internal sealed record LibraryFeedDeleteResult
+{
+    [JsonPropertyName("feed_id")]
+    public string FeedId { get; init; } = "";
+
+    [JsonPropertyName("directory_deleted")]
+    public bool DirectoryDeleted { get; init; }
+
+    [JsonPropertyName("cleanup_pending")]
+    public bool CleanupPending { get; init; }
+
+    [JsonPropertyName("days_deleted")]
+    public int DaysDeleted { get; init; }
+
+    [JsonPropertyName("segments_deleted")]
+    public int SegmentsDeleted { get; init; }
+
+    [JsonPropertyName("incidents_deleted")]
+    public int IncidentsDeleted { get; init; }
+
+    [JsonPropertyName("area_digests_invalidated")]
+    public int AreaDigestsInvalidated { get; init; }
+
+    [JsonPropertyName("schedules_deleted")]
+    public int SchedulesDeleted { get; init; }
+}
+
 internal sealed record ManagedRuntimeStatus
 {
     [JsonPropertyName("profile")]

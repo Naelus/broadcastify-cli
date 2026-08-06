@@ -490,6 +490,63 @@ internal sealed class WorkerClient
         return result ?? new LibraryResponse();
     }
 
+    public async Task<LibraryResumePlan> GetLibraryResumePlanAsync(
+        string outputDirectory,
+        CancellationToken cancellationToken)
+    {
+        LibraryResumePlan? result = null;
+        await RunWorkerAsync(
+            [
+                "-m", "broadcastify_cli.worker", "library-resume-plan",
+                "--output-dir", string.IsNullOrWhiteSpace(outputDirectory)
+                    ? "archives"
+                    : outputDirectory,
+            ],
+            null,
+            message =>
+            {
+                if (message.TryGetProperty("type", out var type)
+                    && type.GetString() == "library_resume_plan")
+                {
+                    result = message.Deserialize<LibraryResumePlan>(JsonOptions);
+                }
+            },
+            cancellationToken);
+        return result ?? new LibraryResumePlan();
+    }
+
+    public async Task<LibraryFeedDeleteResult?> DeleteLibraryFeedAsync(
+        string outputDirectory,
+        string feedId,
+        bool removeSchedule,
+        CancellationToken cancellationToken)
+    {
+        LibraryFeedDeleteResult? result = null;
+        await RunWorkerAsync(
+            ["-m", "broadcastify_cli.worker", "delete-library-feed"],
+            JsonSerializer.Serialize(
+                new
+                {
+                    output_dir = string.IsNullOrWhiteSpace(outputDirectory)
+                        ? "archives"
+                        : outputDirectory,
+                    feed_id = feedId,
+                    remove_schedule = removeSchedule,
+                },
+                JsonOptions),
+            message =>
+            {
+                if (message.TryGetProperty("type", out var type)
+                    && type.GetString() == "library_feed_deleted"
+                    && message.TryGetProperty("result", out var value))
+                {
+                    result = value.Deserialize<LibraryFeedDeleteResult>(JsonOptions);
+                }
+            },
+            cancellationToken);
+        return result;
+    }
+
     public async Task<DayReport?> ContinueLocalDayAsync(
         LocalProcessingRequest request,
         Action<JsonElement> onMessage,

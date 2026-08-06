@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
+import uuid
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -28,6 +30,102 @@ from .workfiles import (
 
 RAW_ARCHIVE_PATTERN = re.compile(r"^\d{12}-\d+-(\d+)\.mp3$", re.IGNORECASE)
 DAY_DIRECTORY_PATTERN = re.compile(r"^\d{8}$")
+PENDING_DELETE_PATTERN = re.compile(r"^\.deleting-\d+-[0-9a-f]{32}$")
+
+
+def build_library_resume_plan(
+    days: list[dict[str, Any]],
+    quota_status: dict[str, Any],
+) -> dict[str, Any]:
+    """Return a deterministic local-first queue without starting any work."""
+
+    incomplete = [value for value in days if not bool(value.get("is_complete"))]
+    ordered = sorted(
+        incomplete,
+        key=lambda value: (
+            bool(value.get("needs_network")),
+            str(value.get("archive_date") or ""),
+            str(value.get("feed_id") or ""),
+        ),
+    )
+    return {
+        "days": ordered,
+        "local_count": sum(not bool(value.get("needs_network")) for value in ordered),
+        "network_count": sum(bool(value.get("needs_network")) for value in ordered),
+        "quota": dict(quota_status),
+    }
+
+
+def delete_local_library_feed(
+    output_dir: str | Path,
+    database_path: str | Path,
+    feed_id: str,
+    *,
+    remove_schedule: bool = True,
+) -> dict[str, Any]:
+    """Atomically detach one feed directory, then remove its database evidence."""
+
+    normalized = str(feed_id or "").strip()
+    if not normalized.isdigit():
+        raise ValueError("Feed ID must contain only digits.")
+    output_root = Path(output_dir).expanduser().resolve()
+    feed_directory = output_root / normalized
+    tombstone: Path | None = None
+    if feed_directory.exists():
+        is_junction = getattr(feed_directory, "is_junction", lambda: False)
+        if feed_directory.is_symlink() or is_junction() or not feed_directory.is_dir():
+            raise ValueError(
+                "The feed library path is not a regular directory and was not deleted."
+            )
+        if feed_directory.resolve().parent != output_root:
+            raise ValueError("The feed library path escapes the selected library root.")
+        tombstone = output_root / f".deleting-{normalized}-{uuid.uuid4().hex}"
+        feed_directory.rename(tombstone)
+
+    try:
+        with AnalysisStore(database_path) as store:
+            result = store.delete_library_feed(
+                normalized,
+                remove_schedule=remove_schedule,
+            )
+    except Exception:
+        if tombstone is not None and tombstone.exists() and not feed_directory.exists():
+            tombstone.rename(feed_directory)
+        raise
+
+    cleanup_pending = False
+    if tombstone is not None:
+        try:
+            shutil.rmtree(tombstone)
+        except OSError:
+            cleanup_pending = True
+    return {
+        "feed_id": normalized,
+        "directory_deleted": tombstone is not None,
+        "cleanup_pending": cleanup_pending,
+        **result,
+    }
+
+
+def cleanup_pending_library_deletions(output_dir: str | Path) -> int:
+    """Retry cleanup of directories detached by a completed feed deletion."""
+
+    output_root = Path(output_dir).expanduser().resolve()
+    if not output_root.is_dir():
+        return 0
+    removed = 0
+    for candidate in output_root.iterdir():
+        if not PENDING_DELETE_PATTERN.match(candidate.name):
+            continue
+        is_junction = getattr(candidate, "is_junction", lambda: False)
+        if candidate.is_symlink() or is_junction() or not candidate.is_dir():
+            continue
+        try:
+            shutil.rmtree(candidate)
+        except OSError:
+            continue
+        removed += 1
+    return removed
 
 
 def _transcript_tail(path: str | Path) -> str:
@@ -432,6 +530,7 @@ def scan_local_library(
     database_path: str | Path | None = None,
 ) -> list[dict[str, Any]]:
     output_root = Path(output_dir)
+    cleanup_pending_library_deletions(output_root)
     database = Path(database_path) if database_path else output_root / "broadcastify-analysis.sqlite3"
     with AnalysisStore(database) as store:
         stored_days = {

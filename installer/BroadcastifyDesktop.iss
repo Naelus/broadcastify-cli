@@ -1,8 +1,8 @@
 #ifndef MyAppVersion
-  #define MyAppVersion "0.4.17"
+  #define MyAppVersion "0.4.18"
 #endif
 #ifndef MyAppVersionNumeric
-  #define MyAppVersionNumeric "0.4.17.0"
+  #define MyAppVersionNumeric "0.4.18.0"
 #endif
 #ifndef SourceDir
   #error SourceDir must point to the prepared Windows application directory.

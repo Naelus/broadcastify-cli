@@ -959,6 +959,117 @@ class AnalysisStore:
         ).fetchall()
         return [self._with_local_day_paths(row) for row in rows]
 
+    def delete_library_feed(
+        self,
+        feed_id: str,
+        *,
+        remove_schedule: bool = True,
+    ) -> dict[str, int]:
+        """Remove one feed's evidence records and invalidate derived caches."""
+
+        normalized = str(feed_id or "").strip()
+        if not normalized.isdigit():
+            raise ValueError("Feed ID must contain only digits.")
+
+        day_ids = [
+            int(row["id"])
+            for row in self.connection.execute(
+                "SELECT id FROM feed_days WHERE feed_id=?", (normalized,)
+            ).fetchall()
+        ]
+        incident_count = 0
+        segment_count = 0
+        passage_count = 0
+        if day_ids:
+            placeholders = ",".join("?" for _ in day_ids)
+            parameters = tuple(day_ids)
+            incident_count = int(
+                self.connection.execute(
+                    f"SELECT COUNT(*) FROM incidents WHERE day_id IN ({placeholders})",
+                    parameters,
+                ).fetchone()[0]
+            )
+            segment_count = int(
+                self.connection.execute(
+                    f"SELECT COUNT(*) FROM transcript_segments WHERE day_id IN ({placeholders})",
+                    parameters,
+                ).fetchone()[0]
+            )
+            passage_count = int(
+                self.connection.execute(
+                    f"SELECT COUNT(*) FROM passages WHERE day_id IN ({placeholders})",
+                    parameters,
+                ).fetchone()[0]
+            )
+
+        digest_ids: list[int] = []
+        for row in self.connection.execute(
+            "SELECT id, stories_json, coverage_json FROM area_story_digests"
+        ).fetchall():
+            values: list[Any] = []
+            for column in ("stories_json", "coverage_json"):
+                try:
+                    values.append(json.loads(str(row[column] or "null")))
+                except json.JSONDecodeError:
+                    continue
+            if any(self._json_references_feed(value, normalized) for value in values):
+                digest_ids.append(int(row["id"]))
+
+        with self.transaction() as connection:
+            connection.execute(
+                "DELETE FROM weekly_summaries WHERE feed_id=?", (normalized,)
+            )
+            connection.execute(
+                "DELETE FROM qa_history WHERE feed_id=?", (normalized,)
+            )
+            if digest_ids:
+                placeholders = ",".join("?" for _ in digest_ids)
+                connection.execute(
+                    f"DELETE FROM area_story_digests WHERE id IN ({placeholders})",
+                    tuple(digest_ids),
+                )
+            connection.execute("DELETE FROM feed_days WHERE feed_id=?", (normalized,))
+            connection.execute(
+                "DELETE FROM embeddings WHERE entity_type='passage' "
+                "AND entity_id NOT IN (SELECT id FROM passages)"
+            )
+            schedules_deleted = 0
+            if remove_schedule:
+                schedules_deleted = connection.execute(
+                    "DELETE FROM feed_schedules WHERE feed_id=?", (normalized,)
+                ).rowcount
+
+        return {
+            "days_deleted": len(day_ids),
+            "segments_deleted": segment_count,
+            "passages_deleted": passage_count,
+            "incidents_deleted": incident_count,
+            "area_digests_invalidated": len(digest_ids),
+            "schedules_deleted": max(0, int(schedules_deleted)),
+        }
+
+    @staticmethod
+    def _json_references_feed(value: Any, feed_id: str) -> bool:
+        if isinstance(value, dict):
+            direct = value.get("feed_id")
+            if direct is not None and str(direct) == feed_id:
+                return True
+            feed_ids = value.get("feed_ids")
+            if isinstance(feed_ids, list) and any(
+                str(item) == feed_id for item in feed_ids
+            ):
+                return True
+            return any(
+                AnalysisStore._json_references_feed(item, feed_id)
+                for item in value.values()
+            )
+        if isinstance(value, list):
+            return any(
+                AnalysisStore._json_references_feed(item, feed_id)
+                for item in value
+            )
+        return False
+
     def save_feed_catalog(self, feeds: Sequence[dict[str, Any]]) -> None:
         now = utc_now()
         with self.transaction() as connection:

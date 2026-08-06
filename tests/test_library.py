@@ -8,6 +8,9 @@ from broadcastify_cli.analysis import PROMPT_VERSION
 from broadcastify_cli.archive_cache import remember_archive_identity
 from broadcastify_cli.library import (
     LocalProcessingRequest,
+    build_library_resume_plan,
+    cleanup_pending_library_deletions,
+    delete_local_library_feed,
     prepare_local_day,
     scan_local_library,
     transcript_satisfies_diarization,
@@ -21,6 +24,119 @@ def _day(tmp_path: Path, feed_id: str, value: str) -> Path:
     result = tmp_path / feed_id / value.replace("-", "")
     result.mkdir(parents=True)
     return result
+
+
+def test_library_resume_plan_is_local_first_and_never_starts_acquisition() -> None:
+    days = [
+        {
+            "feed_id": "90003",
+            "archive_date": "2026-07-03",
+            "is_complete": False,
+            "needs_network": True,
+        },
+        {
+            "feed_id": "90001",
+            "archive_date": "2026-07-02",
+            "is_complete": False,
+            "needs_network": False,
+        },
+        {
+            "feed_id": "90002",
+            "archive_date": "2026-07-01",
+            "is_complete": True,
+            "needs_network": False,
+        },
+    ]
+    quota = {"available": False, "remaining": 0, "next_request_at": "later"}
+
+    result = build_library_resume_plan(days, quota)
+
+    assert [value["feed_id"] for value in result["days"]] == ["90001", "90003"]
+    assert result["local_count"] == 1
+    assert result["network_count"] == 1
+    assert result["quota"] == quota
+
+
+def test_delete_local_library_feed_removes_only_selected_feed_and_schedule(
+    tmp_path: Path,
+) -> None:
+    target = _day(tmp_path, "90001", "2026-07-12")
+    other = _day(tmp_path, "90002", "2026-07-12")
+    target_audio = target / "combined_90001_20260712.mp3"
+    other_audio = other / "combined_90002_20260712.mp3"
+    target_audio.write_bytes(b"target audio")
+    other_audio.write_bytes(b"other audio")
+    target_transcript = target / "transcripts" / "combined_90001_20260712.json"
+    other_transcript = other / "transcripts" / "combined_90002_20260712.json"
+    target_transcript.parent.mkdir()
+    other_transcript.parent.mkdir()
+    transcript_payload = {
+        "model": "test",
+        "segments": [{"start": 0.0, "end": 1.0, "text": "retained"}],
+    }
+    target_transcript.write_text(json.dumps(transcript_payload), encoding="utf-8")
+    other_transcript.write_text(json.dumps(transcript_payload), encoding="utf-8")
+    database = tmp_path / "analysis.sqlite3"
+    with AnalysisStore(database) as store:
+        store.import_transcript(
+            "90001", date(2026, 7, 12), target_transcript, target_audio
+        )
+        store.import_transcript(
+            "90002", date(2026, 7, 12), other_transcript, other_audio
+        )
+        store.save_feed_schedule(
+            {
+                "feed_id": "90001",
+                "feed_name": "Target Feed",
+                "run_time_local": "02:00",
+                "job": {},
+            }
+        )
+        store.save_feed_schedule(
+            {
+                "feed_id": "90002",
+                "feed_name": "Other Feed",
+                "run_time_local": "02:00",
+                "job": {},
+            }
+        )
+
+    result = delete_local_library_feed(
+        tmp_path,
+        database,
+        "90001",
+        remove_schedule=True,
+    )
+
+    assert result["directory_deleted"] is True
+    assert result["cleanup_pending"] is False
+    assert result["days_deleted"] == 1
+    assert result["segments_deleted"] == 1
+    assert result["schedules_deleted"] == 1
+    assert not (tmp_path / "90001").exists()
+    assert other_audio.is_file()
+    with AnalysisStore(database) as store:
+        assert store.list_days("90001") == []
+        assert len(store.list_days("90002")) == 1
+        assert [value["feed_id"] for value in store.list_feed_schedules()] == [
+            "90002"
+        ]
+
+
+def test_library_refresh_retries_only_detached_delete_cleanup(tmp_path: Path) -> None:
+    pending = tmp_path / (".deleting-90001-" + "a" * 32)
+    pending.mkdir()
+    (pending / "old.mp3").write_bytes(b"old")
+    ordinary = tmp_path / "notes"
+    ordinary.mkdir()
+    (ordinary / "keep.txt").write_text("keep", encoding="utf-8")
+    lookalike = tmp_path / ".deleting-not-a-tombstone"
+    lookalike.mkdir()
+
+    assert cleanup_pending_library_deletions(tmp_path) == 1
+    assert not pending.exists()
+    assert (ordinary / "keep.txt").is_file()
+    assert lookalike.is_dir()
 
 
 def test_library_discovers_partial_and_analyzed_days(tmp_path: Path) -> None:

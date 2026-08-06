@@ -77,6 +77,8 @@ from .geography import CENSUS_ZCTA_YEAR, ZipCentroidCatalog
 from .jobs import JobRunner
 from .library import (
     LocalProcessingRequest,
+    build_library_resume_plan,
+    delete_local_library_feed,
     prepare_local_day,
     require_current_range_evidence,
     scan_local_library,
@@ -1319,6 +1321,35 @@ def library_days(output_dir: str) -> int:
     return 0
 
 
+def library_resume_plan(output_dir: str) -> int:
+    days = scan_local_library(Path(output_dir), DEFAULT_DATABASE)
+    result = build_library_resume_plan(days, ArchiveRequestLedger().status())
+    emit({"type": "library_resume_plan", **result})
+    return 0
+
+
+def delete_library_feed() -> int:
+    payload = json.load(sys.stdin)
+    result = delete_local_library_feed(
+        payload.get("output_dir") or "archives",
+        DEFAULT_DATABASE,
+        str(payload.get("feed_id") or ""),
+        remove_schedule=bool(payload.get("remove_schedule", True)),
+    )
+    emit(
+        {
+            "type": "library_feed_deleted",
+            "result": result,
+            "message": (
+                f"Deleted feed {result['feed_id']} from the local library: "
+                f"{result['days_deleted']} day(s), "
+                f"{result['incidents_deleted']} incident(s)."
+            ),
+        }
+    )
+    return 0
+
+
 def _library_state_for_store(
     store: AnalysisStore,
     feed_id: str,
@@ -1888,6 +1919,9 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("profile-self-test")
     library = subparsers.add_parser("library")
     library.add_argument("--output-dir", default="archives")
+    resume_library = subparsers.add_parser("library-resume-plan")
+    resume_library.add_argument("--output-dir", default="archives")
+    subparsers.add_parser("delete-library-feed")
     subparsers.add_parser("continue-local")
     days = subparsers.add_parser("analysis-days")
     days.add_argument("--feed-id")
@@ -2008,6 +2042,10 @@ def main() -> int:
             return profile_self_test()
         if arguments.command == "library":
             return library_days(arguments.output_dir)
+        if arguments.command == "library-resume-plan":
+            return library_resume_plan(arguments.output_dir)
+        if arguments.command == "delete-library-feed":
+            return delete_library_feed()
         if arguments.command == "continue-local":
             return continue_local_day()
         if arguments.command == "analysis-days":

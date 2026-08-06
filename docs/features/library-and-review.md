@@ -18,6 +18,12 @@ requested flag or filename.
 
 ## Resume actions
 
+- **Resume all** builds a fresh read-only plan, skips ready days, finishes every
+  local-only day first, and then handles network-needed days sequentially. It
+  checks the persistent rolling ledger before each network day and stops on the
+  first unavailable slot or explicit provider limit. Planning and local stages
+  never contact Broadcastify, and completed checkpoints are reused.
+
 - **Verify & resume** contacts the guarded archive path only when source
   completeness needs verification.
 - **Check for new source audio** is available on every retained day, including
@@ -31,6 +37,23 @@ requested flag or filename.
 - **Re-run evidence analysis** uses retained transcripts and makes no archive
   request.
 - **Open review** appears only for the current evidence-policy version.
+
+## Deleting a feed
+
+The native Library exposes **Delete feed** in the selected feed header. A
+non-default destructive confirmation lists the number of days, approximate
+storage, and data types that will be removed. If the feed has a daily schedule,
+the dialog offers to remove that schedule too and selects that option by
+default so the feed is not unexpectedly downloaded again.
+
+Deletion first detaches the numeric feed directory within the selected Library
+root, then transactionally removes its imported days, transcript segments,
+passages and embeddings, incidents, daily/weekly summaries, saved questions,
+and cached area digests that cite the feed. If the database transaction fails,
+the detached directory is restored. A transient filesystem cleanup failure
+leaves an ignored tombstone that a later Library refresh safely retries. Saved
+Area Watch profiles and acquisition history remain configuration/audit records;
+running one of those profiles can intentionally acquire the feed again.
 
 An older combined MP3 is not considered current when its manifest differs from
 the retained raw blocks. That day is labeled **New audio pending combine**; the

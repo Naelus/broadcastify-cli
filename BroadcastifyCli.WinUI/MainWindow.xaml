@@ -74,8 +74,14 @@
                                 <TextBlock Text="See every retained feed-day, what is finished, and the exact next step—without touching Broadcastify unless a download is incomplete."
                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
                             </StackPanel>
-                            <Button x:Name="RefreshLibraryButton" Grid.Column="1" Content="Refresh library"
-                                    VerticalAlignment="Center" Click="RefreshLibrary_Click" />
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8"
+                                        VerticalAlignment="Center">
+                                <Button x:Name="ResumeAllLibraryButton" Content="Resume all"
+                                        Click="ResumeAllLibrary_Click"
+                                        ToolTipService.ToolTip="Finish local-only work first, then use the guarded rolling archive allowance one day at a time." />
+                                <Button x:Name="RefreshLibraryButton" Content="Refresh library"
+                                        Click="RefreshLibrary_Click" />
+                            </StackPanel>
                         </Grid>
 
                         <Grid Grid.Row="1" ColumnSpacing="12">
@@ -175,12 +181,22 @@
                                                 <RowDefinition Height="*" />
                                                 <RowDefinition Height="Auto" />
                                             </Grid.RowDefinitions>
-                                            <StackPanel Spacing="3">
-                                                <TextBlock x:Name="LibraryDetailTitleText" Style="{StaticResource SubtitleTextBlockStyle}"
-                                                           TextWrapping="Wrap" />
-                                                <TextBlock x:Name="LibraryDetailSubtitleText"
-                                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                            </StackPanel>
+                                            <Grid ColumnSpacing="10">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <StackPanel Spacing="3">
+                                                    <TextBlock x:Name="LibraryDetailTitleText" Style="{StaticResource SubtitleTextBlockStyle}"
+                                                               TextWrapping="Wrap" />
+                                                    <TextBlock x:Name="LibraryDetailSubtitleText"
+                                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                </StackPanel>
+                                                <Button x:Name="LibraryDeleteFeedButton" Grid.Column="1"
+                                                        Content="Delete feed" VerticalAlignment="Top"
+                                                        Click="LibraryDeleteFeed_Click"
+                                                        ToolTipService.ToolTip="Permanently delete this feed's retained audio and derived local evidence." />
+                                            </Grid>
                                             <InfoBar x:Name="LibraryDetailInfoBar" Grid.Row="1" IsOpen="True"
                                                      IsClosable="False" Severity="Informational" />
                                             <TabView Grid.Row="2" IsAddTabButtonVisible="False" TabWidthMode="SizeToContent">

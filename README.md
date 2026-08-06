@@ -92,8 +92,9 @@ In the app:
 5. Optionally choose **Schedule this feed** to save a daily time and recent-day
    lookback for that specific result.
 6. Leave combination enabled when transcribing or adding speaker labels.
-7. Review completed or interrupted days in **Local library**. The next action
-   resumes only the missing or stale stage.
+7. Review completed or interrupted days in **Local library**. Resume one day or
+   use **Resume all** to finish cached work first and guarded network gaps next;
+   a confirmed **Delete feed** action removes a feed's local evidence.
 8. Use **Review & Ask** or **Area watch** for cited incidents, clips, questions,
    weekly briefs, and regional leads.
 

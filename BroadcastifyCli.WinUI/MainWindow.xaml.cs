@@ -7,6 +7,7 @@ using Microsoft.UI;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media;
 using Windows.Graphics;
 using Windows.Media.Core;
 using Windows.Media.Playback;
@@ -2299,6 +2300,161 @@ public sealed partial class MainWindow : Window
     private async void RefreshLibrary_Click(object sender, RoutedEventArgs e) =>
         await RefreshLibraryAsync();
 
+    private async void ResumeAllLibrary_Click(object sender, RoutedEventArgs e)
+    {
+        if (_worker is null || _operationCancellation is not null)
+        {
+            return;
+        }
+
+        LibraryResumePlan plan;
+        try
+        {
+            using var cancellation = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+            plan = await _worker.GetLibraryResumePlanAsync(
+                PersistedOutputDirectory(),
+                cancellation.Token);
+        }
+        catch (Exception exception)
+        {
+            await ShowErrorAsync(exception);
+            return;
+        }
+        if (plan.Days.Count == 0)
+        {
+            await ShowMessageAsync(
+                "Library is caught up",
+                "Every retained feed-day is already ready to review.");
+            return;
+        }
+
+        var quotaText = plan.NetworkCount == 0
+            ? "No Broadcastify archive request is needed."
+            : plan.Quota.Available
+                ? $"The local ledger currently has {plan.Quota.Remaining} guarded archive request(s) available."
+                : "The archive allowance is currently paused; local work will run, then network work will wait.";
+        var confirmation = new ContentDialog
+        {
+            XamlRoot = ((FrameworkElement)Content).XamlRoot,
+            Title = $"Resume {plan.Days.Count:N0} incomplete day(s)?",
+            Content =
+                $"{plan.LocalCount:N0} day(s) can continue entirely from retained files. "
+                + $"{plan.NetworkCount:N0} day(s) still need archive coverage. {quotaText} "
+                + "Local-only days run first. Network days run one at a time and stop "
+                + "before the rolling quota guard permits no further request.",
+            PrimaryButtonText = "Resume all",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Close,
+        };
+        if (await confirmation.ShowAsync() != ContentDialogResult.Primary)
+        {
+            return;
+        }
+
+        var minimumSpeakers = OptionalPositiveInteger(MinimumSpeakersBox.Value);
+        var maximumSpeakers = OptionalPositiveInteger(MaximumSpeakersBox.Value);
+        if (minimumSpeakers is not null
+            && maximumSpeakers is not null
+            && minimumSpeakers > maximumSpeakers)
+        {
+            await ShowMessageAsync(
+                "Invalid speaker range",
+                "Minimum speakers cannot exceed maximum speakers.");
+            return;
+        }
+
+        _operationCancellation = new CancellationTokenSource();
+        var attempted = 0;
+        var pausedForQuota = false;
+        SetBusy(true, "Resuming incomplete library days…", jobRunning: true);
+        JobProgress.IsIndeterminate = false;
+        JobProgress.Maximum = Math.Max(1, plan.Days.Count);
+        JobProgress.Value = 0;
+        try
+        {
+            foreach (var day in plan.Days)
+            {
+                _operationCancellation.Token.ThrowIfCancellationRequested();
+                if (!DateTime.TryParse(day.ArchiveDate, out var archiveDate))
+                {
+                    throw new InvalidOperationException(
+                        $"Could not parse library date {day.ArchiveDate}.");
+                }
+                if (day.NeedsNetwork)
+                {
+                    var quota = await _worker.GetArchiveQuotaStatusAsync(
+                        _operationCancellation.Token);
+                    if (quota is null || !quota.Available)
+                    {
+                        pausedForQuota = true;
+                        AppendLog(
+                            "Resume all paused before the next network day because "
+                            + "the rolling archive ledger has no safe request available.");
+                        break;
+                    }
+                }
+
+                StatusText.Text =
+                    $"Resuming {attempted + 1:N0}/{plan.Days.Count:N0}: "
+                    + $"{day.FeedName} · {day.ArchiveDate}";
+                AppendLog(
+                    $"Resume all: {day.FeedName} on {day.ArchiveDate} "
+                    + (day.NeedsNetwork ? "(guarded archive coverage)." : "(local only)."));
+                var result = await ContinueLibraryDayWorkAsync(
+                    day,
+                    archiveDate.Date,
+                    minimumSpeakers,
+                    maximumSpeakers,
+                    forceAllStages: true);
+                attempted++;
+                JobProgress.Maximum = Math.Max(1, plan.Days.Count);
+                JobProgress.Value = attempted;
+                if (result?.DownloadLimited == true)
+                {
+                    pausedForQuota = true;
+                    AppendLog(
+                        "Resume all stopped after the archive worker reached the "
+                        + "rolling request boundary; retained progress will be reused.");
+                    break;
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            StatusText.Text = "Resume all cancelled";
+            AppendLog("Resume all cancelled; completed work and checkpoints remain saved.");
+        }
+        catch (Exception exception)
+        {
+            await ShowErrorAsync(exception);
+        }
+        finally
+        {
+            _operationCancellation.Dispose();
+            _operationCancellation = null;
+            JobProgress.IsIndeterminate = false;
+            SetBusy(false);
+            await RefreshLibraryAsync();
+            await RefreshAnalysisDaysAsync();
+            await RefreshArchiveQuotaStatusAsync();
+        }
+
+        if (pausedForQuota)
+        {
+            await ShowMessageAsync(
+                "Local work finished; archive work paused",
+                $"Processed {attempted:N0} day(s). Remaining network work stayed "
+                + "queued locally because the rolling request guard stopped it. "
+                + "Use Resume all later; completed work will not repeat.");
+        }
+        else if (attempted == plan.Days.Count)
+        {
+            await ShowMessageAsync(
+                "Resume all finished",
+                $"Processed {attempted:N0} incomplete library day(s). Cached stages were reused.");
+        }
+    }
+
     private async Task RefreshLibraryAsync()
     {
         if (_worker is null)
@@ -2321,6 +2477,8 @@ public sealed partial class MainWindow : Window
             LibraryDayCountText.Text = result.Summary.DayCount.ToString("N0");
             LibraryAttentionCountText.Text = result.Summary.AttentionCount.ToString("N0");
             LibraryCompleteCountText.Text = result.Summary.CompleteCount.ToString("N0");
+            ResumeAllLibraryButton.IsEnabled =
+                result.Summary.AttentionCount > 0 && _operationCancellation is null;
             ApplyLibraryFilter();
         }
         catch (Exception exception)
@@ -2475,6 +2633,8 @@ public sealed partial class MainWindow : Window
             : Visibility.Collapsed;
         LibraryCheckSourceButton.IsEnabled =
             _worker is not null && _operationCancellation is null;
+        LibraryDeleteFeedButton.IsEnabled =
+            _worker is not null && _operationCancellation is null;
         LibraryOpenFolderButton.IsEnabled = Directory.Exists(day.DayDirectory);
         LibraryOpenTranscriptButton.IsEnabled =
             day.HasTranscript && File.Exists(day.TranscriptPath);
@@ -2616,6 +2776,132 @@ public sealed partial class MainWindow : Window
             await ContinueLibraryDayAsync(
                 _selectedLibraryDay,
                 forceSourceCheck: true);
+        }
+    }
+
+    private async void LibraryDeleteFeed_Click(object sender, RoutedEventArgs e)
+    {
+        if (_worker is null
+            || _operationCancellation is not null
+            || _selectedLibraryDay is not { } selected)
+        {
+            return;
+        }
+
+        IReadOnlyList<FeedSchedule> schedules;
+        try
+        {
+            using var cancellation = new CancellationTokenSource(TimeSpan.FromMinutes(1));
+            schedules = await _worker.ListFeedSchedulesAsync(cancellation.Token);
+        }
+        catch (Exception exception)
+        {
+            await ShowErrorAsync(exception);
+            return;
+        }
+
+        var feedDays = _libraryDays
+            .Where(value => value.FeedId == selected.FeedId)
+            .ToList();
+        var retainedBytes = feedDays.Sum(value => value.StorageBytes);
+        var workingBytes = feedDays.Sum(value => value.WorkingStorageBytes);
+        var hasSchedule = schedules.Any(value => value.FeedId == selected.FeedId);
+        var removeScheduleCheckBox = new CheckBox
+        {
+            Content = "Also remove this feed's scheduled download",
+            IsChecked = true,
+            Visibility = hasSchedule ? Visibility.Visible : Visibility.Collapsed,
+        };
+        var content = new StackPanel { Spacing = 10 };
+        content.Children.Add(new TextBlock
+        {
+            Text =
+                $"This permanently deletes {feedDays.Count:N0} local day(s) for "
+                + $"{selected.FeedName} (feed {selected.FeedId}), including source "
+                + "audio, combined recordings, transcripts, speaker labels, incidents, "
+                + "summaries, and search indexes.",
+            TextWrapping = TextWrapping.Wrap,
+        });
+        content.Children.Add(new TextBlock
+        {
+            Text =
+                $"Approximate storage: {(retainedBytes + workingBytes) / 1_048_576d:0.#} MB. "
+                + "Saved Area Watch profiles remain configured and may acquire this "
+                + "feed again when you explicitly run them.",
+            TextWrapping = TextWrapping.Wrap,
+            Foreground = (Brush)Application.Current.Resources[
+                "TextFillColorSecondaryBrush"],
+        });
+        content.Children.Add(removeScheduleCheckBox);
+        var confirmation = new ContentDialog
+        {
+            XamlRoot = ((FrameworkElement)Content).XamlRoot,
+            Title = $"Delete {selected.FeedName} from the Library?",
+            Content = content,
+            PrimaryButtonText = "Delete feed",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Close,
+        };
+        if (await confirmation.ShowAsync() != ContentDialogResult.Primary)
+        {
+            return;
+        }
+
+        LibraryFeedDeleteResult? result = null;
+        _operationCancellation = new CancellationTokenSource();
+        SetBusy(true, $"Deleting {selected.FeedName} from the local Library…");
+        try
+        {
+            await ReleaseMediaForArchiveMutationAsync();
+            result = await _worker.DeleteLibraryFeedAsync(
+                PersistedOutputDirectory(),
+                selected.FeedId,
+                hasSchedule && removeScheduleCheckBox.IsChecked == true,
+                _operationCancellation.Token);
+            if (result is null)
+            {
+                throw new InvalidOperationException(
+                    "The deletion worker returned no completion result.");
+            }
+            _selectedLibraryDay = null;
+            AppendLog(
+                $"Deleted feed {selected.FeedId}: {result.DaysDeleted:N0} day(s), "
+                + $"{result.SegmentsDeleted:N0} transcript segment(s), "
+                + $"{result.IncidentsDeleted:N0} incident(s), and "
+                + $"{result.SchedulesDeleted:N0} schedule(s).");
+            if (result.CleanupPending)
+            {
+                AppendLog(
+                    "The feed was removed from the Library, but a detached cleanup "
+                    + "folder remains for a later safe cleanup pass.");
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            StatusText.Text = "Feed deletion cancelled";
+        }
+        catch (Exception exception)
+        {
+            await ShowErrorAsync(exception);
+        }
+        finally
+        {
+            _operationCancellation.Dispose();
+            _operationCancellation = null;
+            SetBusy(false);
+            await RefreshLibraryAsync();
+            await RefreshAnalysisDaysAsync();
+            await RefreshFeedScheduleStatusAsync();
+        }
+
+        if (result is not null)
+        {
+            await ShowMessageAsync(
+                "Feed deleted",
+                $"Removed {result.DaysDeleted:N0} local day(s) for feed {result.FeedId}. "
+                + (result.SchedulesDeleted > 0
+                    ? "Its scheduled download was also removed."
+                    : "No scheduled download was removed."));
         }
     }
 
@@ -2888,52 +3174,13 @@ public sealed partial class MainWindow : Window
         JobProgress.IsIndeterminate = true;
         try
         {
-            if (day.NeedsNetwork || forceSourceCheck)
-            {
-                AppendLog(forceSourceCheck
-                    ? $"Checking feed {day.FeedId} on {day.ArchiveDate} for new source audio."
-                    : $"Resuming archive coverage for feed {day.FeedId} on {day.ArchiveDate}.");
-                await RunAndAnalyzeJobAsync(CreateJobRequest(
-                    day.FeedId, archiveDate.Date, archiveDate.Date, minimumSpeakers, maximumSpeakers,
-                    string.Equals(day.FeedName, $"Feed {day.FeedId}", StringComparison.Ordinal)
-                        ? null
-                        : day.FeedName));
-            }
-            else
-            {
-                var report = await _worker.ContinueLocalDayAsync(
-                    ApplyAnalysisProvider(new LocalProcessingRequest
-                    {
-                        FeedId = day.FeedId,
-                        ArchiveDate = day.ArchiveDate,
-                        OutputDirectory = string.IsNullOrWhiteSpace(OutputFolderBox.Text) ? "archives" : OutputFolderBox.Text.Trim(),
-                        Model = SelectedComboValue(ModelComboBox, "turbo"),
-                        AsrEngine = SelectedComboValue(AsrEngineComboBox, "auto"),
-                        Device = SelectedComboValue(DeviceComboBox, "auto"),
-                        DeviceIndex = RequiredInteger(GpuIndexBox.Value, 0),
-                        AsrModelPath = string.IsNullOrWhiteSpace(AsrModelPathBox.Text)
-                            ? null
-                            : AsrModelPathBox.Text.Trim(),
-                        DiarizationEngine = diarizationEngineOverride
-                            ?? SelectedComboValue(
-                                DiarizationEngineComboBox, "community-1"),
-                        DiarizationDevice = SelectedComboValue(DiarizationDeviceComboBox, "auto"),
-                        BatchSize = RequiredInteger(BatchSizeBox.Value, 8),
-                        Diarize = true,
-                        Analyze = true,
-                        MinimumSpeakers = minimumSpeakers,
-                        MaximumSpeakers = maximumSpeakers,
-                        HuggingFaceToken = CurrentHuggingFaceToken(),
-                    }),
-                    HandleWorkerMessage,
-                    _operationCancellation.Token);
-                AnalysisFeedBox.Text = day.FeedId;
-                if (report is not null)
-                {
-                    ApplyReport(report);
-                }
-                await RefreshAnalysisDaysAsync();
-            }
+            await ContinueLibraryDayWorkAsync(
+                day,
+                archiveDate.Date,
+                minimumSpeakers,
+                maximumSpeakers,
+                diarizationEngineOverride,
+                forceSourceCheck);
         }
         catch (OperationCanceledException)
         {
@@ -3201,6 +3448,86 @@ public sealed partial class MainWindow : Window
             OutputFolderBox.Text = folder.Path;
             RefreshStorageReadiness();
         }
+    }
+
+    private async Task<JobRunResult?> ContinueLibraryDayWorkAsync(
+        LibraryDay day,
+        DateTime archiveDate,
+        int? minimumSpeakers,
+        int? maximumSpeakers,
+        string? diarizationEngineOverride = null,
+        bool forceSourceCheck = false,
+        bool forceAllStages = false)
+    {
+        if (_worker is null || _operationCancellation is null)
+        {
+            return null;
+        }
+        if (day.NeedsNetwork || forceSourceCheck)
+        {
+            AppendLog(forceSourceCheck
+                ? $"Checking feed {day.FeedId} on {day.ArchiveDate} for new source audio."
+                : $"Resuming archive coverage for feed {day.FeedId} on {day.ArchiveDate}.");
+            var request = CreateJobRequest(
+                day.FeedId,
+                archiveDate,
+                archiveDate,
+                minimumSpeakers,
+                maximumSpeakers,
+                string.Equals(
+                    day.FeedName,
+                    $"Feed {day.FeedId}",
+                    StringComparison.Ordinal)
+                    ? null
+                    : day.FeedName);
+            if (forceAllStages)
+            {
+                request = request with
+                {
+                    Combine = true,
+                    Transcribe = true,
+                    Diarize = true,
+                    DownloadJobs = 1,
+                };
+            }
+            return await RunAndAnalyzeJobAsync(
+                request,
+                forceAllStages ? true : null);
+        }
+
+        var report = await _worker.ContinueLocalDayAsync(
+            ApplyAnalysisProvider(new LocalProcessingRequest
+            {
+                FeedId = day.FeedId,
+                ArchiveDate = day.ArchiveDate,
+                OutputDirectory = PersistedOutputDirectory(),
+                Model = SelectedComboValue(ModelComboBox, "turbo"),
+                AsrEngine = SelectedComboValue(AsrEngineComboBox, "auto"),
+                Device = SelectedComboValue(DeviceComboBox, "auto"),
+                DeviceIndex = RequiredInteger(GpuIndexBox.Value, 0),
+                AsrModelPath = string.IsNullOrWhiteSpace(AsrModelPathBox.Text)
+                    ? null
+                    : AsrModelPathBox.Text.Trim(),
+                DiarizationEngine = diarizationEngineOverride
+                    ?? SelectedComboValue(DiarizationEngineComboBox, "community-1"),
+                DiarizationDevice = SelectedComboValue(
+                    DiarizationDeviceComboBox, "auto"),
+                BatchSize = RequiredInteger(BatchSizeBox.Value, 8),
+                Diarize = true,
+                Analyze = true,
+                MinimumSpeakers = minimumSpeakers,
+                MaximumSpeakers = maximumSpeakers,
+                HuggingFaceToken = CurrentHuggingFaceToken(),
+            }),
+            HandleWorkerMessage,
+            _operationCancellation.Token);
+        AnalysisFeedBox.Text = day.FeedId;
+        if (report is not null)
+        {
+            ApplyReport(report);
+        }
+        await RefreshAnalysisDaysAsync();
+        return null;
     }
 
     private async void BrowsePythonRuntime_Click(
@@ -5435,12 +5762,18 @@ public sealed partial class MainWindow : Window
         SetupAnalysisActionButton.IsEnabled = !busy && _worker is not null;
         AreaProfileCombo.IsEnabled = !busy && _worker is not null;
         RefreshLibraryButton.IsEnabled = !busy && _worker is not null;
+        ResumeAllLibraryButton.IsEnabled = !busy
+            && _worker is not null
+            && _libraryDays.Any(value => !value.IsComplete);
         LibraryList.IsEnabled = !busy && _worker is not null;
         LibraryDetailPrimaryButton.IsEnabled = !busy && _worker is not null
             && _selectedLibraryDay is not null;
         LibraryDetailReviewButton.IsEnabled = !busy
             && _selectedLibraryDay?.CanOpenReview == true;
         LibraryCheckSourceButton.IsEnabled = !busy
+            && _worker is not null
+            && _selectedLibraryDay is not null;
+        LibraryDeleteFeedButton.IsEnabled = !busy
             && _worker is not null
             && _selectedLibraryDay is not null;
         LibraryOpenFolderButton.IsEnabled = !busy
