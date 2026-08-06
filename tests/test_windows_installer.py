@@ -137,6 +137,7 @@ def test_public_installer_build_rejects_private_environment_and_pins_downloads()
     assert '$uvVersion = "0.12.1"' in build
     assert "$cudaRequirementsSha256" in build
     assert 'requirements_artifact = "cuda_requirements"' in build
+    assert "--no-build-isolation" not in build
     assert "torch_backend" not in build
     assert "torch @ https://download-r2.pytorch.org/whl/cu128/" in cuda_lock
     assert "torchaudio @ https://download-r2.pytorch.org/whl/cu128/" in cuda_lock

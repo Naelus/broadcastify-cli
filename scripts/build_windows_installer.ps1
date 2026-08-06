@@ -336,7 +336,6 @@ New-Item -ItemType Directory -Force -Path $bootstrapRoot | Out-Null
     --disable-pip-version-check `
     --no-input `
     --no-deps `
-    --no-build-isolation `
     --wheel-dir $bootstrapRoot `
     $repositoryRoot
 if ($LASTEXITCODE -ne 0) {
