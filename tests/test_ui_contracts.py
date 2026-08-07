@@ -130,6 +130,11 @@ def test_native_releases_media_handles_before_archive_mutation() -> None:
     assert "private async Task ReleaseMediaForArchiveMutationAsync()" in native
     assert native.count("await ReleaseMediaForArchiveMutationAsync();") == 3
     assert "_libraryMediaPlayer.Source = null;" in native
+    assert "ReleaseMediaPlayerInstances(recreate: true);" in native
+    assert "ReleaseMediaPlayerInstances(recreate: false);" in native
+    assert "LibraryAudioPlayer.SetMediaPlayer(null);" in native
+    assert "_libraryMediaPlayer.Dispose();" in native
+    assert "_libraryMediaPlayer = new MediaPlayer();" in native
     assert "await Task.Delay(500);" in native
 
 
@@ -350,6 +355,36 @@ def test_windows_startup_is_visible_configurable_and_recovery_aware() -> None:
     assert window.index("await ApplyLaunchBehaviorAsync();") < window.index(
         "ConfigureFeedScheduleTimer();"
     )
+
+
+def test_native_about_page_exposes_version_paths_and_safe_support_details() -> None:
+    root = ElementTree.parse(
+        ROOT / "BroadcastifyCli.WinUI" / "MainWindow.xaml"
+    ).getroot()
+    names = {
+        element.attrib.get(XAML_NAME): element
+        for element in root.iter()
+        if element.attrib.get(XAML_NAME)
+    }
+
+    assert names["AboutNavigationItem"].attrib["Tag"] == "about"
+    assert names["AboutVersionText"].attrib["Text"] == "Version —"
+    assert names["AboutOpenLibraryButton"].attrib["Click"] == (
+        "AboutOpenLibrary_Click"
+    )
+    assert names["AboutOpenDataButton"].attrib["Click"] == "AboutOpenData_Click"
+    assert names["AboutCopySupportButton"].attrib["Click"] == (
+        "AboutCopySupport_Click"
+    )
+
+    native = (
+        ROOT / "BroadcastifyCli.WinUI" / "MainWindow.xaml.cs"
+    ).read_text(encoding="utf-8")
+    assert "AssemblyInformationalVersionAttribute" in native
+    assert "AboutPage.Visibility = page == \"about\"" in native
+    assert '"Activity log: {AppDiagnostics.ActivityLogPath}"' in native
+    assert "Clipboard.SetContent(package);" in native
+    assert "No credentials or tokens were included." in native
 
 
 def test_native_exposes_explicit_resumable_packaged_cuda_runtime() -> None:

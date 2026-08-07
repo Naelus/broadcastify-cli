@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Collections.ObjectModel;
+using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
@@ -8,6 +9,7 @@ using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
+using Windows.ApplicationModel.DataTransfer;
 using Windows.Graphics;
 using Windows.Media.Core;
 using Windows.Media.Playback;
@@ -57,9 +59,9 @@ public sealed partial class MainWindow : Window
     private string _activeQuestionFeedId = "";
     private bool _syncingAnalysisFeedSelection;
     private DayReport? _currentReport;
-    private readonly MediaPlayer _incidentMediaPlayer = new();
-    private readonly MediaPlayer _areaStoryMediaPlayer = new();
-    private readonly MediaPlayer _libraryMediaPlayer = new();
+    private MediaPlayer _incidentMediaPlayer = new();
+    private MediaPlayer _areaStoryMediaPlayer = new();
+    private MediaPlayer _libraryMediaPlayer = new();
     private IncidentClip? _pendingIncidentClip;
     private LibraryDay? _selectedLibraryDay;
     private int _librarySelectionVersion;
@@ -192,6 +194,7 @@ public sealed partial class MainWindow : Window
             StartButton.IsEnabled = false;
             RefreshLibraryButton.IsEnabled = false;
         }
+        RefreshAboutPage();
     }
 
     private async Task ConfigureLanSharingAsync()
@@ -427,6 +430,7 @@ public sealed partial class MainWindow : Window
         ReviewPage.Visibility = page == "review" ? Visibility.Visible : Visibility.Collapsed;
         AreaPage.Visibility = page == "area" ? Visibility.Visible : Visibility.Collapsed;
         SettingsPage.Visibility = page == "settings" ? Visibility.Visible : Visibility.Collapsed;
+        AboutPage.Visibility = page == "about" ? Visibility.Visible : Visibility.Collapsed;
         if (page == "archive")
         {
             _ = RefreshArchiveQuotaStatusAsync();
@@ -435,6 +439,117 @@ public sealed partial class MainWindow : Window
         if (page == "settings")
         {
             RefreshHuggingFaceCredentialUi();
+        }
+        if (page == "about")
+        {
+            RefreshAboutPage();
+        }
+    }
+
+    private static string InstalledVersion()
+    {
+        var assembly = Assembly.GetExecutingAssembly();
+        var informational = assembly
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()
+            ?.InformationalVersion
+            .Split('+', 2)[0];
+        if (!string.IsNullOrWhiteSpace(informational))
+        {
+            return informational;
+        }
+        var version = assembly.GetName().Version;
+        return version is null ? "Unknown" : version.ToString(3);
+    }
+
+    private static string InstalledFileVersion() =>
+        Assembly.GetExecutingAssembly()
+            .GetCustomAttribute<AssemblyFileVersionAttribute>()
+            ?.Version
+        ?? "Unknown";
+
+    private void RefreshAboutPage()
+    {
+        if (AboutVersionText is null)
+        {
+            return;
+        }
+        var distribution = _worker?.IsBundledRuntime == true
+            ? "Installed desktop runtime"
+            : "Source/development runtime";
+        AboutVersionText.Text = $"Version {InstalledVersion()}";
+        AboutBuildText.Text =
+            $"File {InstalledFileVersion()} · {RuntimeInformation.ProcessArchitecture} · {distribution}";
+        AboutRuntimeText.Text =
+            $"{RuntimeInformation.OSDescription} · .NET {Environment.Version}";
+        AboutLibraryPathText.Text = PersistedOutputDirectory();
+        AboutDataPathText.Text = AppSettingsStore.LocalDataDirectory;
+    }
+
+    private string BuildSupportDetails()
+    {
+        RefreshAboutPage();
+        return string.Join(
+            Environment.NewLine,
+            "Broadcastify Desktop support details",
+            $"Version: {InstalledVersion()}",
+            $"File version: {InstalledFileVersion()}",
+            $"Architecture: {RuntimeInformation.ProcessArchitecture}",
+            $"Operating system: {RuntimeInformation.OSDescription}",
+            $".NET runtime: {Environment.Version}",
+            $"Distribution: {(_worker?.IsBundledRuntime == true ? "installed" : "source/development")}",
+            $"Library: {PersistedOutputDirectory()}",
+            $"App data: {AppSettingsStore.LocalDataDirectory}",
+            $"Activity log: {AppDiagnostics.ActivityLogPath}");
+    }
+
+    private async Task OpenAboutFolderAsync(string title, string path)
+    {
+        try
+        {
+            var fullPath = Path.GetFullPath(path);
+            Directory.CreateDirectory(fullPath);
+            var folder = await StorageFolder.GetFolderFromPathAsync(fullPath);
+            if (!await Launcher.LaunchFolderAsync(folder))
+            {
+                throw new InvalidOperationException("Windows could not open the folder.");
+            }
+            AboutActionStatusText.Text = $"Opened {fullPath}";
+        }
+        catch (Exception exception) when (
+            exception is ArgumentException
+                or IOException
+                or NotSupportedException
+                or UnauthorizedAccessException
+                or InvalidOperationException)
+        {
+            AboutActionStatusText.Text = $"Could not open the folder: {exception.Message}";
+            await ShowMessageAsync(title, exception.Message);
+        }
+    }
+
+    private async void AboutOpenLibrary_Click(object sender, RoutedEventArgs e) =>
+        await OpenAboutFolderAsync("Could not open the library", PersistedOutputDirectory());
+
+    private async void AboutOpenData_Click(object sender, RoutedEventArgs e) =>
+        await OpenAboutFolderAsync("Could not open app data", AppSettingsStore.LocalDataDirectory);
+
+    private void AboutCopySupport_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var package = new DataPackage
+            {
+                RequestedOperation = DataPackageOperation.Copy,
+            };
+            package.SetText(BuildSupportDetails());
+            Clipboard.SetContent(package);
+            Clipboard.Flush();
+            AboutActionStatusText.Text =
+                "Copied version, runtime, and local paths. No credentials or tokens were included.";
+        }
+        catch (Exception exception)
+        {
+            AboutActionStatusText.Text = $"Could not copy support details: {exception.Message}";
         }
     }
 
@@ -690,6 +805,7 @@ public sealed partial class MainWindow : Window
         PersistUserSettings(logFailure: true);
         PersistAnalysisCredentialPreference();
         _worker?.StopLanNode();
+        ReleaseMediaPlayerInstances(recreate: false);
     }
 
     private DesktopSettings CaptureUserSettings() =>
@@ -4594,6 +4710,11 @@ public sealed partial class MainWindow : Window
         _areaStoryMediaPlayer.Pause();
         _areaStoryMediaPlayer.Source = null;
         _pendingIncidentClip = null;
+        // Setting Source to null is not sufficient on Windows: Media Foundation
+        // can retain the underlying file handle through the MediaPlayerElement.
+        // Detach and dispose every instance before a directory rename, then
+        // create fresh players so playback remains available after the mutation.
+        ReleaseMediaPlayerInstances(recreate: true);
         if (hadMediaSource)
         {
             LibraryAudioStatusText.Text =
@@ -4602,6 +4723,31 @@ public sealed partial class MainWindow : Window
             // Give that close a bounded moment before FFmpeg publishes a refresh.
             await Task.Delay(500);
         }
+    }
+
+    private void ReleaseMediaPlayerInstances(bool recreate)
+    {
+        LibraryAudioPlayer.SetMediaPlayer(null);
+        IncidentPlayer.SetMediaPlayer(null);
+        AreaStoryPlayer.SetMediaPlayer(null);
+        _incidentMediaPlayer.MediaOpened -= IncidentMediaPlayer_MediaOpened;
+        _areaStoryMediaPlayer.MediaOpened -= AreaStoryMediaPlayer_MediaOpened;
+        _libraryMediaPlayer.Dispose();
+        _incidentMediaPlayer.Dispose();
+        _areaStoryMediaPlayer.Dispose();
+        if (!recreate)
+        {
+            return;
+        }
+
+        _libraryMediaPlayer = new MediaPlayer();
+        _incidentMediaPlayer = new MediaPlayer();
+        _areaStoryMediaPlayer = new MediaPlayer();
+        _incidentMediaPlayer.MediaOpened += IncidentMediaPlayer_MediaOpened;
+        _areaStoryMediaPlayer.MediaOpened += AreaStoryMediaPlayer_MediaOpened;
+        LibraryAudioPlayer.SetMediaPlayer(_libraryMediaPlayer);
+        IncidentPlayer.SetMediaPlayer(_incidentMediaPlayer);
+        AreaStoryPlayer.SetMediaPlayer(_areaStoryMediaPlayer);
     }
 
     private async Task AnalyzeCompletedJobAsync(

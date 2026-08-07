@@ -46,6 +46,9 @@
                 <NavigationViewItem x:Name="CredentialsNavigationItem" Content="Credentials" Tag="credentials">
                     <NavigationViewItem.Icon><FontIcon Glyph="&#xE8D7;" /></NavigationViewItem.Icon>
                 </NavigationViewItem>
+                <NavigationViewItem x:Name="AboutNavigationItem" Content="About &amp; support" Tag="about">
+                    <NavigationViewItem.Icon><FontIcon Glyph="&#xE946;" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
             </NavigationView.FooterMenuItems>
 
             <NavigationView.Content>
@@ -1250,6 +1253,81 @@
                                 </ScrollViewer>
                             </TabViewItem>
                         </TabView>
+                    </Grid>
+
+                    <!-- About and support -->
+                    <Grid x:Name="AboutPage" Visibility="Collapsed" Padding="26,20,26,18" RowSpacing="16">
+                        <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+                        <StackPanel Spacing="4">
+                            <TextBlock Text="About &amp; support" Style="{StaticResource TitleTextBlockStyle}" />
+                            <TextBlock Text="Version, storage locations, diagnostics, documentation, and update links."
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        </StackPanel>
+                        <ScrollViewer Grid.Row="1" HorizontalScrollBarVisibility="Disabled">
+                            <StackPanel Spacing="16" MaxWidth="900" HorizontalAlignment="Left" Padding="0,4,12,16">
+                                <Border Style="{StaticResource CardBorderStyle}" Padding="20">
+                                    <Grid ColumnSpacing="18">
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="52" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                        <FontIcon Glyph="&#xE8A5;" FontSize="38"
+                                                  Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"
+                                                  VerticalAlignment="Top" />
+                                        <StackPanel Grid.Column="1" Spacing="5">
+                                            <TextBlock Text="Broadcastify Desktop" Style="{StaticResource SubtitleTextBlockStyle}" />
+                                            <TextBlock Text="Local radio archive intelligence" FontSize="16"
+                                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                            <TextBlock x:Name="AboutVersionText" Text="Version —" FontWeight="SemiBold" />
+                                            <TextBlock x:Name="AboutBuildText" Text="Build details unavailable" TextWrapping="Wrap"
+                                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                            <TextBlock x:Name="AboutRuntimeText" Text="Runtime details unavailable" TextWrapping="Wrap"
+                                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                        </StackPanel>
+                                    </Grid>
+                                </Border>
+
+                                <Border Style="{StaticResource CardBorderStyle}" Padding="20">
+                                    <StackPanel Spacing="12">
+                                        <TextBlock Text="Local data and diagnostics" Style="{StaticResource SubtitleTextBlockStyle}" />
+                                        <TextBlock Text="These locations are preserved separately from the installed application. Opening them does not change or delete retained work."
+                                                   TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                        <StackPanel Spacing="3">
+                                            <TextBlock Text="Archive library" FontWeight="SemiBold" />
+                                            <TextBlock x:Name="AboutLibraryPathText" Text="—" TextWrapping="Wrap"
+                                                       IsTextSelectionEnabled="True" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                        </StackPanel>
+                                        <StackPanel Spacing="3">
+                                            <TextBlock Text="Settings and diagnostic logs" FontWeight="SemiBold" />
+                                            <TextBlock x:Name="AboutDataPathText" Text="—" TextWrapping="Wrap"
+                                                       IsTextSelectionEnabled="True" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                        </StackPanel>
+                                        <StackPanel Orientation="Horizontal" Spacing="8">
+                                            <Button x:Name="AboutOpenLibraryButton" Content="Open library folder" Click="AboutOpenLibrary_Click" />
+                                            <Button x:Name="AboutOpenDataButton" Content="Open logs &amp; settings folder" Click="AboutOpenData_Click" />
+                                            <Button x:Name="AboutCopySupportButton" Content="Copy support details" Click="AboutCopySupport_Click"
+                                                    ToolTipService.ToolTip="Copies version, runtime, and local paths. Credentials and tokens are never included." />
+                                        </StackPanel>
+                                        <TextBlock x:Name="AboutActionStatusText" Text="Support details never include saved credentials or tokens."
+                                                   TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite"
+                                                   Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                                    </StackPanel>
+                                </Border>
+
+                                <Border Style="{StaticResource CardBorderStyle}" Padding="20">
+                                    <StackPanel Spacing="10">
+                                        <TextBlock Text="Help and updates" Style="{StaticResource SubtitleTextBlockStyle}" />
+                                        <TextBlock Text="Use the documentation for setup and recovery, compare the installed version with the latest release, or report a reproducible problem."
+                                                   TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                        <StackPanel Orientation="Horizontal" Spacing="4">
+                                            <HyperlinkButton Content="Documentation" NavigateUri="https://github.com/Naelus/broadcastify-cli#readme" />
+                                            <HyperlinkButton Content="Check for updates" NavigateUri="https://github.com/Naelus/broadcastify-cli/releases/latest" />
+                                            <HyperlinkButton Content="Report a problem" NavigateUri="https://github.com/Naelus/broadcastify-cli/issues/new" />
+                                            <HyperlinkButton Content="GPL-3.0-or-later license" NavigateUri="https://github.com/Naelus/broadcastify-cli/blob/main/LICENSE" />
+                                        </StackPanel>
+                                        <TextBlock Text="Broadcastify is a third-party service. Website access and AI/ML processing require authorization appropriate for your use."
+                                                   TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                                    </StackPanel>
+                                </Border>
+                            </StackPanel>
+                        </ScrollViewer>
                     </Grid>
 
                     <!-- Persistent task status -->

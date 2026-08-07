@@ -101,6 +101,9 @@ In the app:
    ordering; a confirmed **Delete feed** action removes a feed's local evidence.
 8. Use **Review & Ask** to choose a feed by name and chat with cited evidence,
    or use **Area watch** for clips, weekly briefs, and regional leads.
+9. Open **About & support** to confirm the installed version, find the archive
+   and diagnostic folders, copy credential-free support details, or check for
+   updates.
 
 The full prerequisite, first-run, model, and private-build instructions are in
 [docs/guides/windows-setup.md](docs/guides/windows-setup.md).
