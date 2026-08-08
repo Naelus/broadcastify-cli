@@ -3584,7 +3584,7 @@ public sealed partial class MainWindow : Window
             LibraryActionInfoBar.Severity = InfoBarSeverity.Success;
             LibraryActionInfoBar.Title = "Feed deleted";
             LibraryActionInfoBar.Message =
-                $"Removed {result.DaysDeleted:N0} local day(s) for feed {result.FeedId}. "
+                $"Removed feed {result.FeedId} from the selected Library. "
                 + (result.SchedulesDeleted > 0
                     ? "Its scheduled download was also removed. "
                     : "No scheduled download was removed. ")

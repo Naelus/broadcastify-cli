@@ -231,6 +231,8 @@ def test_native_library_exposes_guarded_feed_delete_and_resume_all() -> None:
     assert "SaveLibraryCatchUpAsync" in native
     assert "FinalizeLibraryCatchUpsAsync" in native
     assert 'LibraryActionInfoBar.Title = "Feed deleted"' in native
+    assert 'Removed feed {result.FeedId} from the selected Library.' in native
+    assert 'DaysDeleted:N0} local day(s)' not in native
     assert 'await ShowMessageAsync(\n                "Feed deleted"' not in native
     assert '"library-resume-plan"' in worker
     assert '"save-library-catch-up"' in worker
