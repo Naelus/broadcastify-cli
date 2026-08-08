@@ -31,7 +31,6 @@ public sealed partial class MainWindow : Window
     private sealed record LibraryCatchUpRange(
         LibraryFeedCoverage Feed,
         DateTimeOffset StartDate,
-        DateTimeOffset EndDate,
         bool SaveForResume);
 
     private const string DefaultAnalysisModel = "ggml-org/gemma-4-12B-it-GGUF:Q4_0";
@@ -2496,15 +2495,9 @@ public sealed partial class MainWindow : Window
             Header = "Catch up from",
             MaxYear = today,
         };
-        var endPicker = new DatePicker
-        {
-            Header = "Through",
-            Date = today,
-            MaxYear = today,
-        };
         var saveForResumeBox = new CheckBox
         {
-            Content = "Keep this range resumable until every day is complete (recommended)",
+            Content = "Keep this start date resumable through today until caught up (recommended)",
             IsChecked = true,
         };
         void ApplyFeedDefault()
@@ -2512,17 +2505,14 @@ public sealed partial class MainWindow : Window
             if (feedCombo.SelectedItem is LibraryFeedCoverage feed)
             {
                 if (feed.CatchUpSaved
-                    && DateTimeOffset.TryParse(feed.CatchUpStartDate, out var savedStart)
-                    && DateTimeOffset.TryParse(feed.CatchUpEndDate, out var savedEnd))
+                    && DateTimeOffset.TryParse(feed.CatchUpStartDate, out var savedStart))
                 {
                     startPicker.Date = savedStart;
-                    endPicker.Date = savedEnd;
                     saveForResumeBox.IsChecked = true;
                 }
                 else
                 {
                     startPicker.Date = DefaultCatchUpStart(feed);
-                    endPicker.Date = today;
                     saveForResumeBox.IsChecked = true;
                 }
             }
@@ -2533,17 +2523,21 @@ public sealed partial class MainWindow : Window
         content.Children.Add(new TextBlock
         {
             Text =
-                "Evaluate every calendar day for one feed across this range. The evaluation reads only local files, checkpoints, schedules, and the quota ledger. It does not contact Broadcastify. Afterward you can review the exact local/network counts before starting.",
+                "Choose an existing feed and the earliest date you want covered. The local planner checks every calendar day from that date through today, queues only absent or unfinished days, and skips days already complete. This evaluation does not contact Broadcastify.",
             TextWrapping = TextWrapping.Wrap,
         });
         content.Children.Add(feedCombo);
         content.Children.Add(startPicker);
-        content.Children.Add(endPicker);
+        content.Children.Add(new TextBlock
+        {
+            Text = $"Through today · {today:yyyy-MM-dd}",
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+        });
         content.Children.Add(saveForResumeBox);
         content.Children.Add(new TextBlock
         {
             Text =
-                "When started, missing days run sequentially and stop at the persistent rolling request boundary. A saved range remains visible in Feed coverage and Resume / prioritize after an app restart, and clears automatically only when every day is complete. Uncheck the option and evaluate to clear an existing saved range.",
+                "When started, retained local stages run first and missing downloads stay sequential behind the persistent rolling request guard. If work is interrupted, the saved start date rejoins Resume / prioritize after an app or computer restart and automatically extends through the then-current day. It clears only after every day through current is complete. Uncheck the option and evaluate to clear an existing saved catch-up.",
             TextWrapping = TextWrapping.Wrap,
             Foreground = (Brush)Application.Current.Resources[
                 "TextFillColorSecondaryBrush"],
@@ -2551,9 +2545,9 @@ public sealed partial class MainWindow : Window
         var dialog = new ContentDialog
         {
             XamlRoot = ((FrameworkElement)Content).XamlRoot,
-            Title = "Evaluate a full feed catch-up range",
+            Title = "Catch up missing feed days",
             Content = content,
-            PrimaryButtonText = "Evaluate range",
+            PrimaryButtonText = "Find missing days",
             CloseButtonText = "Cancel",
             DefaultButton = ContentDialogButton.Close,
         };
@@ -2564,30 +2558,21 @@ public sealed partial class MainWindow : Window
         if (feedCombo.SelectedItem is not LibraryFeedCoverage selectedFeed)
         {
             await ShowMessageAsync(
-                "Catch-up range required",
-                "Choose a feed, start date, and end date.");
+                "Feed required",
+                "Choose an existing feed and a start date.");
             return null;
         }
         var startDate = startPicker.Date;
-        var endDate = endPicker.Date;
-        if (startDate.Date > endDate.Date)
+        if (startDate.Date > today.Date)
         {
             await ShowMessageAsync(
-                "Invalid catch-up range",
-                "The catch-up start date cannot be after the end date.");
-            return null;
-        }
-        if (endDate.Date > today.Date)
-        {
-            await ShowMessageAsync(
-                "Invalid catch-up range",
-                "The catch-up end date cannot be in the future.");
+                "Invalid catch-up start date",
+                "The catch-up start date cannot be in the future.");
             return null;
         }
         return new LibraryCatchUpRange(
             selectedFeed,
             startDate,
-            endDate,
             saveForResumeBox.IsChecked == true);
     }
 
@@ -2626,7 +2611,7 @@ public sealed partial class MainWindow : Window
                 cancellation.Token,
                 range.Feed.FeedId,
                 range.StartDate.ToString("yyyy-MM-dd"),
-                range.EndDate.ToString("yyyy-MM-dd"));
+                throughCurrent: true);
         }
         catch (Exception exception)
         {
@@ -2901,12 +2886,12 @@ public sealed partial class MainWindow : Window
                     catchUpRange.Feed.FeedId,
                     catchUpRange.Feed.FeedName,
                     catchUpRange.StartDate.ToString("yyyy-MM-dd"),
-                    catchUpRange.EndDate.ToString("yyyy-MM-dd"),
-                    cancellation.Token);
+                    throughCurrent: true,
+                    cancellationToken: cancellation.Token);
                 AppendLog(
                     $"Saved catch-up for {catchUpRange.Feed.FeedName}: "
-                    + $"{catchUpRange.StartDate:yyyy-MM-dd} through "
-                    + $"{catchUpRange.EndDate:yyyy-MM-dd}.");
+                    + $"{catchUpRange.StartDate:yyyy-MM-dd} through today; "
+                    + "the boundary will extend while work remains incomplete.");
             }
             catch (Exception exception)
             {

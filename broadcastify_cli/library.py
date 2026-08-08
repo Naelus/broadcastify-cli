@@ -100,8 +100,15 @@ def build_library_feed_coverage(
         schedule = schedule_by_feed.get(feed_id)
         catchup = catchup_by_feed.get(feed_id)
         requested = explicit_ranges.get(feed_id)
+        schedule_dates = _schedule_target_dates(schedule, current) if schedule else []
+        schedule_values = {value.isoformat() for value in schedule_dates}
+        strict_catchup_values: set[str] = set()
+        catchup_through_current = bool(
+            catchup and catchup.get("through_current", False)
+        )
         if requested is not None:
             range_start, range_end = requested
+            schedule_values = set()
             if range_start > range_end:
                 raise ValueError("Catch-up start date must not be after its end date.")
             if range_end > current:
@@ -110,8 +117,9 @@ def build_library_feed_coverage(
                 range_start + timedelta(days=offset)
                 for offset in range((range_end - range_start).days + 1)
             ]
+            strict_catchup_values = {value.isoformat() for value in target_dates}
         else:
-            target_dates = _schedule_target_dates(schedule, current) if schedule else []
+            target_dates = list(schedule_dates)
             if catchup is not None:
                 try:
                     catchup_start = date.fromisoformat(
@@ -124,19 +132,29 @@ def build_library_feed_coverage(
                     raise ValueError(
                         f"Saved catch-up dates for feed {feed_id} are invalid."
                     ) from exc
-                if catchup_start > catchup_end:
+                effective_catchup_end = (
+                    current if catchup_through_current else catchup_end
+                )
+                if catchup_start > effective_catchup_end:
                     raise ValueError(
                         f"Saved catch-up start date for feed {feed_id} is after its end date."
                     )
-                if catchup_end > current:
+                if not catchup_through_current and catchup_end > current:
                     raise ValueError(
                         f"Saved catch-up end date for feed {feed_id} is in the future."
                     )
-                target_dates.extend(
+                catchup_dates = [
                     catchup_start + timedelta(days=offset)
-                    for offset in range((catchup_end - catchup_start).days + 1)
-                )
+                    for offset in range(
+                        (effective_catchup_end - catchup_start).days + 1
+                    )
+                ]
+                target_dates.extend(catchup_dates)
                 target_dates = sorted(set(target_dates))
+                if catchup_through_current:
+                    strict_catchup_values = {
+                        value.isoformat() for value in catchup_dates
+                    }
         target_values = {value.isoformat() for value in target_dates}
         retained_by_date = {
             str(value.get("archive_date") or ""): value
@@ -158,12 +176,31 @@ def build_library_feed_coverage(
             value
             for value in target_days
             if bool(value.get("source_check_due"))
+            and (
+                str(value.get("archive_date") or "") not in strict_catchup_values
+                or str(value.get("archive_date") or "") in schedule_values
+                or not bool(value.get("is_complete"))
+            )
         ]
         network_days = {
             str(value.get("archive_date") or "")
             for value in target_days
-            if bool(value.get("needs_network"))
-            or bool(value.get("source_check_due"))
+            if (
+                not bool(value.get("is_complete"))
+                and (
+                    bool(value.get("needs_network"))
+                    or bool(value.get("source_check_due"))
+                )
+            )
+            or (
+                bool(value.get("is_complete"))
+                and bool(value.get("source_check_due"))
+                and (
+                    str(value.get("archive_date") or "")
+                    not in strict_catchup_values
+                    or str(value.get("archive_date") or "") in schedule_values
+                )
+            )
         }
         network_days.update(missing_dates)
         local_processing_dates = {
@@ -240,6 +277,7 @@ def build_library_feed_coverage(
                 "scheduled": scheduled,
                 "schedule_enabled": bool(schedule and schedule.get("enabled", True)),
                 "catch_up_saved": catchup_saved,
+                "catch_up_through_current": catchup_through_current,
                 "catch_up_start_date": (
                     str(catchup.get("start_date") or "") if catchup else ""
                 ),
@@ -304,6 +342,41 @@ def _missing_resume_day(
     }
 
 
+def _saved_through_current_contains(
+    day: dict[str, Any],
+    catchups: list[dict[str, Any]],
+    schedules: list[dict[str, Any]],
+    current: date,
+) -> bool:
+    """Return whether a complete day belongs only to a strict saved catch-up."""
+
+    feed_id = str(day.get("feed_id") or "")
+    archive_value = str(day.get("archive_date") or "")
+    if not feed_id or not archive_value:
+        return False
+    for schedule in schedules:
+        if str(schedule.get("feed_id") or "") != feed_id:
+            continue
+        if archive_value in {
+            value.isoformat() for value in _schedule_target_dates(schedule, current)
+        }:
+            return False
+    for catchup in catchups:
+        if (
+            str(catchup.get("feed_id") or "") != feed_id
+            or not bool(catchup.get("through_current", False))
+        ):
+            continue
+        try:
+            start_date = date.fromisoformat(str(catchup.get("start_date") or ""))
+            archive_date = date.fromisoformat(archive_value)
+        except ValueError:
+            continue
+        if start_date <= archive_date <= current:
+            return True
+    return False
+
+
 def build_library_resume_plan(
     days: list[dict[str, Any]],
     quota_status: dict[str, Any],
@@ -314,19 +387,44 @@ def build_library_resume_plan(
     requested_feed_id: str = "",
     requested_start_date: date | None = None,
     requested_end_date: date | None = None,
+    requested_through_current: bool = False,
 ) -> dict[str, Any]:
     """Return a deterministic local-first queue without starting any work."""
 
     normalized_feed_id = str(requested_feed_id or "").strip()
-    has_requested_range = bool(
-        normalized_feed_id and requested_start_date and requested_end_date
+    current = today or date.today()
+    if requested_through_current and requested_end_date is not None:
+        raise ValueError("Through-current catch-up does not accept a fixed end date.")
+    if requested_start_date and requested_start_date > current:
+        raise ValueError("Catch-up start date cannot be in the future.")
+    resolved_requested_end = (
+        current
+        if requested_through_current and requested_start_date
+        else requested_end_date
     )
-    if any((normalized_feed_id, requested_start_date, requested_end_date)) and not has_requested_range:
-        raise ValueError("Feed ID, start date, and end date are all required for catch-up.")
+    has_requested_range = bool(
+        normalized_feed_id and requested_start_date and resolved_requested_end
+    )
+    if (
+        any(
+            (
+                normalized_feed_id,
+                requested_start_date,
+                requested_end_date,
+                requested_through_current,
+            )
+        )
+        and not has_requested_range
+    ):
+        raise ValueError(
+            "Feed ID and start date are required for through-current catch-up."
+            if requested_through_current
+            else "Feed ID, start date, and end date are all required for catch-up."
+        )
     if normalized_feed_id and not normalized_feed_id.isdigit():
         raise ValueError("Feed ID must contain only digits.")
     requested_ranges = (
-        {normalized_feed_id: (requested_start_date, requested_end_date)}
+        {normalized_feed_id: (requested_start_date, resolved_requested_end)}
         if has_requested_range
         else None
     )
@@ -351,12 +449,21 @@ def build_library_resume_plan(
                 str(value.get("feed_id") or "") == normalized_feed_id
                 and requested_start_date.isoformat()
                 <= str(value.get("archive_date") or "")
-                <= requested_end_date.isoformat()
+                <= resolved_requested_end.isoformat()
             )
         )
         and (
             not bool(value.get("is_complete"))
-            or bool(value.get("source_check_due"))
+            or (
+                bool(value.get("source_check_due"))
+                and not has_requested_range
+                and not _saved_through_current_contains(
+                    value,
+                    catchups or [],
+                    schedules or [],
+                    current,
+                )
+            )
         )
     ]
     existing_keys = {
@@ -417,7 +524,10 @@ def build_library_resume_plan(
             requested_start_date.isoformat() if has_requested_range else ""
         ),
         "scope_end_date": (
-            requested_end_date.isoformat() if has_requested_range else ""
+            resolved_requested_end.isoformat() if has_requested_range else ""
+        ),
+        "scope_through_current": bool(
+            has_requested_range and requested_through_current
         ),
     }
 
@@ -439,6 +549,8 @@ def completed_library_catchup_feed_ids(
             end_date = date.fromisoformat(str(catchup.get("end_date") or ""))
         except ValueError:
             continue
+        if bool(catchup.get("through_current", False)):
+            end_date = current
         coverage = build_library_feed_coverage(
             days,
             today=current,

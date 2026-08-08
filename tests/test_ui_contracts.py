@@ -200,7 +200,7 @@ def test_native_library_exposes_guarded_feed_delete_and_resume_all() -> None:
         "ResumeAllLibrary_Click"
     )
     assert names["CatchUpFeedButton"].attrib["Content"] == (
-        "Evaluate / catch up feed…"
+        "Catch up missing feed days…"
     )
     assert names["CatchUpFeedButton"].attrib["Click"] == "CatchUpFeed_Click"
     assert names["LibraryDeleteFeedButton"].attrib["Content"] == "Delete feed"
@@ -225,9 +225,10 @@ def test_native_library_exposes_guarded_feed_delete_and_resume_all() -> None:
     assert "result?.DownloadLimited == true" in native
     assert "DownloadJobs = 1" in native
     assert "ShowLibraryCatchUpRangeAsync" in native
-    assert "Evaluate every calendar day for one feed" in native
+    assert "queues only absent or unfinished days" in native
     assert "RunLibraryResumePlanAsync" in native
-    assert "Keep this range resumable until every day is complete" in native
+    assert "automatically extends through the then-current day" in native
+    assert "endPicker" not in native
     assert "SaveLibraryCatchUpAsync" in native
     assert "FinalizeLibraryCatchUpsAsync" in native
     assert 'LibraryActionInfoBar.Title = "Feed deleted"' in native
@@ -238,7 +239,8 @@ def test_native_library_exposes_guarded_feed_delete_and_resume_all() -> None:
     assert '"save-library-catch-up"' in worker
     assert '"finalize-library-catch-ups"' in worker
     assert '"--start-date"' in worker
-    assert '"--end-date"' in worker
+    assert '"--through-current"' in worker
+    assert "through_current = throughCurrent" in worker
     assert '"delete-library-feed"' in worker
 
 
@@ -254,6 +256,7 @@ def test_native_ui_smoke_launcher_isolated_from_real_user_data() -> None:
     assert "!UsesTestDataRoot" in settings
     assert "broadcastify-desktop-ui-smoke-" in launcher
     assert "save-library-catch-up" in launcher
+    assert "through_current = $true" in launcher
     assert "BROADCASTIFY_SECURE_ANALYSIS_DB" in launcher
     assert "System.Diagnostics.ProcessStartInfo" in launcher
     assert "UIAutomation" not in launcher

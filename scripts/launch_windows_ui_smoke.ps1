@@ -32,7 +32,6 @@ $dataRoot = Join-Path $SessionRoot "app-data"
 $libraryRoot = Join-Path $SessionRoot "library"
 $today = [DateTime]::Today
 $startDate = $today.AddDays(-9)
-$endDate = $today.AddDays(-3)
 $dayRoot = Join-Path (
     (Join-Path $libraryRoot $FeedId)
 ) $startDate.ToString("yyyyMMdd")
@@ -61,7 +60,7 @@ $payload = [ordered]@{
     feed_id = $FeedId
     feed_name = "Isolated UI smoke feed"
     start_date = $startDate.ToString("yyyy-MM-dd")
-    end_date = $endDate.ToString("yyyy-MM-dd")
+    through_current = $true
 } | ConvertTo-Json -Compress
 
 $savedEnvironment = @{}
@@ -120,7 +119,8 @@ $session = [ordered]@{
     database = $database
     feed_id = $FeedId
     catch_up_start_date = $startDate.ToString("yyyy-MM-dd")
-    catch_up_end_date = $endDate.ToString("yyyy-MM-dd")
+    catch_up_end_date = $today.ToString("yyyy-MM-dd")
+    catch_up_through_current = $true
 }
 $session | ConvertTo-Json -Depth 3 |
     Set-Content -LiteralPath (Join-Path $SessionRoot "smoke-session.json") -Encoding UTF8

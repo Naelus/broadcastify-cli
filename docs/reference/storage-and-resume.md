@@ -95,8 +95,8 @@ The persistent database stores:
 - daily and weekly summaries;
 - question history;
 - area profiles, acquisition queues, story digests, and per-feed schedules;
-- one explicit saved Library catch-up range per feed, including its full
-  start/end boundary; and
+- one explicit saved Library catch-up intent per feed, including its start date,
+  last evaluated end date, and whether the effective end follows today; and
 - model-window checkpoints and prompt/source identities.
 
 SQLite is derived from retained transcripts/audio but is worth backing up with
@@ -146,10 +146,13 @@ A later stage cannot make an earlier stale stage look complete.
   a startup recovery defers any schedule left running for one collision-
   avoidance minute and resumes from retained work. Windows login startup runs
   this recovery before claiming scheduled work.
-- Explicit Library catch-up ranges are stored independently of the recent-day
-  schedule lookback. They survive cancellation, quota pauses, app/machine
-  restarts, and upgrades, participate in the normal global Resume plan, and
-  self-clear only after every day in the saved boundary is locally current.
+- Explicit Library catch-ups are stored independently of the recent-day schedule
+  lookback. New catch-ups retain one start date and recompute their effective end
+  as today on every Library/Resume load while work remains. They synthesize
+  absent calendar days, include partially processed retained days, and omit
+  complete days. They survive cancellation, quota pauses, app/machine restarts,
+  and upgrades, participate in the normal global Resume plan, and self-clear
+  only after every day through current is locally complete.
 - Native settings are atomically written; activity/crash logs append.
 - A managed CUDA install retains its checksum-verified download cache and
   partial environment after cancellation; an exclusive lock prevents two app

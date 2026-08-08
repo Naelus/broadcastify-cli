@@ -1366,6 +1366,7 @@ def library_resume_plan(
     feed_id: str = "",
     start_date: str = "",
     end_date: str = "",
+    through_current: bool = False,
 ) -> int:
     days = scan_local_library(Path(output_dir), DEFAULT_DATABASE)
     with AnalysisStore(DEFAULT_DATABASE) as store:
@@ -1381,6 +1382,7 @@ def library_resume_plan(
         requested_feed_id=feed_id,
         requested_start_date=requested_start,
         requested_end_date=requested_end,
+        requested_through_current=through_current,
     )
     emit({"type": "library_resume_plan", **result})
     return 0
@@ -1995,6 +1997,7 @@ def build_parser() -> argparse.ArgumentParser:
     resume_library.add_argument("--feed-id", default="")
     resume_library.add_argument("--start-date", default="")
     resume_library.add_argument("--end-date", default="")
+    resume_library.add_argument("--through-current", action="store_true")
     subparsers.add_parser("delete-library-feed")
     subparsers.add_parser("continue-local")
     days = subparsers.add_parser("analysis-days")
@@ -2128,6 +2131,7 @@ def main() -> int:
                 arguments.feed_id,
                 arguments.start_date,
                 arguments.end_date,
+                arguments.through_current,
             )
         if arguments.command == "delete-library-feed":
             return delete_library_feed()

@@ -29,19 +29,22 @@ requested flag or filename.
 
 ## Resume actions
 
-- **Evaluate / catch up feed…** selects one retained or scheduled feed and an
-  explicit start/end date. The local planner expands every calendar day in that
-  range, including gaps that are older than a schedule's normal lookback or
-  belong to an unscheduled feed. It reports the exact retained-local and
-  source/network counts before work starts. By default, starting the plan saves
-  the complete range in the Library database before the first day runs. That
-  saved range survives app restart, cancellation, quota pause, and machine
-  restart; it remains visible in **Feed coverage and backlog** and is included
-  by the normal **Resume / prioritize…** action, not only by reopening the
-  range dialog. It clears automatically only after every calendar day has
-  current local completion evidence. The range dialog can explicitly replace
-  or clear it. Starting and resuming use the same sequential quota checks and
-  checkpoints, so completed days and retained stages are never repeated.
+- **Catch up missing feed days…** selects one retained, scheduled, or previously
+  saved feed and one prior start date. The local planner expands every calendar
+  day from that date through today, including gaps older than a schedule's
+  normal lookback and unscheduled feeds. Only absent days and retained days with
+  unfinished processing are queued; a locally complete day is skipped even if
+  its normal current-day source refresh would otherwise be due. The exact
+  retained-local and source/network counts are shown before work starts. By
+  default, starting the plan saves the start date in the Library database before
+  the first day runs. While any work remains, its effective end follows the
+  current day whenever Library or **Resume / prioritize…** reloads it. The saved
+  catch-up survives app restart, cancellation, quota pause, machine restart, and
+  upgrades; it is not limited to reopening the catch-up dialog. It self-clears
+  only after every calendar day through current has local completion evidence.
+  The dialog can explicitly replace or clear it. Starting and resuming use the
+  same sequential quota checks and checkpoints, so completed days and retained
+  stages are never repeated.
 - **Resume / prioritize…** builds a fresh read-only plan, synthesizes missing
   days from enabled feed schedules, and skips work already current. Before
   execution, the user chooses feeds, local-only work, whether to check/download

@@ -1051,6 +1051,9 @@ public sealed record LibraryFeedCoverage
     [JsonPropertyName("catch_up_saved")]
     public bool CatchUpSaved { get; init; }
 
+    [JsonPropertyName("catch_up_through_current")]
+    public bool CatchUpThroughCurrent { get; init; }
+
     [JsonPropertyName("catch_up_start_date")]
     public string CatchUpStartDate { get; init; } = "";
 
@@ -1119,7 +1122,11 @@ public sealed record LibraryFeedCoverage
 
     public string FeedLabel => $"{FeedName} · feed {FeedId}";
     public string TargetSummary => CatchUpSaved
-        ? $"Saved catch-up {CatchUpStartDate} through {CatchUpEndDate}"
+        ? CatchUpThroughCurrent
+            ? $"Saved catch-up {CatchUpStartDate} through today ({TargetEndDate})"
+                + (Scheduled ? " · daily schedule also active" : "")
+                + $" · {RetainedDayCount}/{TargetDayCount} target days retained"
+            : $"Saved catch-up {CatchUpStartDate} through {CatchUpEndDate}"
             + (Scheduled ? " · daily schedule also active" : "")
             + $" · {RetainedDayCount}/{TargetDayCount} target days retained"
         : Scheduled
@@ -1210,6 +1217,9 @@ internal sealed record LibraryResumePlan
 
     [JsonPropertyName("scope_end_date")]
     public string ScopeEndDate { get; init; } = "";
+
+    [JsonPropertyName("scope_through_current")]
+    public bool ScopeThroughCurrent { get; init; }
 }
 
 internal sealed record LibraryFeedDeleteResult

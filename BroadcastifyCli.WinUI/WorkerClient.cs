@@ -495,7 +495,8 @@ internal sealed class WorkerClient
         CancellationToken cancellationToken,
         string feedId = "",
         string startDate = "",
-        string endDate = "")
+        string endDate = "",
+        bool throughCurrent = false)
     {
         LibraryResumePlan? result = null;
         var arguments = new List<string>
@@ -507,12 +508,15 @@ internal sealed class WorkerClient
         };
         if (!string.IsNullOrWhiteSpace(feedId))
         {
-            arguments.AddRange(
-                [
-                    "--feed-id", feedId,
-                    "--start-date", startDate,
-                    "--end-date", endDate,
-                ]);
+            arguments.AddRange(["--feed-id", feedId, "--start-date", startDate]);
+            if (throughCurrent)
+            {
+                arguments.Add("--through-current");
+            }
+            else
+            {
+                arguments.AddRange(["--end-date", endDate]);
+            }
         }
         await RunWorkerAsync(
             arguments,
@@ -533,7 +537,7 @@ internal sealed class WorkerClient
         string feedId,
         string feedName,
         string startDate,
-        string endDate,
+        bool throughCurrent,
         CancellationToken cancellationToken)
     {
         var saved = false;
@@ -545,7 +549,7 @@ internal sealed class WorkerClient
                     feed_id = feedId,
                     feed_name = feedName,
                     start_date = startDate,
-                    end_date = endDate,
+                    through_current = throughCurrent,
                 },
                 JsonOptions),
             message =>

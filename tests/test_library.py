@@ -110,7 +110,7 @@ def test_library_coverage_and_resume_plan_include_missing_scheduled_days() -> No
     assert all(value["scheduled_missing"] for value in plan["days"])
 
 
-def test_library_resume_plan_expands_an_explicit_unscheduled_feed_range() -> None:
+def test_library_resume_plan_catches_up_only_missing_or_incomplete_through_current() -> None:
     days = [
         {
             "feed_id": "90001",
@@ -118,7 +118,7 @@ def test_library_resume_plan_expands_an_explicit_unscheduled_feed_range() -> Non
             "archive_date": "2026-08-01",
             "is_complete": True,
             "needs_network": False,
-            "source_check_due": False,
+            "source_check_due": True,
             "pipeline_percent": 100,
         },
         {
@@ -147,12 +147,13 @@ def test_library_resume_plan_expands_an_explicit_unscheduled_feed_range() -> Non
         today=date(2026, 8, 5),
         requested_feed_id="90001",
         requested_start_date=date(2026, 8, 1),
-        requested_end_date=date(2026, 8, 5),
+        requested_through_current=True,
     )
 
     assert plan["scope_feed_id"] == "90001"
     assert plan["scope_start_date"] == "2026-08-01"
     assert plan["scope_end_date"] == "2026-08-05"
+    assert plan["scope_through_current"] is True
     assert [value["feed_id"] for value in plan["feeds"]] == ["90001"]
     assert plan["feeds"][0]["target_day_count"] == 5
     assert plan["feeds"][0]["missing_dates"] == [
@@ -168,6 +169,9 @@ def test_library_resume_plan_expands_an_explicit_unscheduled_feed_range() -> Non
     ]
     assert plan["local_count"] == 1
     assert plan["network_count"] == 3
+    assert "2026-08-01" not in {
+        value["archive_date"] for value in plan["days"]
+    }
 
 
 def test_library_resume_plan_rejects_future_or_partial_catch_up_ranges() -> None:
@@ -189,6 +193,16 @@ def test_library_resume_plan_rejects_future_or_partial_catch_up_ranges() -> None
             requested_end_date=date(2026, 8, 6),
         )
 
+    with pytest.raises(ValueError, match="future"):
+        build_library_resume_plan(
+            [],
+            {"available": True, "remaining": 40},
+            today=date(2026, 8, 5),
+            requested_feed_id="90001",
+            requested_start_date=date(2026, 8, 6),
+            requested_through_current=True,
+        )
+
 
 def test_saved_library_catchup_survives_restart_and_expands_global_resume(
     tmp_path: Path,
@@ -201,9 +215,11 @@ def test_saved_library_catchup_survives_restart_and_expands_global_resume(
                 "feed_name": "Example Public Safety",
                 "start_date": "2026-08-01",
                 "end_date": "2026-08-05",
+                "through_current": True,
             }
         )
     assert saved["start_date"] == "2026-08-01"
+    assert saved["through_current"] is True
 
     with AnalysisStore(database) as reopened:
         catchups = reopened.list_library_catchups()
@@ -215,7 +231,7 @@ def test_saved_library_catchup_survives_restart_and_expands_global_resume(
             "archive_date": "2026-08-01",
             "is_complete": True,
             "needs_network": False,
-            "source_check_due": False,
+            "source_check_due": True,
             "pipeline_percent": 100,
         }
     ]
@@ -227,23 +243,93 @@ def test_saved_library_catchup_survives_restart_and_expands_global_resume(
     )
 
     assert plan["feeds"][0]["catch_up_saved"] is True
+    assert plan["feeds"][0]["catch_up_through_current"] is True
     assert plan["feeds"][0]["catch_up_start_date"] == "2026-08-01"
-    assert plan["feeds"][0]["target_day_count"] == 5
+    assert plan["feeds"][0]["target_end_date"] == "2026-08-06"
+    assert plan["feeds"][0]["target_day_count"] == 6
+    assert plan["feeds"][0]["source_check_due_count"] == 0
     assert [value["archive_date"] for value in plan["days"]] == [
         "2026-08-02",
         "2026-08-03",
         "2026-08-04",
         "2026-08-05",
+        "2026-08-06",
     ]
 
 
-def test_saved_library_catchup_clears_only_after_every_target_day_is_complete() -> None:
+def test_saved_through_current_catchup_defaults_snapshot_end_to_today(
+    tmp_path: Path,
+) -> None:
+    with AnalysisStore(tmp_path / "analysis.sqlite3") as store:
+        saved = store.save_library_catchup(
+            {
+                "feed_id": "90001",
+                "feed_name": "Example Public Safety",
+                "start_date": date.today().isoformat(),
+                "through_current": True,
+            }
+        )
+
+    assert saved["end_date"] == date.today().isoformat()
+    assert saved["through_current"] is True
+
+
+def test_saved_through_current_catchup_preserves_scheduled_source_refresh() -> None:
+    current = date(2026, 8, 6)
+    plan = build_library_resume_plan(
+        [
+            {
+                "feed_id": "90001",
+                "feed_name": "Example Public Safety",
+                "archive_date": current.isoformat(),
+                "is_complete": True,
+                "needs_network": False,
+                "source_check_due": True,
+                "pipeline_percent": 100,
+            }
+        ],
+        {"available": True, "remaining": 40},
+        schedules=[
+            {
+                "feed_id": "90001",
+                "feed_name": "Example Public Safety",
+                "enabled": True,
+                "lookback_days": 1,
+            }
+        ],
+        catchups=[
+            {
+                "feed_id": "90001",
+                "feed_name": "Example Public Safety",
+                "start_date": "2026-08-01",
+                "end_date": "2026-08-05",
+                "through_current": True,
+            }
+        ],
+        today=current,
+    )
+
+    planned_dates = [value["archive_date"] for value in plan["days"]]
+    assert planned_dates == [
+        "2026-08-01",
+        "2026-08-02",
+        "2026-08-03",
+        "2026-08-04",
+        "2026-08-05",
+        current.isoformat(),
+    ]
+    assert plan["days"][-1]["status"] == "Source refresh due"
+    assert plan["feeds"][0]["source_check_due_count"] == 1
+
+
+def test_saved_through_current_catchup_clears_only_after_current_day_is_complete() -> None:
     catchups = [
         {
             "feed_id": "90001",
             "feed_name": "Example Public Safety",
             "start_date": "2026-08-01",
             "end_date": "2026-08-02",
+            "through_current": True,
         }
     ]
     complete = {
@@ -258,7 +344,7 @@ def test_saved_library_catchup_clears_only_after_every_target_day_is_complete() 
     assert completed_library_catchup_feed_ids(
         [{**complete, "archive_date": "2026-08-01"}],
         catchups,
-        today=date(2026, 8, 6),
+        today=date(2026, 8, 3),
     ) == []
     assert completed_library_catchup_feed_ids(
         [
@@ -266,8 +352,55 @@ def test_saved_library_catchup_clears_only_after_every_target_day_is_complete() 
             {**complete, "archive_date": "2026-08-02"},
         ],
         catchups,
-        today=date(2026, 8, 6),
+        today=date(2026, 8, 3),
+    ) == []
+    assert completed_library_catchup_feed_ids(
+        [
+            {**complete, "archive_date": "2026-08-01"},
+            {**complete, "archive_date": "2026-08-02"},
+            {**complete, "archive_date": "2026-08-03"},
+        ],
+        catchups,
+        today=date(2026, 8, 3),
     ) == ["90001"]
+
+
+def test_library_catchup_schema_migrates_existing_fixed_ranges(tmp_path: Path) -> None:
+    database = tmp_path / "analysis.sqlite3"
+    with AnalysisStore(database) as store:
+        store.connection.executescript(
+            """
+            ALTER TABLE library_catchups RENAME TO library_catchups_newer;
+            CREATE TABLE library_catchups (
+                feed_id TEXT PRIMARY KEY,
+                feed_name TEXT NOT NULL,
+                start_date TEXT NOT NULL,
+                end_date TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            INSERT INTO library_catchups(
+                feed_id, feed_name, start_date, end_date, created_at, updated_at
+            ) VALUES (
+                '90001', 'Legacy feed', '2026-08-01', '2026-08-02',
+                '2026-08-02T00:00:00+00:00', '2026-08-02T00:00:00+00:00'
+            );
+            DROP TABLE library_catchups_newer;
+            """
+        )
+
+    with AnalysisStore(database) as reopened:
+        columns = {
+            str(row["name"])
+            for row in reopened.connection.execute(
+                "PRAGMA table_info(library_catchups)"
+            ).fetchall()
+        }
+        catchup = reopened.list_library_catchups()[0]
+
+    assert "through_current" in columns
+    assert catchup["through_current"] is False
+
 
 def test_current_day_source_snapshot_becomes_resume_candidate_when_stale(
     tmp_path: Path,

@@ -257,6 +257,7 @@ class AnalysisStore:
                 feed_name TEXT NOT NULL,
                 start_date TEXT NOT NULL,
                 end_date TEXT NOT NULL,
+                through_current INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
@@ -362,6 +363,17 @@ class AnalysisStore:
             self.connection.execute(
                 "ALTER TABLE feed_schedules ADD COLUMN "
                 "backfill_start_date TEXT NOT NULL DEFAULT ''"
+            )
+        library_catchup_columns = {
+            str(row["name"])
+            for row in self.connection.execute(
+                "PRAGMA table_info(library_catchups)"
+            ).fetchall()
+        }
+        if "through_current" not in library_catchup_columns:
+            self.connection.execute(
+                "ALTER TABLE library_catchups ADD COLUMN "
+                "through_current INTEGER NOT NULL DEFAULT 0"
             )
         row = self.connection.execute("SELECT version FROM schema_info LIMIT 1").fetchone()
         if row is None:
@@ -552,6 +564,7 @@ class AnalysisStore:
             "feed_name": str(row["feed_name"]),
             "start_date": str(row["start_date"]),
             "end_date": str(row["end_date"]),
+            "through_current": bool(row["through_current"]),
             "created_at": str(row["created_at"]),
             "updated_at": str(row["updated_at"]),
         }
@@ -563,9 +576,15 @@ class AnalysisStore:
         if not feed_id.isdigit():
             raise ValueError("A numeric feed ID is required for catch-up.")
         feed_name = str(payload.get("feed_name") or f"Feed {feed_id}").strip()[:200]
+        through_current = bool(payload.get("through_current", False))
         try:
             start_date = date.fromisoformat(str(payload.get("start_date") or ""))
-            end_date = date.fromisoformat(str(payload.get("end_date") or ""))
+            end_value = str(payload.get("end_date") or "")
+            end_date = (
+                date.today()
+                if through_current and not end_value
+                else date.fromisoformat(end_value)
+            )
         except ValueError as exc:
             raise ValueError("Catch-up dates must use YYYY-MM-DD.") from exc
         if start_date > end_date:
@@ -577,12 +596,14 @@ class AnalysisStore:
             connection.execute(
                 """
                 INSERT INTO library_catchups(
-                    feed_id, feed_name, start_date, end_date, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?)
+                    feed_id, feed_name, start_date, end_date, through_current,
+                    created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(feed_id) DO UPDATE SET
                     feed_name=excluded.feed_name,
                     start_date=excluded.start_date,
                     end_date=excluded.end_date,
+                    through_current=excluded.through_current,
                     updated_at=excluded.updated_at
                 """,
                 (
@@ -590,6 +611,7 @@ class AnalysisStore:
                     feed_name,
                     start_date.isoformat(),
                     end_date.isoformat(),
+                    int(through_current),
                     now,
                     now,
                 ),
