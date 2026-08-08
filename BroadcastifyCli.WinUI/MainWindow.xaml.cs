@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Collections.ObjectModel;
+using System.Diagnostics;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -16,7 +17,6 @@ using Windows.Media.Playback;
 using Windows.Security.Credentials;
 using Windows.Storage;
 using Windows.Storage.Pickers;
-using Windows.System;
 using WinRT.Interop;
 
 namespace BroadcastifyCli.WinUI;
@@ -62,6 +62,7 @@ public sealed partial class MainWindow : Window
     private MediaPlayer _incidentMediaPlayer = new();
     private MediaPlayer _areaStoryMediaPlayer = new();
     private MediaPlayer _libraryMediaPlayer = new();
+    private bool _mediaPlayersAttached = true;
     private IncidentClip? _pendingIncidentClip;
     private LibraryDay? _selectedLibraryDay;
     private int _librarySelectionVersion;
@@ -508,8 +509,12 @@ public sealed partial class MainWindow : Window
         {
             var fullPath = Path.GetFullPath(path);
             Directory.CreateDirectory(fullPath);
-            var folder = await StorageFolder.GetFolderFromPathAsync(fullPath);
-            if (!await Launcher.LaunchFolderAsync(folder))
+            using var launched = Process.Start(new ProcessStartInfo
+            {
+                FileName = fullPath,
+                UseShellExecute = true,
+            });
+            if (launched is null)
             {
                 throw new InvalidOperationException("Windows could not open the folder.");
             }
@@ -3230,7 +3235,7 @@ public sealed partial class MainWindow : Window
         UpdateCommandAvailability();
         try
         {
-            await ReleaseMediaForArchiveMutationAsync();
+            await ReleaseMediaForArchiveMutationAsync(recreatePlayers: false);
             result = await _worker.DeleteLibraryFeedAsync(
                 PersistedOutputDirectory(),
                 selected.FeedId,
@@ -3274,6 +3279,7 @@ public sealed partial class MainWindow : Window
         }
         finally
         {
+            RestoreMediaPlayerInstances();
             _libraryMutationBusy = false;
             UpdateCommandAvailability();
             await RefreshLibraryAsync();
@@ -3485,9 +3491,15 @@ public sealed partial class MainWindow : Window
         }
         try
         {
-            var folder = await StorageFolder.GetFolderFromPathAsync(
-                Path.GetFullPath(_selectedLibraryDay.DayDirectory));
-            await Launcher.LaunchFolderAsync(folder);
+            using var launched = Process.Start(new ProcessStartInfo
+            {
+                FileName = Path.GetFullPath(_selectedLibraryDay.DayDirectory),
+                UseShellExecute = true,
+            });
+            if (launched is null)
+            {
+                throw new InvalidOperationException("Windows could not open the folder.");
+            }
         }
         catch (Exception exception)
         {
@@ -3509,9 +3521,15 @@ public sealed partial class MainWindow : Window
         }
         try
         {
-            var transcript = await StorageFile.GetFileFromPathAsync(
-                Path.GetFullPath(_selectedLibraryDay.TranscriptPath));
-            await Launcher.LaunchFileAsync(transcript);
+            using var launched = Process.Start(new ProcessStartInfo
+            {
+                FileName = Path.GetFullPath(_selectedLibraryDay.TranscriptPath),
+                UseShellExecute = true,
+            });
+            if (launched is null)
+            {
+                throw new InvalidOperationException("Windows could not open the transcript.");
+            }
         }
         catch (Exception exception)
         {
@@ -4698,7 +4716,8 @@ public sealed partial class MainWindow : Window
         return jobResult;
     }
 
-    private async Task ReleaseMediaForArchiveMutationAsync()
+    private async Task ReleaseMediaForArchiveMutationAsync(
+        bool recreatePlayers = true)
     {
         var hadMediaSource = _libraryMediaPlayer.Source is not null
             || _incidentMediaPlayer.Source is not null
@@ -4712,9 +4731,17 @@ public sealed partial class MainWindow : Window
         _pendingIncidentClip = null;
         // Setting Source to null is not sufficient on Windows: Media Foundation
         // can retain the underlying file handle through the MediaPlayerElement.
-        // Detach and dispose every instance before a directory rename, then
-        // create fresh players so playback remains available after the mutation.
-        ReleaseMediaPlayerInstances(recreate: true);
+        // Detach and dispose every instance before a directory rename. Feed
+        // deletion keeps them detached until the worker has finished; attaching
+        // replacements too early can keep the previous native playback graph alive.
+        ReleaseMediaPlayerInstances(recreate: recreatePlayers);
+        // Older builds opened folders through WinRT StorageFolder objects. Their
+        // native wrappers can outlive the local C# variable and keep a directory
+        // handle until finalization. Folder and transcript launches now use the
+        // Windows shell; collect any legacy wrappers before the mutation.
+        GC.Collect(GC.MaxGeneration, GCCollectionMode.Forced, blocking: true);
+        GC.WaitForPendingFinalizers();
+        GC.Collect(GC.MaxGeneration, GCCollectionMode.Forced, blocking: true);
         if (hadMediaSource)
         {
             LibraryAudioStatusText.Text =
@@ -4735,11 +4762,21 @@ public sealed partial class MainWindow : Window
         _libraryMediaPlayer.Dispose();
         _incidentMediaPlayer.Dispose();
         _areaStoryMediaPlayer.Dispose();
+        _mediaPlayersAttached = false;
         if (!recreate)
         {
             return;
         }
 
+        RestoreMediaPlayerInstances();
+    }
+
+    private void RestoreMediaPlayerInstances()
+    {
+        if (_mediaPlayersAttached)
+        {
+            return;
+        }
         _libraryMediaPlayer = new MediaPlayer();
         _incidentMediaPlayer = new MediaPlayer();
         _areaStoryMediaPlayer = new MediaPlayer();
@@ -4748,6 +4785,7 @@ public sealed partial class MainWindow : Window
         LibraryAudioPlayer.SetMediaPlayer(_libraryMediaPlayer);
         IncidentPlayer.SetMediaPlayer(_incidentMediaPlayer);
         AreaStoryPlayer.SetMediaPlayer(_areaStoryMediaPlayer);
+        _mediaPlayersAttached = true;
     }
 
     private async Task AnalyzeCompletedJobAsync(
@@ -6505,8 +6543,8 @@ public sealed partial class MainWindow : Window
         ResumeAllLibraryButton.IsEnabled = interactive
             && pipelineIdle
             && _libraryFeeds.Any(value => value.BacklogCount > 0);
-        LibraryList.IsEnabled = interactive;
-        LibraryFeedCoverageList.IsEnabled = interactive;
+        LibraryList.IsEnabled = interactive && !_libraryMutationBusy;
+        LibraryFeedCoverageList.IsEnabled = interactive && !_libraryMutationBusy;
         LibraryDetailPrimaryButton.IsEnabled = interactive
             && pipelineIdle
             && selectedDay is not null;
