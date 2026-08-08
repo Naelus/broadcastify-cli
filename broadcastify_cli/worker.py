@@ -79,6 +79,7 @@ from .library import (
     LocalProcessingRequest,
     build_library_feed_coverage,
     build_library_resume_plan,
+    completed_library_catchup_feed_ids,
     delete_local_library_feed,
     prepare_local_day,
     require_current_range_evidence,
@@ -471,6 +472,33 @@ def recover_feed_schedules() -> int:
     with AnalysisStore(DEFAULT_DATABASE) as store:
         recovered = store.recover_feed_schedules()
     emit({"type": "feed_schedules_recovered", "recovered": recovered})
+    return 0
+
+
+def save_library_catchup() -> int:
+    payload = json.load(sys.stdin)
+    with AnalysisStore(DEFAULT_DATABASE) as store:
+        catchup = store.save_library_catchup(payload)
+    emit({"type": "library_catch_up_saved", "catch_up": catchup})
+    return 0
+
+
+def delete_library_catchup() -> int:
+    payload = json.load(sys.stdin)
+    with AnalysisStore(DEFAULT_DATABASE) as store:
+        deleted = store.delete_library_catchup(str(payload.get("feed_id") or ""))
+    emit({"type": "library_catch_up_deleted", "deleted": deleted})
+    return 0
+
+
+def finalize_library_catchups(output_dir: str) -> int:
+    days = scan_local_library(Path(output_dir), DEFAULT_DATABASE)
+    with AnalysisStore(DEFAULT_DATABASE) as store:
+        catchups = store.list_library_catchups()
+        completed = completed_library_catchup_feed_ids(days, catchups)
+        for feed_id in completed:
+            store.delete_library_catchup(feed_id)
+    emit({"type": "library_catch_ups_finalized", "feed_ids": completed})
     return 0
 
 
@@ -1308,7 +1336,8 @@ def library_days(output_dir: str) -> int:
     days = scan_local_library(Path(output_dir), DEFAULT_DATABASE)
     with AnalysisStore(DEFAULT_DATABASE) as store:
         schedules = store.list_feed_schedules()
-    feeds = build_library_feed_coverage(days, schedules)
+        catchups = store.list_library_catchups()
+    feeds = build_library_feed_coverage(days, schedules, catchups)
     emit(
         {
             "type": "library_days",
@@ -1341,12 +1370,14 @@ def library_resume_plan(
     days = scan_local_library(Path(output_dir), DEFAULT_DATABASE)
     with AnalysisStore(DEFAULT_DATABASE) as store:
         schedules = store.list_feed_schedules()
+        catchups = store.list_library_catchups()
     requested_start = date.fromisoformat(start_date) if start_date else None
     requested_end = date.fromisoformat(end_date) if end_date else None
     result = build_library_resume_plan(
         days,
         ArchiveRequestLedger().status(),
         schedules,
+        catchups,
         requested_feed_id=feed_id,
         requested_start_date=requested_start,
         requested_end_date=requested_end,
@@ -1945,6 +1976,10 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("finish-schedule")
     subparsers.add_parser("delete-schedule")
     subparsers.add_parser("recover-schedules")
+    subparsers.add_parser("save-library-catch-up")
+    subparsers.add_parser("delete-library-catch-up")
+    finalize_catchups = subparsers.add_parser("finalize-library-catch-ups")
+    finalize_catchups.add_argument("--output-dir", default="archives")
     subparsers.add_parser("diagnostics")
     subparsers.add_parser("diagnostics-selected")
     subparsers.add_parser("prepare-asr-model")
@@ -2063,6 +2098,12 @@ def main() -> int:
             return delete_feed_schedule()
         if arguments.command == "recover-schedules":
             return recover_feed_schedules()
+        if arguments.command == "save-library-catch-up":
+            return save_library_catchup()
+        if arguments.command == "delete-library-catch-up":
+            return delete_library_catchup()
+        if arguments.command == "finalize-library-catch-ups":
+            return finalize_library_catchups(arguments.output_dir)
         if arguments.command == "diagnostics":
             return diagnostics()
         if arguments.command == "diagnostics-selected":

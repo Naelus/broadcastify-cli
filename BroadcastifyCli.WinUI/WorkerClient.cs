@@ -529,6 +529,88 @@ internal sealed class WorkerClient
         return result ?? new LibraryResumePlan();
     }
 
+    public async Task SaveLibraryCatchUpAsync(
+        string feedId,
+        string feedName,
+        string startDate,
+        string endDate,
+        CancellationToken cancellationToken)
+    {
+        var saved = false;
+        await RunWorkerAsync(
+            ["-m", "broadcastify_cli.worker", "save-library-catch-up"],
+            JsonSerializer.Serialize(
+                new
+                {
+                    feed_id = feedId,
+                    feed_name = feedName,
+                    start_date = startDate,
+                    end_date = endDate,
+                },
+                JsonOptions),
+            message =>
+            {
+                if (message.TryGetProperty("type", out var type)
+                    && type.GetString() == "library_catch_up_saved")
+                {
+                    saved = true;
+                }
+            },
+            cancellationToken);
+        if (!saved)
+        {
+            throw new InvalidOperationException(
+                "The worker did not confirm the saved catch-up range.");
+        }
+    }
+
+    public async Task<bool> DeleteLibraryCatchUpAsync(
+        string feedId,
+        CancellationToken cancellationToken)
+    {
+        var deleted = false;
+        await RunWorkerAsync(
+            ["-m", "broadcastify_cli.worker", "delete-library-catch-up"],
+            JsonSerializer.Serialize(new { feed_id = feedId }, JsonOptions),
+            message =>
+            {
+                if (message.TryGetProperty("type", out var type)
+                    && type.GetString() == "library_catch_up_deleted"
+                    && message.TryGetProperty("deleted", out var value))
+                {
+                    deleted = value.GetBoolean();
+                }
+            },
+            cancellationToken);
+        return deleted;
+    }
+
+    public async Task<IReadOnlyList<string>> FinalizeLibraryCatchUpsAsync(
+        string outputDirectory,
+        CancellationToken cancellationToken)
+    {
+        List<string>? feedIds = null;
+        await RunWorkerAsync(
+            [
+                "-m", "broadcastify_cli.worker", "finalize-library-catch-ups",
+                "--output-dir", string.IsNullOrWhiteSpace(outputDirectory)
+                    ? "archives"
+                    : outputDirectory,
+            ],
+            null,
+            message =>
+            {
+                if (message.TryGetProperty("type", out var type)
+                    && type.GetString() == "library_catch_ups_finalized"
+                    && message.TryGetProperty("feed_ids", out var value))
+                {
+                    feedIds = value.Deserialize<List<string>>(JsonOptions);
+                }
+            },
+            cancellationToken);
+        return feedIds ?? [];
+    }
+
     public async Task<LibraryFeedDeleteResult?> DeleteLibraryFeedAsync(
         string outputDirectory,
         string feedId,

@@ -1,0 +1,7 @@
+<Project>
+  <Target Name="RequireCommittedBuildSource"
+          BeforeTargets="PrepareForBuild"
+          Condition="'$(DesignTimeBuild)' != 'true' and ('$(MSBuildProjectName)' == 'BroadcastifyCli.WinUI' or '$(MSBuildProjectName)' == 'BroadcastifyCli.WindowsML')">
+    <Exec Command="powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildThisFileDirectory)scripts\assert_committed_build_source.ps1&quot; -RepositoryRoot &quot;$(MSBuildThisFileDirectory)&quot; -Quiet" />
+  </Target>
+</Project>

@@ -44,6 +44,9 @@ internal sealed record DesktopSettings
 
 internal static class AppSettingsStore
 {
+    internal const string TestDataRootEnvironment =
+        "BROADCASTIFY_DESKTOP_TEST_DATA_ROOT";
+
     private static readonly JsonSerializerOptions SerializerOptions = new()
     {
         PropertyNameCaseInsensitive = true,
@@ -54,10 +57,19 @@ internal static class AppSettingsStore
     {
         get
         {
+            var testRoot = Environment.GetEnvironmentVariable(
+                TestDataRootEnvironment)?.Trim();
+            if (!string.IsNullOrWhiteSpace(testRoot))
+            {
+                return Path.GetFullPath(testRoot);
+            }
             var userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
             return Path.Combine(userProfile, "AppData", "Local", "Broadcastify Desktop");
         }
     }
+
+    private static bool UsesTestDataRoot => !string.IsNullOrWhiteSpace(
+        Environment.GetEnvironmentVariable(TestDataRootEnvironment));
 
     internal static string SettingsPath => Path.Combine(LocalDataDirectory, "settings.json");
 
@@ -71,7 +83,8 @@ internal static class AppSettingsStore
         {
             var sourcePath = File.Exists(SettingsPath)
                 ? SettingsPath
-                : !Path.GetFullPath(legacyPath).Equals(
+                : !UsesTestDataRoot
+                  && !Path.GetFullPath(legacyPath).Equals(
                     Path.GetFullPath(SettingsPath), StringComparison.OrdinalIgnoreCase)
                   && File.Exists(legacyPath)
                     ? legacyPath

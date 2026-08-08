@@ -65,6 +65,7 @@
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
                             <RowDefinition Height="*" />
                         </Grid.RowDefinitions>
 
@@ -112,7 +113,10 @@
                             </Border>
                         </Grid>
 
-                        <Expander Grid.Row="2" Header="Feed coverage and backlog" IsExpanded="True">
+                        <InfoBar x:Name="LibraryActionInfoBar" Grid.Row="2"
+                                 IsOpen="False" IsClosable="True" />
+
+                        <Expander Grid.Row="3" Header="Feed coverage and backlog" IsExpanded="True">
                             <Grid RowSpacing="8" Padding="0,8,0,2">
                                 <Grid.RowDefinitions>
                                     <RowDefinition Height="Auto" />
@@ -151,7 +155,7 @@
                             </Grid>
                         </Expander>
 
-                        <Grid Grid.Row="3" ColumnSpacing="10">
+                        <Grid Grid.Row="4" ColumnSpacing="10">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="220" />
@@ -167,7 +171,7 @@
                             </ComboBox>
                         </Grid>
 
-                        <Border Grid.Row="4" Style="{StaticResource CardBorderStyle}" Padding="0">
+                        <Border Grid.Row="5" Style="{StaticResource CardBorderStyle}" Padding="0">
                             <Grid ColumnSpacing="0">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="5*" MinWidth="330" />

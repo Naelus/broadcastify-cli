@@ -24,6 +24,13 @@ The consumer build layers a portable runtime over the verified native publish:
 .\scripts\build_windows_installer.ps1
 ```
 
+Native and installer builds are commit-gated. The shared build target and
+installer preflight reject tracked or untracked, non-ignored worktree changes;
+machine-only notes belong in `.git/info/exclude`. Commit source, tests,
+documentation, version, and release metadata before invoking either build. If
+anything changes afterward, create a new commit before rebuilding instead of
+reusing that version's artifact.
+
 Output:
 
 ```text
@@ -55,6 +62,9 @@ THIRD-PARTY-NOTICES.txt
 The main application and namespaced Windows ML helper each carry the .NET 10
 runtime files they require. Public builds disable debug symbols and reject any
 staged PDB so local build paths cannot enter a release installer.
+`ProductVersion` includes the full committed source revision and
+`build-manifest.json` records the same `source_commit`; the build fails if the
+two do not match.
 
 `WorkerClient` detects `runtime/python/python.exe`, stops searching for
 `pyproject.toml`, and runs workers from the writable per-user data directory.
@@ -146,6 +156,14 @@ The retained lifecycle test completed install, native launch with the bundled
 Python child, same-version upgrade, uninstall, and clean reinstall. Settings and
 all data files were unchanged; the corrected uninstall removed the complete
 program directory; and the clean launch generated no Python cache directories.
+
+For destructive real-window smoke testing, `scripts/launch_windows_ui_smoke.ps1`
+launches the installed executable with a unique temporary data root, Library,
+quota ledger, and saved catch-up fixture. It does not click or control the UI;
+Computer Use remains the interaction path. The test process never reads or
+writes the normal app-data directory, and the fixture requires no website
+request. Close the test process before deleting the reported temporary session
+root.
 
 The packaged CUDA bootstrap was also exercised from the staged public package,
 not the source virtual environment. It installed 105 checksum-locked dependency

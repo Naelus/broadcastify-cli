@@ -16,6 +16,7 @@ from broadcastify_cli.library import (
     build_library_feed_coverage,
     build_library_resume_plan,
     cleanup_pending_library_deletions,
+    completed_library_catchup_feed_ids,
     delete_local_library_feed,
     prepare_local_day,
     scan_local_library,
@@ -189,6 +190,85 @@ def test_library_resume_plan_rejects_future_or_partial_catch_up_ranges() -> None
         )
 
 
+def test_saved_library_catchup_survives_restart_and_expands_global_resume(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "analysis.sqlite3"
+    with AnalysisStore(database) as store:
+        saved = store.save_library_catchup(
+            {
+                "feed_id": "90001",
+                "feed_name": "Example Public Safety",
+                "start_date": "2026-08-01",
+                "end_date": "2026-08-05",
+            }
+        )
+    assert saved["start_date"] == "2026-08-01"
+
+    with AnalysisStore(database) as reopened:
+        catchups = reopened.list_library_catchups()
+
+    days = [
+        {
+            "feed_id": "90001",
+            "feed_name": "Example Public Safety",
+            "archive_date": "2026-08-01",
+            "is_complete": True,
+            "needs_network": False,
+            "source_check_due": False,
+            "pipeline_percent": 100,
+        }
+    ]
+    plan = build_library_resume_plan(
+        days,
+        {"available": True, "remaining": 40},
+        catchups=catchups,
+        today=date(2026, 8, 6),
+    )
+
+    assert plan["feeds"][0]["catch_up_saved"] is True
+    assert plan["feeds"][0]["catch_up_start_date"] == "2026-08-01"
+    assert plan["feeds"][0]["target_day_count"] == 5
+    assert [value["archive_date"] for value in plan["days"]] == [
+        "2026-08-02",
+        "2026-08-03",
+        "2026-08-04",
+        "2026-08-05",
+    ]
+
+
+def test_saved_library_catchup_clears_only_after_every_target_day_is_complete() -> None:
+    catchups = [
+        {
+            "feed_id": "90001",
+            "feed_name": "Example Public Safety",
+            "start_date": "2026-08-01",
+            "end_date": "2026-08-02",
+        }
+    ]
+    complete = {
+        "feed_id": "90001",
+        "feed_name": "Example Public Safety",
+        "is_complete": True,
+        "needs_network": False,
+        "source_check_due": False,
+        "pipeline_percent": 100,
+    }
+
+    assert completed_library_catchup_feed_ids(
+        [{**complete, "archive_date": "2026-08-01"}],
+        catchups,
+        today=date(2026, 8, 6),
+    ) == []
+    assert completed_library_catchup_feed_ids(
+        [
+            {**complete, "archive_date": "2026-08-01"},
+            {**complete, "archive_date": "2026-08-02"},
+        ],
+        catchups,
+        today=date(2026, 8, 6),
+    ) == ["90001"]
+
 def test_current_day_source_snapshot_becomes_resume_candidate_when_stale(
     tmp_path: Path,
     monkeypatch,
@@ -343,6 +423,22 @@ def test_delete_local_library_feed_removes_only_selected_feed_and_schedule(
                 "job": {},
             }
         )
+        store.save_library_catchup(
+            {
+                "feed_id": "90001",
+                "feed_name": "Target Feed",
+                "start_date": "2026-07-10",
+                "end_date": "2026-07-12",
+            }
+        )
+        store.save_library_catchup(
+            {
+                "feed_id": "90002",
+                "feed_name": "Other Feed",
+                "start_date": "2026-07-10",
+                "end_date": "2026-07-12",
+            }
+        )
         store.save_feed_schedule(
             {
                 "feed_id": "90002",
@@ -364,12 +460,16 @@ def test_delete_local_library_feed_removes_only_selected_feed_and_schedule(
     assert result["days_deleted"] == 1
     assert result["segments_deleted"] == 1
     assert result["schedules_deleted"] == 1
+    assert result["catchups_deleted"] == 1
     assert not (tmp_path / "90001").exists()
     assert other_audio.is_file()
     with AnalysisStore(database) as store:
         assert store.list_days("90001") == []
         assert len(store.list_days("90002")) == 1
         assert [value["feed_id"] for value in store.list_feed_schedules()] == [
+            "90002"
+        ]
+        assert [value["feed_id"] for value in store.list_library_catchups()] == [
             "90002"
         ]
 

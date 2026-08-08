@@ -252,6 +252,15 @@ class AnalysisStore:
                 updated_at TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS library_catchups (
+                feed_id TEXT PRIMARY KEY,
+                feed_name TEXT NOT NULL,
+                start_date TEXT NOT NULL,
+                end_date TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS area_profiles (
                 id INTEGER PRIMARY KEY,
                 name TEXT NOT NULL UNIQUE,
@@ -533,6 +542,77 @@ class AnalysisStore:
         with self.transaction() as connection:
             cursor = connection.execute(
                 "DELETE FROM feed_schedules WHERE id=?", (int(schedule_id),)
+            )
+        return cursor.rowcount > 0
+
+    @staticmethod
+    def _library_catchup(row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "feed_id": str(row["feed_id"]),
+            "feed_name": str(row["feed_name"]),
+            "start_date": str(row["start_date"]),
+            "end_date": str(row["end_date"]),
+            "created_at": str(row["created_at"]),
+            "updated_at": str(row["updated_at"]),
+        }
+
+    def save_library_catchup(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Persist one explicit feed range until its work is complete or cleared."""
+
+        feed_id = str(payload.get("feed_id") or "").strip()
+        if not feed_id.isdigit():
+            raise ValueError("A numeric feed ID is required for catch-up.")
+        feed_name = str(payload.get("feed_name") or f"Feed {feed_id}").strip()[:200]
+        try:
+            start_date = date.fromisoformat(str(payload.get("start_date") or ""))
+            end_date = date.fromisoformat(str(payload.get("end_date") or ""))
+        except ValueError as exc:
+            raise ValueError("Catch-up dates must use YYYY-MM-DD.") from exc
+        if start_date > end_date:
+            raise ValueError("Catch-up start date must not be after its end date.")
+        if end_date > date.today():
+            raise ValueError("Catch-up end date cannot be in the future.")
+        now = utc_now()
+        with self.transaction() as connection:
+            connection.execute(
+                """
+                INSERT INTO library_catchups(
+                    feed_id, feed_name, start_date, end_date, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(feed_id) DO UPDATE SET
+                    feed_name=excluded.feed_name,
+                    start_date=excluded.start_date,
+                    end_date=excluded.end_date,
+                    updated_at=excluded.updated_at
+                """,
+                (
+                    feed_id,
+                    feed_name,
+                    start_date.isoformat(),
+                    end_date.isoformat(),
+                    now,
+                    now,
+                ),
+            )
+        row = self.connection.execute(
+            "SELECT * FROM library_catchups WHERE feed_id=?", (feed_id,)
+        ).fetchone()
+        assert row is not None
+        return self._library_catchup(row)
+
+    def list_library_catchups(self) -> list[dict[str, Any]]:
+        rows = self.connection.execute(
+            "SELECT * FROM library_catchups ORDER BY start_date, feed_name COLLATE NOCASE"
+        ).fetchall()
+        return [self._library_catchup(row) for row in rows]
+
+    def delete_library_catchup(self, feed_id: str) -> bool:
+        normalized = str(feed_id or "").strip()
+        if not normalized.isdigit():
+            raise ValueError("Feed ID must contain only digits.")
+        with self.transaction() as connection:
+            cursor = connection.execute(
+                "DELETE FROM library_catchups WHERE feed_id=?", (normalized,)
             )
         return cursor.rowcount > 0
 
@@ -1039,6 +1119,9 @@ class AnalysisStore:
                 schedules_deleted = connection.execute(
                     "DELETE FROM feed_schedules WHERE feed_id=?", (normalized,)
                 ).rowcount
+            catchups_deleted = connection.execute(
+                "DELETE FROM library_catchups WHERE feed_id=?", (normalized,)
+            ).rowcount
 
         return {
             "days_deleted": len(day_ids),
@@ -1047,6 +1130,7 @@ class AnalysisStore:
             "incidents_deleted": incident_count,
             "area_digests_invalidated": len(digest_ids),
             "schedules_deleted": max(0, int(schedules_deleted)),
+            "catchups_deleted": max(0, int(catchups_deleted)),
         }
 
     @staticmethod

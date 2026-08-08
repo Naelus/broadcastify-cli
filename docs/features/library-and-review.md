@@ -33,9 +33,15 @@ requested flag or filename.
   explicit start/end date. The local planner expands every calendar day in that
   range, including gaps that are older than a schedule's normal lookback or
   belong to an unscheduled feed. It reports the exact retained-local and
-  source/network counts before work starts. Starting that plan uses the same
-  sequential quota checks and checkpoints as other resumes; selecting the same
-  range later continues the remaining days without repeating completed work.
+  source/network counts before work starts. By default, starting the plan saves
+  the complete range in the Library database before the first day runs. That
+  saved range survives app restart, cancellation, quota pause, and machine
+  restart; it remains visible in **Feed coverage and backlog** and is included
+  by the normal **Resume / prioritize…** action, not only by reopening the
+  range dialog. It clears automatically only after every calendar day has
+  current local completion evidence. The range dialog can explicitly replace
+  or clear it. Starting and resuming use the same sequential quota checks and
+  checkpoints, so completed days and retained stages are never repeated.
 - **Resume / prioritize…** builds a fresh read-only plan, synthesizes missing
   days from enabled feed schedules, and skips work already current. Before
   execution, the user chooses feeds, local-only work, whether to check/download
@@ -73,9 +79,12 @@ default so the feed is not unexpectedly downloaded again.
 Deletion first detaches the numeric feed directory within the selected Library
 root, then transactionally removes its imported days, transcript segments,
 passages and embeddings, incidents, daily/weekly summaries, saved questions,
-and cached area digests that cite the feed. If the database transaction fails,
-the detached directory is restored. A transient filesystem cleanup failure
-leaves an ignored tombstone that a later Library refresh safely retries. Saved
+cached area digests that cite the feed, daily schedule, and saved catch-up
+range. If the database transaction fails, the detached directory is restored.
+A transient filesystem cleanup failure leaves an ignored tombstone that a
+later Library refresh safely retries. The result is shown in a nonmodal Library
+banner after the destructive confirmation closes, avoiding overlapping Windows
+dialogs. Saved
 Area Watch profiles and acquisition history remain configuration/audit records;
 running one of those profiles can intentionally acquire the feed again.
 

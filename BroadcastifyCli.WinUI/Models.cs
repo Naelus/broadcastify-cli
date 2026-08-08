@@ -1048,6 +1048,15 @@ public sealed record LibraryFeedCoverage
     [JsonPropertyName("scheduled")]
     public bool Scheduled { get; init; }
 
+    [JsonPropertyName("catch_up_saved")]
+    public bool CatchUpSaved { get; init; }
+
+    [JsonPropertyName("catch_up_start_date")]
+    public string CatchUpStartDate { get; init; } = "";
+
+    [JsonPropertyName("catch_up_end_date")]
+    public string CatchUpEndDate { get; init; } = "";
+
     [JsonPropertyName("target_start_date")]
     public string TargetStartDate { get; init; } = "";
 
@@ -1109,9 +1118,13 @@ public sealed record LibraryFeedCoverage
     public string Status { get; init; } = "";
 
     public string FeedLabel => $"{FeedName} · feed {FeedId}";
-    public string TargetSummary => Scheduled
-        ? $"Scheduled {TargetStartDate} through {TargetEndDate} · {RetainedDayCount}/{TargetDayCount} days retained"
-        : $"{RetainedDayCount} retained day{(RetainedDayCount == 1 ? "" : "s")} · no active target range";
+    public string TargetSummary => CatchUpSaved
+        ? $"Saved catch-up {CatchUpStartDate} through {CatchUpEndDate}"
+            + (Scheduled ? " · daily schedule also active" : "")
+            + $" · {RetainedDayCount}/{TargetDayCount} target days retained"
+        : Scheduled
+            ? $"Scheduled {TargetStartDate} through {TargetEndDate} · {RetainedDayCount}/{TargetDayCount} days retained"
+            : $"{RetainedDayCount} retained day{(RetainedDayCount == 1 ? "" : "s")} · no active target range";
     public string WorkSummary => BacklogCount == 0
         ? Status
         : $"{Status} · {LocalProcessingDayCount} local · {NetworkDayCount} source/network";
@@ -1224,6 +1237,9 @@ internal sealed record LibraryFeedDeleteResult
 
     [JsonPropertyName("schedules_deleted")]
     public int SchedulesDeleted { get; init; }
+
+    [JsonPropertyName("catchups_deleted")]
+    public int CatchUpsDeleted { get; init; }
 }
 
 internal sealed record ManagedRuntimeStatus

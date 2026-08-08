@@ -144,6 +144,16 @@ def test_public_installer_build_rejects_private_environment_and_pins_downloads()
     assert "torchcodec==0.14.0" in cuda_lock
     assert "ZoneInfo('America/Chicago')" in build
     assert "$unexpectedPdbFiles.Count -gt 0" in build
+    assert "Assert-CommittedBuildSource" in build
+    guard = (ROOT / "scripts" / "assert_committed_build_source.ps1").read_text()
+    targets = (ROOT / "Directory.Build.targets").read_text()
+    assert "assert_committed_build_source.ps1" in build
+    assert "status --porcelain --untracked-files=all" in guard
+    assert "Commit every source, test, documentation, version" in guard
+    assert "RequireCommittedBuildSource" in targets
+    assert "BeforeTargets=\"PrepareForBuild\"" in targets
+    assert '"-p:SourceRevisionId=$sourceCommit"' in build
+    assert "source_commit = $sourceCommit" in build
     assert 'tags:' in workflow
     assert '"v*"' in workflow
     assert "gh release upload" in workflow

@@ -65,6 +65,15 @@ function Get-NumericVersion {
     return ($parts[0..3] -join ".")
 }
 
+function Assert-CommittedBuildSource {
+    $guard = Join-Path $repositoryRoot "scripts\assert_committed_build_source.ps1"
+    $head = (& $guard -RepositoryRoot $repositoryRoot).Trim()
+    if ($LASTEXITCODE -ne 0 -or $head -notmatch '^[0-9a-f]{40}$') {
+        throw "The committed-source build guard failed."
+    }
+    return $head
+}
+
 function Get-VerifiedDownload {
     param(
         [Parameter(Mandatory = $true)][string]$Uri,
@@ -118,6 +127,7 @@ function Resolve-InnoCompiler {
     throw "ISCC.exe was not found. Run scripts\install_inno_setup.ps1 first."
 }
 
+$sourceCommit = Assert-CommittedBuildSource
 $projectVersion = Get-ProjectVersion
 if ([string]::IsNullOrWhiteSpace($Version)) {
     $Version = $projectVersion
@@ -188,6 +198,7 @@ $bundleValue = if ($BundleLocalEnv) { "true" } else { "false" }
     "-p:Version=$Version" `
     "-p:FileVersion=$numericVersion" `
     "-p:AssemblyVersion=$numericVersion" `
+    "-p:SourceRevisionId=$sourceCommit" `
     "-p:SelfContained=true" `
     "-p:DebugType=None" `
     "-p:DebugSymbols=false"
@@ -235,6 +246,15 @@ foreach ($nativeVersionFile in $nativeVersionFiles) {
         throw (
             "The native publish has stale ProductVersion $($versionInfo.ProductVersion) " +
             "in $nativeVersionFile; expected $Version."
+        )
+    }
+    if (-not $versionInfo.ProductVersion.Contains(
+            $sourceCommit.Substring(0, 7),
+            [StringComparison]::OrdinalIgnoreCase
+        )) {
+        throw (
+            "The native publish ProductVersion is not bound to source commit " +
+            "$sourceCommit in $nativeVersionFile."
         )
     }
 }
@@ -509,6 +529,7 @@ Get-ChildItem -LiteralPath $sitePackages -Filter __pycache__ -Recurse -Directory
 $manifest = [ordered]@{
     schema_version = 1
     app_version = $Version
+    source_commit = $sourceCommit
     architecture = "win-x64"
     python = [ordered]@{
         version = $pythonVersion
@@ -539,6 +560,7 @@ $manifest | ConvertTo-Json -Depth 5 |
 if ($SkipInstaller) {
     [pscustomobject]@{
         version = $Version
+        source_commit = $sourceCommit
         application_directory = $application
         installer = $null
         private_environment = [bool]$BundleLocalEnv
@@ -565,6 +587,7 @@ if (-not (Test-Path -LiteralPath $installer -PathType Leaf)) {
 
 [pscustomobject]@{
     version = $Version
+    source_commit = $sourceCommit
     application_directory = $application
     installer = $installer
     installer_sha256 = (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash

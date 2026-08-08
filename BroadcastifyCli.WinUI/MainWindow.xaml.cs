@@ -31,7 +31,8 @@ public sealed partial class MainWindow : Window
     private sealed record LibraryCatchUpRange(
         LibraryFeedCoverage Feed,
         DateTimeOffset StartDate,
-        DateTimeOffset EndDate);
+        DateTimeOffset EndDate,
+        bool SaveForResume);
 
     private const string DefaultAnalysisModel = "ggml-org/gemma-4-12B-it-GGUF:Q4_0";
     private const int NearestAreaFeedShortcutCount = 3;
@@ -2501,11 +2502,29 @@ public sealed partial class MainWindow : Window
             Date = today,
             MaxYear = today,
         };
+        var saveForResumeBox = new CheckBox
+        {
+            Content = "Keep this range resumable until every day is complete (recommended)",
+            IsChecked = true,
+        };
         void ApplyFeedDefault()
         {
             if (feedCombo.SelectedItem is LibraryFeedCoverage feed)
             {
-                startPicker.Date = DefaultCatchUpStart(feed);
+                if (feed.CatchUpSaved
+                    && DateTimeOffset.TryParse(feed.CatchUpStartDate, out var savedStart)
+                    && DateTimeOffset.TryParse(feed.CatchUpEndDate, out var savedEnd))
+                {
+                    startPicker.Date = savedStart;
+                    endPicker.Date = savedEnd;
+                    saveForResumeBox.IsChecked = true;
+                }
+                else
+                {
+                    startPicker.Date = DefaultCatchUpStart(feed);
+                    endPicker.Date = today;
+                    saveForResumeBox.IsChecked = true;
+                }
             }
         }
         ApplyFeedDefault();
@@ -2520,10 +2539,11 @@ public sealed partial class MainWindow : Window
         content.Children.Add(feedCombo);
         content.Children.Add(startPicker);
         content.Children.Add(endPicker);
+        content.Children.Add(saveForResumeBox);
         content.Children.Add(new TextBlock
         {
             Text =
-                "When started, missing days run sequentially and stop at the persistent rolling request boundary. Rerunning the same range resumes retained progress without repeating completed work.",
+                "When started, missing days run sequentially and stop at the persistent rolling request boundary. A saved range remains visible in Feed coverage and Resume / prioritize after an app restart, and clears automatically only when every day is complete. Uncheck the option and evaluate to clear an existing saved range.",
             TextWrapping = TextWrapping.Wrap,
             Foreground = (Brush)Application.Current.Resources[
                 "TextFillColorSecondaryBrush"],
@@ -2564,7 +2584,11 @@ public sealed partial class MainWindow : Window
                 "The catch-up end date cannot be in the future.");
             return null;
         }
-        return new LibraryCatchUpRange(selectedFeed, startDate, endDate);
+        return new LibraryCatchUpRange(
+            selectedFeed,
+            startDate,
+            endDate,
+            saveForResumeBox.IsChecked == true);
     }
 
     private async void CatchUpFeed_Click(object sender, RoutedEventArgs e)
@@ -2577,6 +2601,21 @@ public sealed partial class MainWindow : Window
         if (range is null)
         {
             return;
+        }
+        if (!range.SaveForResume && range.Feed.CatchUpSaved)
+        {
+            try
+            {
+                using var cancellation = new CancellationTokenSource(TimeSpan.FromMinutes(1));
+                await _worker.DeleteLibraryCatchUpAsync(
+                    range.Feed.FeedId,
+                    cancellation.Token);
+            }
+            catch (Exception exception)
+            {
+                await ShowErrorAsync(exception);
+                return;
+            }
         }
         LibraryResumePlan plan;
         try
@@ -2594,7 +2633,7 @@ public sealed partial class MainWindow : Window
             await ShowErrorAsync(exception);
             return;
         }
-        await RunLibraryResumePlanAsync(plan);
+        await RunLibraryResumePlanAsync(plan, range);
     }
 
     private async Task<ResumeAllSelection?> ShowResumeAllOptionsAsync(
@@ -2785,7 +2824,9 @@ public sealed partial class MainWindow : Window
         await RunLibraryResumePlanAsync(plan);
     }
 
-    private async Task RunLibraryResumePlanAsync(LibraryResumePlan plan)
+    private async Task RunLibraryResumePlanAsync(
+        LibraryResumePlan plan,
+        LibraryCatchUpRange? catchUpRange = null)
     {
         var worker = _worker;
         if (worker is null)
@@ -2794,6 +2835,21 @@ public sealed partial class MainWindow : Window
         }
         if (plan.Days.Count == 0)
         {
+            if (catchUpRange?.Feed.CatchUpSaved == true)
+            {
+                try
+                {
+                    using var cancellation = new CancellationTokenSource(TimeSpan.FromMinutes(1));
+                    await worker.FinalizeLibraryCatchUpsAsync(
+                        PersistedOutputDirectory(),
+                        cancellation.Token);
+                    await RefreshLibraryAsync();
+                }
+                catch (Exception exception)
+                {
+                    AppendLog($"Catch-up finalization: {exception.Message}");
+                }
+            }
             await ShowMessageAsync(
                 "Library is caught up",
                 string.IsNullOrWhiteSpace(plan.ScopeFeedId)
@@ -2834,6 +2890,29 @@ public sealed partial class MainWindow : Window
                 "Background pipeline already running",
                 "Another archive or transcription pipeline started while these options were open. Let it finish or cancel it, then resume the selected work.");
             return;
+        }
+
+        if (catchUpRange?.SaveForResume == true)
+        {
+            try
+            {
+                using var cancellation = new CancellationTokenSource(TimeSpan.FromMinutes(1));
+                await worker.SaveLibraryCatchUpAsync(
+                    catchUpRange.Feed.FeedId,
+                    catchUpRange.Feed.FeedName,
+                    catchUpRange.StartDate.ToString("yyyy-MM-dd"),
+                    catchUpRange.EndDate.ToString("yyyy-MM-dd"),
+                    cancellation.Token);
+                AppendLog(
+                    $"Saved catch-up for {catchUpRange.Feed.FeedName}: "
+                    + $"{catchUpRange.StartDate:yyyy-MM-dd} through "
+                    + $"{catchUpRange.EndDate:yyyy-MM-dd}.");
+            }
+            catch (Exception exception)
+            {
+                await ShowErrorAsync(exception);
+                return;
+            }
         }
 
         var pipeline = new CancellationTokenSource();
@@ -2929,6 +3008,23 @@ public sealed partial class MainWindow : Window
             _activePipelineFeedIds.Clear();
             JobProgress.IsIndeterminate = false;
             SetPipelineBusy(false);
+            try
+            {
+                using var finalization = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+                var completedCatchUps = await worker.FinalizeLibraryCatchUpsAsync(
+                    PersistedOutputDirectory(),
+                    finalization.Token);
+                if (completedCatchUps.Count > 0)
+                {
+                    AppendLog(
+                        "Completed saved catch-up range(s): "
+                        + string.Join(", ", completedCatchUps));
+                }
+            }
+            catch (Exception exception)
+            {
+                AppendLog($"Catch-up finalization: {exception.Message}");
+            }
             await RefreshLibraryAsync();
             await RefreshAnalysisDaysAsync();
             await RefreshArchiveQuotaStatusAsync();
@@ -3345,6 +3441,7 @@ public sealed partial class MainWindow : Window
                 + "Let that feed finish or cancel it before deleting. Other feeds can still be deleted while background work continues.");
             return;
         }
+        LibraryActionInfoBar.IsOpen = false;
 
         IReadOnlyList<FeedSchedule> schedules;
         try
@@ -3406,9 +3503,11 @@ public sealed partial class MainWindow : Window
         }
         if (IsFeedBusy(selected.FeedId))
         {
-            await ShowMessageAsync(
-                "Feed became busy",
-                "A background worker began using this feed while the confirmation was open. Nothing was deleted; retry after that feed finishes.");
+            LibraryActionInfoBar.Severity = InfoBarSeverity.Warning;
+            LibraryActionInfoBar.Title = "Feed became busy";
+            LibraryActionInfoBar.Message =
+                "A background worker began using this feed while the confirmation was open. Nothing was deleted; retry after that feed finishes.";
+            LibraryActionInfoBar.IsOpen = true;
             return;
         }
 
@@ -3454,11 +3553,19 @@ public sealed partial class MainWindow : Window
                     StringComparison.OrdinalIgnoreCase))
             {
                 AppendLog($"Delete feed: {exception.Message}");
-                await ShowMessageAsync("Feed is still in use", exception.Message);
+                LibraryActionInfoBar.Severity = InfoBarSeverity.Error;
+                LibraryActionInfoBar.Title = "Feed is still in use";
+                LibraryActionInfoBar.Message = exception.Message;
+                LibraryActionInfoBar.IsOpen = true;
             }
             else
             {
-                await ShowErrorAsync(exception);
+                StatusText.Text = "Feed deletion failed";
+                AppendLog($"ERROR: {exception.Message}");
+                LibraryActionInfoBar.Severity = InfoBarSeverity.Error;
+                LibraryActionInfoBar.Title = "Feed could not be deleted";
+                LibraryActionInfoBar.Message = exception.Message;
+                LibraryActionInfoBar.IsOpen = true;
             }
         }
         finally
@@ -3473,12 +3580,18 @@ public sealed partial class MainWindow : Window
 
         if (result is not null)
         {
-            await ShowMessageAsync(
-                "Feed deleted",
+            StatusText.Text = $"Deleted feed {result.FeedId} from the Library";
+            LibraryActionInfoBar.Severity = InfoBarSeverity.Success;
+            LibraryActionInfoBar.Title = "Feed deleted";
+            LibraryActionInfoBar.Message =
                 $"Removed {result.DaysDeleted:N0} local day(s) for feed {result.FeedId}. "
                 + (result.SchedulesDeleted > 0
-                    ? "Its scheduled download was also removed."
-                    : "No scheduled download was removed."));
+                    ? "Its scheduled download was also removed. "
+                    : "No scheduled download was removed. ")
+                + (result.CatchUpsDeleted > 0
+                    ? "Its saved catch-up range was also cleared."
+                    : "No saved catch-up range was active.");
+            LibraryActionInfoBar.IsOpen = true;
         }
     }
 

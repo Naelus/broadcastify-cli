@@ -207,6 +207,7 @@ def test_native_library_exposes_guarded_feed_delete_and_resume_all() -> None:
     assert names["LibraryDeleteFeedButton"].attrib["Click"] == (
         "LibraryDeleteFeed_Click"
     )
+    assert names["LibraryActionInfoBar"].attrib["IsOpen"] == "False"
 
     native = (
         ROOT / "BroadcastifyCli.WinUI" / "MainWindow.xaml.cs"
@@ -226,10 +227,35 @@ def test_native_library_exposes_guarded_feed_delete_and_resume_all() -> None:
     assert "ShowLibraryCatchUpRangeAsync" in native
     assert "Evaluate every calendar day for one feed" in native
     assert "RunLibraryResumePlanAsync" in native
+    assert "Keep this range resumable until every day is complete" in native
+    assert "SaveLibraryCatchUpAsync" in native
+    assert "FinalizeLibraryCatchUpsAsync" in native
+    assert 'LibraryActionInfoBar.Title = "Feed deleted"' in native
+    assert 'await ShowMessageAsync(\n                "Feed deleted"' not in native
     assert '"library-resume-plan"' in worker
+    assert '"save-library-catch-up"' in worker
+    assert '"finalize-library-catch-ups"' in worker
     assert '"--start-date"' in worker
     assert '"--end-date"' in worker
     assert '"delete-library-feed"' in worker
+
+
+def test_native_ui_smoke_launcher_isolated_from_real_user_data() -> None:
+    settings = (
+        ROOT / "BroadcastifyCli.WinUI" / "AppSettingsStore.cs"
+    ).read_text()
+    launcher = (
+        ROOT / "scripts" / "launch_windows_ui_smoke.ps1"
+    ).read_text()
+
+    assert "BROADCASTIFY_DESKTOP_TEST_DATA_ROOT" in settings
+    assert "!UsesTestDataRoot" in settings
+    assert "broadcastify-desktop-ui-smoke-" in launcher
+    assert "save-library-catch-up" in launcher
+    assert "BROADCASTIFY_SECURE_ANALYSIS_DB" in launcher
+    assert "System.Diagnostics.ProcessStartInfo" in launcher
+    assert "UIAutomation" not in launcher
+    assert "SendKeys" not in launcher
 
 
 def test_native_library_shows_feed_coverage_and_named_archive_chat() -> None:

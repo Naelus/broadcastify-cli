@@ -64,6 +64,7 @@ def _schedule_target_dates(
 def build_library_feed_coverage(
     days: list[dict[str, Any]],
     schedules: list[dict[str, Any]] | None = None,
+    catchups: list[dict[str, Any]] | None = None,
     *,
     today: date | None = None,
     requested_ranges: dict[str, tuple[date, date]] | None = None,
@@ -76,17 +77,28 @@ def build_library_feed_coverage(
         for value in schedules or []
         if str(value.get("feed_id") or "")
     }
+    catchup_by_feed = {
+        str(value.get("feed_id") or ""): value
+        for value in catchups or []
+        if str(value.get("feed_id") or "")
+    }
     days_by_feed: dict[str, list[dict[str, Any]]] = {}
     for value in days:
         feed_id = str(value.get("feed_id") or "")
         if feed_id:
             days_by_feed.setdefault(feed_id, []).append(value)
     explicit_ranges = requested_ranges or {}
-    feed_ids = sorted(set(days_by_feed) | set(schedule_by_feed) | set(explicit_ranges))
+    feed_ids = sorted(
+        set(days_by_feed)
+        | set(schedule_by_feed)
+        | set(catchup_by_feed)
+        | set(explicit_ranges)
+    )
     results: list[dict[str, Any]] = []
     for feed_id in feed_ids:
         retained = days_by_feed.get(feed_id, [])
         schedule = schedule_by_feed.get(feed_id)
+        catchup = catchup_by_feed.get(feed_id)
         requested = explicit_ranges.get(feed_id)
         if requested is not None:
             range_start, range_end = requested
@@ -100,6 +112,31 @@ def build_library_feed_coverage(
             ]
         else:
             target_dates = _schedule_target_dates(schedule, current) if schedule else []
+            if catchup is not None:
+                try:
+                    catchup_start = date.fromisoformat(
+                        str(catchup.get("start_date") or "")
+                    )
+                    catchup_end = date.fromisoformat(
+                        str(catchup.get("end_date") or "")
+                    )
+                except ValueError as exc:
+                    raise ValueError(
+                        f"Saved catch-up dates for feed {feed_id} are invalid."
+                    ) from exc
+                if catchup_start > catchup_end:
+                    raise ValueError(
+                        f"Saved catch-up start date for feed {feed_id} is after its end date."
+                    )
+                if catchup_end > current:
+                    raise ValueError(
+                        f"Saved catch-up end date for feed {feed_id} is in the future."
+                    )
+                target_dates.extend(
+                    catchup_start + timedelta(days=offset)
+                    for offset in range((catchup_end - catchup_start).days + 1)
+                )
+                target_dates = sorted(set(target_dates))
         target_values = {value.isoformat() for value in target_dates}
         retained_by_date = {
             str(value.get("archive_date") or ""): value
@@ -154,6 +191,8 @@ def build_library_feed_coverage(
             if str(value.get("feed_name") or "").strip()
         ]
         feed_name = str((schedule or {}).get("feed_name") or "").strip()
+        if not feed_name:
+            feed_name = str((catchup or {}).get("feed_name") or "").strip()
         if not feed_name and names:
             feed_name = names[0]
         if not feed_name:
@@ -177,7 +216,12 @@ def build_library_feed_coverage(
         )
         scheduled = bool(schedule and schedule.get("enabled", True))
         backlog_count = len(set(missing_dates) | network_days | local_processing_dates)
-        if scheduled and backlog_count == 0:
+        catchup_saved = catchup is not None
+        if catchup_saved and backlog_count == 0:
+            status = "Saved catch-up range is complete"
+        elif catchup_saved:
+            status = f"{backlog_count} catch-up day{'s' if backlog_count != 1 else ''} need work"
+        elif scheduled and backlog_count == 0:
             status = "Caught up for the scheduled range"
         elif scheduled:
             status = f"{backlog_count} scheduled day{'s' if backlog_count != 1 else ''} need work"
@@ -195,6 +239,13 @@ def build_library_feed_coverage(
                 "feed_name": feed_name,
                 "scheduled": scheduled,
                 "schedule_enabled": bool(schedule and schedule.get("enabled", True)),
+                "catch_up_saved": catchup_saved,
+                "catch_up_start_date": (
+                    str(catchup.get("start_date") or "") if catchup else ""
+                ),
+                "catch_up_end_date": (
+                    str(catchup.get("end_date") or "") if catchup else ""
+                ),
                 "target_start_date": target_dates[0].isoformat() if target_dates else "",
                 "target_end_date": target_dates[-1].isoformat() if target_dates else "",
                 "target_day_count": expected_count,
@@ -220,7 +271,10 @@ def build_library_feed_coverage(
     return sorted(
         results,
         key=lambda value: (
-            not bool(value["scheduled"]),
+            not (
+                bool(value["scheduled"])
+                or bool(value.get("catch_up_saved"))
+            ),
             -int(value["backlog_count"]),
             str(value["feed_name"]).lower(),
         ),
@@ -254,6 +308,7 @@ def build_library_resume_plan(
     days: list[dict[str, Any]],
     quota_status: dict[str, Any],
     schedules: list[dict[str, Any]] | None = None,
+    catchups: list[dict[str, Any]] | None = None,
     *,
     today: date | None = None,
     requested_feed_id: str = "",
@@ -278,6 +333,7 @@ def build_library_resume_plan(
     coverage = build_library_feed_coverage(
         days,
         schedules,
+        catchups,
         today=today,
         requested_ranges=requested_ranges,
     )
@@ -364,6 +420,33 @@ def build_library_resume_plan(
             requested_end_date.isoformat() if has_requested_range else ""
         ),
     }
+
+
+def completed_library_catchup_feed_ids(
+    days: list[dict[str, Any]],
+    catchups: list[dict[str, Any]],
+    *,
+    today: date | None = None,
+) -> list[str]:
+    """Identify saved explicit ranges whose every day is locally complete/current."""
+
+    current = today or date.today()
+    completed: list[str] = []
+    for catchup in catchups:
+        feed_id = str(catchup.get("feed_id") or "").strip()
+        try:
+            start_date = date.fromisoformat(str(catchup.get("start_date") or ""))
+            end_date = date.fromisoformat(str(catchup.get("end_date") or ""))
+        except ValueError:
+            continue
+        coverage = build_library_feed_coverage(
+            days,
+            today=current,
+            requested_ranges={feed_id: (start_date, end_date)},
+        )
+        if coverage and int(coverage[0].get("backlog_count") or 0) == 0:
+            completed.append(feed_id)
+    return completed
 
 
 def delete_local_library_feed(

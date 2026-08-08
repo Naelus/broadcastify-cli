@@ -23,6 +23,11 @@ identity unchanged.
 
 ## Efficient verification
 
+Every native or installer build is commit-gated. Commit all tracked source,
+tests, documentation, version, and release metadata first; never build from a
+dirty tracked worktree. If source changes after a build, create a new commit
+before rebuilding. A versioned installer is immutable for its source commit.
+
 Run focused tests while iterating, then the full offline suite and native build:
 
 ```powershell

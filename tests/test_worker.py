@@ -93,6 +93,9 @@ def test_library_resume_planning_reads_only_local_state_and_quota(
         def list_feed_schedules(self) -> list[dict[str, object]]:
             return []
 
+        def list_library_catchups(self) -> list[dict[str, object]]:
+            return []
+
     monkeypatch.setattr(
         "broadcastify_cli.worker.scan_local_library",
         lambda *_args: [

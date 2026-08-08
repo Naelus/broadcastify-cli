@@ -1,6 +1,6 @@
 # Feature inventory
 
-Last updated: August 6, 2026
+Last updated: August 8, 2026
 
 Status labels: **Validated**, **Implemented**, **Evaluated**, **Foundation**, or
 **Planned**. Detailed behavior and retained validation evidence belong in
@@ -62,7 +62,7 @@ See [evidence analysis](docs/features/evidence-analysis.md),
 | Capability | Status | Notes |
 |---|---|---|
 | Native WinUI 3 shell | Validated | Task navigation for Library, New Archive, Review & Ask, Area Watch, Settings, and About & Support; the support surface shows the installed version/runtime and opens local data or copies credential-free diagnostic context. Acquisition/transcription runs as a background pipeline while non-conflicting review/chat/library actions remain available, same-feed file handles are guarded, model analysis is serialized, and bursty worker output remains off the UI thread and in the rotating diagnostic log. |
-| Local Library | Validated | Five-stage timeline, playback, transcript preview, stale-result detection, retained-versus-temporary storage, schedule-aware feed backlog/last-known source coverage, explicit full-range evaluation/catch-up for scheduled or unscheduled feeds, guarded retrying whole-feed deletion with media players detached through the directory rename and legacy WinRT folder handles finalized, shell-based folder/transcript launching, selector-driven quota-safe Resume/prioritize, safe orphan cleanup, and exact per-day resume/upgrade/review actions. |
+| Local Library | Validated | Five-stage timeline, playback, transcript preview, stale-result detection, retained-versus-temporary storage, schedule-aware feed backlog/last-known source coverage, durable full-range catch-up for scheduled or unscheduled feeds that survives restart/quota/cancellation and rejoins global Resume, guarded retrying whole-feed deletion with media players detached through the directory rename and nonmodal completion feedback, shell-based folder/transcript launching, selector-driven quota-safe Resume/prioritize, safe orphan cleanup, and exact per-day resume/upgrade/review actions. |
 | Area Watch | Validated | Profile discovery, queue, coverage-aware ranked leads, selected evidence, clips and exports. |
 | Neighborhood subscription delivery | Foundation | Story eligibility and neighborhood/topic tags exist; opt-in delivery is explicitly low priority in [#5](https://github.com/Naelus/broadcastify-cli/issues/5). |
 | Cross-platform browser UI | Validated | Windows/Linux desktop and mobile validation; loopback default and explicit trusted-LAN mode. |
@@ -71,7 +71,7 @@ See [evidence analysis](docs/features/evidence-analysis.md),
 | Linux user service | Validated | Install/start/stop/status/log/restart and data-preserving uninstall. |
 | TrueNAS App | Validated | Persistent host-path data, trusted-LAN UI, AMD Vulkan, unprivileged/read-only container boundary. |
 | Verified Windows publish | Validated | WinUI resources, namespaced Windows ML helper, normal/private environment isolation. |
-| Standalone Windows installer | Validated | Per-user Inno Setup package with self-contained .NET app/helper, embedded Python, FFmpeg, Windows ML and portable inference runtimes; public stages reject PDBs/private state, install/upgrade/uninstall preserve application data, interactive setup discloses default-on login startup, and silent setup requires explicit startup/launch flags. |
+| Standalone Windows installer | Validated | Per-user Inno Setup package with self-contained .NET app/helper, embedded Python, FFmpeg, Windows ML and portable inference runtimes; every native/package build requires committed source, embeds that commit in ProductVersion and the manifest, public stages reject PDBs/private state, install/upgrade/uninstall preserve application data, interactive setup discloses default-on login startup, and silent setup requires explicit startup/launch flags. |
 | Packaged CUDA runtime manager | Validated | Explicit isolated Python/CUDA install from a fully hashed Windows lock; source/license/size/path disclosure, progress, cancellation, retained cache, safe resume, atomic promotion, app-update reuse, and clean staged-package ASR/Community-1 execution are proven. |
 | Additional accelerator add-ons | Foundation | OpenVINO/Vulkan packaged dependency lifecycles and release signing remain future work; their source/runtime paths continue to work when explicitly configured. |
 
