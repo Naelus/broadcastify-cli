@@ -156,3 +156,25 @@ def test_tagged_release_uses_the_shipped_windows_product_name() -> None:
     ).read_text(encoding="utf-8")
 
     assert '--title "Broadcastify Desktop ${{ steps.version.outputs.value }}"' in workflow
+
+
+def test_maintenance_update_uses_checkpointed_shutdown_without_force_kill() -> None:
+    stop = (
+        ROOT / "scripts" / "stop_windows_desktop_for_maintenance.ps1"
+    ).read_text(encoding="utf-8")
+    install = (
+        ROOT / "scripts" / "install_windows_update.ps1"
+    ).read_text(encoding="utf-8")
+
+    assert "CloseMainWindow()" in stop
+    assert "Get-CimInstance Win32_Process" in stop
+    assert "broadcastify_cli.worker" in stop
+    assert "No process was force-killed; maintenance was refused." in stop
+    assert "Stop-Process" not in stop
+    assert "stop_windows_desktop_for_maintenance.ps1" in install
+    assert '"/VERYSILENT"' in install
+    assert '"/SUPPRESSMSGBOXES"' in install
+    assert '"/NORESTART"' in install
+    assert "[switch]$Restart" in install
+    assert "if ($Restart)" in install
+    assert "LAUNCHAFTERINSTALL" not in install

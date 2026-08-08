@@ -120,6 +120,22 @@ The recommended silent deployment is:
   /ENABLESTARTUP /LAUNCHAFTERINSTALL
 ```
 
+For coding and maintenance sessions, use the guarded update command instead:
+
+```powershell
+.\scripts\install_windows_update.ps1 `
+  -Installer .\dist\windows\BroadcastifyDesktop-<version>-win-x64-setup.exe
+```
+
+It requests the application's normal close path, which cancels the active
+worker and retains its checkpoints, then follows the complete child-process
+tree until it exits. It also waits for any Broadcastify worker still running.
+If clean shutdown does not finish within 90 seconds, the command refuses the
+installation and reports the remaining processes; it never force-kills them.
+The application stays closed after installation so startup scheduling cannot
+restart work during the coding session. Pass `-Restart` only when an immediate
+launch is intentional.
+
 The launched app receives `--prompt-setup`: if the archive account or selected
 gated speaker-label path is not configured, it remains visible and directs the
 user to Credentials while scheduled jobs wait. Normal login launches use
