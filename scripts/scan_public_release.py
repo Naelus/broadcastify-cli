@@ -4,6 +4,7 @@ import argparse
 import os
 import re
 import sys
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -54,6 +55,19 @@ def _encoded_values(value: str) -> tuple[bytes, ...]:
         values.add(variant.encode("utf-16-le"))
         values.add(variant.encode("utf-16-be"))
     return tuple(sorted(values))
+
+
+def _is_generic_github_hosted_profile(
+    value: str,
+    environment: Mapping[str, str],
+) -> bool:
+    normalized = value.strip().replace("/", "\\").rstrip("\\").casefold()
+    return (
+        environment.get("GITHUB_ACTIONS", "").casefold() == "true"
+        and environment.get("RUNNER_ENVIRONMENT", "").casefold()
+        == "github-hosted"
+        and re.fullmatch(r"[a-z]:\\users\\runneradmin", normalized) is not None
+    )
 
 
 def _needles(forbidden_paths: list[str]) -> list[ByteNeedle]:
@@ -126,12 +140,19 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--root", required=True, type=Path)
     parser.add_argument("--forbid-path", action="append", default=[])
+    parser.add_argument("--forbid-user-profile")
     arguments = parser.parse_args(argv)
     if not arguments.root.is_dir():
         parser.error(f"release root is not a directory: {arguments.root}")
+    forbidden_paths = [str(value) for value in arguments.forbid_path]
+    if arguments.forbid_user_profile and not _is_generic_github_hosted_profile(
+        arguments.forbid_user_profile,
+        os.environ,
+    ):
+        forbidden_paths.append(arguments.forbid_user_profile)
     files_scanned, violations = scan_public_release(
         arguments.root,
-        [str(value) for value in arguments.forbid_path],
+        forbidden_paths,
     )
     if violations:
         print("Public release scan failed:", file=sys.stderr)

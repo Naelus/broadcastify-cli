@@ -206,6 +206,13 @@ It installs the checksum- and signature-verified Inno Setup 7.0.2 compiler,
 builds the installer, uploads a workflow artifact, and creates a tagged GitHub
 release with generated notes or replaces its existing installer asset.
 
+The public staging scan rejects private data files, debug symbols, environment
+secrets, and the exact source-workspace path. It also rejects a personal or
+self-hosted builder's user-profile path. The standard GitHub-hosted Windows
+profile (`C:\Users\runneradmin`) is excluded from only that profile check because
+prebuilt third-party wheels commonly retain it; the exact Actions workspace
+path remains prohibited.
+
 The workflow never creates a tag and requires the tag/build version to match
 `pyproject.toml`. It contains no credentials; repository `GITHUB_TOKEN` supplies
 only release permission.

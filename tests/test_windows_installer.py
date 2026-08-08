@@ -1,3 +1,4 @@
+import os
 import re
 import subprocess
 import sys
@@ -149,6 +150,7 @@ def test_public_installer_build_rejects_private_environment_and_pins_downloads()
     assert "dotnet clean $project -c Release" in build
     assert "scan_public_release.py" in build
     assert '"--forbid-path", $repositoryRoot' in build
+    assert '"--forbid-user-profile", $env:USERPROFILE' in build
     assert "The public secret and forbidden-file scan failed." in build
     assert "Assert-CommittedBuildSource" in build
     guard = (ROOT / "scripts" / "assert_committed_build_source.ps1").read_text()
@@ -220,6 +222,78 @@ def test_public_release_scanner_accepts_a_clean_stage(tmp_path: Path) -> None:
 
     assert result.returncode == 0
     assert "Public release scan passed: 2 files checked." in result.stdout
+
+
+def test_public_release_scanner_ignores_generic_github_runner_profile(
+    tmp_path: Path,
+) -> None:
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    (stage / "uv.exe").write_bytes(
+        b"third-party build metadata C:\\Users\\runneradmin\\work"
+    )
+    environment = os.environ.copy()
+    environment.update(
+        {
+            "GITHUB_ACTIONS": "true",
+            "RUNNER_ENVIRONMENT": "github-hosted",
+        }
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "scan_public_release.py"),
+            "--root",
+            str(stage),
+            "--forbid-path",
+            r"D:\a\broadcastify-cli\broadcastify-cli",
+            "--forbid-user-profile",
+            r"C:\Users\runneradmin",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=environment,
+    )
+
+    assert result.returncode == 0
+    assert "Public release scan passed: 1 files checked." in result.stdout
+
+
+def test_public_release_scanner_keeps_self_hosted_profile_protection(
+    tmp_path: Path,
+) -> None:
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    (stage / "application.dll").write_bytes(
+        b"source C:\\Users\\runneradmin\\private\\application.pdb"
+    )
+    environment = os.environ.copy()
+    environment.update(
+        {
+            "GITHUB_ACTIONS": "true",
+            "RUNNER_ENVIRONMENT": "self-hosted",
+        }
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "scan_public_release.py"),
+            "--root",
+            str(stage),
+            "--forbid-user-profile",
+            r"C:\Users\runneradmin",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=environment,
+    )
+
+    assert result.returncode == 1
+    assert "application.dll: contains build path 1" in result.stderr
 
 
 def test_tagged_release_uses_the_shipped_windows_product_name() -> None:

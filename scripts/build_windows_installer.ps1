@@ -569,7 +569,7 @@ if (-not $BundleLocalEnv) {
         "--forbid-path", $repositoryRoot
     )
     if (-not [string]::IsNullOrWhiteSpace($env:USERPROFILE)) {
-        $scanArguments += @("--forbid-path", $env:USERPROFILE)
+        $scanArguments += @("--forbid-user-profile", $env:USERPROFILE)
     }
     & $builder @scanArguments
     if ($LASTEXITCODE -ne 0) {
