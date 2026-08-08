@@ -31,6 +31,11 @@ documentation, version, and release metadata before invoking either build. If
 anything changes afterward, create a new commit before rebuilding instead of
 reusing that version's artifact.
 
+The installer build cleans stale native outputs before publishing so an earlier
+debug build cannot donate embedded PDB paths to a public package. Before Inno
+Setup runs, a binary-safe scan rejects PDBs, local databases/settings/logs,
+model weights, build-machine paths, and any current environment secret value.
+
 Output:
 
 ```text

@@ -15,6 +15,7 @@ $project = Join-Path $repositoryRoot "BroadcastifyCli.WinUI\BroadcastifyCli.WinU
 $innoScript = Join-Path $repositoryRoot "installer\BroadcastifyDesktop.iss"
 $constraints = Join-Path $repositoryRoot "installer\windows-runtime-constraints.txt"
 $cudaRequirementsSource = Join-Path $repositoryRoot "installer\windows-managed-cuda-lock.txt"
+$publicReleaseScanner = Join-Path $repositoryRoot "scripts\scan_public_release.py"
 $pythonVersion = "3.12.10"
 $pythonSha256 = "4ACBED6DD1C744B0376E3B1CF57CE906F9DC9E95E68824584C8099A63025A3C3"
 $pythonUrl = "https://www.python.org/ftp/python/$pythonVersion/python-$pythonVersion-embed-amd64.zip"
@@ -190,6 +191,10 @@ if (Test-Path -LiteralPath $stageRoot) {
 New-Item -ItemType Directory -Force -Path $application, $output, $cache | Out-Null
 
 $bundleValue = if ($BundleLocalEnv) { "true" } else { "false" }
+& dotnet clean $project -c Release
+if ($LASTEXITCODE -ne 0) {
+    throw "Cleaning stale native build outputs failed with exit code $LASTEXITCODE."
+}
 & dotnet publish $project `
     -c Release `
     -r win-x64 `
@@ -556,6 +561,21 @@ $manifest = [ordered]@{
 }
 $manifest | ConvertTo-Json -Depth 5 |
     Set-Content -LiteralPath (Join-Path $application "build-manifest.json") -Encoding UTF8
+
+if (-not $BundleLocalEnv) {
+    $scanArguments = @(
+        $publicReleaseScanner,
+        "--root", $application,
+        "--forbid-path", $repositoryRoot
+    )
+    if (-not [string]::IsNullOrWhiteSpace($env:USERPROFILE)) {
+        $scanArguments += @("--forbid-path", $env:USERPROFILE)
+    }
+    & $builder @scanArguments
+    if ($LASTEXITCODE -ne 0) {
+        throw "The public secret and forbidden-file scan failed."
+    }
+}
 
 if ($SkipInstaller) {
     [pscustomobject]@{
