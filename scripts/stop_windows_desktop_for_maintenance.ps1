@@ -7,6 +7,15 @@ $ErrorActionPreference = "Stop"
 $appExecutableName = "Broadcastify Desktop.exe"
 $workerCommandPattern = "*broadcastify_cli.worker*"
 
+function Test-IsBroadcastifyWorker {
+    param($ProcessRow)
+
+    ($ProcessRow.Name -ieq "python.exe" -or
+        $ProcessRow.Name -ieq "pythonw.exe") -and
+    $ProcessRow.CommandLine -and
+    $ProcessRow.CommandLine -like $workerCommandPattern
+}
+
 $initialSnapshot = @(Get-CimInstance Win32_Process)
 $appProcesses = @($initialSnapshot | Where-Object { $_.Name -ieq $appExecutableName })
 $trackedProcessIds = [System.Collections.Generic.HashSet[int]]::new()
@@ -51,7 +60,7 @@ do {
     $remaining = @($snapshot | Where-Object {
         $trackedProcessIds.Contains([int]$_.ProcessId) -or
         $_.Name -ieq $appExecutableName -or
-        ($_.CommandLine -and $_.CommandLine -like $workerCommandPattern)
+        (Test-IsBroadcastifyWorker $_)
     })
 
     if ($remaining.Count -eq 0) {

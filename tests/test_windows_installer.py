@@ -169,6 +169,8 @@ def test_maintenance_update_uses_checkpointed_shutdown_without_force_kill() -> N
     assert "CloseMainWindow()" in stop
     assert "Get-CimInstance Win32_Process" in stop
     assert "broadcastify_cli.worker" in stop
+    assert 'Name -ieq "python.exe"' in stop
+    assert 'Name -ieq "pythonw.exe"' in stop
     assert "No process was force-killed; maintenance was refused." in stop
     assert "Stop-Process" not in stop
     assert "stop_windows_desktop_for_maintenance.ps1" in install
