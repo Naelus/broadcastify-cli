@@ -1332,14 +1332,24 @@ def library_days(output_dir: str) -> int:
     return 0
 
 
-def library_resume_plan(output_dir: str) -> int:
+def library_resume_plan(
+    output_dir: str,
+    feed_id: str = "",
+    start_date: str = "",
+    end_date: str = "",
+) -> int:
     days = scan_local_library(Path(output_dir), DEFAULT_DATABASE)
     with AnalysisStore(DEFAULT_DATABASE) as store:
         schedules = store.list_feed_schedules()
+    requested_start = date.fromisoformat(start_date) if start_date else None
+    requested_end = date.fromisoformat(end_date) if end_date else None
     result = build_library_resume_plan(
         days,
         ArchiveRequestLedger().status(),
         schedules,
+        requested_feed_id=feed_id,
+        requested_start_date=requested_start,
+        requested_end_date=requested_end,
     )
     emit({"type": "library_resume_plan", **result})
     return 0
@@ -1947,6 +1957,9 @@ def build_parser() -> argparse.ArgumentParser:
     library.add_argument("--output-dir", default="archives")
     resume_library = subparsers.add_parser("library-resume-plan")
     resume_library.add_argument("--output-dir", default="archives")
+    resume_library.add_argument("--feed-id", default="")
+    resume_library.add_argument("--start-date", default="")
+    resume_library.add_argument("--end-date", default="")
     subparsers.add_parser("delete-library-feed")
     subparsers.add_parser("continue-local")
     days = subparsers.add_parser("analysis-days")
@@ -2069,7 +2082,12 @@ def main() -> int:
         if arguments.command == "library":
             return library_days(arguments.output_dir)
         if arguments.command == "library-resume-plan":
-            return library_resume_plan(arguments.output_dir)
+            return library_resume_plan(
+                arguments.output_dir,
+                arguments.feed_id,
+                arguments.start_date,
+                arguments.end_date,
+            )
         if arguments.command == "delete-library-feed":
             return delete_library_feed()
         if arguments.command == "continue-local":

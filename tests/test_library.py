@@ -109,6 +109,86 @@ def test_library_coverage_and_resume_plan_include_missing_scheduled_days() -> No
     assert all(value["scheduled_missing"] for value in plan["days"])
 
 
+def test_library_resume_plan_expands_an_explicit_unscheduled_feed_range() -> None:
+    days = [
+        {
+            "feed_id": "90001",
+            "feed_name": "Example Public Safety",
+            "archive_date": "2026-08-01",
+            "is_complete": True,
+            "needs_network": False,
+            "source_check_due": False,
+            "pipeline_percent": 100,
+        },
+        {
+            "feed_id": "90001",
+            "feed_name": "Example Public Safety",
+            "archive_date": "2026-08-03",
+            "is_complete": False,
+            "needs_network": False,
+            "source_check_due": False,
+            "pipeline_percent": 60,
+        },
+        {
+            "feed_id": "90002",
+            "feed_name": "Other Feed",
+            "archive_date": "2026-08-02",
+            "is_complete": False,
+            "needs_network": True,
+            "source_check_due": True,
+            "pipeline_percent": 0,
+        },
+    ]
+
+    plan = build_library_resume_plan(
+        days,
+        {"available": True, "remaining": 40},
+        today=date(2026, 8, 5),
+        requested_feed_id="90001",
+        requested_start_date=date(2026, 8, 1),
+        requested_end_date=date(2026, 8, 5),
+    )
+
+    assert plan["scope_feed_id"] == "90001"
+    assert plan["scope_start_date"] == "2026-08-01"
+    assert plan["scope_end_date"] == "2026-08-05"
+    assert [value["feed_id"] for value in plan["feeds"]] == ["90001"]
+    assert plan["feeds"][0]["target_day_count"] == 5
+    assert plan["feeds"][0]["missing_dates"] == [
+        "2026-08-02",
+        "2026-08-04",
+        "2026-08-05",
+    ]
+    assert [value["archive_date"] for value in plan["days"]] == [
+        "2026-08-03",
+        "2026-08-02",
+        "2026-08-04",
+        "2026-08-05",
+    ]
+    assert plan["local_count"] == 1
+    assert plan["network_count"] == 3
+
+
+def test_library_resume_plan_rejects_future_or_partial_catch_up_ranges() -> None:
+    with pytest.raises(ValueError, match="all required"):
+        build_library_resume_plan(
+            [],
+            {"available": True, "remaining": 40},
+            today=date(2026, 8, 5),
+            requested_feed_id="90001",
+        )
+
+    with pytest.raises(ValueError, match="future"):
+        build_library_resume_plan(
+            [],
+            {"available": True, "remaining": 40},
+            today=date(2026, 8, 5),
+            requested_feed_id="90001",
+            requested_start_date=date(2026, 8, 1),
+            requested_end_date=date(2026, 8, 6),
+        )
+
+
 def test_current_day_source_snapshot_becomes_resume_candidate_when_stale(
     tmp_path: Path,
     monkeypatch,

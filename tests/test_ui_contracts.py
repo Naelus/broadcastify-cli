@@ -199,6 +199,10 @@ def test_native_library_exposes_guarded_feed_delete_and_resume_all() -> None:
     assert names["ResumeAllLibraryButton"].attrib["Click"] == (
         "ResumeAllLibrary_Click"
     )
+    assert names["CatchUpFeedButton"].attrib["Content"] == (
+        "Evaluate / catch up feed…"
+    )
+    assert names["CatchUpFeedButton"].attrib["Click"] == "CatchUpFeed_Click"
     assert names["LibraryDeleteFeedButton"].attrib["Content"] == "Delete feed"
     assert names["LibraryDeleteFeedButton"].attrib["Click"] == (
         "LibraryDeleteFeed_Click"
@@ -219,7 +223,12 @@ def test_native_library_exposes_guarded_feed_delete_and_resume_all() -> None:
     assert "if (quota is null || !quota.Available)" in native
     assert "result?.DownloadLimited == true" in native
     assert "DownloadJobs = 1" in native
+    assert "ShowLibraryCatchUpRangeAsync" in native
+    assert "Evaluate every calendar day for one feed" in native
+    assert "RunLibraryResumePlanAsync" in native
     assert '"library-resume-plan"' in worker
+    assert '"--start-date"' in worker
+    assert '"--end-date"' in worker
     assert '"delete-library-feed"' in worker
 
 

@@ -34,8 +34,9 @@ a browser UI for Windows, Linux, macOS, and TrueNAS, plus command-line tools.
 - Stores audio, transcripts, speaker turns, incidents, summaries, evidence
   clips, and processing state locally and independently.
 - Provides a local library with per-feed backlog/last-known source coverage,
-  selector-driven quota-safe resume, exact-clip review, named-feed evidence
-  chat, seven-day briefs, and evidence-backed regional story leads.
+  explicit full-date-range feed catch-up, selector-driven quota-safe resume,
+  exact-clip review, named-feed evidence chat, seven-day briefs, and
+  evidence-backed regional story leads.
 - Keeps acquisition, transcription, and diarization in a background pipeline so
   non-conflicting Library, review, schedule, and chat actions remain usable.
 

@@ -29,6 +29,13 @@ requested flag or filename.
 
 ## Resume actions
 
+- **Evaluate / catch up feed…** selects one retained or scheduled feed and an
+  explicit start/end date. The local planner expands every calendar day in that
+  range, including gaps that are older than a schedule's normal lookback or
+  belong to an unscheduled feed. It reports the exact retained-local and
+  source/network counts before work starts. Starting that plan uses the same
+  sequential quota checks and checkpoints as other resumes; selecting the same
+  range later continues the remaining days without repeating completed work.
 - **Resume / prioritize…** builds a fresh read-only plan, synthesizes missing
   days from enabled feed schedules, and skips work already current. Before
   execution, the user chooses feeds, local-only work, whether to check/download
@@ -73,7 +80,9 @@ Area Watch profiles and acquisition history remain configuration/audit records;
 running one of those profiles can intentionally acquire the feed again.
 
 On Windows, playback is released before detaching the directory and transient
-sharing violations are retried with bounded backoff. If another worker, File
+sharing violations are retried with bounded backoff. Media players remain
+detached through the directory rename, and folder/transcript buttons use the
+Windows shell rather than retaining WinRT directory handles. If another worker, File
 Explorer window, media handle, or outside process still owns the folder, the
 operation reports that the feed is in use and removes neither files nor database
 records. A feed currently used by the background pipeline or archive chat is

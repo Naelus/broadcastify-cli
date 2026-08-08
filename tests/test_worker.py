@@ -112,9 +112,17 @@ def test_library_resume_planning_reads_only_local_state_and_quota(
     )
     monkeypatch.setattr("broadcastify_cli.worker.emit", emitted.append)
 
-    assert library_resume_plan("unused") == 0
+    assert library_resume_plan(
+        "unused",
+        "90001",
+        "2026-08-01",
+        "2026-08-02",
+    ) == 0
     assert emitted[0]["type"] == "library_resume_plan"
-    assert emitted[0]["network_count"] == 1
+    assert emitted[0]["scope_feed_id"] == "90001"
+    assert emitted[0]["scope_start_date"] == "2026-08-01"
+    assert emitted[0]["scope_end_date"] == "2026-08-02"
+    assert emitted[0]["network_count"] == 2
     assert emitted[0]["quota"] == {"available": False, "remaining": 0}
 
 

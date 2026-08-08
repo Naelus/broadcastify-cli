@@ -28,6 +28,11 @@ public sealed partial class MainWindow : Window
         bool IncludeLocal,
         bool IncludeNetwork);
 
+    private sealed record LibraryCatchUpRange(
+        LibraryFeedCoverage Feed,
+        DateTimeOffset StartDate,
+        DateTimeOffset EndDate);
+
     private const string DefaultAnalysisModel = "ggml-org/gemma-4-12B-it-GGUF:Q4_0";
     private const int NearestAreaFeedShortcutCount = 3;
     private const int MaximumVisibleActivityLogCharacters = 24_000;
@@ -2443,6 +2448,155 @@ public sealed partial class MainWindow : Window
     private async void RefreshLibrary_Click(object sender, RoutedEventArgs e) =>
         await RefreshLibraryAsync();
 
+    private DateTimeOffset DefaultCatchUpStart(LibraryFeedCoverage feed)
+    {
+        var candidates = new List<DateTimeOffset>();
+        if (DateTimeOffset.TryParse(feed.TargetStartDate, out var scheduledStart))
+        {
+            candidates.Add(scheduledStart);
+        }
+        foreach (var day in _libraryDays.Where(value => value.FeedId == feed.FeedId))
+        {
+            if (DateTimeOffset.TryParse(day.ArchiveDate, out var retainedDate))
+            {
+                candidates.Add(retainedDate);
+            }
+        }
+        var today = new DateTimeOffset(DateTime.Today);
+        return candidates.Count > 0
+            ? candidates.Min().Date > today.Date ? today : candidates.Min().Date
+            : today.AddDays(-1);
+    }
+
+    private async Task<LibraryCatchUpRange?> ShowLibraryCatchUpRangeAsync()
+    {
+        var feeds = _libraryFeeds.ToList();
+        if (feeds.Count == 0)
+        {
+            await ShowMessageAsync(
+                "No Library feed available",
+                "Retain or schedule at least one feed before evaluating a catch-up range.");
+            return null;
+        }
+        var feedCombo = new ComboBox
+        {
+            Header = "Feed",
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            DisplayMemberPath = "FeedLabel",
+            ItemsSource = feeds,
+            SelectedItem = feeds.FirstOrDefault(value =>
+                    value.FeedId == _selectedLibraryDay?.FeedId)
+                ?? LibraryFeedCoverageList.SelectedItem as LibraryFeedCoverage
+                ?? feeds[0],
+        };
+        var today = new DateTimeOffset(DateTime.Today);
+        var startPicker = new DatePicker
+        {
+            Header = "Catch up from",
+            MaxYear = today,
+        };
+        var endPicker = new DatePicker
+        {
+            Header = "Through",
+            Date = today,
+            MaxYear = today,
+        };
+        void ApplyFeedDefault()
+        {
+            if (feedCombo.SelectedItem is LibraryFeedCoverage feed)
+            {
+                startPicker.Date = DefaultCatchUpStart(feed);
+            }
+        }
+        ApplyFeedDefault();
+        feedCombo.SelectionChanged += (_, _) => ApplyFeedDefault();
+        var content = new StackPanel { Spacing = 12, MaxWidth = 520 };
+        content.Children.Add(new TextBlock
+        {
+            Text =
+                "Evaluate every calendar day for one feed across this range. The evaluation reads only local files, checkpoints, schedules, and the quota ledger. It does not contact Broadcastify. Afterward you can review the exact local/network counts before starting.",
+            TextWrapping = TextWrapping.Wrap,
+        });
+        content.Children.Add(feedCombo);
+        content.Children.Add(startPicker);
+        content.Children.Add(endPicker);
+        content.Children.Add(new TextBlock
+        {
+            Text =
+                "When started, missing days run sequentially and stop at the persistent rolling request boundary. Rerunning the same range resumes retained progress without repeating completed work.",
+            TextWrapping = TextWrapping.Wrap,
+            Foreground = (Brush)Application.Current.Resources[
+                "TextFillColorSecondaryBrush"],
+        });
+        var dialog = new ContentDialog
+        {
+            XamlRoot = ((FrameworkElement)Content).XamlRoot,
+            Title = "Evaluate a full feed catch-up range",
+            Content = content,
+            PrimaryButtonText = "Evaluate range",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Close,
+        };
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary)
+        {
+            return null;
+        }
+        if (feedCombo.SelectedItem is not LibraryFeedCoverage selectedFeed)
+        {
+            await ShowMessageAsync(
+                "Catch-up range required",
+                "Choose a feed, start date, and end date.");
+            return null;
+        }
+        var startDate = startPicker.Date;
+        var endDate = endPicker.Date;
+        if (startDate.Date > endDate.Date)
+        {
+            await ShowMessageAsync(
+                "Invalid catch-up range",
+                "The catch-up start date cannot be after the end date.");
+            return null;
+        }
+        if (endDate.Date > today.Date)
+        {
+            await ShowMessageAsync(
+                "Invalid catch-up range",
+                "The catch-up end date cannot be in the future.");
+            return null;
+        }
+        return new LibraryCatchUpRange(selectedFeed, startDate, endDate);
+    }
+
+    private async void CatchUpFeed_Click(object sender, RoutedEventArgs e)
+    {
+        if (_worker is null || _pipelineCancellation is not null)
+        {
+            return;
+        }
+        var range = await ShowLibraryCatchUpRangeAsync();
+        if (range is null)
+        {
+            return;
+        }
+        LibraryResumePlan plan;
+        try
+        {
+            using var cancellation = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+            plan = await _worker.GetLibraryResumePlanAsync(
+                PersistedOutputDirectory(),
+                cancellation.Token,
+                range.Feed.FeedId,
+                range.StartDate.ToString("yyyy-MM-dd"),
+                range.EndDate.ToString("yyyy-MM-dd"));
+        }
+        catch (Exception exception)
+        {
+            await ShowErrorAsync(exception);
+            return;
+        }
+        await RunLibraryResumePlanAsync(plan);
+    }
+
     private async Task<ResumeAllSelection?> ShowResumeAllOptionsAsync(
         LibraryResumePlan plan)
     {
@@ -2516,6 +2670,23 @@ public sealed partial class MainWindow : Window
                 ? $"The persistent ledger currently has {plan.Quota.Remaining:N0} guarded archive request(s) available. Each missing media block—not each day—uses one."
                 : "The rolling archive allowance is paused. Local work can still run; selected network work will stop before making a request.";
         var content = new StackPanel { Spacing = 12, MaxWidth = 560 };
+        if (!string.IsNullOrWhiteSpace(plan.ScopeFeedId))
+        {
+            var scopedFeed = plan.Feeds.FirstOrDefault(value =>
+                value.FeedId == plan.ScopeFeedId);
+            content.Children.Add(new InfoBar
+            {
+                IsOpen = true,
+                IsClosable = false,
+                Severity = InfoBarSeverity.Informational,
+                Title = $"Evaluated {scopedFeed?.TargetDayCount ?? 0:N0} calendar day(s)",
+                Message =
+                    $"{scopedFeed?.FeedName ?? $"Feed {plan.ScopeFeedId}"} · "
+                    + $"{plan.ScopeStartDate} through {plan.ScopeEndDate} · "
+                    + $"{scopedFeed?.ReadyDayCount ?? 0:N0} already ready · "
+                    + $"{plan.Days.Count:N0} pending. Completed days are omitted from the work queue, not from evaluation.",
+            });
+        }
         content.Children.Add(new TextBlock
         {
             Text = $"Choose which feeds and work types to run. A day can appear in both counts when retained local stages are ready but today's source listing is due for refresh. Planning used only local state and did not contact Broadcastify. {quotaText}",
@@ -2611,11 +2782,24 @@ public sealed partial class MainWindow : Window
             await ShowErrorAsync(exception);
             return;
         }
+        await RunLibraryResumePlanAsync(plan);
+    }
+
+    private async Task RunLibraryResumePlanAsync(LibraryResumePlan plan)
+    {
+        var worker = _worker;
+        if (worker is null)
+        {
+            return;
+        }
         if (plan.Days.Count == 0)
         {
             await ShowMessageAsync(
                 "Library is caught up",
-                "Every retained feed-day is already ready to review.");
+                string.IsNullOrWhiteSpace(plan.ScopeFeedId)
+                    ? "Every retained or scheduled feed-day is already ready to review."
+                    : $"Feed {plan.ScopeFeedId} is already complete from "
+                        + $"{plan.ScopeStartDate} through {plan.ScopeEndDate}.");
             return;
         }
 
@@ -2674,7 +2858,7 @@ public sealed partial class MainWindow : Window
                 var useNetwork = day.NeedsNetwork && selection.IncludeNetwork;
                 if (useNetwork)
                 {
-                    var quota = await _worker.GetArchiveQuotaStatusAsync(
+                    var quota = await worker.GetArchiveQuotaStatusAsync(
                         pipeline.Token);
                     if (quota is null || !quota.Available)
                     {
@@ -6540,6 +6724,9 @@ public sealed partial class MainWindow : Window
         SetupAnalysisActionButton.IsEnabled = interactive && pipelineIdle;
         AreaProfileCombo.IsEnabled = interactive;
         RefreshLibraryButton.IsEnabled = interactive;
+        CatchUpFeedButton.IsEnabled = interactive
+            && pipelineIdle
+            && _libraryFeeds.Count > 0;
         ResumeAllLibraryButton.IsEnabled = interactive
             && pipelineIdle
             && _libraryFeeds.Any(value => value.BacklogCount > 0);

@@ -80,6 +80,9 @@
                             </StackPanel>
                             <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8"
                                         VerticalAlignment="Center">
+                                <Button x:Name="CatchUpFeedButton" Content="Evaluate / catch up feed…"
+                                        Click="CatchUpFeed_Click"
+                                        ToolTipService.ToolTip="Choose one feed and a full date range, evaluate every day locally, then resume missing work sequentially behind the rolling request guard." />
                                 <Button x:Name="ResumeAllLibraryButton" Content="Resume / prioritize…"
                                         Click="ResumeAllLibrary_Click"
                                         ToolTipService.ToolTip="Finish local-only work first, then use the guarded rolling archive allowance one day at a time." />

@@ -66,6 +66,7 @@ def build_library_feed_coverage(
     schedules: list[dict[str, Any]] | None = None,
     *,
     today: date | None = None,
+    requested_ranges: dict[str, tuple[date, date]] | None = None,
 ) -> list[dict[str, Any]]:
     """Summarize retained and scheduled coverage without website access."""
 
@@ -80,12 +81,25 @@ def build_library_feed_coverage(
         feed_id = str(value.get("feed_id") or "")
         if feed_id:
             days_by_feed.setdefault(feed_id, []).append(value)
-    feed_ids = sorted(set(days_by_feed) | set(schedule_by_feed))
+    explicit_ranges = requested_ranges or {}
+    feed_ids = sorted(set(days_by_feed) | set(schedule_by_feed) | set(explicit_ranges))
     results: list[dict[str, Any]] = []
     for feed_id in feed_ids:
         retained = days_by_feed.get(feed_id, [])
         schedule = schedule_by_feed.get(feed_id)
-        target_dates = _schedule_target_dates(schedule, current) if schedule else []
+        requested = explicit_ranges.get(feed_id)
+        if requested is not None:
+            range_start, range_end = requested
+            if range_start > range_end:
+                raise ValueError("Catch-up start date must not be after its end date.")
+            if range_end > current:
+                raise ValueError("Catch-up end date cannot be in the future.")
+            target_dates = [
+                range_start + timedelta(days=offset)
+                for offset in range((range_end - range_start).days + 1)
+            ]
+        else:
+            target_dates = _schedule_target_dates(schedule, current) if schedule else []
         target_values = {value.isoformat() for value in target_dates}
         retained_by_date = {
             str(value.get("archive_date") or ""): value
@@ -242,15 +256,52 @@ def build_library_resume_plan(
     schedules: list[dict[str, Any]] | None = None,
     *,
     today: date | None = None,
+    requested_feed_id: str = "",
+    requested_start_date: date | None = None,
+    requested_end_date: date | None = None,
 ) -> dict[str, Any]:
     """Return a deterministic local-first queue without starting any work."""
 
-    coverage = build_library_feed_coverage(days, schedules, today=today)
+    normalized_feed_id = str(requested_feed_id or "").strip()
+    has_requested_range = bool(
+        normalized_feed_id and requested_start_date and requested_end_date
+    )
+    if any((normalized_feed_id, requested_start_date, requested_end_date)) and not has_requested_range:
+        raise ValueError("Feed ID, start date, and end date are all required for catch-up.")
+    if normalized_feed_id and not normalized_feed_id.isdigit():
+        raise ValueError("Feed ID must contain only digits.")
+    requested_ranges = (
+        {normalized_feed_id: (requested_start_date, requested_end_date)}
+        if has_requested_range
+        else None
+    )
+    coverage = build_library_feed_coverage(
+        days,
+        schedules,
+        today=today,
+        requested_ranges=requested_ranges,
+    )
+    if has_requested_range:
+        coverage = [
+            value for value in coverage
+            if str(value.get("feed_id") or "") == normalized_feed_id
+        ]
     candidates = [
         dict(value)
         for value in days
-        if not bool(value.get("is_complete"))
-        or bool(value.get("source_check_due"))
+        if (
+            not has_requested_range
+            or (
+                str(value.get("feed_id") or "") == normalized_feed_id
+                and requested_start_date.isoformat()
+                <= str(value.get("archive_date") or "")
+                <= requested_end_date.isoformat()
+            )
+        )
+        and (
+            not bool(value.get("is_complete"))
+            or bool(value.get("source_check_due"))
+        )
     ]
     existing_keys = {
         (str(value.get("feed_id") or ""), str(value.get("archive_date") or ""))
@@ -305,6 +356,13 @@ def build_library_resume_plan(
         ),
         "network_count": sum(bool(value.get("needs_network")) for value in ordered),
         "quota": dict(quota_status),
+        "scope_feed_id": normalized_feed_id if has_requested_range else "",
+        "scope_start_date": (
+            requested_start_date.isoformat() if has_requested_range else ""
+        ),
+        "scope_end_date": (
+            requested_end_date.isoformat() if has_requested_range else ""
+        ),
     }
 
 

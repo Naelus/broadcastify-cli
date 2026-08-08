@@ -492,16 +492,30 @@ internal sealed class WorkerClient
 
     public async Task<LibraryResumePlan> GetLibraryResumePlanAsync(
         string outputDirectory,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string feedId = "",
+        string startDate = "",
+        string endDate = "")
     {
         LibraryResumePlan? result = null;
+        var arguments = new List<string>
+        {
+            "-m", "broadcastify_cli.worker", "library-resume-plan",
+            "--output-dir", string.IsNullOrWhiteSpace(outputDirectory)
+                ? "archives"
+                : outputDirectory,
+        };
+        if (!string.IsNullOrWhiteSpace(feedId))
+        {
+            arguments.AddRange(
+                [
+                    "--feed-id", feedId,
+                    "--start-date", startDate,
+                    "--end-date", endDate,
+                ]);
+        }
         await RunWorkerAsync(
-            [
-                "-m", "broadcastify_cli.worker", "library-resume-plan",
-                "--output-dir", string.IsNullOrWhiteSpace(outputDirectory)
-                    ? "archives"
-                    : outputDirectory,
-            ],
+            arguments,
             null,
             message =>
             {

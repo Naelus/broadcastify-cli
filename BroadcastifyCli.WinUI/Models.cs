@@ -1188,6 +1188,15 @@ internal sealed record LibraryResumePlan
 
     [JsonPropertyName("quota")]
     public ArchiveQuotaStatus Quota { get; init; } = new();
+
+    [JsonPropertyName("scope_feed_id")]
+    public string ScopeFeedId { get; init; } = "";
+
+    [JsonPropertyName("scope_start_date")]
+    public string ScopeStartDate { get; init; } = "";
+
+    [JsonPropertyName("scope_end_date")]
+    public string ScopeEndDate { get; init; } = "";
 }
 
 internal sealed record LibraryFeedDeleteResult
