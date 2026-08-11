@@ -2780,6 +2780,157 @@ QA_SCHEMA: dict[str, Any] = {
 }
 
 
+def _coverage_ranges_text(
+    coverage: Mapping[str, Any],
+    range_key: str,
+    date_key: str,
+) -> str:
+    ranges = [str(value) for value in coverage.get(range_key, []) if str(value)]
+    if ranges:
+        visible = ranges[:12]
+        result = ", ".join(visible)
+        if len(ranges) > len(visible):
+            result += f", plus {len(ranges) - len(visible)} more ranges"
+        return result
+    values = [str(value) for value in coverage.get(date_key, []) if str(value)]
+    visible = values[:12]
+    result = ", ".join(visible) or "none"
+    if len(values) > len(visible):
+        result += f", plus {len(values) - len(visible)} more dates"
+    return result
+
+
+def _range_pattern_evidence(
+    incidents: Sequence[Mapping[str, Any]],
+) -> tuple[list[str], list[dict[str, Any]]]:
+    """Build deterministic aggregate evidence for whole-range pattern questions."""
+
+    records: list[dict[str, Any]] = []
+    lines: list[str] = []
+
+    def add_record(
+        kind: str,
+        label: str,
+        count: int,
+        values: Sequence[Mapping[str, Any]],
+        description: str,
+    ) -> None:
+        evidence_id = f"P{len(records) + 1}"
+        incident_ids = [
+            int(value["id"])
+            for value in values[:8]
+            if value.get("id") is not None
+        ]
+        record = {
+            "evidence_id": evidence_id,
+            "kind": kind,
+            "label": label,
+            "count": int(count),
+            "incident_ids": incident_ids,
+            "description": description,
+        }
+        records.append(record)
+        examples = (
+            "; examples " + ", ".join(f"I{value}" for value in incident_ids)
+            if incident_ids
+            else ""
+        )
+        lines.append(f"{evidence_id} {description}{examples}")
+
+    incident_values = [dict(value) for value in incidents]
+    analyzed_dates = sorted(
+        {str(value.get("archive_date") or "") for value in incident_values}
+        - {""}
+    )
+    add_record(
+        "total",
+        "current extracted incidents",
+        len(incident_values),
+        incident_values,
+        f"total current extracted incidents={len(incident_values)} across "
+        f"{len(analyzed_dates)} analyzed day(s)",
+    )
+
+    categories: dict[str, list[dict[str, Any]]] = {}
+    locations: dict[str, list[dict[str, Any]]] = {}
+    location_labels: dict[str, str] = {}
+    weekdays: dict[str, list[dict[str, Any]]] = {}
+    time_blocks: dict[str, list[dict[str, Any]]] = {}
+    for value in incident_values:
+        category = str(value.get("event_type") or "other").replace("_", " ")
+        categories.setdefault(category, []).append(value)
+        location = str(value.get("location") or "").strip()
+        if location and location.lower() not in {"unknown", "not stated", "none"}:
+            key = re.sub(r"\s+", " ", location).casefold()
+            location_labels.setdefault(key, re.sub(r"\s+", " ", location))
+            locations.setdefault(key, []).append(value)
+        try:
+            archive_date = date.fromisoformat(str(value.get("archive_date") or ""))
+        except ValueError:
+            archive_date = None
+        if archive_date is not None:
+            weekdays.setdefault(archive_date.strftime("%A"), []).append(value)
+        try:
+            hour = int(float(value.get("start_seconds") or 0.0) // 3_600) % 24
+        except (TypeError, ValueError):
+            hour = 0
+        block_start = (hour // 6) * 6
+        block_label = f"{block_start:02d}:00-{block_start + 5:02d}:59 archive time"
+        time_blocks.setdefault(block_label, []).append(value)
+
+    for label, values in sorted(
+        categories.items(), key=lambda item: (-len(item[1]), item[0])
+    )[:8]:
+        add_record(
+            "category",
+            label,
+            len(values),
+            values,
+            f"category {label}={len(values)} current extracted incident(s)",
+        )
+    for key, values in sorted(
+        locations.items(),
+        key=lambda item: (-len(item[1]), location_labels[item[0]].casefold()),
+    )[:8]:
+        if len(values) < 2:
+            continue
+        label = location_labels[key]
+        add_record(
+            "location",
+            label,
+            len(values),
+            values,
+            f"repeated extracted location {label}={len(values)} incident(s)",
+        )
+    if weekdays:
+        description = "weekday distribution: " + ", ".join(
+            f"{label}={len(values)}"
+            for label, values in sorted(
+                weekdays.items(), key=lambda item: (-len(item[1]), item[0])
+            )
+        )
+        add_record(
+            "weekday_distribution",
+            "weekday distribution",
+            sum(len(values) for values in weekdays.values()),
+            incident_values,
+            description,
+        )
+    if time_blocks:
+        description = "six-hour archive-time distribution: " + ", ".join(
+            f"{label}={len(values)}"
+            for label, values in sorted(time_blocks.items())
+        )
+        add_record(
+            "time_distribution",
+            "six-hour archive-time distribution",
+            sum(len(values) for values in time_blocks.values()),
+            incident_values,
+            description,
+        )
+    return lines, records
+
+
 class RangeQuestionAnswerer:
     def __init__(
         self,
@@ -2831,6 +2982,16 @@ class RangeQuestionAnswerer:
         ]
         allowed_evidence_dates = question_ready_dates if coverage is not None else None
         allowed_incident_dates = analyzed_dates if coverage is not None else None
+        question_ready_range_text = _coverage_ranges_text(
+            coverage_value,
+            "question_ready_ranges",
+            "question_ready_dates",
+        )
+        unavailable_range_text = _coverage_ranges_text(
+            coverage_value,
+            "unavailable_ranges",
+            "unavailable_dates",
+        )
         final_limit = min(
             40,
             max(limit, len(question_ready_dates))
@@ -2880,6 +3041,7 @@ class RangeQuestionAnswerer:
             prompt_version=PROMPT_VERSION,
             archive_dates=allowed_incident_dates,
         )
+        pattern_lines, pattern_records = _range_pattern_evidence(incidents)
         evidence_lines = []
         evidence_records = []
         for index, value in enumerate(evidence, start=1):
@@ -2901,11 +3063,19 @@ class RangeQuestionAnswerer:
                     ),
                 }
             )
+        representative_incidents = sorted(
+            incidents,
+            key=lambda value: (
+                -int(value.get("priority") or 0),
+                str(value.get("archive_date") or ""),
+                float(value.get("start_seconds") or 0.0),
+            ),
+        )[:100]
         incident_lines = [
             f"I{value['id']} "
             f"[{format_archive_time(value, float(value['start_seconds']))}] "
             f"{value['event_type']}: {value['summary']}"
-            for value in incidents[:100]
+            for value in representative_incidents
         ]
         conversation_lines = [
             f"{value['role'].upper()}: {value['content']}"
@@ -2915,7 +3085,11 @@ class RangeQuestionAnswerer:
             system=(
                 "Answer questions about a police-radio archive using only supplied evidence. The evidence "
                 "is noisy ASR and may be inaccurate. Never infer guilt, identity, or an outcome. Cite every "
-                "material claim with E or I identifiers in the answer. If evidence is insufficient, say so. "
+                "material claim with E, I, or P identifiers in the answer. P identifiers are deterministic "
+                "aggregate counts over current extracted incidents, not model estimates. If evidence is "
+                "insufficient, say so. Never call these counts population-normalized crime rates or claim a "
+                "trend without comparable coverage across time. Repeated extracted location text may be "
+                "described as a radio-report cluster, not proof that a place is dangerous. "
                 "Preserve explicitly spoken person names when relevant to the question and cited evidence, but "
                 "never infer or normalize an identity. Do not repeat phone numbers, license plates, dates of "
                 "birth, or driver's-license numbers. Earlier chat turns are context "
@@ -2927,16 +3101,10 @@ class RangeQuestionAnswerer:
                 + (
                     "LOCAL COVERAGE (authoritative):\n"
                     + str(coverage_value.get("summary") or "")
-                    + "\nQuestion-ready dates: "
-                    + (", ".join(question_ready_dates) or "none")
-                    + "\nUnavailable dates: "
-                    + (
-                        ", ".join(
-                            str(value)
-                            for value in coverage_value.get("unavailable_dates", [])
-                        )
-                        or "none"
-                    )
+                    + "\nQuestion-ready date ranges: "
+                    + question_ready_range_text
+                    + "\nUnavailable date ranges: "
+                    + unavailable_range_text
                     + "\nNever interpret an unavailable date as a day with no activity.\n\n"
                     if coverage is not None
                     else ""
@@ -2950,6 +3118,8 @@ class RangeQuestionAnswerer:
                 )
                 + f"CURRENT QUESTION: {question}\n\nSTRUCTURED INCIDENTS:\n"
                 + ("\n".join(incident_lines) or "None")
+                + "\n\nDETERMINISTIC RANGE PATTERNS:\n"
+                + ("\n".join(pattern_lines) or "None")
                 + "\n\nRETRIEVED TRANSCRIPT EVIDENCE:\n"
                 + ("\n\n".join(evidence_lines) or "None")
             ),
@@ -2959,10 +3129,14 @@ class RangeQuestionAnswerer:
         )
         answer = str(result.get("answer") or "").strip()
         valid_ids = {value["evidence_id"] for value in evidence_records}
+        valid_ids.update(value["evidence_id"] for value in pattern_records)
+        valid_ids.update(f"I{int(value['id'])}" for value in representative_incidents)
+        for value in pattern_records:
+            valid_ids.update(f"I{incident_id}" for incident_id in value["incident_ids"])
         cited_ids = [
             str(value)
             for value in result.get("evidence_ids", [])
-            if str(value) in valid_ids or str(value).startswith("I")
+            if str(value) in valid_ids
         ]
         self.store.save_qa(
             feed_id,
@@ -2970,7 +3144,7 @@ class RangeQuestionAnswerer:
             end_date,
             question,
             answer,
-            evidence_records,
+            [*evidence_records, *pattern_records],
             self.client.model,
         )
         limitations = [
@@ -2987,7 +3161,7 @@ class RangeQuestionAnswerer:
             limitations.insert(
                 0,
                 "Partial retained coverage: no question-ready transcript for "
-                + ", ".join(unavailable_dates)
+                + unavailable_range_text
                 + ".",
             )
         return {
@@ -2995,6 +3169,7 @@ class RangeQuestionAnswerer:
             "evidence_ids": cited_ids,
             "limitations": limitations,
             "retrieved": evidence_records,
+            "patterns": pattern_records,
             "coverage": coverage_value,
         }
 

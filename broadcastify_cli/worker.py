@@ -82,6 +82,7 @@ from .library import (
     build_library_resume_plan,
     completed_library_catchup_feed_ids,
     delete_local_library_feed,
+    entire_archive_feed_range,
     prepare_local_day,
     require_current_range_evidence,
     scan_local_library,
@@ -1817,15 +1818,31 @@ def ask_archive() -> int:
 def question_coverage(
     output_dir: str,
     feed_id: str,
-    start_date: str,
-    end_date: str,
+    start_date: str = "",
+    end_date: str = "",
+    entire_feed: bool = False,
 ) -> int:
+    days = scan_local_library(Path(output_dir), DEFAULT_DATABASE)
+    if entire_feed:
+        if start_date or end_date:
+            raise ValueError(
+                "Use entire-feed coverage or explicit start/end dates, not both."
+            )
+        resolved_start, resolved_end = entire_archive_feed_range(days, feed_id)
+    else:
+        if not start_date or not end_date:
+            raise ValueError(
+                "Question coverage requires start/end dates or entire-feed scope."
+            )
+        resolved_start = date.fromisoformat(start_date)
+        resolved_end = date.fromisoformat(end_date)
     result = build_archive_question_coverage(
-        scan_local_library(Path(output_dir), DEFAULT_DATABASE),
+        days,
         feed_id,
-        date.fromisoformat(start_date),
-        date.fromisoformat(end_date),
+        resolved_start,
+        resolved_end,
     )
+    result["scope"] = "entire_feed" if entire_feed else "range"
     emit({"type": "question_coverage", "coverage": result})
     return 0
 
@@ -2032,8 +2049,9 @@ def build_parser() -> argparse.ArgumentParser:
     question_coverage_parser = subparsers.add_parser("question-coverage")
     question_coverage_parser.add_argument("--output-dir", default="archives")
     question_coverage_parser.add_argument("--feed-id", required=True)
-    question_coverage_parser.add_argument("--start-date", required=True)
-    question_coverage_parser.add_argument("--end-date", required=True)
+    question_coverage_parser.add_argument("--start-date", default="")
+    question_coverage_parser.add_argument("--end-date", default="")
+    question_coverage_parser.add_argument("--entire-feed", action="store_true")
     subparsers.add_parser("delete-library-feed")
     subparsers.add_parser("continue-local")
     days = subparsers.add_parser("analysis-days")
@@ -2175,6 +2193,7 @@ def main() -> int:
                 arguments.feed_id,
                 arguments.start_date,
                 arguments.end_date,
+                arguments.entire_feed,
             )
         if arguments.command == "delete-library-feed":
             return delete_library_feed()

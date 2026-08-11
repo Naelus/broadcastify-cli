@@ -110,6 +110,7 @@
                     <label><span>Revisit latest days</span><input id="scheduleLookbackDays" type="number" min="1" max="14" value="2"></label>
                     <label><span>Catch up from (optional)</span><input id="scheduleBackfillStartDate" type="date"></label>
                   </div>
+                  <label class="check-row"><input id="scheduleRecurringCatchUp" type="checkbox"><span><strong>Recurring full-range catch-up</strong><small>Keep the catch-up start after a successful run and recheck missing days through current every day.</small></span></label>
                   <label class="check-row"><input id="scheduleEnabled" type="checkbox" checked><span><strong>Schedule enabled</strong><small>Disabled schedules remain saved but do not run.</small></span></label>
                   <button class="button secondary" id="saveFeedScheduleButton" type="button">Schedule selected feed daily</button>
                   <div id="feedScheduleList" class="result-list"><div class="empty-compact">No feed schedules yet.</div></div>
@@ -136,12 +137,14 @@
                 <label><span>Calendar month</span><input id="askMonth" type="month"></label>
                 <button class="button secondary" id="useAskMonthButton" type="button">Use selected month</button>
               </div>
+              <button class="button secondary" id="useAskEntireFeedButton" type="button">Use entire downloaded feed</button>
               <div class="form-grid three">
                 <label><span>Feed ID</span><input id="askFeedId" inputmode="numeric" required></label>
                 <label><span>From</span><input id="askStartDate" type="date" required></label>
                 <label><span>Through</span><input id="askEndDate" type="date" required></label>
               </div>
               <label><span>Question</span><textarea id="askQuestion" rows="4" required placeholder="What serious calls were reported, and which remained unconfirmed?"></textarea></label>
+              <button class="button secondary" id="askFeedHotspotsButton" type="button">Prepare a whole-feed hot-spots question</button>
               <button class="button primary" type="submit">Ask with cited evidence</button>
             </form>
             <div class="answer-panel" id="answerPanel"><div class="empty-compact">Your saved answer will appear here.</div></div>
@@ -344,6 +347,6 @@
   </aside>
 
   <div class="toast-region" id="toastRegion" aria-live="polite"></div>
-  <script src="/static/app.js?v=34" defer></script>
+  <script src="/static/app.js?v=35" defer></script>
 </body>
 </html>

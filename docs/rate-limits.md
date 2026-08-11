@@ -125,9 +125,10 @@ The fixes now in place are:
 - native and Web/NAS schedulers bind each claimed job to the currently selected
   Library, overriding stale saved paths that could otherwise fetch an archive
   ID again into a second local root;
-- an optional historical schedule boundary survives quota deferrals and clears
-  only after every requested day is complete, so released rolling slots can
-  drain a backlog without a second ad-hoc downloader;
+- an optional historical schedule boundary survives quota deferrals; one-time
+  mode clears only after every requested day is complete, while recurring mode
+  retains the boundary for the next daily gap check, so released rolling slots
+  can drain a backlog without a second ad-hoc downloader;
 - before Broadcastify authentication, each acquisition reads the local ledger;
   a closed guard permits trusted-LAN reuse and locally proven completion
   snapshots only, never authenticates or loads a listing, and reports

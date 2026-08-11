@@ -31,7 +31,8 @@ public sealed partial class MainWindow : Window
     private sealed record LibraryCatchUpRange(
         LibraryFeedCoverage Feed,
         DateTimeOffset StartDate,
-        bool SaveForResume);
+        bool SaveForResume,
+        bool CreateRecurringSchedule);
 
     private const string DefaultAnalysisModel = "ggml-org/gemma-4-12B-it-GGUF:Q4_0";
     private const int NearestAreaFeedShortcutCount = 3;
@@ -2501,6 +2502,11 @@ public sealed partial class MainWindow : Window
             Content = "Keep this start date resumable through today until caught up (recommended)",
             IsChecked = true,
         };
+        var recurringScheduleBox = new CheckBox
+        {
+            Content = "Also create or update a daily recurring catch-up from this date",
+            IsChecked = false,
+        };
         void ApplyFeedDefault()
         {
             if (feedCombo.SelectedItem is LibraryFeedCoverage feed)
@@ -2535,10 +2541,11 @@ public sealed partial class MainWindow : Window
             FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
         });
         content.Children.Add(saveForResumeBox);
+        content.Children.Add(recurringScheduleBox);
         content.Children.Add(new TextBlock
         {
             Text =
-                "When started, retained local stages run first and missing downloads stay sequential behind the persistent rolling request guard. If work is interrupted, the saved start date rejoins Resume / prioritize after an app or computer restart and automatically extends through the then-current day. It clears only after every day through current is complete. Uncheck the option and evaluate to clear an existing saved catch-up.",
+                "When started, retained local stages run first and missing downloads stay sequential behind the persistent rolling request guard. The resumable one-time boundary automatically extends through the then-current day and clears after every day through current is complete. A recurring catch-up keeps the boundary and rechecks it at the saved daily schedule time; the next dialog confirms processing and timing. Uncheck resumable intent and evaluate to clear an existing one-time catch-up.",
             TextWrapping = TextWrapping.Wrap,
             Foreground = (Brush)Application.Current.Resources[
                 "TextFillColorSecondaryBrush"],
@@ -2574,7 +2581,8 @@ public sealed partial class MainWindow : Window
         return new LibraryCatchUpRange(
             selectedFeed,
             startDate,
-            saveForResumeBox.IsChecked == true);
+            saveForResumeBox.IsChecked == true,
+            recurringScheduleBox.IsChecked == true);
     }
 
     private async void CatchUpFeed_Click(object sender, RoutedEventArgs e)
@@ -2596,6 +2604,30 @@ public sealed partial class MainWindow : Window
                 await _worker.DeleteLibraryCatchUpAsync(
                     range.Feed.FeedId,
                     cancellation.Token);
+            }
+            catch (Exception exception)
+            {
+                await ShowErrorAsync(exception);
+                return;
+            }
+        }
+        if (range.CreateRecurringSchedule)
+        {
+            try
+            {
+                var existing = (await _worker.ListFeedSchedulesAsync(
+                    CancellationToken.None))
+                    .FirstOrDefault(value => value.FeedId == range.Feed.FeedId);
+                if (!await ShowFeedScheduleEditorAsync(
+                        range.Feed.FeedId,
+                        range.Feed.FeedName,
+                        existing,
+                        range.StartDate,
+                        suggestRecurringCatchUp: true))
+                {
+                    return;
+                }
+                await RefreshFeedScheduleStatusAsync();
             }
             catch (Exception exception)
             {
@@ -4428,7 +4460,9 @@ public sealed partial class MainWindow : Window
     private async Task<bool> ShowFeedScheduleEditorAsync(
         string feedId,
         string feedName,
-        FeedSchedule? existing)
+        FeedSchedule? existing,
+        DateTimeOffset? suggestedBackfillStart = null,
+        bool suggestRecurringCatchUp = false)
     {
         if (_worker is null)
         {
@@ -4466,10 +4500,25 @@ public sealed partial class MainWindow : Window
             Date = DateTimeOffset.TryParse(
                 existing?.BackfillStartDate,
                 out var savedBackfillDate)
-                ? savedBackfillDate
-                : null,
+                ? suggestedBackfillStart ?? savedBackfillDate
+                : suggestedBackfillStart,
             MaxDate = DateTimeOffset.Now,
         };
+        var recurringCatchUpBox = new CheckBox
+        {
+            Content = "Keep this catch-up boundary and recheck it every day",
+            IsChecked = suggestRecurringCatchUp || (existing?.RecurringCatchUp ?? false),
+        };
+        void UpdateRecurringCatchUpState()
+        {
+            recurringCatchUpBox.IsEnabled = backfillPicker.Date is not null;
+            if (backfillPicker.Date is null)
+            {
+                recurringCatchUpBox.IsChecked = false;
+            }
+        }
+        backfillPicker.DateChanged += (_, _) => UpdateRecurringCatchUpState();
+        UpdateRecurringCatchUpState();
         var enabledBox = new CheckBox
         {
             Content = "Schedule enabled",
@@ -4545,7 +4594,7 @@ public sealed partial class MainWindow : Window
         var explanation = new TextBlock
         {
             Text = "The schedule reuses retained work and waits for rolling request slots. "
-                + "An optional catch-up date keeps older gaps in scope until every day is complete, then clears itself. "
+                + "An optional catch-up date can clear after the first complete run or remain active for a recurring full-range gap check. "
                 + "Changing only the time or processing stages keeps its saved model and hardware choices.",
             TextWrapping = TextWrapping.Wrap,
         };
@@ -4558,6 +4607,7 @@ public sealed partial class MainWindow : Window
         content.Children.Add(timePicker);
         content.Children.Add(lookbackBox);
         content.Children.Add(backfillPicker);
+        content.Children.Add(recurringCatchUpBox);
         content.Children.Add(enabledBox);
         content.Children.Add(new TextBlock
         {
@@ -4625,6 +4675,7 @@ public sealed partial class MainWindow : Window
                 RunTimeLocal = $"{timePicker.Time.Hours:00}:{timePicker.Time.Minutes:00}",
                 LookbackDays = RequiredInteger(lookbackBox.Value, 2),
                 BackfillStartDate = backfillPicker.Date?.ToString("yyyy-MM-dd") ?? "",
+                RecurringCatchUp = recurringCatchUpBox.IsChecked == true,
                 Job = request,
                 Analyze = analyzeBox.IsChecked == true,
                 Enabled = enabledBox.IsChecked == true,
@@ -5881,6 +5932,56 @@ public sealed partial class MainWindow : Window
     private async void UseQuestionMonth_Click(object sender, RoutedEventArgs e) =>
         await ApplyQuestionMonthAsync();
 
+    private async Task<bool> ApplyEntireQuestionFeedAsync()
+    {
+        if (_worker is null)
+        {
+            return false;
+        }
+        var feedId = AnalysisFeedBox.Text.Trim();
+        if (string.IsNullOrWhiteSpace(feedId))
+        {
+            await ShowMessageAsync(
+                "Feed required",
+                "Choose a named feed before selecting its entire downloaded span.");
+            return false;
+        }
+        QuestionCoverageInfoBar.Severity = InfoBarSeverity.Informational;
+        QuestionCoverageInfoBar.Title = "Finding the retained feed span";
+        QuestionCoverageInfoBar.Message =
+            "Reading local files and evidence records; no archive request is made.";
+        try
+        {
+            using var cancellation = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+            var coverage = await _worker.GetEntireFeedQuestionCoverageAsync(
+                PersistedOutputDirectory(),
+                feedId,
+                cancellation.Token);
+            if (coverage is null
+                || !DateTimeOffset.TryParse(coverage.StartDate, out var startDate)
+                || !DateTimeOffset.TryParse(coverage.EndDate, out var endDate))
+            {
+                throw new InvalidOperationException(
+                    "The worker did not return a valid retained feed span.");
+            }
+            QuestionStartDatePicker.Date = startDate;
+            QuestionEndDatePicker.Date = endDate;
+            ShowQuestionCoverage(coverage);
+            return true;
+        }
+        catch (Exception exception)
+        {
+            QuestionCoverageInfoBar.Severity = InfoBarSeverity.Warning;
+            QuestionCoverageInfoBar.Title = "Entire-feed scope unavailable";
+            QuestionCoverageInfoBar.Message = exception.Message;
+            AppendLog($"Entire-feed question scope: {exception.Message}");
+            return false;
+        }
+    }
+
+    private async void UseEntireQuestionFeed_Click(object sender, RoutedEventArgs e) =>
+        await ApplyEntireQuestionFeedAsync();
+
     private async void CheckQuestionCoverage_Click(object sender, RoutedEventArgs e) =>
         await RefreshQuestionCoverageAsync();
 
@@ -6045,6 +6146,17 @@ public sealed partial class MainWindow : Window
         }
         QuestionBox.Text =
             "Across the retained days in this month, what were the most important reported events and recurring patterns? Rank them by public-safety significance, cite the supporting evidence, and clearly separate coverage gaps from days with no supported reports.";
+        QuestionBox.Focus(FocusState.Programmatic);
+    }
+
+    private async void AskFeedHotspotsExample_Click(object sender, RoutedEventArgs e)
+    {
+        if (!await ApplyEntireQuestionFeedAsync())
+        {
+            return;
+        }
+        QuestionBox.Text =
+            "Across the entire downloaded feed, where and when do supported incident records cluster? Rank repeated extracted locations, categories, weekdays, and six-hour time windows using exact aggregate counts and citations. Treat missing or unprocessed dates as coverage limits, and do not claim population-normalized crime rates or trends.";
         QuestionBox.Focus(FocusState.Programmatic);
     }
 
@@ -6944,6 +7056,9 @@ public sealed partial class MainWindow : Window
             && !string.IsNullOrWhiteSpace(AnalysisFeedBox.Text);
         UseQuestionMonthButton.IsEnabled = interactive
             && _questionCancellation is null;
+        UseEntireQuestionFeedButton.IsEnabled = interactive
+            && _questionCancellation is null
+            && !string.IsNullOrWhiteSpace(AnalysisFeedBox.Text);
         CheckQuestionCoverageButton.IsEnabled = interactive
             && _questionCancellation is null
             && !string.IsNullOrWhiteSpace(AnalysisFeedBox.Text);

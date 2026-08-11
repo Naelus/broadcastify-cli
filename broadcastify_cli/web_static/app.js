@@ -610,7 +610,7 @@ function renderFeedSchedules() {
   }
   target.innerHTML = schedules.map((schedule) => {
     const catchUp = schedule.backfill_start_date
-      ? ` · catching up from ${html(schedule.backfill_start_date)}`
+      ? ` · ${schedule.recurring_catch_up ? "recurring catch-up" : "catching up once"} from ${html(schedule.backfill_start_date)}`
       : "";
     return `<div class="result-row">
       <div><strong>${html(schedule.feed_name)}</strong><small>Feed ${html(schedule.feed_id)} · daily ${html(schedule.run_time_local)} · latest ${html(schedule.lookback_days)} day${Number(schedule.lookback_days) === 1 ? "" : "s"}${catchUp}</small><small>${schedule.enabled ? "Enabled" : "Disabled"} · ${html(words(schedule.state))}${schedule.message ? ` · ${html(schedule.message)}` : ""}</small></div>
@@ -1617,6 +1617,7 @@ byId("saveFeedScheduleButton").addEventListener("click", async () => {
         run_time_local: byId("scheduleRunTime").value || "02:00",
         lookback_days: lookback,
         backfill_start_date: byId("scheduleBackfillStartDate").value || "",
+        recurring_catch_up: byId("scheduleRecurringCatchUp").checked,
         analyze: byId("archiveAnalyze").checked,
         enabled: byId("scheduleEnabled").checked,
         job,
@@ -1645,6 +1646,8 @@ byId("feedScheduleList").addEventListener("click", async (event) => {
     byId("scheduleRunTime").value = schedule.run_time_local || "02:00";
     byId("scheduleLookbackDays").value = Number(schedule.lookback_days) || 2;
     byId("scheduleBackfillStartDate").value = schedule.backfill_start_date || "";
+    byId("scheduleRecurringCatchUp").checked = Boolean(schedule.recurring_catch_up);
+    syncRecurringCatchUpInput();
     byId("scheduleEnabled").checked = Boolean(schedule.enabled);
     byId("archiveCombine").checked = Boolean(schedule.job?.combine);
     byId("archiveTranscribe").checked = Boolean(schedule.job?.transcribe);
@@ -2161,6 +2164,39 @@ byId("useAskMonthButton").addEventListener("click", () => {
   byId("askEndDate").value = end > localToday ? localToday : end;
   toast("Month range selected. The answer will report retained coverage gaps.");
 });
+function useEntireDownloadedFeed() {
+  const feedId = byId("askFeedId").value.trim();
+  if (!/^\d+$/.test(feedId)) {
+    toast("Enter or select a numeric feed ID first.", true);
+    return false;
+  }
+  const dates = [...new Set((state.bootstrap.days || [])
+    .filter((day) => String(day.feed_id) === feedId)
+    .map((day) => String(day.archive_date || ""))
+    .filter((value) => /^\d{4}-\d{2}-\d{2}$/.test(value)))].sort();
+  if (!dates.length) {
+    toast(`No locally retained days exist for feed ${feedId}.`, true);
+    return false;
+  }
+  byId("askStartDate").value = dates[0];
+  byId("askEndDate").value = dates[dates.length - 1];
+  toast(`Entire downloaded span selected: ${dates[0]} through ${dates[dates.length - 1]}. Gaps inside the span remain visible.`);
+  return true;
+}
+byId("useAskEntireFeedButton").addEventListener("click", () => {
+  useEntireDownloadedFeed();
+});
+byId("askFeedHotspotsButton").addEventListener("click", () => {
+  if (!useEntireDownloadedFeed()) return;
+  byId("askQuestion").value = "Across the entire downloaded feed, where and when do supported incident records cluster? Rank repeated extracted locations, categories, weekdays, and six-hour time windows using exact aggregate counts and citations. Treat missing or unprocessed dates as coverage limits, and do not claim population-normalized crime rates or trends.";
+  byId("askQuestion").focus();
+});
+function syncRecurringCatchUpInput() {
+  const recurring = byId("scheduleRecurringCatchUp");
+  recurring.disabled = !byId("scheduleBackfillStartDate").value;
+  if (recurring.disabled) recurring.checked = false;
+}
+byId("scheduleBackfillStartDate").addEventListener("input", syncRecurringCatchUpInput);
 byId("forgetBroadcastifyLoginButton").addEventListener("click", async () => {
   try {
     await api("/api/credentials", {
@@ -2220,6 +2256,7 @@ byId("weekEnding").value = localToday;
 byId("askMonth").value = localToday.slice(0, 7);
 byId("askStartDate").value = localToday;
 byId("askEndDate").value = localToday;
+syncRecurringCatchUpInput();
 applySettingsForm();
 updateAreaCoverageControls();
 window.addEventListener("hashchange", setViewFromLocation);

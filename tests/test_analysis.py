@@ -175,6 +175,114 @@ def test_range_question_filters_to_ready_month_dates_and_owns_gap_limitation(
     ]
 
 
+def test_range_question_supplies_deterministic_hotspot_pattern_evidence(
+    tmp_path: Path,
+) -> None:
+    first_date = date(2026, 7, 6)
+    second_date = date(2026, 7, 7)
+
+    class PatternClient:
+        model = "fake-pattern-model"
+
+        def __init__(self) -> None:
+            self.user = ""
+            self.system = ""
+            self.location_id = ""
+
+        def chat_json(self, **kwargs: object) -> dict[str, object]:
+            self.user = str(kwargs["user"])
+            self.system = str(kwargs["system"])
+            self.location_id = next(
+                line.split()[0]
+                for line in self.user.splitlines()
+                if "repeated extracted location Main and First" in line
+            )
+            return {
+                "answer": (
+                    "Main and First repeated in two extracted records "
+                    f"[{self.location_id}]."
+                ),
+                "evidence_ids": [self.location_id],
+                "limitations": [],
+            }
+
+    client = PatternClient()
+    with AnalysisStore(tmp_path / "analysis.sqlite3") as store:
+        for index, archive_date in enumerate((first_date, second_date), start=1):
+            transcript = tmp_path / f"transcript-{index}.json"
+            transcript.write_text(
+                json.dumps(
+                    {
+                        "model": "test",
+                        "segments": [
+                            {
+                                "start": 7_200.0 * index,
+                                "end": 7_205.0 * index,
+                                "text": "Dispatch reported possible shots at Main and First.",
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            imported = store.import_transcript("90001", archive_date, transcript)
+            store.replace_incidents(
+                imported.day_id,
+                [
+                    {
+                        "fingerprint": f"pattern-{index}",
+                        "event_type": "shots_fired",
+                        "title": "Possible shots reported",
+                        "summary": "Dispatch reported possible shots.",
+                        "location": "Main and First",
+                        "start_seconds": 7_200.0 * index,
+                        "end_seconds": 7_205.0 * index,
+                        "priority": 4,
+                        "confidence": 0.9,
+                        "evidence": [],
+                        "attributes": {},
+                    }
+                ],
+                model="test-model",
+                prompt_version=PROMPT_VERSION,
+            )
+        coverage = {
+            "feed_id": "90001",
+            "start_date": first_date.isoformat(),
+            "end_date": second_date.isoformat(),
+            "requested_day_count": 2,
+            "audio_day_count": 2,
+            "question_ready_day_count": 2,
+            "analyzed_day_count": 2,
+            "question_ready_dates": [first_date.isoformat(), second_date.isoformat()],
+            "question_ready_ranges": [f"{first_date} through {second_date}"],
+            "analyzed_dates": [first_date.isoformat(), second_date.isoformat()],
+            "unavailable_dates": [],
+            "unavailable_ranges": [],
+            "summary": "2/2 requested days are question-ready.",
+        }
+        result = RangeQuestionAnswerer(store, client).ask(
+            "90001",
+            first_date,
+            second_date,
+            "Where and when are the hot spots?",
+            coverage=coverage,
+        )
+
+    assert "DETERMINISTIC RANGE PATTERNS:" in client.user
+    assert "repeated extracted location Main and First=2 incident(s)" in client.user
+    assert "weekday distribution:" in client.user
+    assert "six-hour archive-time distribution:" in client.user
+    assert "population-normalized crime rates" in client.system
+    assert result["evidence_ids"] == [client.location_id]
+    assert any(
+        value["kind"] == "location"
+        and value["label"] == "Main and First"
+        and value["count"] == 2
+        for value in result["patterns"]
+    )
+
+
 def test_managed_llama_cpu_device_disables_every_gpu_layer() -> None:
     assert LlamaServerProcess(device="cpu")._offload_arguments() == [
         "--device",

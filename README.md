@@ -24,9 +24,9 @@ a browser UI for Windows, Linux, macOS, and TrueNAS, plus command-line tools.
   resumable jobs, a durable 240-of-250 rolling-window guard, and optional
   trusted-LAN sharing.
 - Saves daily schedules for explicitly selected feeds; each run revisits a
-  short recent window, can retain an older catch-up boundary until every gap
-  is complete, and continues at rolling quota release times instead of
-  sleeping for a fixed day.
+  short recent window, can clear an older catch-up boundary after completion
+  or keep it as a recurring full-range gap check, and continues at rolling
+  quota release times instead of sleeping for a fixed day.
 - Combines each feed-day into one continuous timeline before transcription and
   speaker labeling.
 - Runs local Whisper-family ASR, Community-1 or a fast CPU speaker preview, BGE
@@ -35,7 +35,7 @@ a browser UI for Windows, Linux, macOS, and TrueNAS, plus command-line tools.
   clips, and processing state locally and independently.
 - Provides a local library with per-feed backlog/last-known source coverage,
   start-date-through-current missing-day catch-up, selector-driven quota-safe resume,
-  exact-clip review, named-feed evidence chat, seven-day briefs, and
+  exact-clip review, whole-feed hotspot-aware evidence chat, seven-day briefs, and
   evidence-backed regional story leads.
 - Keeps acquisition, transcription, and diarization in a background pipeline so
   non-conflicting Library, review, schedule, and chat actions remain usable.
@@ -94,17 +94,19 @@ In the app:
    input without consuming archive quota.
 4. Open **New archive**, search for a feed, and select an inclusive date range.
 5. Optionally choose **Schedule this feed** to save a daily time and recent-day
-   lookback for that specific result.
+   lookback for that specific result. A historical boundary can run once or
+   remain active as a recurring catch-up through current.
 6. Leave combination enabled when transcribing or adding speaker labels.
 7. Review completed or interrupted days in **Local library**. Expand feed
    coverage to see scheduled gaps and last-known provider blocks, or use
    **Resume / prioritize…** to select feeds, local work, guarded downloads, and
    ordering; a confirmed **Delete feed** action removes a feed's local evidence.
-8. Use **Review & Ask** to choose a feed by name, select a calendar month,
-   preview which downloaded days are question-ready, and chat with cited
-   evidence. Partial months identify missing or locally unfinished dates rather
-   than treating them as quiet days. **Area watch** provides clips, weekly
-   briefs, and regional leads.
+8. Use **Review & Ask** to choose a feed by name, select a calendar month or the
+   entire downloaded span, preview which days are question-ready, and chat with
+   cited evidence. Whole-feed hotspot questions receive deterministic category,
+   location, weekday, and time-block counts. Missing or locally unfinished dates
+   remain coverage gaps rather than quiet days. **Area watch** provides clips,
+   weekly briefs, and regional leads.
 9. Open **About & support** to confirm the installed version, find the archive
    and diagnostic folders, copy credential-free support details, or check for
    updates.

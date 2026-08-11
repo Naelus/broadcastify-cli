@@ -94,17 +94,18 @@ hardcoded locality. It stores:
 - the feed ID and display name;
 - one local wall-clock time;
 - a one-to-fourteen-day lookback, including the current day;
-- an optional fixed historical catch-up start date;
+- an optional fixed historical catch-up start date and one-time or recurring mode;
 - the selected combination, ASR, speaker, analysis, and LAN settings; and
 - enabled, last-run, retry, and recovery state.
 
 At the scheduled time the job revisits that recent range. Exact source blocks
 and valid processing stages are reused, so overlap is intentional and does not
 repeat completed work. When a historical catch-up date is set, it remains the
-range start across rolling-quota retries and day changes. It clears itself only
-after the complete requested range has no missing days; a LAN-deferred or
-otherwise incomplete result retries shortly rather than being recorded as
-complete. If the rolling archive guard is closed, cached days can still finish
+range start across rolling-quota retries and day changes. One-time mode clears
+the date only after the complete requested range has no missing days. Recurring
+mode retains it after success and checks that start through the new current day
+at the next daily run. A LAN-deferred or otherwise incomplete result retries
+shortly rather than being recorded as complete. If the rolling archive guard is closed, cached days can still finish
 locally and the missing acquisition is deferred until the ledger's next-safe
 time. The acquisition runner reads that local ledger before authentication; a
 closed guard permits trusted-LAN reuse, local processing, and cache reuse only
@@ -125,7 +126,7 @@ Face and analysis API-key values; those secrets must remain in the platform
 credential store, active session, or private environment.
 
 On Windows, **Manage schedules** can edit the daily time, lookback, historical
-catch-up date, enabled state, local processing stages, and incident analysis
+catch-up date, one-time/recurring mode, enabled state, local processing stages, and incident analysis
 for an existing feed. The Web/TrueNAS schedule list exposes the same edit and
 enable/disable controls rather than requiring removal and recreation.
 Changing those basics preserves the schedule's saved model, accelerator,

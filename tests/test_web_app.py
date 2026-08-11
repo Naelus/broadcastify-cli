@@ -251,7 +251,7 @@ def test_loopback_web_app_serves_library_transcript_and_media(
         assert cookie.startswith("radio_archive_session=")
         assert token_match is not None
         assert b'id="areaPublicSafetyOnly"' in body
-        assert b'/static/app.js?v=34' in body
+        assert b'/static/app.js?v=35' in body
         assert b'id="archiveQuotaNotice"' in body
         assert b'id="saveFeedScheduleButton"' in body
         assert b'id="scheduleBackfillStartDate"' in body
@@ -282,7 +282,7 @@ def test_loopback_web_app_serves_library_transcript_and_media(
         assert response.getheader("Content-Type") == "image/svg+xml"
         assert b"<svg" in body
 
-        response, body = _request(connection, "GET", "/static/app.js?v=34")
+        response, body = _request(connection, "GET", "/static/app.js?v=35")
         assert response.status == 200
         assert b"areaSelectedStoryIndex" in body
         assert b"data-area-story-index" in body
@@ -364,6 +364,8 @@ def test_loopback_web_app_serves_library_transcript_and_media(
                 "feed_name": "Example City Public Safety",
                 "run_time_local": "23:59",
                 "lookback_days": 2,
+                "backfill_start_date": "2026-07-01",
+                "recurring_catch_up": True,
                 "enabled": False,
                 "analyze": True,
                 "job": {"combine": True, "transcribe": True, "diarize": True},
@@ -373,6 +375,8 @@ def test_loopback_web_app_serves_library_transcript_and_media(
         assert response.status == 200
         assert saved_schedule["feed_id"] == "90001"
         assert saved_schedule["job"]["download_jobs"] == 1
+        assert saved_schedule["backfill_start_date"] == "2026-07-01"
+        assert saved_schedule["recurring_catch_up"] is True
 
         response, body = _request(
             connection,

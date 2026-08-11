@@ -165,6 +165,50 @@ def test_question_coverage_reads_only_local_library_state(
     assert coverage["question_ready_dates"] == ["2026-07-01"]
     assert coverage["missing_audio_dates"] == ["2026-07-02"]
     assert coverage["complete_coverage"] is False
+    assert coverage["scope"] == "range"
+
+
+def test_entire_feed_question_coverage_uses_local_retained_span(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    emitted: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        "broadcastify_cli.worker.scan_local_library",
+        lambda *_args, **_kwargs: [
+            {
+                "feed_id": "90001",
+                "archive_date": "2026-06-30",
+                "has_combined": True,
+                "has_transcript": True,
+                "has_imported_transcript": True,
+                "has_analysis": True,
+            },
+            {
+                "feed_id": "90001",
+                "archive_date": "2026-07-02",
+                "has_combined": True,
+                "has_transcript": True,
+                "has_imported_transcript": True,
+                "has_analysis": True,
+            },
+        ],
+    )
+    monkeypatch.setattr("broadcastify_cli.worker.emit", emitted.append)
+
+    assert question_coverage(
+        str(tmp_path),
+        "90001",
+        entire_feed=True,
+    ) == 0
+
+    coverage = emitted[0]["coverage"]
+    assert coverage["scope"] == "entire_feed"
+    assert coverage["start_date"] == "2026-06-30"
+    assert coverage["end_date"] == "2026-07-02"
+    assert coverage["requested_day_count"] == 3
+    assert coverage["question_ready_day_count"] == 2
+    assert coverage["missing_audio_dates"] == ["2026-07-01"]
 
 
 def test_asr_self_test_uses_selected_engine_without_returning_transcript_text(

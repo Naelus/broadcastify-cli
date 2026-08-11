@@ -827,6 +827,35 @@ internal sealed class WorkerClient
         return coverage;
     }
 
+    public async Task<ArchiveQuestionCoverage?> GetEntireFeedQuestionCoverageAsync(
+        string outputDirectory,
+        string feedId,
+        CancellationToken cancellationToken)
+    {
+        ArchiveQuestionCoverage? coverage = null;
+        await RunWorkerAsync(
+            [
+                "-m", "broadcastify_cli.worker", "question-coverage",
+                "--output-dir", string.IsNullOrWhiteSpace(outputDirectory)
+                    ? "archives"
+                    : outputDirectory,
+                "--feed-id", feedId,
+                "--entire-feed",
+            ],
+            null,
+            message =>
+            {
+                if (message.TryGetProperty("type", out var type)
+                    && type.GetString() == "question_coverage")
+                {
+                    coverage = message.GetProperty("coverage")
+                        .Deserialize<ArchiveQuestionCoverage>(JsonOptions);
+                }
+            },
+            cancellationToken);
+        return coverage;
+    }
+
     public async Task<WeeklyReport?> SummarizeWeekAsync(
         WeeklySummaryRequest request,
         Action<JsonElement> onMessage,

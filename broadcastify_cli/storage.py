@@ -238,6 +238,7 @@ class AnalysisStore:
                 run_time_local TEXT NOT NULL,
                 lookback_days INTEGER NOT NULL DEFAULT 2,
                 backfill_start_date TEXT NOT NULL DEFAULT '',
+                recurring_catch_up INTEGER NOT NULL DEFAULT 0,
                 job_json TEXT NOT NULL,
                 analyze INTEGER NOT NULL DEFAULT 1,
                 enabled INTEGER NOT NULL DEFAULT 1,
@@ -364,6 +365,11 @@ class AnalysisStore:
                 "ALTER TABLE feed_schedules ADD COLUMN "
                 "backfill_start_date TEXT NOT NULL DEFAULT ''"
             )
+        if "recurring_catch_up" not in feed_schedule_columns:
+            self.connection.execute(
+                "ALTER TABLE feed_schedules ADD COLUMN "
+                "recurring_catch_up INTEGER NOT NULL DEFAULT 0"
+            )
         library_catchup_columns = {
             str(row["name"])
             for row in self.connection.execute(
@@ -454,6 +460,7 @@ class AnalysisStore:
             "run_time_local": str(row["run_time_local"]),
             "lookback_days": int(row["lookback_days"]),
             "backfill_start_date": str(row["backfill_start_date"] or ""),
+            "recurring_catch_up": bool(row["recurring_catch_up"]),
             "job": json.loads(str(row["job_json"])),
             "analyze": bool(row["analyze"]),
             "enabled": bool(row["enabled"]),
@@ -483,6 +490,9 @@ class AnalysisStore:
             if parsed_backfill > date.today():
                 raise ValueError("Catch-up start date cannot be in the future.")
             backfill_start_date = parsed_backfill.isoformat()
+        recurring_catch_up = bool(payload.get("recurring_catch_up", False))
+        if recurring_catch_up and not backfill_start_date:
+            raise ValueError("A recurring catch-up requires a catch-up start date.")
         job = dict(payload.get("job") or {})
         for key in (
             "feed_id",
@@ -501,15 +511,16 @@ class AnalysisStore:
                 """
                 INSERT INTO feed_schedules(
                     feed_id, feed_name, run_time_local, lookback_days,
-                    backfill_start_date,
+                    backfill_start_date, recurring_catch_up,
                     job_json, analyze, enabled, state, message,
                     created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'scheduled', '', ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'scheduled', '', ?, ?)
                 ON CONFLICT(feed_id) DO UPDATE SET
                     feed_name=excluded.feed_name,
                     run_time_local=excluded.run_time_local,
                     lookback_days=excluded.lookback_days,
                     backfill_start_date=excluded.backfill_start_date,
+                    recurring_catch_up=excluded.recurring_catch_up,
                     job_json=excluded.job_json,
                     analyze=excluded.analyze,
                     enabled=excluded.enabled,
@@ -527,6 +538,7 @@ class AnalysisStore:
                     run_time,
                     lookback_days,
                     backfill_start_date,
+                    int(recurring_catch_up),
                     json.dumps(job, sort_keys=True),
                     int(bool(payload.get("analyze", True))),
                     int(bool(payload.get("enabled", True))),
@@ -767,7 +779,8 @@ class AnalysisStore:
                 SET state=?, message=?,
                     last_run_date=CASE WHEN ?='' THEN last_run_date ELSE ? END,
                     backfill_start_date=CASE
-                        WHEN ?='complete' THEN '' ELSE backfill_start_date
+                        WHEN ?='complete' AND recurring_catch_up=0 THEN ''
+                        ELSE backfill_start_date
                     END,
                     last_finished_at=?, not_before=?, lease_until='', updated_at=?
                 WHERE id=?

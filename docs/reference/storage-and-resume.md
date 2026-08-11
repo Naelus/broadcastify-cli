@@ -142,8 +142,9 @@ A later stage cannot make an earlier stale stage look complete.
   diarization cache exists.
 - Incident analysis checkpoints every completed model window.
 - Feed schedules store last-run, next-safe quota, and optional historical
-  catch-up state; catch-up clears only after the whole range is present, while
-  a startup recovery defers any schedule left running for one collision-
+  catch-up state plus its one-time/recurring choice. One-time catch-up clears
+  only after the whole range is present; recurring catch-up preserves the same
+  start for the next daily through-current check. A startup recovery defers any schedule left running for one collision-
   avoidance minute and resumes from retained work. Windows login startup runs
   this recovery before claiming scheduled work.
 - Explicit Library catch-ups are stored independently of the recent-day schedule

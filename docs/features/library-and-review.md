@@ -42,7 +42,10 @@ requested flag or filename.
   catch-up survives app restart, cancellation, quota pause, machine restart, and
   upgrades; it is not limited to reopening the catch-up dialog. It self-clears
   only after every calendar day through current has local completion evidence.
-  The dialog can explicitly replace or clear it. Starting and resuming use the
+  The dialog can explicitly replace or clear it, or promote the selected feed
+  and start date into a daily recurring catch-up. Recurring mode keeps that
+  boundary after a complete run and checks it through the then-current day at
+  each scheduled time. Starting and resuming use the
   same sequential quota checks and checkpoints, so completed days and retained
   stages are never repeated.
 - **Resume / prioritize…** builds a fresh read-only plan, synthesizes missing
@@ -133,13 +136,19 @@ timestamped source quotes, exact and surrounding-context playback, local clip
 export, and range questions. The feed picker displays retained/scheduled feed
 names rather than requiring a numeric ID. **Ask the archive** is a multi-turn
 chat over one named feed and date range. A month selector sets the full past
-calendar month or the current month through today, then previews how many days
+calendar month or the current month through today. **Use entire downloaded
+feed** selects the earliest-to-latest locally retained span, including internal
+calendar gaps, then previews how many days
 have downloaded audio and how many have a current imported transcript. Missing
 audio and locally unfinished dates remain explicit coverage gaps; they are
 excluded from retrieval and cannot be interpreted as days with no activity.
-Starter questions cover shots reports, unusual events, weekly importance, and
-a coverage-aware monthly summary. Recent turns help resolve follow-ups, but
-every new material claim must cite fresh E/I evidence for that turn. The
+Starter questions cover shots reports, unusual events, weekly importance, a
+coverage-aware monthly summary, and whole-feed hotspots. The backend supplies
+deterministic P records for exact category, repeated-location, weekday, and
+six-hour archive-time counts over current analyzed days. These support cluster
+descriptions but cannot be presented as population-normalized crime rates or
+trends. Recent turns help resolve follow-ups, but every new material claim must
+cite fresh E/I/P evidence for that turn. The
 configured provider is used—quantized local Gemma 4 12B through llama.cpp by
 default—and each answer remains in the existing local Q&A audit history.
 Incident playback seeks within the generated clip, not an unrelated offset in

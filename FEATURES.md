@@ -1,6 +1,6 @@
 # Feature inventory
 
-Last updated: August 10, 2026
+Last updated: August 11, 2026
 
 Status labels: **Validated**, **Implemented**, **Evaluated**, **Foundation**, or
 **Planned**. Detailed behavior and retained validation evidence belong in
@@ -16,7 +16,7 @@ Status labels: **Validated**, **Implemented**, **Evaluated**, **Foundation**, or
 | Cache-aware archive acquisition | Validated | One-to-one provider-ID/timeline index with legacy collapse detection and targeted repair, duplicate-listing suppression, sequential pacing, newest/previous priority, current-day refresh, process-safe 240-of-250 rolling ledger, and immediate 429 stop. |
 | Source-specific progress | Validated | Each ready block reports local cache versus Broadcastify download; LAN copies name the exact peer-sourced block. |
 | Nearest-first area queue | Validated | Persists stop points, skips complete feeds, resumes partial work, stops lower priorities on quota exhaustion. |
-| Per-feed daily schedules | Validated | Explicitly selected feeds retain their processing profile, recent-day lookback, and optional self-clearing historical catch-up boundary; visible default-on Windows startup keeps the desktop scheduler available, interrupted/incomplete runs resume retained work, Web/NAS runs continuously, quota deferrals resume at the next known rolling slot, and every scheduler binds jobs to its currently selected Library so a stale path cannot re-fetch the same archive IDs into another root. |
+| Per-feed daily schedules | Validated | Explicitly selected feeds retain their processing profile, recent-day lookback, and optional historical catch-up boundary in either self-clearing or recurring full-range mode; visible default-on Windows startup keeps the desktop scheduler available, interrupted/incomplete runs resume retained work, Web/NAS runs continuously, quota deferrals resume at the next known rolling slot, and every scheduler binds jobs to its currently selected Library so a stale path cannot re-fetch the same archive IDs into another root. |
 | Trusted-LAN archive pool | Validated | One upstream producer lease; followers hash-verify raw blocks and preserve exact provider identities from any peer; no credentials/transcripts/analysis shared. |
 
 See [archive acquisition](docs/features/archive-acquisition.md),
@@ -49,7 +49,7 @@ See [audio processing](docs/features/audio-processing.md),
 | Evidence-gated incidents | Validated | Exact citations, critical-concept support, bounded gaps, outcome rejection, category/priority correction. |
 | Cited-name private review | Validated | Spoken names preserved; inferred/normalized identities forbidden; high-risk identifiers masked. |
 | Daily and weekly briefs | Validated | Current-version incidents only, explicit coverage gaps and grounding checks. |
-| Range and monthly Q&A | Validated | Friendly-name feed picker, one-click calendar-month ranges, local downloaded/question-ready coverage preview, partial-month gap enforcement, date-diverse structured plus retrieved evidence with required E/I citations, bounded multi-turn follow-ups, starter questions, and local Q&A audit persistence; quantized Gemma 4 12B remains the default provider. |
+| Range, monthly, and whole-feed Q&A | Validated | Friendly-name feed picker, one-click calendar-month or entire-downloaded-span scope, local downloaded/question-ready coverage preview, compact gap enforcement, date-diverse retrieved evidence, deterministic category/location/weekday/time-block pattern records with required E/I/P citations, bounded multi-turn follow-ups, hotspot starters, and local Q&A audit persistence; quantized Gemma 4 12B remains the default provider. |
 | Evidence clips and export | Validated | Exact hashed citation clip plus separately labeled surrounding context. |
 | External provider contracts | Validated | OpenAI Responses, compatible `/v1`, and saved-login Codex behind explicit transcript-sharing consent. |
 
@@ -62,7 +62,7 @@ See [evidence analysis](docs/features/evidence-analysis.md),
 | Capability | Status | Notes |
 |---|---|---|
 | Native WinUI 3 shell | Validated | Task navigation for Library, New Archive, Review & Ask, Area Watch, Settings, and About & Support; the support surface shows the installed version/runtime and opens local data or copies credential-free diagnostic context. Acquisition/transcription runs as a background pipeline while non-conflicting review/chat/library actions remain available, same-feed file handles are guarded, model analysis is serialized, and bursty worker output remains off the UI thread and in the rotating diagnostic log. |
-| Local Library | Validated | Five-stage timeline, playback, transcript preview, stale-result detection, retained-versus-temporary storage, schedule-aware feed backlog/last-known source coverage, durable existing-feed catch-up from one prior date through current that queues only absent or unfinished days, survives restart/quota/cancellation, and rejoins global Resume, guarded retrying whole-feed deletion with media players detached through the directory rename and nonmodal completion feedback, shell-based folder/transcript launching, selector-driven quota-safe Resume/prioritize, safe orphan cleanup, and exact per-day resume/upgrade/review actions. |
+| Local Library | Validated | Five-stage timeline, playback, transcript preview, stale-result detection, retained-versus-temporary storage, schedule-aware feed backlog/last-known source coverage, durable existing-feed catch-up from one prior date through current that queues only absent or unfinished days, survives restart/quota/cancellation, can be promoted to a recurring daily schedule, and rejoins global Resume, guarded retrying whole-feed deletion with media players detached through the directory rename and nonmodal completion feedback, shell-based folder/transcript launching, selector-driven quota-safe Resume/prioritize, safe orphan cleanup, and exact per-day resume/upgrade/review actions. |
 | Area Watch | Validated | Profile discovery, queue, coverage-aware ranked leads, selected evidence, clips and exports. |
 | Neighborhood subscription delivery | Foundation | Story eligibility and neighborhood/topic tags exist; opt-in delivery is explicitly low priority in [#5](https://github.com/Naelus/broadcastify-cli/issues/5). |
 | Cross-platform browser UI | Validated | Windows/Linux desktop and mobile validation; loopback default and explicit trusted-LAN mode. |

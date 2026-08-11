@@ -25,6 +25,7 @@ from .analysis_providers import (
 )
 from .library import (
     build_archive_question_coverage,
+    entire_archive_feed_range,
     require_current_range_evidence,
     scan_local_library,
 )
@@ -172,8 +173,13 @@ def analyze_day(
 
 @cli.command("ask")
 @click.option("--feed-id", required=True)
-@click.option("--start-date", required=True, callback=lambda _c, _p, v: parse_date(v))
-@click.option("--end-date", required=True, callback=lambda _c, _p, v: parse_date(v))
+@click.option("--start-date", callback=lambda _c, _p, v: parse_date(v) if v else None)
+@click.option("--end-date", callback=lambda _c, _p, v: parse_date(v) if v else None)
+@click.option(
+    "--entire-feed",
+    is_flag=True,
+    help="Use the earliest-to-latest locally retained span for this feed.",
+)
 @click.option("--question", required=True)
 @click.option("--db", type=click.Path(path_type=Path), default=Path("archives/broadcastify-analysis.sqlite3"))
 @click.option("--provider", type=click.Choice(PROVIDER_CHOICES), default="local", show_default=True)
@@ -187,8 +193,9 @@ def analyze_day(
 @click.option("--semantic/--keyword-only", default=True, show_default=True)
 def ask(
     feed_id: str,
-    start_date: date,
-    end_date: date,
+    start_date: date | None,
+    end_date: date | None,
+    entire_feed: bool,
     question: str,
     db: Path,
     provider: str,
@@ -201,7 +208,21 @@ def ask(
     embedding_model: str,
     semantic: bool,
 ) -> None:
-    """Ask an evidence-grounded question over an imported date range."""
+    """Ask an evidence-grounded question over a range or entire retained feed."""
+    days = scan_local_library(db.parent, db)
+    if entire_feed:
+        if start_date is not None or end_date is not None:
+            raise click.UsageError(
+                "Use --entire-feed or --start-date/--end-date, not both."
+            )
+        try:
+            start_date, end_date = entire_archive_feed_range(days, feed_id)
+        except ValueError as exc:
+            raise click.ClickException(str(exc)) from exc
+    elif start_date is None or end_date is None:
+        raise click.UsageError(
+            "Provide both --start-date and --end-date, or use --entire-feed."
+        )
     if start_date > end_date:
         raise click.BadParameter("Start date must be on or before end date.")
     provider_settings = provider_config(
@@ -215,7 +236,7 @@ def ask(
     )
     with AnalysisStore(db) as store:
         coverage = build_archive_question_coverage(
-            scan_local_library(db.parent, db),
+            days,
             feed_id,
             start_date,
             end_date,

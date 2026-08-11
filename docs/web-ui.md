@@ -51,13 +51,14 @@ The payload is never included in the returned job snapshot. Still treat payload 
 - paged/searchable speaker-labeled transcript viewing
 - website-backed feed search and guarded inclusive archive jobs
 - persistent daily schedules for explicitly selected feeds, with editable
-  time, enable state, recent-day lookback, optional self-clearing historical
-  catch-up, cache/stage reuse, service-start recovery, and rolling-quota resume
+  time, enable state, recent-day lookback, optional self-clearing or recurring
+  historical catch-up, cache/stage reuse, service-start recovery, and rolling-quota resume
 - visible installation-local 240-of-250 rolling request status with a
   10-request manual reserve and next-safe time
 - trusted-LAN source-block pooling before website access, with optional discovery or explicit private peer URLs and one renewable upstream producer lease per quota-scope/feed/day
 - automatic analysis queue for newly completed transcripts
-- evidence-grounded range Q&A and persisted seven-day briefs with missing dates
+- evidence-grounded range/month/whole-feed Q&A, deterministic hotspot aggregates,
+  and persisted seven-day briefs with missing dates
 - center/radius or ordered-ZIP discovery, explicit area profiles, persisted nearest-first stop/resume queues, and retained regional story-lead briefs with coverage gaps
 - automatic/CUDA/CPU/Vulkan/OpenVINO/Apple Metal/Windows ML processing profiles with a collapsed stage-by-stage readiness comparison
 - five-step first-run readiness for account, storage, transcription, speaker labels, and analysis

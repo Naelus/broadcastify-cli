@@ -4,6 +4,8 @@ import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import pytest
+
 from broadcastify_cli.storage import AnalysisStore
 
 
@@ -46,7 +48,7 @@ def test_feed_schedule_is_specific_persistent_and_forces_safe_acquisition(
         )
 
 
-def test_existing_schedule_database_adds_historical_catch_up_column(
+def test_existing_schedule_database_adds_historical_and_recurring_catch_up_columns(
     tmp_path: Path,
 ) -> None:
     database = tmp_path / "analysis.sqlite3"
@@ -87,7 +89,9 @@ def test_existing_schedule_database_adds_historical_catch_up_column(
         )
 
     assert "backfill_start_date" in columns
+    assert "recurring_catch_up" in columns
     assert saved["backfill_start_date"] == "2026-07-03"
+    assert saved["recurring_catch_up"] is False
 
 
 def test_claim_is_atomic_and_quota_wait_reopens_at_next_rolling_slot(
@@ -166,6 +170,47 @@ def test_historical_catch_up_survives_quota_wait_and_clears_only_when_complete(
             now=now + timedelta(minutes=22),
         )
         assert completed["backfill_start_date"] == ""
+
+
+def test_recurring_catch_up_keeps_boundary_after_success_and_rechecks_next_day(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "analysis.sqlite3"
+    now = datetime(2026, 7, 23, 3, 0, tzinfo=timezone(timedelta(hours=-5)))
+    payload = _payload()
+    payload["backfill_start_date"] = "2026-07-03"
+    payload["recurring_catch_up"] = True
+
+    with AnalysisStore(database) as store:
+        saved = store.save_feed_schedule(payload)
+        claimed = store.claim_due_feed_schedule(now=now)
+        assert claimed is not None
+        assert claimed["recurring_catch_up"] is True
+        assert claimed["job"]["start_date"] == "2026-07-03"
+
+        completed = store.finish_feed_schedule(
+            int(saved["id"]),
+            due_date="2026-07-23",
+            status="complete",
+            now=now + timedelta(minutes=5),
+        )
+        assert completed["backfill_start_date"] == "2026-07-03"
+        assert completed["recurring_catch_up"] is True
+        assert store.claim_due_feed_schedule(now=now + timedelta(hours=1)) is None
+
+        next_run = store.claim_due_feed_schedule(now=now + timedelta(days=1))
+        assert next_run is not None
+        assert next_run["job"]["start_date"] == "2026-07-03"
+        assert next_run["job"]["end_date"] == "2026-07-24"
+
+
+def test_recurring_catch_up_requires_a_start_date(tmp_path: Path) -> None:
+    payload = _payload()
+    payload["recurring_catch_up"] = True
+
+    with AnalysisStore(tmp_path / "analysis.sqlite3") as store:
+        with pytest.raises(ValueError, match="requires a catch-up start date"):
+            store.save_feed_schedule(payload)
 
 
 def test_schedule_rejects_a_future_historical_catch_up_date(tmp_path: Path) -> None:

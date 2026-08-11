@@ -17,8 +17,11 @@ from broadcastify_cli.library import (
     build_library_feed_coverage,
     build_library_resume_plan,
     cleanup_pending_library_deletions,
+    compact_archive_date_ranges,
     completed_library_catchup_feed_ids,
     delete_local_library_feed,
+    describe_archive_date_ranges,
+    entire_archive_feed_range,
     prepare_local_day,
     scan_local_library,
     transcript_satisfies_diarization,
@@ -84,8 +87,37 @@ def test_archive_question_coverage_distinguishes_ready_processing_and_missing_da
     assert coverage["local_processing_dates"] == ["2026-07-02"]
     assert coverage["missing_audio_dates"] == ["2026-07-04"]
     assert coverage["unavailable_dates"] == ["2026-07-02", "2026-07-04"]
+    assert coverage["question_ready_ranges"] == ["2026-07-01", "2026-07-03"]
+    assert coverage["unavailable_ranges"] == ["2026-07-02", "2026-07-04"]
     assert coverage["complete_coverage"] is False
     assert "2/4 requested days are question-ready" in coverage["summary"]
+
+
+def test_entire_feed_range_and_compact_gap_descriptions_are_local_only() -> None:
+    days = [
+        {"feed_id": "90001", "archive_date": "2026-06-30"},
+        {"feed_id": "90001", "archive_date": "2026-07-01"},
+        {"feed_id": "90001", "archive_date": "2026-07-03"},
+        {"feed_id": "90002", "archive_date": "2025-01-01"},
+    ]
+
+    assert entire_archive_feed_range(days, "90001") == (
+        date(2026, 6, 30),
+        date(2026, 7, 3),
+    )
+    values = ["2026-06-30", "2026-07-01", "2026-07-03"]
+    assert compact_archive_date_ranges(values) == [
+        "2026-06-30 through 2026-07-01",
+        "2026-07-03",
+    ]
+    assert describe_archive_date_ranges(values) == (
+        "2026-06-30 through 2026-07-01, 2026-07-03"
+    )
+
+
+def test_entire_feed_range_rejects_a_feed_without_retained_days() -> None:
+    with pytest.raises(ValueError, match="No locally retained feed days"):
+        entire_archive_feed_range([], "90001")
 
 
 def test_library_resume_plan_is_local_first_and_never_starts_acquisition() -> None:

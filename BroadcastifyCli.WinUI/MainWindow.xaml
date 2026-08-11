@@ -544,13 +544,15 @@
                                                         VerticalAlignment="Center" Click="ClearArchiveChat_Click" />
                                             </Grid>
                                             <Grid ColumnSpacing="10">
-                                                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
                                                 <DatePicker x:Name="QuestionMonthPicker" Header="Month (choose any date)" DateChanged="QuestionRange_DateChanged" />
                                                 <Button x:Name="UseQuestionMonthButton" Grid.Column="1" Content="Use selected month"
                                                         VerticalAlignment="Bottom" Click="UseQuestionMonth_Click" />
-                                                <Button x:Name="CheckQuestionCoverageButton" Grid.Column="2" Content="Check downloaded coverage"
+                                                <Button x:Name="UseEntireQuestionFeedButton" Grid.Column="2" Content="Use entire downloaded feed"
+                                                        VerticalAlignment="Bottom" Click="UseEntireQuestionFeed_Click" />
+                                                <Button x:Name="CheckQuestionCoverageButton" Grid.Column="3" Content="Check downloaded coverage"
                                                         VerticalAlignment="Bottom" Click="CheckQuestionCoverage_Click" />
-                                                <TextBlock Grid.Column="3" Text="The current month ends at today. Past months use their complete calendar range. No archive request is made."
+                                                <TextBlock Grid.Column="4" Text="The current month ends at today. Entire-feed scope uses the earliest-to-latest locally retained span and keeps internal gaps visible. No archive request is made."
                                                            TextWrapping="Wrap" VerticalAlignment="Bottom"
                                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                             </Grid>
@@ -570,6 +572,7 @@
                                                 <Button Content="Craziest reported events" Click="AskCraziestExample_Click" />
                                                 <Button Content="Most important this week" Click="AskImportantExample_Click" />
                                                 <Button Content="Summarize this month" Click="AskMonthExample_Click" />
+                                                <Button Content="Find whole-feed hot spots" Click="AskFeedHotspotsExample_Click" />
                                             </StackPanel>
                                             <ListView x:Name="ArchiveChatList" SelectionMode="None" MinHeight="240" MaxHeight="440">
                                                 <ListView.ItemTemplate>

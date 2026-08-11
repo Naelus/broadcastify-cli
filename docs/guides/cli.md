@@ -47,18 +47,20 @@ incidents for the day.
 ```powershell
 .\.venv\Scripts\broadcastify-analysis.exe ask `
   --feed-id 90001 `
-  --start-date 2026-07-01 `
-  --end-date 2026-07-31 `
-  --question "What serious incidents and recurring patterns were reported this month?"
+  --entire-feed `
+  --question "Where and when do supported reports cluster across everything retained?"
 
 .\.venv\Scripts\broadcastify-analysis.exe summarize-week `
   --feed-id 90001 `
   --week-ending 2026-07-12
 ```
 
-Range questions print local downloaded/question-ready coverage and retrieve only
-from current imported transcript dates. Weekly briefs name missing dates. Neither
-surface treats missing coverage as inactivity.
+Use explicit `--start-date` and `--end-date` instead of `--entire-feed` for a
+bounded range. Questions print local downloaded/question-ready coverage and
+retrieve only from current imported transcript dates. Whole-feed pattern
+questions also receive deterministic category/location/weekday/time-block
+aggregates. Weekly briefs name missing dates. Neither surface treats missing
+coverage as inactivity.
 
 ## Inspect saved results
 

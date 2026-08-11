@@ -532,6 +532,80 @@ def build_library_resume_plan(
     }
 
 
+def compact_archive_date_ranges(values: Sequence[str]) -> list[str]:
+    """Collapse ISO archive dates into stable, human-readable contiguous ranges."""
+
+    parsed: list[date] = []
+    for raw in values:
+        try:
+            parsed.append(date.fromisoformat(str(raw)))
+        except ValueError:
+            continue
+    ordered = sorted(set(parsed))
+    if not ordered:
+        return []
+    ranges: list[str] = []
+    start = ordered[0]
+    end = ordered[0]
+    for value in ordered[1:]:
+        if value == end + timedelta(days=1):
+            end = value
+            continue
+        ranges.append(
+            start.isoformat()
+            if start == end
+            else f"{start.isoformat()} through {end.isoformat()}"
+        )
+        start = value
+        end = value
+    ranges.append(
+        start.isoformat()
+        if start == end
+        else f"{start.isoformat()} through {end.isoformat()}"
+    )
+    return ranges
+
+
+def describe_archive_date_ranges(
+    values: Sequence[str],
+    *,
+    max_ranges: int = 12,
+) -> str:
+    """Describe large date sets without placing hundreds of dates in a prompt."""
+
+    ranges = compact_archive_date_ranges(values)
+    visible = ranges[: max(1, int(max_ranges))]
+    description = ", ".join(visible) or "none"
+    remaining = len(ranges) - len(visible)
+    if remaining > 0:
+        description += f", plus {remaining} more range{'s' if remaining != 1 else ''}"
+    return description
+
+
+def entire_archive_feed_range(
+    days: Sequence[dict[str, Any]],
+    feed_id: str,
+) -> tuple[date, date]:
+    """Return the earliest-to-latest locally retained span for one feed."""
+
+    normalized_feed_id = str(feed_id or "").strip()
+    if not normalized_feed_id.isdigit():
+        raise ValueError("Feed ID must contain only digits.")
+    retained_dates: list[date] = []
+    for value in days:
+        if str(value.get("feed_id") or "") != normalized_feed_id:
+            continue
+        try:
+            retained_dates.append(date.fromisoformat(str(value.get("archive_date") or "")))
+        except ValueError:
+            continue
+    if not retained_dates:
+        raise ValueError(
+            f"No locally retained feed days exist for feed {normalized_feed_id}."
+        )
+    return min(retained_dates), max(retained_dates)
+
+
 def build_archive_question_coverage(
     days: list[dict[str, Any]],
     feed_id: str,
@@ -589,13 +663,18 @@ def build_archive_question_coverage(
     )
     if local_processing_dates:
         summary += (
-            " Local processing needed: "
-            + ", ".join(local_processing_dates)
+            f" Local processing needed for {len(local_processing_dates)} day(s): "
+            + describe_archive_date_ranges(local_processing_dates)
             + "."
         )
     if missing_audio_dates:
-        summary += " No retained audio: " + ", ".join(missing_audio_dates) + "."
+        summary += (
+            f" No retained audio for {len(missing_audio_dates)} day(s): "
+            + describe_archive_date_ranges(missing_audio_dates)
+            + "."
+        )
     return {
+        "scope": "range",
         "feed_id": normalized_feed_id,
         "start_date": start_date.isoformat(),
         "end_date": end_date.isoformat(),
@@ -604,11 +683,19 @@ def build_archive_question_coverage(
         "question_ready_day_count": len(question_ready_dates),
         "analyzed_day_count": len(analyzed_dates),
         "audio_dates": audio_dates,
+        "audio_ranges": compact_archive_date_ranges(audio_dates),
         "question_ready_dates": question_ready_dates,
+        "question_ready_ranges": compact_archive_date_ranges(question_ready_dates),
         "analyzed_dates": analyzed_dates,
+        "analyzed_ranges": compact_archive_date_ranges(analyzed_dates),
         "local_processing_dates": local_processing_dates,
+        "local_processing_ranges": compact_archive_date_ranges(
+            local_processing_dates
+        ),
         "missing_audio_dates": missing_audio_dates,
+        "missing_audio_ranges": compact_archive_date_ranges(missing_audio_dates),
         "unavailable_dates": unavailable_dates,
+        "unavailable_ranges": compact_archive_date_ranges(unavailable_dates),
         "complete_coverage": not unavailable_dates,
         "summary": summary,
     }

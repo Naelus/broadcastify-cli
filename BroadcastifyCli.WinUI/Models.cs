@@ -719,6 +719,9 @@ internal sealed record FeedSchedule
     [JsonPropertyName("backfill_start_date")]
     public string BackfillStartDate { get; init; } = "";
 
+    [JsonPropertyName("recurring_catch_up")]
+    public bool RecurringCatchUp { get; init; }
+
     [JsonPropertyName("job")]
     public JobRequest Job { get; init; } = new();
 
@@ -745,7 +748,8 @@ internal sealed record FeedSchedule
 
     public string ScheduleSummary => string.IsNullOrWhiteSpace(BackfillStartDate)
         ? $"Daily at {RunTimeLocal} · revisit {LookbackDays} day{(LookbackDays == 1 ? "" : "s")}"
-        : $"Daily at {RunTimeLocal} · revisit {LookbackDays} day{(LookbackDays == 1 ? "" : "s")} · catch up from {BackfillStartDate}";
+        : $"Daily at {RunTimeLocal} · revisit {LookbackDays} day{(LookbackDays == 1 ? "" : "s")} · "
+            + $"{(RecurringCatchUp ? "recurring catch-up" : "catch up once")} from {BackfillStartDate}";
 
     public string StateSummary => string.IsNullOrWhiteSpace(Message)
         ? State.Replace('_', ' ')
@@ -768,6 +772,9 @@ internal sealed record FeedScheduleSaveRequest
 
     [JsonPropertyName("backfill_start_date")]
     public string BackfillStartDate { get; init; } = "";
+
+    [JsonPropertyName("recurring_catch_up")]
+    public bool RecurringCatchUp { get; init; }
 
     [JsonPropertyName("job")]
     public JobRequest Job { get; init; } = new();
@@ -1702,6 +1709,9 @@ internal sealed record ArchiveQuestionRequest : AnalysisProviderRequest
 
 public sealed record ArchiveQuestionCoverage
 {
+    [JsonPropertyName("scope")]
+    public string Scope { get; init; } = "range";
+
     [JsonPropertyName("feed_id")]
     public string FeedId { get; init; } = "";
 
@@ -1726,14 +1736,26 @@ public sealed record ArchiveQuestionCoverage
     [JsonPropertyName("question_ready_dates")]
     public List<string> QuestionReadyDates { get; init; } = [];
 
+    [JsonPropertyName("question_ready_ranges")]
+    public List<string> QuestionReadyRanges { get; init; } = [];
+
     [JsonPropertyName("local_processing_dates")]
     public List<string> LocalProcessingDates { get; init; } = [];
+
+    [JsonPropertyName("local_processing_ranges")]
+    public List<string> LocalProcessingRanges { get; init; } = [];
 
     [JsonPropertyName("missing_audio_dates")]
     public List<string> MissingAudioDates { get; init; } = [];
 
+    [JsonPropertyName("missing_audio_ranges")]
+    public List<string> MissingAudioRanges { get; init; } = [];
+
     [JsonPropertyName("unavailable_dates")]
     public List<string> UnavailableDates { get; init; } = [];
+
+    [JsonPropertyName("unavailable_ranges")]
+    public List<string> UnavailableRanges { get; init; } = [];
 
     [JsonPropertyName("complete_coverage")]
     public bool CompleteCoverage { get; init; }

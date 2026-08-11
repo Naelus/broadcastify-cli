@@ -278,6 +278,9 @@ def test_native_library_shows_feed_coverage_and_named_archive_chat() -> None:
     assert names["ArchiveChatList"].attrib["SelectionMode"] == "None"
     assert names["AskButton"].attrib["Content"] == "Send"
     assert names["UseQuestionMonthButton"].attrib["Content"] == "Use selected month"
+    assert names["UseEntireQuestionFeedButton"].attrib["Content"] == (
+        "Use entire downloaded feed"
+    )
     assert names["CheckQuestionCoverageButton"].attrib["Content"] == "Check downloaded coverage"
     assert names["QuestionCoverageInfoBar"].attrib["IsOpen"] == "True"
 
@@ -290,6 +293,8 @@ def test_native_library_shows_feed_coverage_and_named_archive_chat() -> None:
     assert "ShowResumeAllOptionsAsync" in native
     assert "HandleQuestionWorkerMessage" in native
     assert "ApplyQuestionMonthAsync" in native
+    assert "ApplyEntireQuestionFeedAsync" in native
+    assert "AskFeedHotspotsExample_Click" in native
     assert "RefreshQuestionCoverageAsync" in native
     assert "QuestionReadyDayCount" in native
     assert "_pipelineCancellation" in native
@@ -302,6 +307,7 @@ def test_native_library_shows_feed_coverage_and_named_archive_chat() -> None:
     assert 'JsonPropertyName("history")' in models
     assert 'JsonPropertyName("output_dir")' in models
     assert 'JsonPropertyName("question_ready_dates")' in models
+    assert 'JsonPropertyName("question_ready_ranges")' in models
     assert 'JsonPropertyName("coverage")' in models
 
     worker = (
@@ -309,6 +315,7 @@ def test_native_library_shows_feed_coverage_and_named_archive_chat() -> None:
     ).read_text(encoding="utf-8")
     assert '"question-coverage"' in worker
     assert "GetArchiveQuestionCoverageAsync" in worker
+    assert "GetEntireFeedQuestionCoverageAsync" in worker
 
     web_html = (
         ROOT / "broadcastify_cli" / "web_static" / "index.html"
@@ -318,8 +325,11 @@ def test_native_library_shows_feed_coverage_and_named_archive_chat() -> None:
     ).read_text(encoding="utf-8")
     assert 'id="askMonth"' in web_html
     assert 'id="useAskMonthButton"' in web_html
+    assert 'id="useAskEntireFeedButton"' in web_html
+    assert 'id="askFeedHotspotsButton"' in web_html
     assert "coverage.question_ready_day_count" in web_script
     assert "The answer will report retained coverage gaps" in web_script
+    assert "useEntireDownloadedFeed" in web_script
 
 
 def test_native_and_web_distinguish_working_storage_and_stale_transcripts() -> None:
@@ -416,6 +426,8 @@ def test_windows_startup_is_visible_configurable_and_recovery_aware() -> None:
     assert "Recovered {recovered} interrupted scheduled feed" in window
     assert 'Header = "Catch up from (optional)"' in window
     assert "BackfillStartDate = backfillPicker.Date" in window
+    assert "RecurringCatchUp = recurringCatchUpBox.IsChecked" in window
+    assert "suggestRecurringCatchUp: true" in window
     assert "result?.MissingDays.Count" in window
     assert 'Status = waitingForQuota' in window
     assert "Task<int> RecoverFeedSchedulesAsync" in worker
