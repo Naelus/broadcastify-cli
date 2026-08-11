@@ -56,6 +56,9 @@ incident set, or area profile changes.
 
 The native **Ask the archive** surface selects feeds by friendly name and keeps
 a bounded recent conversation so follow-up phrases can refer to the prior turn.
+Its visibly labeled question-scope controls use narrow-window rows, and **New
+chat** returns to those controls instead of focusing the message box and
+scrolling the month selector out of view.
 Its month picker maps a past month to its complete calendar range and maps the
 current month through today. An entire-feed action selects the earliest through
 latest locally retained day while keeping internal gaps explicit. A local coverage check distinguishes retained

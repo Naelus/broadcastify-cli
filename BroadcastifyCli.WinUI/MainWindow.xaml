@@ -531,7 +531,7 @@
                                     </ScrollViewer>
                                 </TabViewItem>
                                 <TabViewItem Header="Ask the archive" IsClosable="False">
-                                    <ScrollViewer Padding="8">
+                                    <ScrollViewer x:Name="ArchiveChatScroll" Padding="8">
                                         <StackPanel Spacing="12" MaxWidth="900" HorizontalAlignment="Stretch">
                                             <Grid ColumnSpacing="10">
                                                 <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
@@ -543,36 +543,46 @@
                                                 <Button x:Name="ClearArchiveChatButton" Grid.Column="1" Content="New chat"
                                                         VerticalAlignment="Center" Click="ClearArchiveChat_Click" />
                                             </Grid>
-                                            <Grid ColumnSpacing="10">
-                                                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                                                <DatePicker x:Name="QuestionMonthPicker" Header="Month (choose any date)" DateChanged="QuestionRange_DateChanged" />
-                                                <Button x:Name="UseQuestionMonthButton" Grid.Column="1" Content="Use selected month"
-                                                        VerticalAlignment="Bottom" Click="UseQuestionMonth_Click" />
-                                                <Button x:Name="UseEntireQuestionFeedButton" Grid.Column="2" Content="Use entire downloaded feed"
-                                                        VerticalAlignment="Bottom" Click="UseEntireQuestionFeed_Click" />
-                                                <Button x:Name="CheckQuestionCoverageButton" Grid.Column="3" Content="Check downloaded coverage"
-                                                        VerticalAlignment="Bottom" Click="CheckQuestionCoverage_Click" />
-                                                <TextBlock Grid.Column="4" Text="The current month ends at today. Entire-feed scope uses the earliest-to-latest locally retained span and keeps internal gaps visible. No archive request is made."
-                                                           TextWrapping="Wrap" VerticalAlignment="Bottom"
-                                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                            </Grid>
-                                            <Grid ColumnSpacing="10">
-                                                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                                                <DatePicker x:Name="QuestionStartDatePicker" Header="Start date" DateChanged="QuestionRange_DateChanged" />
-                                                <DatePicker x:Name="QuestionEndDatePicker" Grid.Column="1" Header="End date" DateChanged="QuestionRange_DateChanged" />
-                                                <TextBlock Grid.Column="2" Text="Answers use the configured analysis provider (local Gemma 4 12B Q4 by default), retrieved transcript passages, and saved incident records."
-                                                           TextWrapping="Wrap" VerticalAlignment="Bottom"
-                                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                            </Grid>
+                                            <StackPanel x:Name="ArchiveQuestionScopePanel" Spacing="8">
+                                                <TextBlock Text="Question scope" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                                                <TextBlock Text="Choose a calendar month, the entire downloaded feed, or custom start and end dates."
+                                                           TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                <Grid ColumnSpacing="10">
+                                                    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                                    <DatePicker x:Name="QuestionMonthPicker" Header="Month (choose any date)" DateChanged="QuestionRange_DateChanged" />
+                                                    <Button x:Name="UseQuestionMonthButton" Grid.Column="1" Content="Use selected month"
+                                                            VerticalAlignment="Bottom" Click="UseQuestionMonth_Click" />
+                                                </Grid>
+                                                <StackPanel Orientation="Horizontal" Spacing="10">
+                                                    <Button x:Name="UseEntireQuestionFeedButton" Content="Use entire downloaded feed"
+                                                            Click="UseEntireQuestionFeed_Click" />
+                                                    <Button x:Name="CheckQuestionCoverageButton" Content="Check downloaded coverage"
+                                                            Click="CheckQuestionCoverage_Click" />
+                                                </StackPanel>
+                                                <Grid ColumnSpacing="10">
+                                                    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                                    <DatePicker x:Name="QuestionStartDatePicker" Header="Start date" DateChanged="QuestionRange_DateChanged" />
+                                                    <DatePicker x:Name="QuestionEndDatePicker" Grid.Column="1" Header="End date" DateChanged="QuestionRange_DateChanged" />
+                                                </Grid>
+                                                <TextBlock Text="The current month ends at today. Entire-feed scope uses the earliest-to-latest locally retained span and keeps internal gaps visible. Coverage checks use only local files and records; no archive request is made."
+                                                           TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                <TextBlock Text="Answers use the configured analysis provider (local Gemma 4 12B Q4 by default), retrieved transcript passages, and saved incident records."
+                                                           TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                            </StackPanel>
                                             <InfoBar x:Name="QuestionCoverageInfoBar" IsOpen="True" IsClosable="False" Severity="Informational"
                                                      Title="Downloaded coverage not checked"
                                                      Message="Choose a feed and month, then check which retained days are ready for questions." />
-                                            <StackPanel Orientation="Horizontal" Spacing="8">
-                                                <Button Content="How many shots-fired reports?" Click="AskShotsExample_Click" />
-                                                <Button Content="Craziest reported events" Click="AskCraziestExample_Click" />
-                                                <Button Content="Most important this week" Click="AskImportantExample_Click" />
-                                                <Button Content="Summarize this month" Click="AskMonthExample_Click" />
-                                                <Button Content="Find whole-feed hot spots" Click="AskFeedHotspotsExample_Click" />
+                                            <StackPanel x:Name="ArchiveQuestionStarterPanel" Spacing="8">
+                                                <TextBlock Text="One-click question starters" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                                    <Button Content="How many shots-fired reports?" Click="AskShotsExample_Click" />
+                                                    <Button Content="Craziest reported events" Click="AskCraziestExample_Click" />
+                                                    <Button Content="Most important this week" Click="AskImportantExample_Click" />
+                                                </StackPanel>
+                                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                                    <Button Content="Summarize this month" Click="AskMonthExample_Click" />
+                                                    <Button Content="Find whole-feed hot spots" Click="AskFeedHotspotsExample_Click" />
+                                                </StackPanel>
                                             </StackPanel>
                                             <ListView x:Name="ArchiveChatList" SelectionMode="None" MinHeight="240" MaxHeight="440">
                                                 <ListView.ItemTemplate>

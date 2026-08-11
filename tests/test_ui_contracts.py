@@ -276,6 +276,9 @@ def test_native_library_shows_feed_coverage_and_named_archive_chat() -> None:
     assert names["LibraryFeedCoverageList"].attrib["SelectionMode"] == "Single"
     assert names["AnalysisFeedCombo"].attrib["DisplayMemberPath"] == "FeedLabel"
     assert names["ArchiveChatList"].attrib["SelectionMode"] == "None"
+    assert names["ArchiveChatScroll"].tag.endswith("ScrollViewer")
+    assert names["ArchiveQuestionScopePanel"].tag.endswith("StackPanel")
+    assert names["ArchiveQuestionStarterPanel"].tag.endswith("StackPanel")
     assert names["AskButton"].attrib["Content"] == "Send"
     assert names["UseQuestionMonthButton"].attrib["Content"] == "Use selected month"
     assert names["UseEntireQuestionFeedButton"].attrib["Content"] == (
@@ -296,6 +299,11 @@ def test_native_library_shows_feed_coverage_and_named_archive_chat() -> None:
     assert "ApplyEntireQuestionFeedAsync" in native
     assert "AskFeedHotspotsExample_Click" in native
     assert "RefreshQuestionCoverageAsync" in native
+    clear_chat = native.split(
+        "private void ClearArchiveChat_Click", maxsplit=1
+    )[1].split("private void AskShotsExample_Click", maxsplit=1)[0]
+    assert "ArchiveChatScroll.ChangeView(null, 0, null, true)" in clear_chat
+    assert "QuestionBox.Focus" not in clear_chat
     assert "QuestionReadyDayCount" in native
     assert "_pipelineCancellation" in native
     assert "_questionCancellation" in native

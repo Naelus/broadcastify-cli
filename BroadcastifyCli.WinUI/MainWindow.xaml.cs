@@ -6115,7 +6115,7 @@ public sealed partial class MainWindow : Window
         }
         _archiveChatMessages.Clear();
         ArchiveChatStatusText.Text = "New chat ready. Saved evidence and prior Q&A audit records were not deleted.";
-        QuestionBox.Focus(FocusState.Programmatic);
+        ArchiveChatScroll.ChangeView(null, 0, null, true);
     }
 
     private void AskShotsExample_Click(object sender, RoutedEventArgs e)
