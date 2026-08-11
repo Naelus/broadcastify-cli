@@ -22,6 +22,7 @@ start.
 - [Area Watch, regional leads, and neighborhood subscriptions](features/area-watch.md)
 - [Area coverage semantics](area-coverage.md)
 - [Trusted-LAN archive sharing](lan-archive-sync.md)
+- [Product regression gate and end-to-end retained workflows](features/product-regression-gate.md)
 
 ## Design decisions
 

@@ -4,4 +4,11 @@
           Condition="'$(DesignTimeBuild)' != 'true' and ('$(MSBuildProjectName)' == 'BroadcastifyCli.WinUI' or '$(MSBuildProjectName)' == 'BroadcastifyCli.WindowsML')">
     <Exec Command="powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildThisFileDirectory)scripts\assert_committed_build_source.ps1&quot; -Quiet" />
   </Target>
+
+  <Target Name="RunProductRegressionGate"
+          BeforeTargets="PrepareForBuild"
+          DependsOnTargets="RequireCommittedBuildSource"
+          Condition="'$(DesignTimeBuild)' != 'true' and '$(MSBuildProjectName)' == 'BroadcastifyCli.WinUI'">
+    <Exec Command="powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildThisFileDirectory)scripts\run_product_regression_gate.ps1&quot;" />
+  </Target>
 </Project>

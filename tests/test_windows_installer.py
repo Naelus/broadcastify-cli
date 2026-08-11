@@ -326,3 +326,28 @@ def test_maintenance_update_uses_checkpointed_shutdown_without_force_kill() -> N
     assert "[switch]$Restart" in install
     assert "if ($Restart)" in install
     assert "LAUNCHAFTERINSTALL" not in install
+
+
+def test_every_desktop_build_requires_the_full_offline_product_gate() -> None:
+    targets = (ROOT / "Directory.Build.targets").read_text(encoding="utf-8")
+    gate = (ROOT / "scripts" / "run_product_regression_gate.ps1").read_text(
+        encoding="utf-8"
+    )
+    workflow = (
+        ROOT / ".github" / "workflows" / "windows-release.yml"
+    ).read_text(encoding="utf-8")
+    installer = (
+        ROOT / "scripts" / "build_windows_installer.ps1"
+    ).read_text(encoding="utf-8")
+
+    assert 'Name="RunProductRegressionGate"' in targets
+    assert 'DependsOnTargets="RequireCommittedBuildSource"' in targets
+    assert "scripts\\run_product_regression_gate.ps1" in targets
+    assert "tests\\e2e\\test_product_workflows.py" in gate
+    assert '$arguments = @("-m", "pytest", "-q")' in gate
+    assert "BROADCASTIFY_PRODUCT_REGRESSION_GATE" in gate
+    assert "BROADCASTIFY_USERNAME" in gate
+    assert "BROADCASTIFY_SECURE_PASSWORD" in gate
+    assert 'pip install --disable-pip-version-check -e ".[dev]"' in workflow
+    assert "dotnet publish $project" in installer
+    assert "ProductRegressionGate=false" not in installer

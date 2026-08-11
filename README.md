@@ -77,9 +77,15 @@ py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install --upgrade pip
 .\.venv\Scripts\python.exe -m pip install torch==2.11.0+cu128 torchaudio==2.11.0+cu128 --index-url https://download.pytorch.org/whl/cu128
 .\.venv\Scripts\python.exe -m pip install -e ".[transcription,analysis,dev]"
+.\scripts\run_product_regression_gate.ps1 -Focused
 dotnet build .\BroadcastifyCli.WinUI\BroadcastifyCli.WinUI.csproj -c Release
 & ".\BroadcastifyCli.WinUI\bin\Release\net10.0-windows10.0.26100.0\win-x64\Broadcastify Desktop.exe"
 ```
+
+Every native build requires a clean committed source revision and automatically
+runs the full offline regression suite before compilation. See the
+[product regression gate](docs/features/product-regression-gate.md) for the
+end-to-end workflows and release dependency.
 
 In the app:
 
@@ -142,6 +148,7 @@ Useful starting points:
 - [Why WinUI 3 plus a browser companion](docs/decisions/ui-and-platforms.md)
 - [Evidence and privacy policy](docs/decisions/evidence-and-privacy.md)
 - [Archive acquisition and quota behavior](docs/features/archive-acquisition.md)
+- [Product regression gate](docs/features/product-regression-gate.md)
 - [Transcription and diarization](docs/features/audio-processing.md)
 - [Incident analysis and evidence](docs/features/evidence-analysis.md)
 - [Area Watch and regional leads](docs/features/area-watch.md)
