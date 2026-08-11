@@ -261,7 +261,9 @@ def test_whisper_cpp_preparation_pins_and_verifies_vad(
         )
         return str(target)
 
-    monkeypatch.setattr("huggingface_hub.hf_hub_download", fake_download)
+    hub = ModuleType("huggingface_hub")
+    hub.hf_hub_download = fake_download  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "huggingface_hub", hub)
 
     result = prepare_whisper_cpp_model("tiny")
     reused = prepare_whisper_cpp_model("tiny")

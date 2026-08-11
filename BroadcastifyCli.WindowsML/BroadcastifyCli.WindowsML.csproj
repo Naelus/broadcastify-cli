@@ -10,8 +10,8 @@
     <WindowsPackageType>None</WindowsPackageType>
     <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
     <SelfContained>true</SelfContained>
-    <Version>0.4.28</Version>
-    <FileVersion>0.4.28.0</FileVersion>
+    <Version>0.4.29</Version>
+    <FileVersion>0.4.29.0</FileVersion>
     <RuntimeFlavor Condition="'$(RuntimeFlavor)' == ''">winml</RuntimeFlavor>
     <DefineConstants Condition="'$(RuntimeFlavor)' == 'winml'">$(DefineConstants);WINDOWS_ML_CATALOG</DefineConstants>
   </PropertyGroup>
