@@ -47,16 +47,18 @@ incidents for the day.
 ```powershell
 .\.venv\Scripts\broadcastify-analysis.exe ask `
   --feed-id 90001 `
-  --start-date 2026-07-11 `
-  --end-date 2026-07-12 `
-  --question "What serious incidents were reported, and which remained unconfirmed?"
+  --start-date 2026-07-01 `
+  --end-date 2026-07-31 `
+  --question "What serious incidents and recurring patterns were reported this month?"
 
 .\.venv\Scripts\broadcastify-analysis.exe summarize-week `
   --feed-id 90001 `
   --week-ending 2026-07-12
 ```
 
-Weekly briefs name missing dates and never treat missing coverage as inactivity.
+Range questions print local downloaded/question-ready coverage and retrieve only
+from current imported transcript dates. Weekly briefs name missing dates. Neither
+surface treats missing coverage as inactivity.
 
 ## Inspect saved results
 

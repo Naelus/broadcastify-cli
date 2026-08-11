@@ -88,6 +88,93 @@ def test_range_question_followup_includes_bounded_chat_context(
     assert "RETRIEVED TRANSCRIPT EVIDENCE:" in client.user
 
 
+def test_range_question_filters_to_ready_month_dates_and_owns_gap_limitation(
+    tmp_path: Path,
+) -> None:
+    ready_date = date(2026, 7, 1)
+    unavailable_date = date(2026, 7, 2)
+    ready_transcript = tmp_path / "ready.json"
+    unavailable_transcript = tmp_path / "unavailable.json"
+    ready_transcript.write_text(
+        json.dumps(
+            {
+                "model": "test",
+                "segments": [
+                    {
+                        "start": 1.0,
+                        "end": 3.0,
+                        "text": "A retained July report mentioned possible shots fired.",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    unavailable_transcript.write_text(
+        json.dumps(
+            {
+                "model": "test",
+                "segments": [
+                    {
+                        "start": 1.0,
+                        "end": 3.0,
+                        "text": "This unavailable date must never reach the model.",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class CoverageClient:
+        model = "fake-month-model"
+
+        def __init__(self) -> None:
+            self.user = ""
+
+        def chat_json(self, **kwargs: object) -> dict[str, object]:
+            self.user = str(kwargs["user"])
+            return {
+                "answer": "One possible report was retained [E1].",
+                "evidence_ids": ["E1"],
+                "limitations": [],
+            }
+
+    coverage = {
+        "feed_id": "90001",
+        "start_date": "2026-07-01",
+        "end_date": "2026-07-02",
+        "requested_day_count": 2,
+        "audio_day_count": 2,
+        "question_ready_day_count": 1,
+        "analyzed_day_count": 0,
+        "question_ready_dates": ["2026-07-01"],
+        "analyzed_dates": [],
+        "unavailable_dates": ["2026-07-02"],
+        "summary": "1/2 requested days are question-ready.",
+    }
+    client = CoverageClient()
+    with AnalysisStore(tmp_path / "analysis.sqlite3") as store:
+        store.import_transcript("90001", ready_date, ready_transcript)
+        store.import_transcript("90001", unavailable_date, unavailable_transcript)
+        result = RangeQuestionAnswerer(store, client).ask(
+            "90001",
+            ready_date,
+            unavailable_date,
+            "Were shots reported?",
+            coverage=coverage,
+        )
+
+    assert "A retained July report" in client.user
+    assert "must never reach the model" not in client.user
+    assert "LOCAL COVERAGE (authoritative)" in client.user
+    assert "Never interpret an unavailable date as a day with no activity" in client.user
+    assert result["coverage"] == coverage
+    assert result["limitations"] == [
+        "Partial retained coverage: no question-ready transcript for 2026-07-02."
+    ]
+
+
 def test_managed_llama_cpu_device_disables_every_gpu_layer() -> None:
     assert LlamaServerProcess(device="cpu")._offload_arguments() == [
         "--device",

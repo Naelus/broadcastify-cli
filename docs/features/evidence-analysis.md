@@ -56,6 +56,14 @@ incident set, or area profile changes.
 
 The native **Ask the archive** surface selects feeds by friendly name and keeps
 a bounded recent conversation so follow-up phrases can refer to the prior turn.
+Its month picker maps a past month to its complete calendar range and maps the
+current month through today. A local coverage check distinguishes retained
+audio, question-ready current transcripts, days still needing local processing,
+and dates with no retained audio. It never contacts Broadcastify. Questions use
+only the question-ready dates; partial coverage is injected into the model
+context and appended as a backend-owned limitation so an uncovered date cannot
+be described as a quiet day. Monthly retrieval considers a wider candidate set
+and favors date diversity before filling the remaining relevance-ranked slots.
 Earlier answers are context, never evidence: retrieval runs again for the
 current question and the response must cite the newly supplied E/I records.
 Questions and answers continue to be written to the local Q&A audit table.

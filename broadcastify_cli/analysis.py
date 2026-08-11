@@ -2736,6 +2736,7 @@ class SemanticIndexer:
         end_date: date,
         query: str,
         limit: int = 20,
+        archive_dates: Sequence[str] | None = None,
     ) -> list[dict[str, Any]]:
         import numpy as np
 
@@ -2749,7 +2750,11 @@ class SemanticIndexer:
         if norm:
             query_array = query_array / norm
         values = self.store.passage_embeddings(
-            feed_id, start_date, end_date, self.model_name
+            feed_id,
+            start_date,
+            end_date,
+            self.model_name,
+            archive_dates=archive_dates,
         )
         scored: list[dict[str, Any]] = []
         for value in values:
@@ -2794,6 +2799,7 @@ class RangeQuestionAnswerer:
         question: str,
         limit: int = 20,
         history: Sequence[dict[str, str]] | None = None,
+        coverage: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         conversation: list[dict[str, str]] = []
         for value in list(history or [])[-8:]:
@@ -2812,19 +2818,67 @@ class RangeQuestionAnswerer:
             ]
             + [question]
         )[-4_000:]
+        coverage_value = dict(coverage or {})
+        question_ready_dates = [
+            str(value)
+            for value in coverage_value.get("question_ready_dates", [])
+            if str(value)
+        ]
+        analyzed_dates = [
+            str(value)
+            for value in coverage_value.get("analyzed_dates", [])
+            if str(value)
+        ]
+        allowed_evidence_dates = question_ready_dates if coverage is not None else None
+        allowed_incident_dates = analyzed_dates if coverage is not None else None
+        final_limit = min(
+            40,
+            max(limit, len(question_ready_dates))
+            if coverage is not None
+            else limit,
+        )
+        candidate_limit = min(
+            200,
+            max(final_limit * 4, len(question_ready_dates) * 4),
+        )
         if self.indexer is not None:
             evidence = self.indexer.search(
-                feed_id, start_date, end_date, retrieval_query, limit=limit
+                feed_id,
+                start_date,
+                end_date,
+                retrieval_query,
+                limit=candidate_limit,
+                archive_dates=allowed_evidence_dates,
             )
         else:
             evidence = self.store.search_passages(
-                feed_id, start_date, end_date, retrieval_query, limit=limit
+                feed_id,
+                start_date,
+                end_date,
+                retrieval_query,
+                limit=candidate_limit,
+                archive_dates=allowed_evidence_dates,
             )
+        if coverage is not None and len(question_ready_dates) > 1:
+            diverse: list[dict[str, Any]] = []
+            overflow: list[dict[str, Any]] = []
+            per_day: dict[str, int] = {}
+            for value in evidence:
+                archive_value = str(value.get("archive_date") or "")
+                if per_day.get(archive_value, 0) < 2:
+                    diverse.append(value)
+                    per_day[archive_value] = per_day.get(archive_value, 0) + 1
+                else:
+                    overflow.append(value)
+            evidence = (diverse + overflow)[:final_limit]
+        else:
+            evidence = evidence[:final_limit]
         incidents = self.store.get_incidents(
             feed_id,
             start_date,
             end_date,
             prompt_version=PROMPT_VERSION,
+            archive_dates=allowed_incident_dates,
         )
         evidence_lines = []
         evidence_records = []
@@ -2871,6 +2925,23 @@ class RangeQuestionAnswerer:
             user=(
                 f"Feed: {feed_id}\nRange: {start_date} through {end_date}\n"
                 + (
+                    "LOCAL COVERAGE (authoritative):\n"
+                    + str(coverage_value.get("summary") or "")
+                    + "\nQuestion-ready dates: "
+                    + (", ".join(question_ready_dates) or "none")
+                    + "\nUnavailable dates: "
+                    + (
+                        ", ".join(
+                            str(value)
+                            for value in coverage_value.get("unavailable_dates", [])
+                        )
+                        or "none"
+                    )
+                    + "\nNever interpret an unavailable date as a day with no activity.\n\n"
+                    if coverage is not None
+                    else ""
+                )
+                + (
                     "EARLIER CHAT:\n"
                     + "\n".join(conversation_lines)
                     + "\n\n"
@@ -2902,11 +2973,29 @@ class RangeQuestionAnswerer:
             evidence_records,
             self.client.model,
         )
+        limitations = [
+            str(value).strip()
+            for value in result.get("limitations", [])
+            if str(value).strip()
+        ]
+        unavailable_dates = [
+            str(value)
+            for value in coverage_value.get("unavailable_dates", [])
+            if str(value)
+        ]
+        if unavailable_dates:
+            limitations.insert(
+                0,
+                "Partial retained coverage: no question-ready transcript for "
+                + ", ".join(unavailable_dates)
+                + ".",
+            )
         return {
             "answer": answer,
             "evidence_ids": cited_ids,
-            "limitations": list(result.get("limitations", [])),
+            "limitations": limitations,
             "retrieved": evidence_records,
+            "coverage": coverage_value,
         }
 
 

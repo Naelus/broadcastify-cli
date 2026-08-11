@@ -23,7 +23,11 @@ from .analysis_providers import (
     AnalysisProviderConfig,
     open_analysis_client,
 )
-from .library import require_current_range_evidence
+from .library import (
+    build_archive_question_coverage,
+    require_current_range_evidence,
+    scan_local_library,
+)
 from .storage import AnalysisStore
 
 
@@ -210,6 +214,16 @@ def ask(
         analysis_device,
     )
     with AnalysisStore(db) as store:
+        coverage = build_archive_question_coverage(
+            scan_local_library(db.parent, db),
+            feed_id,
+            start_date,
+            end_date,
+        )
+        if int(coverage["question_ready_day_count"]) == 0:
+            raise click.ClickException(
+                "No question-ready retained transcripts exist for this feed and range."
+            )
         try:
             require_current_range_evidence(
                 store,
@@ -218,6 +232,7 @@ def ask(
                 end_date,
                 require_analysis=False,
                 purpose="Archive question answering",
+                archive_dates=coverage["question_ready_dates"],
             )
         except ValueError as exc:
             raise click.ClickException(str(exc)) from exc
@@ -232,8 +247,15 @@ def ask(
                 store,
                 client,
                 indexer=indexer,
-            ).ask(feed_id, start_date, end_date, question)
+            ).ask(
+                feed_id,
+                start_date,
+                end_date,
+                question,
+                coverage=coverage,
+            )
     console.print(result["answer"])
+    console.print("[dim]Coverage: " + str(coverage["summary"]) + "[/dim]")
     if result["limitations"]:
         console.print("[dim]Limitations: " + "; ".join(result["limitations"]) + "[/dim]")
 

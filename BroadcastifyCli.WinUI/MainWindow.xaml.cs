@@ -159,6 +159,7 @@ public sealed partial class MainWindow : Window
         EndDatePicker.Date = today;
         QuestionStartDatePicker.Date = today;
         QuestionEndDatePicker.Date = today;
+        QuestionMonthPicker.Date = today;
         WeekEndingPicker.Date = today;
         AreaStartDatePicker.Date = today;
         AreaEndDatePicker.Date = today;
@@ -5329,6 +5330,7 @@ public sealed partial class MainWindow : Window
         {
             _archiveChatMessages.Clear();
             ArchiveChatStatusText.Text = "New feed selected; start a new evidence chat.";
+            ResetQuestionCoverage();
         }
     }
 
@@ -5353,6 +5355,7 @@ public sealed partial class MainWindow : Window
         {
             _archiveChatMessages.Clear();
             ArchiveChatStatusText.Text = "New feed selected; start a new evidence chat.";
+            ResetQuestionCoverage();
         }
         await RefreshAnalysisDaysAsync();
         UpdateCommandAvailability();
@@ -5767,6 +5770,120 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    private void QuestionRange_DateChanged(
+        object sender,
+        DatePickerValueChangedEventArgs e) =>
+        ResetQuestionCoverage();
+
+    private void ResetQuestionCoverage()
+    {
+        if (QuestionCoverageInfoBar is null)
+        {
+            return;
+        }
+        QuestionCoverageInfoBar.Severity = InfoBarSeverity.Informational;
+        QuestionCoverageInfoBar.Title = "Downloaded coverage not checked";
+        QuestionCoverageInfoBar.Message =
+            "Check retained coverage before asking; this uses only local files and records.";
+    }
+
+    private void ShowQuestionCoverage(ArchiveQuestionCoverage coverage)
+    {
+        QuestionCoverageInfoBar.Severity = coverage.QuestionReadyDayCount == 0
+            ? InfoBarSeverity.Warning
+            : coverage.CompleteCoverage
+                ? InfoBarSeverity.Success
+                : InfoBarSeverity.Informational;
+        QuestionCoverageInfoBar.Title =
+            $"{coverage.QuestionReadyDayCount:N0}/{coverage.RequestedDayCount:N0} day(s) ready for questions";
+        QuestionCoverageInfoBar.Message = coverage.DisplaySummary
+            + " Answers use only question-ready dates and treat every other date as a coverage gap.";
+    }
+
+    private async Task<ArchiveQuestionCoverage?> RefreshQuestionCoverageAsync()
+    {
+        if (_worker is null)
+        {
+            return null;
+        }
+        var feedId = AnalysisFeedBox.Text.Trim();
+        var startDate = QuestionStartDatePicker.Date.Date;
+        var endDate = QuestionEndDatePicker.Date.Date;
+        if (string.IsNullOrWhiteSpace(feedId))
+        {
+            ResetQuestionCoverage();
+            QuestionCoverageInfoBar.Severity = InfoBarSeverity.Warning;
+            QuestionCoverageInfoBar.Title = "Choose a feed";
+            return null;
+        }
+        if (startDate > endDate)
+        {
+            ResetQuestionCoverage();
+            QuestionCoverageInfoBar.Severity = InfoBarSeverity.Warning;
+            QuestionCoverageInfoBar.Title = "Invalid date range";
+            QuestionCoverageInfoBar.Message = "Start date must be on or before end date.";
+            return null;
+        }
+        QuestionCoverageInfoBar.Severity = InfoBarSeverity.Informational;
+        QuestionCoverageInfoBar.Title = "Checking retained coverage";
+        QuestionCoverageInfoBar.Message =
+            "Reading local files and evidence records; no archive request is made.";
+        try
+        {
+            using var cancellation = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+            var coverage = await _worker.GetArchiveQuestionCoverageAsync(
+                PersistedOutputDirectory(),
+                feedId,
+                startDate.ToString("yyyy-MM-dd"),
+                endDate.ToString("yyyy-MM-dd"),
+                cancellation.Token);
+            if (coverage is null)
+            {
+                throw new InvalidOperationException(
+                    "The worker did not return retained coverage.");
+            }
+            ShowQuestionCoverage(coverage);
+            return coverage;
+        }
+        catch (Exception exception)
+        {
+            QuestionCoverageInfoBar.Severity = InfoBarSeverity.Warning;
+            QuestionCoverageInfoBar.Title = "Coverage check failed";
+            QuestionCoverageInfoBar.Message = exception.Message;
+            AppendLog($"Question coverage: {exception.Message}");
+            return null;
+        }
+    }
+
+    private async Task<bool> ApplyQuestionMonthAsync()
+    {
+        var selected = QuestionMonthPicker.Date.Date;
+        var monthStart = new DateTime(selected.Year, selected.Month, 1);
+        var today = DateTime.Today;
+        if (monthStart > today)
+        {
+            await ShowMessageAsync(
+                "Future month unavailable",
+                "Choose the current month or an earlier month with retained archive data.");
+            return false;
+        }
+        var monthEnd = monthStart.AddMonths(1).AddDays(-1);
+        if (monthEnd > today)
+        {
+            monthEnd = today;
+        }
+        QuestionStartDatePicker.Date = new DateTimeOffset(monthStart);
+        QuestionEndDatePicker.Date = new DateTimeOffset(monthEnd);
+        await RefreshQuestionCoverageAsync();
+        return true;
+    }
+
+    private async void UseQuestionMonth_Click(object sender, RoutedEventArgs e) =>
+        await ApplyQuestionMonthAsync();
+
+    private async void CheckQuestionCoverage_Click(object sender, RoutedEventArgs e) =>
+        await RefreshQuestionCoverageAsync();
+
     private async void Ask_Click(object sender, RoutedEventArgs e)
     {
         if (_worker is null || _questionCancellation is not null)
@@ -5785,6 +5902,18 @@ public sealed partial class MainWindow : Window
         if (startDate > endDate)
         {
             await ShowMessageAsync("Invalid date range", "Start date must be on or before end date.");
+            return;
+        }
+        var coverage = await RefreshQuestionCoverageAsync();
+        if (coverage is null)
+        {
+            return;
+        }
+        if (coverage.QuestionReadyDayCount == 0)
+        {
+            await ShowMessageAsync(
+                "No question-ready days",
+                "This range has no current retained transcripts. Finish local processing for at least one downloaded day, then ask again.");
             return;
         }
 
@@ -5824,6 +5953,7 @@ public sealed partial class MainWindow : Window
                     FeedId = feedId,
                     StartDate = startDate.ToString("yyyy-MM-dd"),
                     EndDate = endDate.ToString("yyyy-MM-dd"),
+                    OutputDirectory = PersistedOutputDirectory(),
                     Question = question,
                     History = history,
                 }),
@@ -5841,7 +5971,12 @@ public sealed partial class MainWindow : Window
                     Content = answer.Answer,
                     EvidenceIds = answer.EvidenceIds,
                     Limitations = answer.Limitations,
+                    Coverage = answer.Coverage,
                 });
+            if (answer is not null)
+            {
+                ShowQuestionCoverage(answer.Coverage);
+            }
             ArchiveChatList.ScrollIntoView(_archiveChatMessages[^1]);
             ArchiveChatStatusText.Text =
                 "Answer complete. Follow-up messages retain the recent chat context but must cite fresh archive evidence.";
@@ -5899,6 +6034,17 @@ public sealed partial class MainWindow : Window
         var end = QuestionEndDatePicker.Date.Date;
         QuestionStartDatePicker.Date = end.AddDays(-6);
         QuestionBox.Text = "What were the most important reported events in the past week, ranked by public-safety significance with citations and coverage gaps?";
+        QuestionBox.Focus(FocusState.Programmatic);
+    }
+
+    private async void AskMonthExample_Click(object sender, RoutedEventArgs e)
+    {
+        if (!await ApplyQuestionMonthAsync())
+        {
+            return;
+        }
+        QuestionBox.Text =
+            "Across the retained days in this month, what were the most important reported events and recurring patterns? Rank them by public-safety significance, cite the supporting evidence, and clearly separate coverage gaps from days with no supported reports.";
         QuestionBox.Focus(FocusState.Programmatic);
     }
 
@@ -6794,6 +6940,11 @@ public sealed partial class MainWindow : Window
         AnalyzeSelectedButton.IsEnabled = interactive && pipelineIdle;
         ReloadReportButton.IsEnabled = interactive;
         AskButton.IsEnabled = interactive
+            && _questionCancellation is null
+            && !string.IsNullOrWhiteSpace(AnalysisFeedBox.Text);
+        UseQuestionMonthButton.IsEnabled = interactive
+            && _questionCancellation is null;
+        CheckQuestionCoverageButton.IsEnabled = interactive
             && _questionCancellation is null
             && !string.IsNullOrWhiteSpace(AnalysisFeedBox.Text);
         ClearArchiveChatButton.IsEnabled = interactive;

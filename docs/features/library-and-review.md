@@ -132,13 +132,18 @@ Review supports priority filters plus all-priority search, daily briefs,
 timestamped source quotes, exact and surrounding-context playback, local clip
 export, and range questions. The feed picker displays retained/scheduled feed
 names rather than requiring a numeric ID. **Ask the archive** is a multi-turn
-chat over one named feed and date range, with starter questions for shots
-reports, unusual events, and the most important events in a week. Recent turns
-help resolve follow-ups, but every new material claim must cite fresh E/I
-evidence for that turn. The configured provider is used—quantized local Gemma 4
-12B through llama.cpp by default—and each answer remains in the existing local
-Q&A audit history. Incident playback seeks within the generated clip, not an
-unrelated offset in the full day.
+chat over one named feed and date range. A month selector sets the full past
+calendar month or the current month through today, then previews how many days
+have downloaded audio and how many have a current imported transcript. Missing
+audio and locally unfinished dates remain explicit coverage gaps; they are
+excluded from retrieval and cannot be interpreted as days with no activity.
+Starter questions cover shots reports, unusual events, weekly importance, and
+a coverage-aware monthly summary. Recent turns help resolve follow-ups, but
+every new material claim must cite fresh E/I evidence for that turn. The
+configured provider is used—quantized local Gemma 4 12B through llama.cpp by
+default—and each answer remains in the existing local Q&A audit history.
+Incident playback seeks within the generated clip, not an unrelated offset in
+the full day.
 
 Archive acquisition, combination, ASR, diarization, and incident extraction run
 as a background pipeline. Navigation, Library browsing, reviewing completed

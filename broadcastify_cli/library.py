@@ -8,7 +8,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Sequence
 
 from .analysis import PROMPT_VERSION
 from .archive_cache import (
@@ -529,6 +529,88 @@ def build_library_resume_plan(
         "scope_through_current": bool(
             has_requested_range and requested_through_current
         ),
+    }
+
+
+def build_archive_question_coverage(
+    days: list[dict[str, Any]],
+    feed_id: str,
+    start_date: date,
+    end_date: date,
+) -> dict[str, Any]:
+    """Describe which retained days can safely support a range question."""
+
+    normalized_feed_id = str(feed_id or "").strip()
+    if not normalized_feed_id.isdigit():
+        raise ValueError("Feed ID must contain only digits.")
+    if start_date > end_date:
+        raise ValueError("Question start date must not be after its end date.")
+    requested_dates = [
+        start_date + timedelta(days=offset)
+        for offset in range((end_date - start_date).days + 1)
+    ]
+    states = {
+        str(value.get("archive_date") or ""): value
+        for value in days
+        if str(value.get("feed_id") or "") == normalized_feed_id
+        and start_date.isoformat()
+        <= str(value.get("archive_date") or "")
+        <= end_date.isoformat()
+    }
+    audio_dates: list[str] = []
+    question_ready_dates: list[str] = []
+    analyzed_dates: list[str] = []
+    local_processing_dates: list[str] = []
+    missing_audio_dates: list[str] = []
+    for requested_date in requested_dates:
+        archive_value = requested_date.isoformat()
+        state = states.get(archive_value)
+        has_audio = bool(state and state.get("has_combined"))
+        question_ready = bool(
+            state
+            and state.get("has_transcript")
+            and state.get("has_imported_transcript")
+        )
+        if has_audio:
+            audio_dates.append(archive_value)
+        if question_ready:
+            question_ready_dates.append(archive_value)
+            if bool(state and state.get("has_analysis")):
+                analyzed_dates.append(archive_value)
+        elif has_audio:
+            local_processing_dates.append(archive_value)
+        else:
+            missing_audio_dates.append(archive_value)
+    unavailable_dates = local_processing_dates + missing_audio_dates
+    requested_count = len(requested_dates)
+    summary = (
+        f"{len(question_ready_dates)}/{requested_count} requested days are "
+        f"question-ready; audio is retained for {len(audio_dates)}/{requested_count}."
+    )
+    if local_processing_dates:
+        summary += (
+            " Local processing needed: "
+            + ", ".join(local_processing_dates)
+            + "."
+        )
+    if missing_audio_dates:
+        summary += " No retained audio: " + ", ".join(missing_audio_dates) + "."
+    return {
+        "feed_id": normalized_feed_id,
+        "start_date": start_date.isoformat(),
+        "end_date": end_date.isoformat(),
+        "requested_day_count": requested_count,
+        "audio_day_count": len(audio_dates),
+        "question_ready_day_count": len(question_ready_dates),
+        "analyzed_day_count": len(analyzed_dates),
+        "audio_dates": audio_dates,
+        "question_ready_dates": question_ready_dates,
+        "analyzed_dates": analyzed_dates,
+        "local_processing_dates": local_processing_dates,
+        "missing_audio_dates": missing_audio_dates,
+        "unavailable_dates": unavailable_dates,
+        "complete_coverage": not unavailable_dates,
+        "summary": summary,
     }
 
 
@@ -1197,10 +1279,16 @@ def require_current_range_evidence(
     *,
     require_analysis: bool,
     purpose: str,
+    archive_dates: Sequence[str] | None = None,
 ) -> None:
     """Block DB consumers when retained files have moved to a newer revision."""
 
     normalized = list(dict.fromkeys(str(value) for value in feed_ids if str(value)))
+    allowed_dates = (
+        {str(value) for value in archive_dates if str(value)}
+        if archive_dates is not None
+        else None
+    )
     states = {
         (str(value["feed_id"]), str(value["archive_date"])): value
         for value in scan_local_library(store.path.parent, store.path)
@@ -1210,7 +1298,10 @@ def require_current_range_evidence(
     for feed_id in normalized:
         for day in store.list_days(feed_id):
             archive_value = str(day["archive_date"])
-            if start_date.isoformat() <= archive_value <= end_date.isoformat():
+            if (
+                start_date.isoformat() <= archive_value <= end_date.isoformat()
+                and (allowed_dates is None or archive_value in allowed_dates)
+            ):
                 key = (feed_id, archive_value)
                 days[key] = day
                 if not require_analysis and (
@@ -1233,6 +1324,11 @@ def require_current_range_evidence(
             end_date,
             prompt_version=PROMPT_VERSION,
         ):
+            if (
+                allowed_dates is not None
+                and str(incident["archive_date"]) not in allowed_dates
+            ):
+                continue
             relevant.add(
                 (
                     str(incident["feed_id"]),

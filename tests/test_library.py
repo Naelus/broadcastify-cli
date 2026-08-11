@@ -13,6 +13,7 @@ from broadcastify_cli.archive_cache import (
 )
 from broadcastify_cli.library import (
     LocalProcessingRequest,
+    build_archive_question_coverage,
     build_library_feed_coverage,
     build_library_resume_plan,
     cleanup_pending_library_deletions,
@@ -31,6 +32,60 @@ def _day(tmp_path: Path, feed_id: str, value: str) -> Path:
     result = tmp_path / feed_id / value.replace("-", "")
     result.mkdir(parents=True)
     return result
+
+
+def test_archive_question_coverage_distinguishes_ready_processing_and_missing_days() -> None:
+    coverage = build_archive_question_coverage(
+        [
+            {
+                "feed_id": "90001",
+                "archive_date": "2026-07-01",
+                "has_combined": True,
+                "has_transcript": True,
+                "has_imported_transcript": True,
+                "has_analysis": True,
+            },
+            {
+                "feed_id": "90001",
+                "archive_date": "2026-07-02",
+                "has_combined": True,
+                "has_transcript": False,
+                "has_imported_transcript": False,
+                "has_analysis": False,
+            },
+            {
+                "feed_id": "90001",
+                "archive_date": "2026-07-03",
+                "has_combined": True,
+                "has_transcript": True,
+                "has_imported_transcript": True,
+                "has_analysis": False,
+            },
+            {
+                "feed_id": "90002",
+                "archive_date": "2026-07-04",
+                "has_combined": True,
+                "has_transcript": True,
+                "has_imported_transcript": True,
+                "has_analysis": True,
+            },
+        ],
+        "90001",
+        date(2026, 7, 1),
+        date(2026, 7, 4),
+    )
+
+    assert coverage["requested_day_count"] == 4
+    assert coverage["audio_day_count"] == 3
+    assert coverage["question_ready_day_count"] == 2
+    assert coverage["analyzed_day_count"] == 1
+    assert coverage["question_ready_dates"] == ["2026-07-01", "2026-07-03"]
+    assert coverage["analyzed_dates"] == ["2026-07-01"]
+    assert coverage["local_processing_dates"] == ["2026-07-02"]
+    assert coverage["missing_audio_dates"] == ["2026-07-04"]
+    assert coverage["unavailable_dates"] == ["2026-07-02", "2026-07-04"]
+    assert coverage["complete_coverage"] is False
+    assert "2/4 requested days are question-ready" in coverage["summary"]
 
 
 def test_library_resume_plan_is_local_first_and_never_starts_acquisition() -> None:

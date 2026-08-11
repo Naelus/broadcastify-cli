@@ -77,6 +77,7 @@ from .geography import CENSUS_ZCTA_YEAR, ZipCentroidCatalog
 from .jobs import JobRunner
 from .library import (
     LocalProcessingRequest,
+    build_archive_question_coverage,
     build_library_feed_coverage,
     build_library_resume_plan,
     completed_library_catchup_feed_ids,
@@ -1759,6 +1760,7 @@ def ask_archive() -> int:
     start_date = date.fromisoformat(str(payload["start_date"]))
     end_date = date.fromisoformat(str(payload["end_date"]))
     question = str(payload["question"]).strip()
+    output_dir = str(payload.get("output_dir") or DEFAULT_DATABASE.parent)
     if not question:
         raise ValueError("A question is required.")
     history = payload.get("history")
@@ -1773,6 +1775,17 @@ def ask_archive() -> int:
         }
     )
     with AnalysisStore(DEFAULT_DATABASE) as store:
+        coverage = build_archive_question_coverage(
+            scan_local_library(Path(output_dir), DEFAULT_DATABASE),
+            feed_id,
+            start_date,
+            end_date,
+        )
+        if int(coverage["question_ready_day_count"]) == 0:
+            raise ValueError(
+                "No question-ready retained transcripts exist for this feed and range. "
+                "Download or finish local processing for at least one day first."
+            )
         require_current_range_evidence(
             store,
             [feed_id],
@@ -1780,6 +1793,7 @@ def ask_archive() -> int:
             end_date,
             require_analysis=False,
             purpose="Archive question answering",
+            archive_dates=coverage["question_ready_dates"],
         )
         indexer = SemanticIndexer(store, model=DEFAULT_EMBEDDING_MODEL)
         indexer.index_missing()
@@ -1794,8 +1808,25 @@ def ask_archive() -> int:
                 end_date,
                 question,
                 history=[value for value in history if isinstance(value, dict)],
+                coverage=coverage,
             )
     emit({"type": "answer", "message": "Question answered.", "result": result})
+    return 0
+
+
+def question_coverage(
+    output_dir: str,
+    feed_id: str,
+    start_date: str,
+    end_date: str,
+) -> int:
+    result = build_archive_question_coverage(
+        scan_local_library(Path(output_dir), DEFAULT_DATABASE),
+        feed_id,
+        date.fromisoformat(start_date),
+        date.fromisoformat(end_date),
+    )
+    emit({"type": "question_coverage", "coverage": result})
     return 0
 
 
@@ -1998,6 +2029,11 @@ def build_parser() -> argparse.ArgumentParser:
     resume_library.add_argument("--start-date", default="")
     resume_library.add_argument("--end-date", default="")
     resume_library.add_argument("--through-current", action="store_true")
+    question_coverage_parser = subparsers.add_parser("question-coverage")
+    question_coverage_parser.add_argument("--output-dir", default="archives")
+    question_coverage_parser.add_argument("--feed-id", required=True)
+    question_coverage_parser.add_argument("--start-date", required=True)
+    question_coverage_parser.add_argument("--end-date", required=True)
     subparsers.add_parser("delete-library-feed")
     subparsers.add_parser("continue-local")
     days = subparsers.add_parser("analysis-days")
@@ -2132,6 +2168,13 @@ def main() -> int:
                 arguments.start_date,
                 arguments.end_date,
                 arguments.through_current,
+            )
+        if arguments.command == "question-coverage":
+            return question_coverage(
+                arguments.output_dir,
+                arguments.feed_id,
+                arguments.start_date,
+                arguments.end_date,
             )
         if arguments.command == "delete-library-feed":
             return delete_library_feed()

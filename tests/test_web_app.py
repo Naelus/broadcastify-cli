@@ -986,6 +986,23 @@ def test_web_jobs_force_quota_safe_archive_defaults(tmp_path: Path) -> None:
     assert payload["lan_discovery_enabled"] is True
 
 
+def test_web_archive_questions_use_the_selected_local_library(tmp_path: Path) -> None:
+    manager = JobManager(tmp_path, tmp_path / "analysis.sqlite3", tmp_path)
+    arguments, payload = manager._worker_request(  # noqa: SLF001
+        "ask",
+        {
+            "feed_id": "90001",
+            "start_date": "2026-07-01",
+            "end_date": "2026-07-31",
+            "question": "What happened this month?",
+        },
+    )
+
+    assert arguments == ["ask"]
+    assert payload is not None
+    assert payload["output_dir"] == str(tmp_path)
+
+
 def test_web_jobs_resolve_automatic_against_the_installed_deployment(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

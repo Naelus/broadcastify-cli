@@ -132,6 +132,10 @@
           <div class="card padded">
             <div class="section-heading"><div><h2>Ask the archive</h2><p>Retrieved transcript passages and incident records support the answer.</p></div></div>
             <form id="askForm" class="form-stack">
+              <div class="form-grid two">
+                <label><span>Calendar month</span><input id="askMonth" type="month"></label>
+                <button class="button secondary" id="useAskMonthButton" type="button">Use selected month</button>
+              </div>
               <div class="form-grid three">
                 <label><span>Feed ID</span><input id="askFeedId" inputmode="numeric" required></label>
                 <label><span>From</span><input id="askStartDate" type="date" required></label>

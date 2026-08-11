@@ -1690,11 +1690,61 @@ internal sealed record ArchiveQuestionRequest : AnalysisProviderRequest
     [JsonPropertyName("end_date")]
     public string EndDate { get; init; } = "";
 
+    [JsonPropertyName("output_dir")]
+    public string OutputDirectory { get; init; } = "archives";
+
     [JsonPropertyName("question")]
     public string Question { get; init; } = "";
 
     [JsonPropertyName("history")]
     public List<ArchiveConversationTurn> History { get; init; } = [];
+}
+
+public sealed record ArchiveQuestionCoverage
+{
+    [JsonPropertyName("feed_id")]
+    public string FeedId { get; init; } = "";
+
+    [JsonPropertyName("start_date")]
+    public string StartDate { get; init; } = "";
+
+    [JsonPropertyName("end_date")]
+    public string EndDate { get; init; } = "";
+
+    [JsonPropertyName("requested_day_count")]
+    public int RequestedDayCount { get; init; }
+
+    [JsonPropertyName("audio_day_count")]
+    public int AudioDayCount { get; init; }
+
+    [JsonPropertyName("question_ready_day_count")]
+    public int QuestionReadyDayCount { get; init; }
+
+    [JsonPropertyName("analyzed_day_count")]
+    public int AnalyzedDayCount { get; init; }
+
+    [JsonPropertyName("question_ready_dates")]
+    public List<string> QuestionReadyDates { get; init; } = [];
+
+    [JsonPropertyName("local_processing_dates")]
+    public List<string> LocalProcessingDates { get; init; } = [];
+
+    [JsonPropertyName("missing_audio_dates")]
+    public List<string> MissingAudioDates { get; init; } = [];
+
+    [JsonPropertyName("unavailable_dates")]
+    public List<string> UnavailableDates { get; init; } = [];
+
+    [JsonPropertyName("complete_coverage")]
+    public bool CompleteCoverage { get; init; }
+
+    [JsonPropertyName("summary")]
+    public string Summary { get; init; } = "";
+
+    public string DisplaySummary => string.IsNullOrWhiteSpace(Summary)
+        ? $"{QuestionReadyDayCount:N0}/{RequestedDayCount:N0} days question-ready · "
+            + $"audio retained for {AudioDayCount:N0}/{RequestedDayCount:N0}"
+        : Summary;
 }
 
 internal sealed record ArchiveConversationTurn
@@ -1712,6 +1762,7 @@ public sealed record ArchiveChatMessage
     public string Content { get; init; } = "";
     public List<string> EvidenceIds { get; init; } = [];
     public List<string> Limitations { get; init; } = [];
+    public ArchiveQuestionCoverage Coverage { get; init; } = new();
     public string SpeakerLabel => Role == "user" ? "You" : "Archive assistant";
     public string EvidenceSummary => EvidenceIds.Count == 0
         ? ""
@@ -1719,6 +1770,9 @@ public sealed record ArchiveChatMessage
     public string LimitationSummary => Limitations.Count == 0
         ? ""
         : "Limitations: " + string.Join("; ", Limitations);
+    public string CoverageSummary => Coverage.RequestedDayCount == 0
+        ? ""
+        : "Coverage: " + Coverage.DisplaySummary;
 }
 
 public sealed record ArchiveAnswer
@@ -1731,6 +1785,9 @@ public sealed record ArchiveAnswer
 
     [JsonPropertyName("limitations")]
     public List<string> Limitations { get; init; } = [];
+
+    [JsonPropertyName("coverage")]
+    public ArchiveQuestionCoverage Coverage { get; init; } = new();
 
     public string LimitationsSummary => Limitations.Count == 0
         ? ""

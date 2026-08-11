@@ -655,7 +655,7 @@ class JobManager:
         }
         if command not in stdin_commands:
             raise WebRequestError(HTTPStatus.BAD_REQUEST, "That local job type is not supported.")
-        if command in {"run", "continue-local", "analyze-day"}:
+        if command in {"run", "continue-local", "analyze-day", "ask"}:
             payload["output_dir"] = str(self.output_dir)
         if command == "run":
             # The browser UI keeps a single upstream downloader, preserves

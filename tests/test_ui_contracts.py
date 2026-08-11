@@ -277,6 +277,9 @@ def test_native_library_shows_feed_coverage_and_named_archive_chat() -> None:
     assert names["AnalysisFeedCombo"].attrib["DisplayMemberPath"] == "FeedLabel"
     assert names["ArchiveChatList"].attrib["SelectionMode"] == "None"
     assert names["AskButton"].attrib["Content"] == "Send"
+    assert names["UseQuestionMonthButton"].attrib["Content"] == "Use selected month"
+    assert names["CheckQuestionCoverageButton"].attrib["Content"] == "Check downloaded coverage"
+    assert names["QuestionCoverageInfoBar"].attrib["IsOpen"] == "True"
 
     native = (
         ROOT / "BroadcastifyCli.WinUI" / "MainWindow.xaml.cs"
@@ -286,6 +289,9 @@ def test_native_library_shows_feed_coverage_and_named_archive_chat() -> None:
     ).read_text(encoding="utf-8")
     assert "ShowResumeAllOptionsAsync" in native
     assert "HandleQuestionWorkerMessage" in native
+    assert "ApplyQuestionMonthAsync" in native
+    assert "RefreshQuestionCoverageAsync" in native
+    assert "QuestionReadyDayCount" in native
     assert "_pipelineCancellation" in native
     assert "_questionCancellation" in native
     assert "_analysisOperationGate" in native
@@ -294,6 +300,26 @@ def test_native_library_shows_feed_coverage_and_named_archive_chat() -> None:
     assert "IsFeedPipelineBusy(_selectedLibraryDay.FeedId)" in native
     assert "Clip playback and export are temporarily held" in native
     assert 'JsonPropertyName("history")' in models
+    assert 'JsonPropertyName("output_dir")' in models
+    assert 'JsonPropertyName("question_ready_dates")' in models
+    assert 'JsonPropertyName("coverage")' in models
+
+    worker = (
+        ROOT / "BroadcastifyCli.WinUI" / "WorkerClient.cs"
+    ).read_text(encoding="utf-8")
+    assert '"question-coverage"' in worker
+    assert "GetArchiveQuestionCoverageAsync" in worker
+
+    web_html = (
+        ROOT / "broadcastify_cli" / "web_static" / "index.html"
+    ).read_text(encoding="utf-8")
+    web_script = (
+        ROOT / "broadcastify_cli" / "web_static" / "app.js"
+    ).read_text(encoding="utf-8")
+    assert 'id="askMonth"' in web_html
+    assert 'id="useAskMonthButton"' in web_html
+    assert "coverage.question_ready_day_count" in web_script
+    assert "The answer will report retained coverage gaps" in web_script
 
 
 def test_native_and_web_distinguish_working_storage_and_stale_transcripts() -> None:

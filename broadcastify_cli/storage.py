@@ -1262,19 +1262,36 @@ class AnalysisStore:
         end_date: date,
         query: str,
         limit: int = 20,
+        *,
+        archive_dates: Sequence[str] | None = None,
     ) -> list[dict[str, Any]]:
         tokens = [token for token in query.replace("'", " ").split() if len(token) >= 2]
         if not tokens:
             return []
+        allowed_dates = (
+            list(dict.fromkeys(str(value) for value in archive_dates if str(value)))
+            if archive_dates is not None
+            else None
+        )
+        if allowed_dates == []:
+            return []
+        date_clause = (
+            " AND d.archive_date IN ("
+            + ",".join("?" for _ in allowed_dates)
+            + ")"
+            if allowed_dates is not None
+            else ""
+        )
         match_query = " OR ".join(f'"{token}"' for token in tokens[:20])
         rows = self.connection.execute(
-            """
+            f"""
             SELECT p.*, d.feed_id, d.archive_date, d.manifest_path,
                    bm25(passage_fts) AS rank
             FROM passage_fts
             JOIN passages p ON p.id=passage_fts.rowid
             JOIN feed_days d ON d.id=p.day_id
             WHERE passage_fts MATCH ? AND d.feed_id=? AND d.archive_date BETWEEN ? AND ?
+                  {date_clause}
             ORDER BY rank LIMIT ?
             """,
             (
@@ -1282,6 +1299,7 @@ class AnalysisStore:
                 feed_id,
                 start_date.isoformat(),
                 end_date.isoformat(),
+                *(allowed_dates or []),
                 max(1, limit),
             ),
         ).fetchall()
@@ -1452,13 +1470,29 @@ class AnalysisStore:
         end_date: date,
         *,
         prompt_version: str | None = None,
+        archive_dates: Sequence[str] | None = None,
     ) -> list[dict[str, Any]]:
+        allowed_dates = (
+            list(dict.fromkeys(str(value) for value in archive_dates if str(value)))
+            if archive_dates is not None
+            else None
+        )
+        if allowed_dates == []:
+            return []
         prompt_clause = " AND i.prompt_version=?" if prompt_version else ""
+        date_clause = (
+            " AND d.archive_date IN ("
+            + ",".join("?" for _ in allowed_dates)
+            + ")"
+            if allowed_dates is not None
+            else ""
+        )
         parameters: tuple[object, ...] = (
             feed_id,
             start_date.isoformat(),
             end_date.isoformat(),
             *((prompt_version,) if prompt_version else ()),
+            *(allowed_dates or []),
         )
         rows = self.connection.execute(
             f"""
@@ -1466,7 +1500,7 @@ class AnalysisStore:
                    d.audio_path, d.audio_sha256, d.transcript_sha256,
                    d.has_diarization
             FROM incidents i JOIN feed_days d ON d.id=i.day_id
-            WHERE d.feed_id=? AND d.archive_date BETWEEN ? AND ?{prompt_clause}
+            WHERE d.feed_id=? AND d.archive_date BETWEEN ? AND ?{prompt_clause}{date_clause}
             ORDER BY d.archive_date, i.start_seconds, i.priority DESC
             """,
             parameters,
@@ -2224,16 +2258,39 @@ class AnalysisStore:
         start_date: date,
         end_date: date,
         model: str,
+        *,
+        archive_dates: Sequence[str] | None = None,
     ) -> list[dict[str, Any]]:
+        allowed_dates = (
+            list(dict.fromkeys(str(value) for value in archive_dates if str(value)))
+            if archive_dates is not None
+            else None
+        )
+        if allowed_dates == []:
+            return []
+        date_clause = (
+            " AND d.archive_date IN ("
+            + ",".join("?" for _ in allowed_dates)
+            + ")"
+            if allowed_dates is not None
+            else ""
+        )
         rows = self.connection.execute(
-            """
+            f"""
             SELECT p.*, d.archive_date, d.manifest_path, e.dimensions, e.vector
             FROM embeddings e
             JOIN passages p ON p.id=e.entity_id AND e.entity_type='passage'
             JOIN feed_days d ON d.id=p.day_id
             WHERE e.model=? AND d.feed_id=? AND d.archive_date BETWEEN ? AND ?
+                  {date_clause}
             """,
-            (model, feed_id, start_date.isoformat(), end_date.isoformat()),
+            (
+                model,
+                feed_id,
+                start_date.isoformat(),
+                end_date.isoformat(),
+                *(allowed_dates or []),
+            ),
         ).fetchall()
         return [dict(row) for row in rows]
 

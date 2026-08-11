@@ -31,6 +31,7 @@ from broadcastify_cli.worker import (
     library_resume_plan,
     prepare_asr_model_command,
     profile_self_test,
+    question_coverage,
 )
 
 
@@ -127,6 +128,43 @@ def test_library_resume_planning_reads_only_local_state_and_quota(
     assert emitted[0]["scope_end_date"] == "2026-08-02"
     assert emitted[0]["network_count"] == 2
     assert emitted[0]["quota"] == {"available": False, "remaining": 0}
+
+
+def test_question_coverage_reads_only_local_library_state(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    emitted: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        "broadcastify_cli.worker.scan_local_library",
+        lambda *_args, **_kwargs: [
+            {
+                "feed_id": "90001",
+                "archive_date": "2026-07-01",
+                "has_combined": True,
+                "has_transcript": True,
+                "has_imported_transcript": True,
+                "has_analysis": False,
+            }
+        ],
+    )
+    monkeypatch.setattr("broadcastify_cli.worker.emit", emitted.append)
+
+    assert question_coverage(
+        str(tmp_path),
+        "90001",
+        "2026-07-01",
+        "2026-07-02",
+    ) == 0
+
+    coverage = emitted[0]["coverage"]
+    assert emitted[0]["type"] == "question_coverage"
+    assert coverage["requested_day_count"] == 2
+    assert coverage["audio_day_count"] == 1
+    assert coverage["question_ready_day_count"] == 1
+    assert coverage["question_ready_dates"] == ["2026-07-01"]
+    assert coverage["missing_audio_dates"] == ["2026-07-02"]
+    assert coverage["complete_coverage"] is False
 
 
 def test_asr_self_test_uses_selected_engine_without_returning_transcript_text(

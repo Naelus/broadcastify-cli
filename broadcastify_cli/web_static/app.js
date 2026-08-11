@@ -1154,7 +1154,11 @@ async function runNextAnalysis() {
 function renderAnswer(result) {
   const evidence = result.evidence_ids || [];
   const limitations = result.limitations || [];
-  byId("answerPanel").innerHTML = `<h3>Evidence-grounded answer</h3><p>${html(result.answer || "No answer text was returned.")}</p>${evidence.length ? `<div class="citation-list">${evidence.map((value) => `<div class="citation">Evidence ${html(value)}</div>`).join("")}</div>` : ""}${limitations.length ? `<div class="notice warning"><strong>Limitations</strong><span>${html(limitations.join("; "))}</span></div>` : ""}`;
+  const coverage = result.coverage || {};
+  const coverageMarkup = Number(coverage.requested_day_count)
+    ? `<div class="notice ${coverage.complete_coverage ? "success" : "warning"}"><strong>${Number(coverage.question_ready_day_count) || 0}/${Number(coverage.requested_day_count) || 0} days question-ready</strong><span>${html(coverage.summary || "")}</span></div>`
+    : "";
+  byId("answerPanel").innerHTML = `<h3>Evidence-grounded answer</h3>${coverageMarkup}<p>${html(result.answer || "No answer text was returned.")}</p>${evidence.length ? `<div class="citation-list">${evidence.map((value) => `<div class="citation">Evidence ${html(value)}</div>`).join("")}</div>` : ""}${limitations.length ? `<div class="notice warning"><strong>Limitations</strong><span>${html(limitations.join("; "))}</span></div>` : ""}`;
 }
 
 function renderWeek(result) {
@@ -2145,6 +2149,18 @@ byId("loginForm").addEventListener("submit", async (event) => {
     toast(remember ? "Broadcastify session refreshed; encrypted login is ready." : "Broadcastify session refreshed without saving the login.");
   } });
 });
+byId("useAskMonthButton").addEventListener("click", () => {
+  const month = byId("askMonth").value;
+  if (!/^\d{4}-\d{2}$/.test(month)) return toast("Choose a calendar month first.", true);
+  const [year, monthNumber] = month.split("-").map(Number);
+  const start = `${month}-01`;
+  const last = new Date(year, monthNumber, 0);
+  const end = new Date(last.getTime() - last.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+  if (start > localToday) return toast("Choose the current month or an earlier month.", true);
+  byId("askStartDate").value = start;
+  byId("askEndDate").value = end > localToday ? localToday : end;
+  toast("Month range selected. The answer will report retained coverage gaps.");
+});
 byId("forgetBroadcastifyLoginButton").addEventListener("click", async () => {
   try {
     await api("/api/credentials", {
@@ -2201,6 +2217,9 @@ byId("archiveEndDate").value = localToday;
 byId("areaStartDate").value = weekAgo;
 byId("areaEndDate").value = localToday;
 byId("weekEnding").value = localToday;
+byId("askMonth").value = localToday.slice(0, 7);
+byId("askStartDate").value = localToday;
+byId("askEndDate").value = localToday;
 applySettingsForm();
 updateAreaCoverageControls();
 window.addEventListener("hashchange", setViewFromLocation);

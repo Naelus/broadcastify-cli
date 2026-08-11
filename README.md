@@ -100,8 +100,11 @@ In the app:
    coverage to see scheduled gaps and last-known provider blocks, or use
    **Resume / prioritize…** to select feeds, local work, guarded downloads, and
    ordering; a confirmed **Delete feed** action removes a feed's local evidence.
-8. Use **Review & Ask** to choose a feed by name and chat with cited evidence,
-   or use **Area watch** for clips, weekly briefs, and regional leads.
+8. Use **Review & Ask** to choose a feed by name, select a calendar month,
+   preview which downloaded days are question-ready, and chat with cited
+   evidence. Partial months identify missing or locally unfinished dates rather
+   than treating them as quiet days. **Area watch** provides clips, weekly
+   briefs, and regional leads.
 9. Open **About & support** to confirm the installed version, find the archive
    and diagnostic folders, copy credential-free support details, or check for
    updates.

@@ -1,6 +1,6 @@
 # Feature inventory
 
-Last updated: August 8, 2026
+Last updated: August 10, 2026
 
 Status labels: **Validated**, **Implemented**, **Evaluated**, **Foundation**, or
 **Planned**. Detailed behavior and retained validation evidence belong in
@@ -49,7 +49,7 @@ See [audio processing](docs/features/audio-processing.md),
 | Evidence-gated incidents | Validated | Exact citations, critical-concept support, bounded gaps, outcome rejection, category/priority correction. |
 | Cited-name private review | Validated | Spoken names preserved; inferred/normalized identities forbidden; high-risk identifiers masked. |
 | Daily and weekly briefs | Validated | Current-version incidents only, explicit coverage gaps and grounding checks. |
-| Range Q&A | Validated | Friendly-name feed picker, structured plus retrieved evidence with required E/I citations, bounded multi-turn follow-ups, starter questions, and local Q&A audit persistence; quantized Gemma 4 12B remains the default provider. |
+| Range and monthly Q&A | Validated | Friendly-name feed picker, one-click calendar-month ranges, local downloaded/question-ready coverage preview, partial-month gap enforcement, date-diverse structured plus retrieved evidence with required E/I citations, bounded multi-turn follow-ups, starter questions, and local Q&A audit persistence; quantized Gemma 4 12B remains the default provider. |
 | Evidence clips and export | Validated | Exact hashed citation clip plus separately labeled surrounding context. |
 | External provider contracts | Validated | OpenAI Responses, compatible `/v1`, and saved-login Codex behind explicit transcript-sharing consent. |
 
