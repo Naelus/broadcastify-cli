@@ -580,6 +580,9 @@ def test_month_and_entire_feed_hotspot_question_is_coverage_grounded(
     assert answer_event["type"] == "answer"
     answer = answer_event["result"]
     assert answer["evidence_ids"] == [client.location_id]
+    assert "Cited event dates and times (archive time):" in answer["answer"]
+    assert "2026-07-06 at archive offset 02:00:00" in answer["answer"]
+    assert "2026-07-07 at archive offset 04:00:00" in answer["answer"]
     assert any(
         value["kind"] == "location"
         and value["label"] == "Main and First"
@@ -599,4 +602,5 @@ def test_month_and_entire_feed_hotspot_question_is_coverage_grounded(
         ).fetchall()
     assert len(saved) == 1
     assert saved[0]["question"] == "Where and when are the recurring hot spots?"
+    assert "Cited event dates and times (archive time):" in saved[0]["answer"]
     assert saved[0]["model"] == client.model

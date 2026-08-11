@@ -2188,7 +2188,7 @@ byId("useAskEntireFeedButton").addEventListener("click", () => {
 });
 byId("askFeedHotspotsButton").addEventListener("click", () => {
   if (!useEntireDownloadedFeed()) return;
-  byId("askQuestion").value = "Across the entire downloaded feed, where and when do supported incident records cluster? Rank repeated extracted locations, categories, weekdays, and six-hour time windows using exact aggregate counts and citations. Treat missing or unprocessed dates as coverage limits, and do not claim population-normalized crime rates or trends.";
+  byId("askQuestion").value = "Across the entire downloaded feed, where and when do supported incident records cluster? Rank repeated extracted locations, categories, weekdays, and six-hour time windows using exact aggregate counts and citations. Include exact archive dates and times for representative events. Treat missing or unprocessed dates as coverage limits, and do not claim population-normalized crime rates or trends.";
   byId("askQuestion").focus();
 });
 function syncRecurringCatchUpInput() {

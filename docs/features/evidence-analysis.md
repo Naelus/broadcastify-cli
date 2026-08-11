@@ -74,7 +74,13 @@ backend computes P aggregate records for category counts, repeated extracted
 locations, weekday counts, and six-hour archive-time blocks. Hotspot answers
 must cite those exact aggregates and describe radio-report clusters—not crime
 rates, dangerous places, or trends unsupported by comparable coverage. The
-response must cite newly supplied E/I/P records.
+response must cite newly supplied E/I/P records. Every specific event described
+in a range, month, or whole-feed answer must carry its retained archive date and
+time. The backend appends a deterministic cited-event time index from the E/I
+records, including representative I records behind cited P aggregates. When a
+retained manifest cannot map an audio offset to wall-clock time, the answer says
+that clock time is unavailable and labels the value as an archive offset rather
+than presenting it as a time of day.
 Questions and answers continue to be written to the local Q&A audit table.
 Archive chat shares a single model-operation gate with background incident
 analysis so download/transcription can continue while llama.cpp work is safely

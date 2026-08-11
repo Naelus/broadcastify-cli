@@ -40,7 +40,9 @@ The feed-question workflow proves that:
 - deterministic category, repeated-location, weekday, and time-block pattern
   records are supplied as citeable evidence;
 - follow-up context is bounded and is not treated as evidence;
-- missing coverage is appended as a backend-owned limitation; and
+- missing coverage is appended as a backend-owned limitation;
+- cited monthly and whole-feed events retain backend-owned archive dates and
+  times, with offsets explicitly distinguished from unavailable clock time; and
 - the answer and its evidence records are written to the local Q&A audit table.
 
 Native UI and release contracts remain in the full suite. They cover the About

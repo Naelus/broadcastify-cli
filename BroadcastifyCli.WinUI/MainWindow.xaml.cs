@@ -6145,7 +6145,7 @@ public sealed partial class MainWindow : Window
             return;
         }
         QuestionBox.Text =
-            "Across the retained days in this month, what were the most important reported events and recurring patterns? Rank them by public-safety significance, cite the supporting evidence, and clearly separate coverage gaps from days with no supported reports.";
+            "Across the retained days in this month, what were the most important reported events and recurring patterns? State the archive date and time for every event mentioned, rank them by public-safety significance, cite the supporting evidence, and clearly separate coverage gaps from days with no supported reports.";
         QuestionBox.Focus(FocusState.Programmatic);
     }
 
@@ -6156,7 +6156,7 @@ public sealed partial class MainWindow : Window
             return;
         }
         QuestionBox.Text =
-            "Across the entire downloaded feed, where and when do supported incident records cluster? Rank repeated extracted locations, categories, weekdays, and six-hour time windows using exact aggregate counts and citations. Treat missing or unprocessed dates as coverage limits, and do not claim population-normalized crime rates or trends.";
+            "Across the entire downloaded feed, where and when do supported incident records cluster? Rank repeated extracted locations, categories, weekdays, and six-hour time windows using exact aggregate counts and citations. Include exact archive dates and times for representative events. Treat missing or unprocessed dates as coverage limits, and do not claim population-normalized crime rates or trends.";
         QuestionBox.Focus(FocusState.Programmatic);
     }
 

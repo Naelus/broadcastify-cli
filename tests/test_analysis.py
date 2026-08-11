@@ -17,6 +17,7 @@ from broadcastify_cli.analysis import (
     WINDOW_PROMPT_VERSION,
     WeeklySummaryAnalyzer,
     archive_datetime_for_offset,
+    format_archive_time,
     build_transcript_windows,
     find_cached_huggingface_gguf,
     find_llama_server,
@@ -52,24 +53,42 @@ def test_range_question_followup_includes_bounded_chat_context(
         ),
         encoding="utf-8",
     )
+    manifest = tmp_path / "combined.manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "sources": [
+                    {
+                        "archive_start": "2026-08-05T14:30:00",
+                        "combined_start_seconds": 0,
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
 
     class ChatClient:
         model = "fake-gemma-chat"
 
         def __init__(self) -> None:
             self.user = ""
+            self.system = ""
 
         def chat_json(self, **kwargs: object) -> dict[str, object]:
             self.user = str(kwargs["user"])
+            self.system = str(kwargs["system"])
             return {
                 "answer": "One report was retained [E1].",
-                "evidence_ids": ["E1"],
+                "evidence_ids": [],
                 "limitations": [],
             }
 
     client = ChatClient()
     with AnalysisStore(tmp_path / "analysis.sqlite3") as store:
-        store.import_transcript("90001", archive_date, transcript)
+        store.import_transcript(
+            "90001", archive_date, transcript, manifest_path=manifest
+        )
         result = RangeQuestionAnswerer(store, client).ask(
             "90001",
             archive_date,
@@ -81,11 +100,17 @@ def test_range_question_followup_includes_bounded_chat_context(
             ],
         )
 
-    assert result["answer"] == "One report was retained [E1]."
+    assert result["answer"] == (
+        "One report was retained [E1].\n\n"
+        "Cited event dates and times (archive time):\n"
+        "- E1 — 2026-08-05 14:30:10 — retrieved transcript evidence"
+    )
+    assert result["evidence_ids"] == ["E1"]
     assert "EARLIER CHAT:" in client.user
     assert "USER: Were any shots reported?" in client.user
     assert "CURRENT QUESTION: How many were there?" in client.user
     assert "RETRIEVED TRANSCRIPT EVIDENCE:" in client.user
+    assert "must state its supplied full archive date and time" in client.system
 
 
 def test_range_question_filters_to_ready_month_dates_and_owns_gap_limitation(
@@ -173,6 +198,10 @@ def test_range_question_filters_to_ready_month_dates_and_owns_gap_limitation(
     assert result["limitations"] == [
         "Partial retained coverage: no question-ready transcript for 2026-07-02."
     ]
+    assert (
+        "2026-07-01 at archive offset 00:00:01 (clock time unavailable)"
+        in result["answer"]
+    )
 
 
 def test_range_question_supplies_deterministic_hotspot_pattern_evidence(
@@ -210,6 +239,7 @@ def test_range_question_supplies_deterministic_hotspot_pattern_evidence(
     with AnalysisStore(tmp_path / "analysis.sqlite3") as store:
         for index, archive_date in enumerate((first_date, second_date), start=1):
             transcript = tmp_path / f"transcript-{index}.json"
+            manifest = tmp_path / f"manifest-{index}.json"
             transcript.write_text(
                 json.dumps(
                     {
@@ -225,7 +255,25 @@ def test_range_question_supplies_deterministic_hotspot_pattern_evidence(
                 ),
                 encoding="utf-8",
             )
-            imported = store.import_transcript("90001", archive_date, transcript)
+            manifest.write_text(
+                json.dumps(
+                    {
+                        "sources": [
+                            {
+                                "archive_start": (
+                                    f"{archive_date.isoformat()}T"
+                                    + ("08:00:00" if index == 1 else "15:00:00")
+                                ),
+                                "combined_start_seconds": 0,
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            imported = store.import_transcript(
+                "90001", archive_date, transcript, manifest_path=manifest
+            )
             store.replace_incidents(
                 imported.day_id,
                 [
@@ -273,8 +321,12 @@ def test_range_question_supplies_deterministic_hotspot_pattern_evidence(
     assert "repeated extracted location Main and First=2 incident(s)" in client.user
     assert "weekday distribution:" in client.user
     assert "six-hour archive-time distribution:" in client.user
+    assert "06:00-11:59 archive time=1" in client.user
+    assert "18:00-23:59 archive time=1" in client.user
     assert "population-normalized crime rates" in client.system
     assert result["evidence_ids"] == [client.location_id]
+    assert "2026-07-06 10:00:00" in result["answer"]
+    assert "2026-07-07 19:00:00" in result["answer"]
     assert any(
         value["kind"] == "location"
         and value["label"] == "Main and First"
@@ -1194,6 +1246,12 @@ def test_manifest_maps_audio_offset_to_archive_wall_time(tmp_path: Path) -> None
     wall_time = archive_datetime_for_offset(manifest, 1860)
     assert wall_time is not None
     assert wall_time.isoformat() == "2026-07-11T00:39:00"
+
+
+def test_archive_time_never_presents_an_audio_offset_as_clock_time() -> None:
+    assert format_archive_time({"archive_date": "2026-07-11"}, 3_661) == (
+        "2026-07-11 at archive offset 01:01:01 (clock time unavailable)"
+    )
 
 
 def test_incident_analysis_requires_valid_evidence(tmp_path: Path) -> None:

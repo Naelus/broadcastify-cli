@@ -836,8 +836,8 @@ def format_archive_time(record: dict[str, Any], seconds: float) -> str:
     if wall_time is not None:
         return wall_time.isoformat(sep=" ", timespec="seconds")
     archive_date = record.get("archive_date")
-    prefix = f"{archive_date} " if archive_date else ""
-    return prefix + format_offset(seconds)
+    prefix = f"{archive_date} at " if archive_date else ""
+    return prefix + f"archive offset {format_offset(seconds)} (clock time unavailable)"
 
 
 def find_llama_server() -> str | None:
@@ -2871,11 +2871,22 @@ def _range_pattern_evidence(
         if archive_date is not None:
             weekdays.setdefault(archive_date.strftime("%A"), []).append(value)
         try:
-            hour = int(float(value.get("start_seconds") or 0.0) // 3_600) % 24
+            start_seconds = float(value.get("start_seconds") or 0.0)
         except (TypeError, ValueError):
-            hour = 0
+            start_seconds = 0.0
+        wall_time = archive_datetime_for_offset(
+            value.get("manifest_path"), start_seconds
+        )
+        if wall_time is not None:
+            hour = wall_time.hour
+            time_basis = "archive time"
+        else:
+            hour = int(start_seconds // 3_600) % 24
+            time_basis = "archive offset (clock time unavailable)"
         block_start = (hour // 6) * 6
-        block_label = f"{block_start:02d}:00-{block_start + 5:02d}:59 archive time"
+        block_label = (
+            f"{block_start:02d}:00-{block_start + 5:02d}:59 {time_basis}"
+        )
         time_blocks.setdefault(block_label, []).append(value)
 
     for label, values in sorted(
@@ -2929,6 +2940,40 @@ def _range_pattern_evidence(
             description,
         )
     return lines, records
+
+
+def _append_cited_event_times(
+    answer: str,
+    cited_ids: Sequence[str],
+    time_references: Mapping[str, Mapping[str, str]],
+    pattern_records: Sequence[Mapping[str, Any]],
+) -> str:
+    """Append backend-owned archive dates/times for every cited event record."""
+
+    pattern_by_id = {
+        str(value.get("evidence_id") or ""): value for value in pattern_records
+    }
+    ordered_ids: list[str] = []
+    for evidence_id in cited_ids:
+        if evidence_id in time_references and evidence_id not in ordered_ids:
+            ordered_ids.append(evidence_id)
+            continue
+        pattern = pattern_by_id.get(evidence_id)
+        if pattern is None:
+            continue
+        for incident_id in pattern.get("incident_ids", [])[:8]:
+            example_id = f"I{int(incident_id)}"
+            if example_id in time_references and example_id not in ordered_ids:
+                ordered_ids.append(example_id)
+    if not ordered_ids:
+        return answer
+    lines = ["Cited event dates and times (archive time):"]
+    for evidence_id in ordered_ids:
+        reference = time_references[evidence_id]
+        lines.append(
+            f"- {evidence_id} — {reference['archive_time']} — {reference['label']}"
+        )
+    return answer.rstrip() + "\n\n" + "\n".join(lines)
 
 
 class RangeQuestionAnswerer:
@@ -3044,11 +3089,15 @@ class RangeQuestionAnswerer:
         pattern_lines, pattern_records = _range_pattern_evidence(incidents)
         evidence_lines = []
         evidence_records = []
+        time_references: dict[str, dict[str, str]] = {}
         for index, value in enumerate(evidence, start=1):
             evidence_id = f"E{index}"
+            archive_time = format_archive_time(
+                value, float(value["start_seconds"])
+            )
             evidence_lines.append(
                 f"{evidence_id} "
-                f"[{format_archive_time(value, float(value['start_seconds']))} to "
+                f"[{archive_time} to "
                 f"{format_archive_time(value, float(value['end_seconds']))}]\n{value['text']}"
             )
             evidence_records.append(
@@ -3058,11 +3107,23 @@ class RangeQuestionAnswerer:
                     "archive_date": value["archive_date"],
                     "start_seconds": float(value["start_seconds"]),
                     "end_seconds": float(value["end_seconds"]),
-                    "archive_time": format_archive_time(
-                        value, float(value["start_seconds"])
-                    ),
+                    "archive_time": archive_time,
                 }
             )
+            time_references[evidence_id] = {
+                "archive_time": archive_time,
+                "label": "retrieved transcript evidence",
+            }
+        for value in incidents:
+            incident_id = f"I{int(value['id'])}"
+            time_references[incident_id] = {
+                "archive_time": format_archive_time(
+                    value, float(value["start_seconds"])
+                ),
+                "label": str(value.get("event_type") or "reported event").replace(
+                    "_", " "
+                ),
+            }
         representative_incidents = sorted(
             incidents,
             key=lambda value: (
@@ -3090,10 +3151,15 @@ class RangeQuestionAnswerer:
                 "insufficient, say so. Never call these counts population-normalized crime rates or claim a "
                 "trend without comparable coverage across time. Repeated extracted location text may be "
                 "described as a radio-report cluster, not proof that a place is dangerous. "
+                "Every specific event or report described in the answer must state its supplied full archive "
+                "date and time in the same sentence. Use the exact E or I timestamp; when it says clock time "
+                "unavailable, report the date and archive offset as such and never present the offset as a "
+                "wall-clock time. Aggregate summaries must include dated and timed E or I examples for any "
+                "specific events they discuss. "
                 "Preserve explicitly spoken person names when relevant to the question and cited evidence, but "
                 "never infer or normalize an identity. Do not repeat phone numbers, license plates, dates of "
                 "birth, or driver's-license numbers. Earlier chat turns are context "
-                "for resolving follow-up questions, not evidence; cite only the E or I "
+                "for resolving follow-up questions, not evidence; cite only the E, I, or P "
                 "records supplied for this turn. Output JSON only."
             ),
             user=(
@@ -3133,11 +3199,20 @@ class RangeQuestionAnswerer:
         valid_ids.update(f"I{int(value['id'])}" for value in representative_incidents)
         for value in pattern_records:
             valid_ids.update(f"I{incident_id}" for incident_id in value["incident_ids"])
-        cited_ids = [
-            str(value)
-            for value in result.get("evidence_ids", [])
-            if str(value) in valid_ids
-        ]
+        cited_ids: list[str] = []
+        for value in [
+            *result.get("evidence_ids", []),
+            *re.findall(r"\b(?:E|I|P)\d+\b", answer),
+        ]:
+            evidence_id = str(value)
+            if evidence_id in valid_ids and evidence_id not in cited_ids:
+                cited_ids.append(evidence_id)
+        answer = _append_cited_event_times(
+            answer,
+            cited_ids,
+            time_references,
+            pattern_records,
+        )
         self.store.save_qa(
             feed_id,
             start_date,

@@ -298,6 +298,8 @@ def test_native_library_shows_feed_coverage_and_named_archive_chat() -> None:
     assert "ApplyQuestionMonthAsync" in native
     assert "ApplyEntireQuestionFeedAsync" in native
     assert "AskFeedHotspotsExample_Click" in native
+    assert "State the archive date and time for every event mentioned" in native
+    assert "Include exact archive dates and times for representative events" in native
     assert "RefreshQuestionCoverageAsync" in native
     clear_chat = native.split(
         "private void ClearArchiveChat_Click", maxsplit=1
@@ -338,6 +340,7 @@ def test_native_library_shows_feed_coverage_and_named_archive_chat() -> None:
     assert "coverage.question_ready_day_count" in web_script
     assert "The answer will report retained coverage gaps" in web_script
     assert "useEntireDownloadedFeed" in web_script
+    assert "Include exact archive dates and times for representative events" in web_script
 
 
 def test_native_and_web_distinguish_working_storage_and_stale_transcripts() -> None:
