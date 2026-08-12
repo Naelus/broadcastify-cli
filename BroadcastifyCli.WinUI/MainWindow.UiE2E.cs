@@ -1050,7 +1050,9 @@ public sealed partial class MainWindow
             LibraryFilterGrid,
             LibraryContentBorder,
             PersistentStatusGrid);
-        RequireKeyboardFocus(LibrarySearchBox, $"docked-{label}/library-focus");
+        await RequireKeyboardFocusAsync(
+            LibrarySearchBox,
+            $"docked-{label}/library-focus");
         results["library_processing"] = await ExerciseScrollAsync(
             LibraryProcessingScroll,
             $"docked-{label}/library-processing");
@@ -1080,7 +1082,9 @@ public sealed partial class MainWindow
             ArchiveFeedSearchBorder,
             ArchiveJobBorder,
             PersistentStatusGrid);
-        RequireKeyboardFocus(SearchBox, $"docked-{label}/archive-focus");
+        await RequireKeyboardFocusAsync(
+            SearchBox,
+            $"docked-{label}/archive-focus");
         results["archive_job"] = await ExerciseScrollAsync(
             ArchiveJobScroll,
             $"docked-{label}/archive-job");
@@ -1097,7 +1101,7 @@ public sealed partial class MainWindow
         ReviewTabView.SelectedItem = DailyReviewTab;
         await WaitForUiLayoutAsync();
         RequireOnlyPageVisible("review");
-        RequireKeyboardFocus(
+        await RequireKeyboardFocusAsync(
             AnalysisFeedCombo,
             $"docked-{label}/review-focus");
         results["review_days"] = await ExerciseItemsScrollAsync(
@@ -1131,7 +1135,7 @@ public sealed partial class MainWindow
         AreaTabView.SelectedItem = AreaFeedsTab;
         await WaitForUiLayoutAsync();
         RequireOnlyPageVisible("area");
-        RequireKeyboardFocus(
+        await RequireKeyboardFocusAsync(
             AreaProfileNameBox,
             $"docked-{label}/area-focus");
         results["area_feed_results"] = await ExerciseItemsScrollAsync(
@@ -1158,7 +1162,7 @@ public sealed partial class MainWindow
         SettingsTabView.SelectedItem = SetupSettingsTab;
         await WaitForUiLayoutAsync();
         RequireOnlyPageVisible("settings");
-        RequireKeyboardFocus(
+        await RequireKeyboardFocusAsync(
             HardwareProfileComboBox,
             $"docked-{label}/settings-focus");
         HardwareProfilesExpander.IsExpanded = true;
@@ -1187,7 +1191,7 @@ public sealed partial class MainWindow
         NavigateTo(AboutNavigationItem);
         await WaitForUiLayoutAsync();
         RequireOnlyPageVisible("about");
-        RequireKeyboardFocus(
+        await RequireKeyboardFocusAsync(
             AboutOpenDataButton,
             $"docked-{label}/about-focus");
         results["about"] = await ExerciseScrollAsync(
@@ -1307,16 +1311,21 @@ public sealed partial class MainWindow
         return results;
     }
 
-    private static void RequireKeyboardFocus(
+    private async Task RequireKeyboardFocusAsync(
         Control control,
         string label)
     {
+        Activate();
+        await WaitForUiLayoutAsync(35);
         Require(
             control.Focus(FocusState.Programmatic),
             $"{label}: the primary control could not receive keyboard focus.");
+        await WaitForUiLayoutAsync(20);
+        var focused = FocusManager.GetFocusedElement(control.XamlRoot);
         Require(
-            control.FocusState != FocusState.Unfocused,
-            $"{label}: keyboard focus was immediately lost.");
+            control.FocusState != FocusState.Unfocused
+                && ReferenceEquals(focused, control),
+            $"{label}: keyboard focus was not retained on the requested control.");
     }
 
     private static IEnumerable<T> FindVisualDescendants<T>(DependencyObject root)
