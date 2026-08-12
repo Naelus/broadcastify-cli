@@ -71,6 +71,7 @@ public sealed partial class MainWindow
         {
             report["startup_docking"] = await VerifyStartupDockRestoreAsync();
             ConfigureUiEndToEndFixture();
+            report["responsive_breakpoint"] = VerifyResponsiveBreakpointContract();
             report["layout_matrix"] = await RunUiLayoutMatrixAsync();
             report["desktop_docking"] = await RunUiDockingProbeAsync();
             report["passed"] = true;
@@ -422,15 +423,23 @@ public sealed partial class MainWindow
     private async Task<Dictionary<string, object?>> VerifyUiLayoutAtSizeAsync(
         UiProbeSize size)
     {
-        await ResizeForClientSizeAsync(size);
+        var reachableSize = GetReachableClientSize(size);
+        await ResizeForClientSizeAsync(
+            reachableSize.WidthDips,
+            reachableSize.HeightDips);
         Require(
-            Math.Abs(WindowRoot.ActualWidth - size.WidthDips) <= 3
-                && Math.Abs(WindowRoot.ActualHeight - size.HeightDips) <= 3,
-            $"{size.Name}: requested a {size.WidthDips:N0}×{size.HeightDips:N0}-DIP client "
+            Math.Abs(WindowRoot.ActualWidth - reachableSize.WidthDips) <= 3
+                && Math.Abs(WindowRoot.ActualHeight - reachableSize.HeightDips) <= 3,
+            $"{size.Name}: targeted a reachable "
+            + $"{reachableSize.WidthDips:N0}×{reachableSize.HeightDips:N0}-DIP client "
             + $"but rendered {WindowRoot.ActualWidth:N1}×{WindowRoot.ActualHeight:N1} DIP.");
+        var renderedCompact = WindowRoot.ActualWidth < 1_100;
         Require(
-            _compactLayoutApplied == size.Compact,
-            $"{size.Name}: compact layout state did not match the width contract.");
+            _compactLayoutApplied == renderedCompact,
+            $"{size.Name}: compact layout state did not match the rendered width.");
+        Require(
+            reachableSize.WidthConstrained || _compactLayoutApplied == size.Compact,
+            $"{size.Name}: an unconstrained client did not match the requested width contract.");
 
         var scrollResults = new Dictionary<string, double>();
         var listResults = new Dictionary<string, int>();
@@ -445,7 +454,7 @@ public sealed partial class MainWindow
             LibraryFilterGrid,
             LibraryContentBorder,
             PersistentStatusGrid);
-        if (size.Compact && size.HeightDips < 820)
+        if (_compactLayoutApplied && WindowRoot.ActualHeight < 820)
         {
             Require(
                 LibraryStatsGrid.Visibility == Visibility.Collapsed,
@@ -662,6 +671,12 @@ public sealed partial class MainWindow
             ["name"] = size.Name,
             ["requested_width_dips"] = size.WidthDips,
             ["requested_height_dips"] = size.HeightDips,
+            ["target_width_dips"] = reachableSize.WidthDips,
+            ["target_height_dips"] = reachableSize.HeightDips,
+            ["display_constrained"] =
+                reachableSize.WidthConstrained || reachableSize.HeightConstrained,
+            ["width_constrained"] = reachableSize.WidthConstrained,
+            ["height_constrained"] = reachableSize.HeightConstrained,
             ["rendered_width_dips"] = Math.Round(WindowRoot.ActualWidth, 1),
             ["rendered_height_dips"] = Math.Round(WindowRoot.ActualHeight, 1),
             ["compact"] = _compactLayoutApplied,
@@ -670,15 +685,75 @@ public sealed partial class MainWindow
         };
     }
 
-    private async Task ResizeForClientSizeAsync(UiProbeSize size)
+    private (
+        double WidthDips,
+        double HeightDips,
+        bool WidthConstrained,
+        bool HeightConstrained) GetReachableClientSize(UiProbeSize size)
+    {
+        var manager = _desktopDockManager
+            ?? throw new InvalidOperationException(
+                "The desktop docking manager was unavailable for display sizing.");
+        var snapshot = manager.CaptureSnapshot();
+        var dpiScale = Math.Max(1.0, snapshot.Dpi / 96.0);
+        var nonClientWidthPixels = Math.Max(
+            0,
+            AppWindow.Size.Width
+                - (int)Math.Round(WindowRoot.ActualWidth * dpiScale));
+        var nonClientHeightPixels = Math.Max(
+            0,
+            AppWindow.Size.Height
+                - (int)Math.Round(WindowRoot.ActualHeight * dpiScale));
+        var maximumWidthDips = Math.Max(
+            1,
+            Math.Floor(
+                Math.Max(1, snapshot.WorkArea.Width - nonClientWidthPixels)
+                    / dpiScale));
+        var maximumHeightDips = Math.Max(
+            1,
+            Math.Floor(
+                Math.Max(1, snapshot.WorkArea.Height - nonClientHeightPixels)
+                    / dpiScale));
+        var targetWidthDips = Math.Min(size.WidthDips, maximumWidthDips);
+        var targetHeightDips = Math.Min(size.HeightDips, maximumHeightDips);
+        return (
+            targetWidthDips,
+            targetHeightDips,
+            targetWidthDips < size.WidthDips - 1,
+            targetHeightDips < size.HeightDips - 1);
+    }
+
+    private Dictionary<string, object> VerifyResponsiveBreakpointContract()
+    {
+        ApplyResponsiveLayout(1_099);
+        Require(
+            _compactLayoutApplied,
+            "The responsive layout did not enter compact mode below its breakpoint.");
+        ApplyResponsiveLayout(1_101);
+        Require(
+            !_compactLayoutApplied,
+            "The responsive layout did not leave compact mode above its breakpoint.");
+        ApplyResponsiveLayout(WindowRoot.ActualWidth);
+        return new Dictionary<string, object>
+        {
+            ["below_width_dips"] = 1_099,
+            ["below_compact"] = true,
+            ["above_width_dips"] = 1_101,
+            ["above_compact"] = false,
+        };
+    }
+
+    private async Task ResizeForClientSizeAsync(
+        double widthDips,
+        double heightDips)
     {
         var dpiScale = Math.Max(
             1.0,
             GetDpiForWindow(WinRT.Interop.WindowNative.GetWindowHandle(this)) / 96.0);
         for (var attempt = 0; attempt < 3; attempt++)
         {
-            var widthDelta = size.WidthDips - WindowRoot.ActualWidth;
-            var heightDelta = size.HeightDips - WindowRoot.ActualHeight;
+            var widthDelta = widthDips - WindowRoot.ActualWidth;
+            var heightDelta = heightDips - WindowRoot.ActualHeight;
             if (Math.Abs(widthDelta) <= 2 && Math.Abs(heightDelta) <= 2)
             {
                 return;

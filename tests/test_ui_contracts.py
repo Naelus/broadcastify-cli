@@ -417,7 +417,14 @@ def test_native_window_exposes_real_appbar_docking_and_compact_layouts() -> None
     assert 'new UiProbeSize("reference", 1240, 900, false)' in ui_e2e
     assert 'new UiProbeSize("large", 1600, 1000, false)' in ui_e2e
     assert "ResizeForClientSizeAsync" in ui_e2e
-    assert "Math.Abs(WindowRoot.ActualWidth - size.WidthDips) <= 3" in ui_e2e
+    assert "GetReachableClientSize" in ui_e2e
+    assert "snapshot.WorkArea.Width - nonClientWidthPixels" in ui_e2e
+    assert "snapshot.WorkArea.Height - nonClientHeightPixels" in ui_e2e
+    assert '"display_constrained"' in ui_e2e
+    assert "reachableSize.WidthConstrained || _compactLayoutApplied == size.Compact" in ui_e2e
+    assert "VerifyResponsiveBreakpointContract" in ui_e2e
+    assert "ApplyResponsiveLayout(1_099)" in ui_e2e
+    assert "ApplyResponsiveLayout(1_101)" in ui_e2e
     assert "ExerciseScrollAsync" in ui_e2e
     assert "ExerciseItemsScrollAsync" in ui_e2e
     assert "ExerciseTextBoxScrollAsync" in ui_e2e
