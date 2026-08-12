@@ -349,6 +349,8 @@ def test_native_window_exposes_real_appbar_docking_and_compact_layouts() -> None
     assert "GetDpiForMonitor" in docking
     assert "MonitorDeviceName" in docking
     assert "RestoreFloatingWindowForStartup" in docking
+    assert "if (restoreMaximized)" in docking
+    assert "presenter.State != OverlappedPresenterState.Maximized" in docking
     assert "NormalizeFloatingBounds" in docking
     assert "MinimumWidthDips = 520" in policy
     assert "RecommendedWidthDips = 600" in policy

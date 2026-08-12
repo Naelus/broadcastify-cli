@@ -372,11 +372,12 @@ internal sealed class DesktopDockManager : IDisposable
         {
             return;
         }
+        var restoreMaximized = _restoreMaximized;
         _applyingPosition = true;
         try
         {
             _appWindow.MoveAndResize(_floatingBounds);
-            if (_restoreMaximized
+            if (restoreMaximized
                 && _appWindow.Presenter is OverlappedPresenter presenter)
             {
                 presenter.Maximize();
@@ -385,6 +386,23 @@ internal sealed class DesktopDockManager : IDisposable
         finally
         {
             _applyingPosition = false;
+        }
+        if (restoreMaximized)
+        {
+            _dispatcherQueue.TryEnqueue(() =>
+            {
+                if (_disposed
+                    || IsDocked
+                    || _appWindow.Presenter is not OverlappedPresenter presenter)
+                {
+                    return;
+                }
+                _restoreMaximized = true;
+                if (presenter.State != OverlappedPresenterState.Maximized)
+                {
+                    presenter.Maximize();
+                }
+            });
         }
     }
 

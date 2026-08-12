@@ -877,11 +877,15 @@ public sealed partial class MainWindow
         Require(
             presenter.State == OverlappedPresenterState.Restored,
             "Docking did not normalize the maximized presenter.");
+        Require(
+            manager.RestoreMaximized,
+            "Docking did not retain the prior maximized-state flag.");
         UnpinDesktop();
         await WaitForUiLayoutAsync(260);
         Require(
             presenter.State == OverlappedPresenterState.Maximized,
-            "Unpin did not restore the prior maximized state.");
+            "Unpin did not restore the prior maximized state "
+            + $"(state={presenter.State}, saved={manager.RestoreMaximized}).");
         presenter.Restore();
         await WaitForUiLayoutAsync(220);
         var restoredFromMaximized = manager.CaptureSnapshot();
