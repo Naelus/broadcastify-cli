@@ -12,24 +12,24 @@
         <MicaBackdrop />
     </Window.SystemBackdrop>
 
-    <Window.Resources>
-        <Style x:Key="TitleChromeButtonStyle" TargetType="Button">
-            <Setter Property="MinWidth" Value="0" />
-            <Setter Property="MinHeight" Value="0" />
-            <Setter Property="Width" Value="46" />
-            <Setter Property="Height" Value="47" />
-            <Setter Property="Padding" Value="0" />
-            <Setter Property="CornerRadius" Value="0" />
-            <Setter Property="BorderThickness" Value="0" />
-            <Setter Property="Background" Value="Transparent" />
-            <Setter Property="HorizontalContentAlignment" Value="Center" />
-            <Setter Property="VerticalContentAlignment" Value="Center" />
-            <Setter Property="UseSystemFocusVisuals" Value="True" />
-        </Style>
-    </Window.Resources>
-
     <Grid x:Name="WindowRoot"
           Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
+        <Grid.Resources>
+            <Style x:Key="TitleChromeButtonStyle" TargetType="Button">
+                <Setter Property="MinWidth" Value="0" />
+                <Setter Property="MinHeight" Value="0" />
+                <Setter Property="Width" Value="46" />
+                <Setter Property="Height" Value="47" />
+                <Setter Property="Padding" Value="0" />
+                <Setter Property="CornerRadius" Value="0" />
+                <Setter Property="BorderThickness" Value="0" />
+                <Setter Property="Background" Value="Transparent" />
+                <Setter Property="HorizontalContentAlignment" Value="Center" />
+                <Setter Property="VerticalContentAlignment" Value="Center" />
+                <Setter Property="UseSystemFocusVisuals" Value="True" />
+            </Style>
+        </Grid.Resources>
+
         <Grid.RowDefinitions>
             <RowDefinition Height="48" />
             <RowDefinition Height="*" />

@@ -273,6 +273,10 @@ def test_native_window_exposes_real_appbar_docking_and_compact_layouts() -> None
         if element.attrib.get(XAML_NAME)
     }
 
+    assert not any(child.tag.endswith("Window.Resources") for child in root)
+    assert any(
+        child.tag.endswith("Grid.Resources") for child in names["WindowRoot"]
+    )
     assert names["AppTitleBar"].tag.endswith("Border")
     assert names["AppTitleBar"].attrib["Height"] == "48"
     assert names["AppTitleBar"].attrib["MinHeight"] == "48"
