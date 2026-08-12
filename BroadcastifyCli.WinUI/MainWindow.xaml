@@ -518,7 +518,7 @@
 
                             <TabView x:Name="ReviewTabView" Grid.Column="1" IsAddTabButtonVisible="False">
                                 <TabViewItem x:Name="DailyReviewTab" Header="Daily review" IsClosable="False">
-                                    <Grid Padding="4,8,4,4" RowSpacing="9">
+                                    <Grid x:Name="DailyReviewContentGrid" Padding="4,8,4,4" RowSpacing="9">
                                         <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                                         <TextBlock x:Name="SummaryText" Text="Choose a saved day." TextWrapping="Wrap" MaxHeight="126" />
                                         <Grid Grid.Row="1" ColumnSpacing="10">
@@ -551,7 +551,7 @@
                                                             <TextBlock Text="{x:Bind EvidenceQuoteDisplay}" TextWrapping="Wrap" MaxLines="3"
                                                                        FontStyle="Italic" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                                             <TextBlock Text="{x:Bind ConfidenceSummary}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                                            <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,4,0,0">
+                                                            <StackPanel Orientation="Vertical" Spacing="6" Margin="0,4,0,0">
                                                                 <Button Content="Play exact clip" Click="PlayIncident_Click" />
                                                                 <Button Content="Play surrounding context" Click="PlayIncidentContext_Click"
                                                                         ToolTipService.ToolTip="Five minutes before through one minute after the cited segment; surrounding traffic is not itself cited evidence." />

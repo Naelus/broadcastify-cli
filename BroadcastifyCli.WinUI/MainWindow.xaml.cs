@@ -1330,10 +1330,15 @@ public sealed partial class MainWindow : Window
 
             ReviewContentGrid.ColumnDefinitions[0].Width = star;
             ReviewContentGrid.ColumnDefinitions[1].Width = zero;
-            ReviewContentGrid.RowDefinitions[0].Height = new GridLength(280);
+            ReviewContentGrid.RowDefinitions[0].Height = new GridLength(
+                shortCompact ? 170 : 280);
             ReviewContentGrid.RowDefinitions[1].Height = star;
             Grid.SetRow(ReviewTabView, 1);
             Grid.SetColumn(ReviewTabView, 0);
+            DailyReviewContentGrid.RowSpacing = shortCompact ? 4 : 9;
+            SummaryText.MaxHeight = shortCompact ? 40 : 126;
+            PlaybackStatusText.MaxLines = shortCompact ? 1 : 0;
+            IncidentPlayer.Height = shortCompact ? 44 : 72;
 
             WeekControls.Orientation = Orientation.Vertical;
             QuestionScopeActions.Orientation = Orientation.Vertical;
@@ -1428,6 +1433,10 @@ public sealed partial class MainWindow : Window
             ReviewContentGrid.RowDefinitions[1].Height = zero;
             Grid.SetRow(ReviewTabView, 0);
             Grid.SetColumn(ReviewTabView, 1);
+            DailyReviewContentGrid.RowSpacing = 9;
+            SummaryText.MaxHeight = 126;
+            PlaybackStatusText.MaxLines = 0;
+            IncidentPlayer.Height = 72;
 
             WeekControls.Orientation = Orientation.Horizontal;
             QuestionScopeActions.Orientation = Orientation.Horizontal;

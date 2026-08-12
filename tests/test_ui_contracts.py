@@ -367,6 +367,9 @@ def test_native_window_exposes_real_appbar_docking_and_compact_layouts() -> None
     assert "Grid.SetRow(LibraryDetailBorder, 1)" in native
     assert "Grid.SetRow(ArchiveJobBorder, 1)" in native
     assert "Grid.SetRow(ReviewTabView, 1)" in native
+    assert "shortCompact ? 170 : 280" in native
+    assert "DailyReviewContentGrid.RowSpacing = shortCompact ? 4 : 9" in native
+    assert "IncidentPlayer.Height = shortCompact ? 44 : 72" in native
     assert "Grid.SetRow(AreaQueueBorder, 1)" in native
     assert "Grid.SetRow(AreaStoryDetailBorder, 1)" in native
     assert "Started with Windows and kept the explicitly pinned status window visible" in native
