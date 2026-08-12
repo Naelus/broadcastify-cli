@@ -421,6 +421,7 @@ def test_native_window_exposes_real_appbar_docking_and_compact_layouts() -> None
     assert "SetForegroundWindow(windowHandle)" in ui_e2e
     assert "IsVisualDescendantOrSelf" in ui_e2e
     assert "control.StartBringIntoView" in ui_e2e
+    assert "control.IsEnabled" in ui_e2e
     assert "Synthetic provider contract line" in ui_e2e
     assert "RunUiDockingProbeAsync" in ui_e2e
     assert 'VerifyDockedSurfaceMatrixAsync("left")' in ui_e2e

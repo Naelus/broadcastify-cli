@@ -1318,9 +1318,8 @@ public sealed partial class MainWindow
     {
         Require(
             control.IsEnabled
-                && control.IsTabStop
                 && control.Visibility == Visibility.Visible,
-            $"{label}: the requested focus target was disabled, hidden, or outside the tab order.");
+            $"{label}: the requested focus target was disabled or hidden.");
         control.StartBringIntoView(new BringIntoViewOptions
         {
             AnimationDesired = false,
