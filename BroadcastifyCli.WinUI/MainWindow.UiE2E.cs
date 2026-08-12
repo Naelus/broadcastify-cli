@@ -368,6 +368,10 @@ public sealed partial class MainWindow
             Enumerable.Repeat(
                 "Missing and unfinished days remain sequential, resumable, and explicitly bounded through current. ",
                 16));
+        AnalysisProviderStatusText.Text = string.Join(
+            Environment.NewLine,
+            Enumerable.Range(1, 40).Select(index =>
+                $"Synthetic provider contract line {index}: local fixture only; no model, credential, or network request."));
         RefreshAboutPage();
         AboutActionStatusText.Text = string.Join(
             Environment.NewLine,
