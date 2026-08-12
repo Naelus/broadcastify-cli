@@ -64,6 +64,12 @@ restoration. A JSON report is written atomically, checked by the launcher, and
 cleaned only after success. A failed or timed-out probe fails the MSBuild target
 and retains its isolated artifacts for diagnosis.
 
+The v0.4.32 pre-package validation passed all 418 offline tests, compiled the
+native application with no warnings or errors, and completed the four-size
+rendered matrix plus left/right/resize/unpin AppBar checks. This result promotes
+the native WinUI shell from Implemented to Validated; packaging and future
+versions must continue to pass the same build-owned gate.
+
 ## Running the gate
 
 Use the focused set while iterating:
