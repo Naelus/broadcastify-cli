@@ -230,7 +230,15 @@ internal sealed class DesktopDockManager : IDisposable
                 _restoreMaximized = maximized;
                 if (presenter.State != OverlappedPresenterState.Restored)
                 {
-                    presenter.Restore();
+                    _applyingPosition = true;
+                    try
+                    {
+                        presenter.Restore();
+                    }
+                    finally
+                    {
+                        _applyingPosition = false;
+                    }
                 }
             }
         }

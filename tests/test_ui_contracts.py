@@ -361,6 +361,7 @@ def test_native_window_exposes_real_appbar_docking_and_compact_layouts() -> None
     assert "presenter.IsResizable = !pinned" in docking
     assert "presenter.IsMinimizable = !pinned" in docking
     assert "presenter.IsMaximizable = !pinned" in docking
+    assert "_applyingPosition = true" in docking
     assert "InputSystemCursorShape.SizeWestEast" in grip
 
     assert "ApplyResponsiveLayout" in native
