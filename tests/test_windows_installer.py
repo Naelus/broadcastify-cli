@@ -349,6 +349,8 @@ def test_every_desktop_build_requires_the_full_offline_product_gate() -> None:
     assert 'Name="RunNativeUiEndToEndGate"' in targets
     assert 'AfterTargets="Build"' in targets
     assert "scripts\\run_windows_ui_e2e.ps1" in targets
+    assert '$(TargetDir)$(AssemblyName).exe' in targets
+    assert '$(TargetPath)&quot;' not in targets
     assert "tests\\e2e\\test_product_workflows.py" in gate
     assert '$arguments = @("-m", "pytest", "-q")' in gate
     assert "BROADCASTIFY_PRODUCT_REGRESSION_GATE" in gate
