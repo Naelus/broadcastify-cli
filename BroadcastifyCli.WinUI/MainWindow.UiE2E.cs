@@ -578,16 +578,16 @@ public sealed partial class MainWindow
             SetupSettingsScroll,
             SetupReadinessInfoBar,
             PersistentStatusGrid);
-        HardwareProfilesExpander.IsExpanded = true;
-        Require(
-            HardwareProfileList.Items.Count >= 2,
-            $"{size.Name}/hardware-profiles: the fixture did not populate the profile list.");
         scrollResults["settings_setup"] = await ExerciseScrollAsync(
             SetupSettingsScroll,
             $"{size.Name}/settings-setup");
 
         SettingsTabView.SelectedItem = ProcessingSettingsTab;
         await WaitForUiLayoutAsync();
+        HardwareProfilesExpander.IsExpanded = true;
+        Require(
+            HardwareProfileList.Items.Count >= 2,
+            $"{size.Name}/hardware-profiles: the fixture did not populate the profile list.");
         RequireHorizontalBounds(
             size.Name,
             SettingsPage,
@@ -1163,6 +1163,11 @@ public sealed partial class MainWindow
         SettingsTabView.SelectedItem = SetupSettingsTab;
         await WaitForUiLayoutAsync();
         RequireOnlyPageVisible("settings");
+        results["settings_setup"] = await ExerciseScrollAsync(
+            SetupSettingsScroll,
+            $"docked-{label}/settings-setup");
+        SettingsTabView.SelectedItem = ProcessingSettingsTab;
+        await WaitForUiLayoutAsync(40);
         await RequireKeyboardFocusAsync(
             HardwareProfileComboBox,
             $"docked-{label}/settings-focus");
@@ -1170,11 +1175,6 @@ public sealed partial class MainWindow
         Require(
             HardwareProfileList.Items.Count >= 2,
             $"docked-{label}/hardware-profiles: the fixture list was empty.");
-        results["settings_setup"] = await ExerciseScrollAsync(
-            SetupSettingsScroll,
-            $"docked-{label}/settings-setup");
-        SettingsTabView.SelectedItem = ProcessingSettingsTab;
-        await WaitForUiLayoutAsync(40);
         results["settings_processing"] = await ExerciseScrollAsync(
             ProcessingSettingsScroll,
             $"docked-{label}/settings-processing");
