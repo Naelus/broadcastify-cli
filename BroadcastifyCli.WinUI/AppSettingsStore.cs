@@ -4,7 +4,7 @@ namespace BroadcastifyCli.WinUI;
 
 internal sealed record DesktopSettings
 {
-    public int Version { get; init; } = 7;
+    public int Version { get; init; } = 8;
     public string PythonRuntimePath { get; init; } = "";
     public string HardwareProfile { get; init; } = "auto";
     public string WhisperModel { get; init; } = "turbo";
@@ -40,6 +40,9 @@ internal sealed record DesktopSettings
     public string LastAreaProfileName { get; init; } = "";
     public string LastReviewFeedId { get; init; } = "";
     public string LastReviewDate { get; init; } = "";
+    public string DesktopDockSide { get; init; } = "none";
+    public double DesktopDockWidth { get; init; } =
+        DesktopDockManager.RecommendedWidthDips;
 }
 
 internal static class AppSettingsStore
@@ -124,6 +127,33 @@ internal static class AppSettingsStore
                 // optional heavyweight accelerator dependencies while the
                 // installer keeps its portable worker as the safe default.
                 settings = settings with { Version = 7 };
+                needsSave = true;
+            }
+            if (settings.Version < 8)
+            {
+                // Version 8 persists only the user's explicit left/right
+                // AppBar choice and logical width. Retained archives and all
+                // processing state remain in their existing locations.
+                settings = settings with
+                {
+                    Version = 8,
+                    DesktopDockSide = "none",
+                    DesktopDockWidth = DesktopDockManager.RecommendedWidthDips,
+                };
+                needsSave = true;
+            }
+            if (settings.DesktopDockSide is not ("none" or "left" or "right"))
+            {
+                settings = settings with { DesktopDockSide = "none" };
+                needsSave = true;
+            }
+            if (!double.IsFinite(settings.DesktopDockWidth)
+                || settings.DesktopDockWidth < DesktopDockManager.MinimumWidthDips)
+            {
+                settings = settings with
+                {
+                    DesktopDockWidth = DesktopDockManager.RecommendedWidthDips,
+                };
                 needsSave = true;
             }
             if (needsSave)

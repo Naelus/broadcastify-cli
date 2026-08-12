@@ -8,7 +8,9 @@ using System.Text.Json;
 using Microsoft.UI;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.Graphics;
@@ -110,28 +112,60 @@ public sealed partial class MainWindow : Window
     private bool _pythonRuntimeInputReady;
     private readonly bool _startupLaunch;
     private readonly bool _promptForSetup;
+    private readonly string? _uiEndToEndReportPath;
     private bool _updatingStartupPreference;
     private bool _pauseScheduledJobsForSetup;
     private readonly StringBuilder _visibleActivityLog = new();
     private readonly ConcurrentQueue<JsonElement> _pendingWorkerMessages = new();
     private readonly SemaphoreSlim _analysisOperationGate = new(1, 1);
     private int _workerMessageDrainScheduled;
+    private DesktopDockManager? _desktopDockManager;
+    private DesktopDockSide _desktopDockSide;
+    private double _desktopDockWidth = DesktopDockManager.RecommendedWidthDips;
+    private bool _desktopDockRestoreAttempted;
+    private bool? _compactLayoutApplied;
+    private bool? _shortCompactLayoutApplied;
 
     public MainWindow(
         bool startupLaunch = false,
-        bool promptForSetup = false)
+        bool promptForSetup = false,
+        string? uiEndToEndReportPath = null)
     {
         _startupLaunch = startupLaunch;
         _promptForSetup = promptForSetup;
+        _uiEndToEndReportPath = uiEndToEndReportPath;
         // Keep one startup snapshot. Processing-tab controls can be realized
         // after the window constructor, so the worker must not depend on a
         // second settings read or the current visual value of that tab.
         var startupSettings = AppSettingsStore.Load();
         InitializeComponent();
+        WindowRoot.SizeChanged += WindowRoot_SizeChanged;
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(AppTitleBar);
-        var dpiScale = Math.Max(1.0, GetDpiForWindow(WindowNative.GetWindowHandle(this)) / 96.0);
+        var windowHandle = WindowNative.GetWindowHandle(this);
+        var dpiScale = Math.Max(1.0, GetDpiForWindow(windowHandle) / 96.0);
         AppWindow.Resize(new SizeInt32((int)(1240 * dpiScale), (int)(900 * dpiScale)));
+        _desktopDockSide = ParseDesktopDockSide(startupSettings.DesktopDockSide);
+        _desktopDockWidth = Math.Max(
+            DesktopDockManager.MinimumWidthDips,
+            startupSettings.DesktopDockWidth);
+        try
+        {
+            _desktopDockManager = new DesktopDockManager(
+                windowHandle,
+                AppWindow,
+                DispatcherQueue);
+        }
+        catch (Exception exception)
+        {
+            AppDiagnostics.AppendCrash(exception, "Desktop docking setup");
+            _desktopDockSide = DesktopDockSide.None;
+            DockButton.IsEnabled = false;
+            ToolTipService.SetToolTip(
+                DockButton,
+                "Windows desktop docking is unavailable in this session.");
+        }
+        WindowRoot.Loaded += WindowRoot_Loaded;
 
         FeedResults.ItemsSource = _feeds;
         AreaFeedResults.ItemsSource = _areaFeeds;
@@ -152,9 +186,22 @@ public sealed partial class MainWindow : Window
         CombineToggle.IsOn = true;
         CombineToggle.IsEnabled = false;
         KeepOriginalsToggle.IsEnabled = true;
-        RefreshWindowsStartupUi();
+        if (_uiEndToEndReportPath is null)
+        {
+            RefreshWindowsStartupUi();
+        }
+        else
+        {
+            StartWithWindowsToggle.IsOn = false;
+            StartWithWindowsToggle.IsEnabled = false;
+            WindowsStartupStatusText.Text =
+                "Disabled inside the isolated UI end-to-end probe.";
+        }
         LoadUserSettings(startupSettings);
-        WireSettingsAutoSave();
+        if (_uiEndToEndReportPath is null)
+        {
+            WireSettingsAutoSave();
+        }
         var today = DateTimeOffset.Now;
         StartDatePicker.Date = today;
         EndDatePicker.Date = today;
@@ -171,6 +218,13 @@ public sealed partial class MainWindow : Window
         Closed += MainWindow_Closed;
         Transcription_Changed(TranscribeCheckBox, new RoutedEventArgs());
         Diarization_Changed(DiarizeCheckBox, new RoutedEventArgs());
+
+        if (_uiEndToEndReportPath is not null)
+        {
+            RefreshAboutPage();
+            WindowRoot.Loaded += StartUiEndToEndProbe;
+            return;
+        }
 
         try
         {
@@ -334,6 +388,13 @@ public sealed partial class MainWindow : Window
         {
             AppendLog(
                 "Started with Windows; setup needs attention before unattended schedules can run reliably.");
+            return;
+        }
+
+        if (_desktopDockManager?.IsDocked == true)
+        {
+            AppendLog(
+                "Started with Windows and kept the explicitly pinned status window visible; saved schedules were checked.");
             return;
         }
 
@@ -807,6 +868,448 @@ public sealed partial class MainWindow : Window
         UpdateSetupSummary();
     }
 
+    private static DesktopDockSide ParseDesktopDockSide(string? value) =>
+        value?.Trim().ToLowerInvariant() switch
+        {
+            "left" => DesktopDockSide.Left,
+            "right" => DesktopDockSide.Right,
+            _ => DesktopDockSide.None,
+        };
+
+    private string DesktopDockSideSetting =>
+        (_desktopDockManager?.IsDocked == true
+            ? _desktopDockManager.Side
+            : _desktopDockSide) switch
+        {
+            DesktopDockSide.Left => "left",
+            DesktopDockSide.Right => "right",
+            _ => "none",
+        };
+
+    private void WindowRoot_Loaded(object sender, RoutedEventArgs e)
+    {
+        if (_desktopDockRestoreAttempted)
+        {
+            return;
+        }
+        _desktopDockRestoreAttempted = true;
+        if (_desktopDockSide is DesktopDockSide.Left or DesktopDockSide.Right)
+        {
+            TryDockDesktop(_desktopDockSide, persist: false);
+        }
+        else
+        {
+            UpdateDesktopDockUi();
+        }
+        ApplyResponsiveLayout(WindowRoot.ActualWidth);
+    }
+
+    private void DockButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_desktopDockManager?.IsDocked == true)
+        {
+            UnpinDesktop();
+            return;
+        }
+
+        PrepareDesktopDockMenu();
+        DockMenuFlyout.ShowAt(DockButton);
+    }
+
+    private void DockButton_RightTapped(object sender, RightTappedRoutedEventArgs e)
+    {
+        PrepareDesktopDockMenu();
+        DockMenuFlyout.ShowAt(DockButton);
+        e.Handled = true;
+    }
+
+    private void DockLeft_Click(object sender, RoutedEventArgs e) =>
+        TryDockDesktop(DesktopDockSide.Left);
+
+    private void DockRight_Click(object sender, RoutedEventArgs e) =>
+        TryDockDesktop(DesktopDockSide.Right);
+
+    private void DockUnpin_Click(object sender, RoutedEventArgs e) =>
+        UnpinDesktop();
+
+    private bool TryDockDesktop(
+        DesktopDockSide side,
+        bool persist = true)
+    {
+        if (_desktopDockManager is null)
+        {
+            return false;
+        }
+
+        try
+        {
+            _desktopDockManager.Dock(side, _desktopDockWidth);
+            _desktopDockSide = side;
+            _desktopDockWidth = _desktopDockManager.WidthDips;
+            UpdateDesktopDockUi();
+            ApplyResponsiveLayout(WindowRoot.ActualWidth);
+            if (persist)
+            {
+                PersistUserSettings(logFailure: true);
+            }
+            AppendLog(
+                $"Pinned to the {side.ToString().ToLowerInvariant()} desktop edge at "
+                + $"{_desktopDockWidth:N0} logical pixels; Windows work area is reserved.");
+            return true;
+        }
+        catch (Exception exception)
+        {
+            _desktopDockManager.Unpin();
+            _desktopDockSide = DesktopDockSide.None;
+            UpdateDesktopDockUi();
+            StatusText.Text = "Desktop docking unavailable";
+            AppendLog($"Desktop docking: {exception.Message}");
+            return false;
+        }
+    }
+
+    private void UnpinDesktop()
+    {
+        if (_desktopDockManager?.IsDocked != true)
+        {
+            return;
+        }
+
+        _desktopDockWidth = _desktopDockManager.WidthDips;
+        _desktopDockManager.Unpin();
+        _desktopDockSide = DesktopDockSide.None;
+        UpdateDesktopDockUi();
+        ApplyResponsiveLayout(WindowRoot.ActualWidth);
+        PersistUserSettings(logFailure: true);
+        AppendLog("Unpinned from the desktop edge and restored the floating window.");
+    }
+
+    private void PrepareDesktopDockMenu()
+    {
+        var side = _desktopDockManager?.Side ?? DesktopDockSide.None;
+        DockLeftMenuItem.IsEnabled = side != DesktopDockSide.Left;
+        DockRightMenuItem.IsEnabled = side != DesktopDockSide.Right;
+        var pinned = _desktopDockManager?.IsDocked == true;
+        DockMenuSeparator.Visibility = pinned ? Visibility.Visible : Visibility.Collapsed;
+        DockUnpinMenuItem.Visibility = pinned ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void UpdateDesktopDockUi()
+    {
+        var manager = _desktopDockManager;
+        var pinned = manager?.IsDocked == true;
+        var side = manager?.Side ?? DesktopDockSide.None;
+        DockButton.Content = pinned ? "Unpin" : "Pin";
+        AutomationProperties.SetName(
+            DockButton,
+            pinned ? "Unpin from desktop" : "Pin to desktop");
+        AutomationProperties.SetHelpText(
+            DockButton,
+            pinned
+                ? "Left click to unpin. Right click to change the pinned side."
+                : "Choose the left or right side and reserve desktop space.");
+        ToolTipService.SetToolTip(
+            DockButton,
+            pinned
+                ? "Unpin (right-click to change side)"
+                : "Pin to the left or right desktop edge");
+        DockResizeHandle.Visibility = pinned ? Visibility.Visible : Visibility.Collapsed;
+        DockResizeHandle.HorizontalAlignment = side == DesktopDockSide.Left
+            ? HorizontalAlignment.Right
+            : HorizontalAlignment.Left;
+        RootNavigation.PaneDisplayMode = pinned
+            ? NavigationViewPaneDisplayMode.LeftMinimal
+            : NavigationViewPaneDisplayMode.Auto;
+        if (pinned)
+        {
+            RootNavigation.IsPaneOpen = false;
+            AppTitleBar.Subtitle =
+                $"Pinned {side.ToString().ToLowerInvariant()} · drag the inner edge to resize";
+        }
+        else
+        {
+            AppTitleBar.Subtitle = "Local radio archive intelligence";
+        }
+        PrepareDesktopDockMenu();
+    }
+
+    private void DockResizeHandle_ManipulationStarted(
+        object sender,
+        ManipulationStartedRoutedEventArgs e)
+    {
+        e.Handled = _desktopDockManager?.IsDocked == true;
+    }
+
+    private void DockResizeHandle_ManipulationDelta(
+        object sender,
+        ManipulationDeltaRoutedEventArgs e)
+    {
+        if (_desktopDockManager?.IsDocked != true)
+        {
+            return;
+        }
+
+        var change = e.Delta.Translation.X;
+        if (_desktopDockManager.Side == DesktopDockSide.Right)
+        {
+            change = -change;
+        }
+        _desktopDockManager.ChangeWidth(_desktopDockManager.WidthDips + change);
+        _desktopDockWidth = _desktopDockManager.WidthDips;
+        ApplyResponsiveLayout(WindowRoot.ActualWidth);
+        e.Handled = true;
+    }
+
+    private void DockResizeHandle_ManipulationCompleted(
+        object sender,
+        ManipulationCompletedRoutedEventArgs e)
+    {
+        if (_desktopDockManager?.IsDocked == true)
+        {
+            _desktopDockWidth = _desktopDockManager.WidthDips;
+            PersistUserSettings(logFailure: true);
+            AppendLog($"Pinned width saved at {_desktopDockWidth:N0} logical pixels.");
+            e.Handled = true;
+        }
+    }
+
+    private void WindowRoot_SizeChanged(object sender, SizeChangedEventArgs e) =>
+        ApplyResponsiveLayout(e.NewSize.Width);
+
+    private void ApplyResponsiveLayout(double width)
+    {
+        var compact = width < 760 || _desktopDockManager?.IsDocked == true;
+        var shortCompact = compact
+            && WindowRoot.ActualHeight > 0
+            && WindowRoot.ActualHeight < 820;
+        if (_compactLayoutApplied == compact
+            && _shortCompactLayoutApplied == shortCompact)
+        {
+            return;
+        }
+        var enteringCompact = _compactLayoutApplied != true && compact;
+        _compactLayoutApplied = compact;
+        _shortCompactLayoutApplied = shortCompact;
+
+        var star = new GridLength(1, GridUnitType.Star);
+        var zero = new GridLength(0);
+        var pagePadding = compact
+            ? new Thickness(14, 14, 14, 12)
+            : new Thickness(26, 20, 26, 18);
+        foreach (var page in new FrameworkElement[]
+                 {
+                     LibraryPage,
+                     ArchivePage,
+                     ReviewPage,
+                     AreaPage,
+                     SettingsPage,
+                     AboutPage,
+                 })
+        {
+            if (page is Grid grid)
+            {
+                grid.Padding = pagePadding;
+            }
+        }
+
+        if (compact)
+        {
+            RootNavigation.IsPaneOpen = false;
+            if (enteringCompact)
+            {
+                LibraryCoverageExpander.IsExpanded = false;
+            }
+            LibraryStatsGrid.Visibility = shortCompact
+                ? Visibility.Collapsed
+                : Visibility.Visible;
+
+            Grid.SetRow(LibraryHeaderActions, 1);
+            Grid.SetColumn(LibraryHeaderActions, 0);
+            LibraryHeaderActions.Orientation = Orientation.Vertical;
+            LibraryHeaderActions.HorizontalAlignment = HorizontalAlignment.Stretch;
+            LibraryHeaderGrid.ColumnDefinitions[1].Width = zero;
+
+            for (var index = 0; index < LibraryStatsGrid.ColumnDefinitions.Count; index++)
+            {
+                LibraryStatsGrid.ColumnDefinitions[index].Width = index < 2 ? star : zero;
+            }
+            Grid.SetRow(LibraryFeedsStat, 0);
+            Grid.SetColumn(LibraryFeedsStat, 0);
+            Grid.SetRow(LibraryDaysStat, 0);
+            Grid.SetColumn(LibraryDaysStat, 1);
+            Grid.SetRow(LibraryBacklogStat, 1);
+            Grid.SetColumn(LibraryBacklogStat, 0);
+            Grid.SetRow(LibraryReadyStat, 1);
+            Grid.SetColumn(LibraryReadyStat, 1);
+
+            LibraryFilterGrid.ColumnDefinitions[1].Width = zero;
+            Grid.SetRow(LibraryFilterCombo, 1);
+            Grid.SetColumn(LibraryFilterCombo, 0);
+
+            LibraryContentGrid.ColumnDefinitions[0].Width = star;
+            LibraryContentGrid.ColumnDefinitions[0].MinWidth = 0;
+            LibraryContentGrid.ColumnDefinitions[1].Width = zero;
+            LibraryContentGrid.ColumnDefinitions[1].MinWidth = 0;
+            LibraryContentGrid.RowDefinitions[0].Height = new GridLength(2, GridUnitType.Star);
+            LibraryContentGrid.RowDefinitions[1].Height = new GridLength(3, GridUnitType.Star);
+            Grid.SetRow(LibraryDetailBorder, 1);
+            Grid.SetColumn(LibraryDetailBorder, 0);
+            LibraryDetailBorder.BorderThickness = new Thickness(0, 1, 0, 0);
+
+            ArchiveContentGrid.ColumnDefinitions[0].Width = star;
+            ArchiveContentGrid.ColumnDefinitions[1].Width = zero;
+            ArchiveContentGrid.RowDefinitions[0].Height = new GridLength(3, GridUnitType.Star);
+            ArchiveContentGrid.RowDefinitions[1].Height = new GridLength(4, GridUnitType.Star);
+            Grid.SetRow(ArchiveJobBorder, 1);
+            Grid.SetColumn(ArchiveJobBorder, 0);
+
+            ReviewContentGrid.ColumnDefinitions[0].Width = star;
+            ReviewContentGrid.ColumnDefinitions[1].Width = zero;
+            ReviewContentGrid.RowDefinitions[0].Height = new GridLength(280);
+            ReviewContentGrid.RowDefinitions[1].Height = star;
+            Grid.SetRow(ReviewTabView, 1);
+            Grid.SetColumn(ReviewTabView, 0);
+
+            WeekControls.Orientation = Orientation.Vertical;
+            QuestionScopeActions.Orientation = Orientation.Vertical;
+            QuestionStarterPrimary.Orientation = Orientation.Vertical;
+            QuestionStarterSecondary.Orientation = Orientation.Vertical;
+            QuestionSendGrid.ColumnDefinitions[1].Width = zero;
+            Grid.SetRow(AskButton, 1);
+            Grid.SetColumn(AskButton, 0);
+            AskButton.HorizontalAlignment = HorizontalAlignment.Stretch;
+
+            AreaFeedsGrid.ColumnDefinitions[0].Width = star;
+            AreaFeedsGrid.ColumnDefinitions[1].Width = zero;
+            AreaFeedsGrid.RowDefinitions[0].Height = star;
+            AreaFeedsGrid.RowDefinitions[1].Height = GridLength.Auto;
+            Grid.SetRow(AreaQueueBorder, 1);
+            Grid.SetColumn(AreaQueueBorder, 0);
+
+            AreaStoryContentGrid.ColumnDefinitions[0].Width = star;
+            AreaStoryContentGrid.ColumnDefinitions[1].Width = zero;
+            AreaStoryContentGrid.RowDefinitions[0].Height = star;
+            AreaStoryContentGrid.RowDefinitions[1].Height = new GridLength(2, GridUnitType.Star);
+            Grid.SetRow(AreaStoryDetailBorder, 1);
+            Grid.SetColumn(AreaStoryDetailBorder, 0);
+
+            RuntimeControls.Orientation = Orientation.Vertical;
+            CredentialButtons.Orientation = Orientation.Vertical;
+            CredentialLinks.Orientation = Orientation.Vertical;
+            AboutActionButtons.Orientation = Orientation.Vertical;
+            AboutHelpLinks.Orientation = Orientation.Vertical;
+
+            PersistentStatusGrid.ColumnDefinitions[0].Width = star;
+            PersistentStatusGrid.ColumnDefinitions[1].Width = GridLength.Auto;
+            PersistentStatusGrid.ColumnDefinitions[2].Width = zero;
+            Grid.SetRow(JobProgress, 1);
+            Grid.SetColumn(JobProgress, 0);
+            Grid.SetColumnSpan(JobProgress, 2);
+            Grid.SetRow(CancelButton, 0);
+            Grid.SetColumn(CancelButton, 1);
+        }
+        else
+        {
+            LibraryStatsGrid.Visibility = Visibility.Visible;
+            Grid.SetRow(LibraryHeaderActions, 0);
+            Grid.SetColumn(LibraryHeaderActions, 1);
+            LibraryHeaderActions.Orientation = Orientation.Horizontal;
+            LibraryHeaderActions.HorizontalAlignment = HorizontalAlignment.Left;
+            LibraryHeaderGrid.ColumnDefinitions[1].Width = GridLength.Auto;
+
+            foreach (var definition in LibraryStatsGrid.ColumnDefinitions)
+            {
+                definition.Width = star;
+            }
+            foreach (var value in new[]
+                     {
+                         LibraryFeedsStat,
+                         LibraryDaysStat,
+                         LibraryBacklogStat,
+                         LibraryReadyStat,
+                     })
+            {
+                Grid.SetRow(value, 0);
+            }
+            Grid.SetColumn(LibraryFeedsStat, 0);
+            Grid.SetColumn(LibraryDaysStat, 1);
+            Grid.SetColumn(LibraryBacklogStat, 2);
+            Grid.SetColumn(LibraryReadyStat, 3);
+
+            LibraryFilterGrid.ColumnDefinitions[1].Width = new GridLength(220);
+            Grid.SetRow(LibraryFilterCombo, 0);
+            Grid.SetColumn(LibraryFilterCombo, 1);
+
+            LibraryContentGrid.ColumnDefinitions[0].Width = new GridLength(5, GridUnitType.Star);
+            LibraryContentGrid.ColumnDefinitions[0].MinWidth = 330;
+            LibraryContentGrid.ColumnDefinitions[1].Width = new GridLength(6, GridUnitType.Star);
+            LibraryContentGrid.ColumnDefinitions[1].MinWidth = 390;
+            LibraryContentGrid.RowDefinitions[0].Height = star;
+            LibraryContentGrid.RowDefinitions[1].Height = zero;
+            Grid.SetRow(LibraryDetailBorder, 0);
+            Grid.SetColumn(LibraryDetailBorder, 1);
+            LibraryDetailBorder.BorderThickness = new Thickness(1, 0, 0, 0);
+
+            ArchiveContentGrid.ColumnDefinitions[0].Width = new GridLength(3, GridUnitType.Star);
+            ArchiveContentGrid.ColumnDefinitions[1].Width = new GridLength(2, GridUnitType.Star);
+            ArchiveContentGrid.RowDefinitions[0].Height = star;
+            ArchiveContentGrid.RowDefinitions[1].Height = zero;
+            Grid.SetRow(ArchiveJobBorder, 0);
+            Grid.SetColumn(ArchiveJobBorder, 1);
+
+            ReviewContentGrid.ColumnDefinitions[0].Width = new GridLength(310);
+            ReviewContentGrid.ColumnDefinitions[1].Width = star;
+            ReviewContentGrid.RowDefinitions[0].Height = star;
+            ReviewContentGrid.RowDefinitions[1].Height = zero;
+            Grid.SetRow(ReviewTabView, 0);
+            Grid.SetColumn(ReviewTabView, 1);
+
+            WeekControls.Orientation = Orientation.Horizontal;
+            QuestionScopeActions.Orientation = Orientation.Horizontal;
+            QuestionStarterPrimary.Orientation = Orientation.Horizontal;
+            QuestionStarterSecondary.Orientation = Orientation.Horizontal;
+            QuestionSendGrid.ColumnDefinitions[1].Width = GridLength.Auto;
+            Grid.SetRow(AskButton, 0);
+            Grid.SetColumn(AskButton, 1);
+            AskButton.HorizontalAlignment = HorizontalAlignment.Left;
+
+            AreaFeedsGrid.ColumnDefinitions[0].Width = new GridLength(3, GridUnitType.Star);
+            AreaFeedsGrid.ColumnDefinitions[1].Width = new GridLength(2, GridUnitType.Star);
+            AreaFeedsGrid.RowDefinitions[0].Height = star;
+            AreaFeedsGrid.RowDefinitions[1].Height = zero;
+            Grid.SetRow(AreaQueueBorder, 0);
+            Grid.SetColumn(AreaQueueBorder, 1);
+
+            AreaStoryContentGrid.ColumnDefinitions[0].Width = new GridLength(330);
+            AreaStoryContentGrid.ColumnDefinitions[1].Width = star;
+            AreaStoryContentGrid.RowDefinitions[0].Height = star;
+            AreaStoryContentGrid.RowDefinitions[1].Height = zero;
+            Grid.SetRow(AreaStoryDetailBorder, 0);
+            Grid.SetColumn(AreaStoryDetailBorder, 1);
+
+            RuntimeControls.Orientation = Orientation.Horizontal;
+            CredentialButtons.Orientation = Orientation.Horizontal;
+            CredentialLinks.Orientation = Orientation.Horizontal;
+            AboutActionButtons.Orientation = Orientation.Horizontal;
+            AboutHelpLinks.Orientation = Orientation.Horizontal;
+
+            PersistentStatusGrid.ColumnDefinitions[0].Width = star;
+            PersistentStatusGrid.ColumnDefinitions[1].Width = new GridLength(260);
+            PersistentStatusGrid.ColumnDefinitions[2].Width = GridLength.Auto;
+            Grid.SetRow(JobProgress, 0);
+            Grid.SetColumn(JobProgress, 1);
+            Grid.SetColumnSpan(JobProgress, 1);
+            Grid.SetRow(CancelButton, 0);
+            Grid.SetColumn(CancelButton, 2);
+        }
+
+        AppTitleBar.Subtitle = _desktopDockManager?.IsDocked == true
+            ? $"Pinned {_desktopDockManager.Side.ToString().ToLowerInvariant()} · drag the inner edge to resize"
+            : compact
+                ? ""
+                : "Local radio archive intelligence";
+    }
+
     private void MainWindow_Closed(object sender, WindowEventArgs args)
     {
         _settingsSaveTimer?.Stop();
@@ -816,6 +1319,7 @@ public sealed partial class MainWindow : Window
         _questionCancellation?.Cancel();
         PersistUserSettings(logFailure: true);
         PersistAnalysisCredentialPreference();
+        _desktopDockManager?.Dispose();
         _worker?.StopLanNode();
         ReleaseMediaPlayerInstances(recreate: false);
     }
@@ -860,6 +1364,9 @@ public sealed partial class MainWindow : Window
             LastAreaProfileName = _lastAreaProfileName,
             LastReviewFeedId = _lastReviewFeedId,
             LastReviewDate = _lastReviewDate,
+            DesktopDockSide = DesktopDockSideSetting,
+            DesktopDockWidth = _desktopDockManager?.WidthDips
+                ?? _desktopDockWidth,
         };
 
     private string PersistedOutputDirectory()

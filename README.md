@@ -116,6 +116,10 @@ In the app:
 9. Open **About & support** to confirm the installed version, find the archive
    and diagnostic folders, copy credential-free support details, or check for
    updates.
+10. Use **Pin** in the title bar to reserve the left or right desktop edge while
+    a catch-up continues. Drag the inner edge to resize; click **Unpin** to
+    restore the floating window. Pinning changes only window layout, not worker
+    or retained archive state.
 
 The full prerequisite, first-run, model, and private-build instructions are in
 [docs/guides/windows-setup.md](docs/guides/windows-setup.md).

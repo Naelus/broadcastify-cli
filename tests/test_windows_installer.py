@@ -339,15 +339,26 @@ def test_every_desktop_build_requires_the_full_offline_product_gate() -> None:
     installer = (
         ROOT / "scripts" / "build_windows_installer.ps1"
     ).read_text(encoding="utf-8")
+    ui_e2e = (
+        ROOT / "scripts" / "run_windows_ui_e2e.ps1"
+    ).read_text(encoding="utf-8")
 
     assert 'Name="RunProductRegressionGate"' in targets
     assert 'DependsOnTargets="RequireCommittedBuildSource"' in targets
     assert "scripts\\run_product_regression_gate.ps1" in targets
+    assert 'Name="RunNativeUiEndToEndGate"' in targets
+    assert 'AfterTargets="Build"' in targets
+    assert "scripts\\run_windows_ui_e2e.ps1" in targets
     assert "tests\\e2e\\test_product_workflows.py" in gate
     assert '$arguments = @("-m", "pytest", "-q")' in gate
     assert "BROADCASTIFY_PRODUCT_REGRESSION_GATE" in gate
     assert "BROADCASTIFY_USERNAME" in gate
     assert "BROADCASTIFY_SECURE_PASSWORD" in gate
+    assert "BROADCASTIFY_DESKTOP_TEST_DATA_ROOT" in ui_e2e
+    assert "--ui-e2e-report" in ui_e2e
+    assert "DesktopDockSide = \"none\"" in ui_e2e
+    assert "UIAutomation" not in ui_e2e
+    assert "SendKeys" not in ui_e2e
     assert 'pip install --disable-pip-version-check -e ".[dev]"' in workflow
     assert "dotnet publish $project" in installer
     assert "ProductRegressionGate=false" not in installer

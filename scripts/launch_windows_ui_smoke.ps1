@@ -38,7 +38,7 @@ $dayRoot = Join-Path (
 New-Item -ItemType Directory -Path $dataRoot, $dayRoot -Force | Out-Null
 
 $settings = [ordered]@{
-    Version = 7
+    Version = 8
     OutputDirectory = $libraryRoot
     LanSyncEnabled = $false
     LanDiscoveryEnabled = $false

@@ -48,6 +48,26 @@ Both UIs are task-oriented rather than one long scrolling form:
 Master/detail layouts keep a bounded list and one selected evidence package
 visible. Generated prose is secondary to coverage and citations.
 
+## Desktop edge docking and responsive layout
+
+The Windows title bar exposes an explicit **Pin** menu with left and right
+choices. Pinning registers the window as a Windows AppBar instead of merely
+moving it: the shell reserves that monitor edge so editors and terminals do not
+cover a continuing archive/catch-up status surface. A pinned window is full
+height, starts at 600 logical pixels, has a dedicated inner resize edge, and
+uses one-click **Unpin**. Right-clicking the pinned control changes sides.
+
+The user's side and logical width are persisted in ordinary desktop settings.
+Closing or crashing the process removes the live AppBar reservation; the next
+launch safely registers it again. Explorer/taskbar restarts, DPI changes,
+display changes, and work-area changes also re-negotiate the reservation.
+
+At narrow or pinned widths, navigation becomes minimal and the main two-column
+surfaces stack vertically. Library master/detail, archive setup, review/chat,
+Area Watch, credentials, About, and the persistent job status remain reachable
+without horizontal page scrolling. Docking does not pause the worker or change
+archive, transcript, database, schedule, quota, or credential storage.
+
 ## Local and LAN hosting
 
 The browser binds to loopback by default. Explicit private/link-local binding or
@@ -64,5 +84,6 @@ port-forwarded or publicly proxied without real authentication and TLS. See
 
 Real Windows, Linux, and TrueNAS paths are validated. Apple Metal support is
 implemented but a real Mac workflow and cross-platform keychain integration are
-not current priorities. The active delivery gap is the
-[standalone Windows package and model manager](https://github.com/Naelus/broadcastify-cli/issues/1).
+not current priorities. The standalone Windows installer and explicit managed
+CUDA runtime are now validated; remaining packaged accelerator work is limited
+to the optional OpenVINO/Vulkan lifecycle and a future signed release path.

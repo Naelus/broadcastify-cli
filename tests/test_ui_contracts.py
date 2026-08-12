@@ -263,6 +263,83 @@ def test_native_ui_smoke_launcher_isolated_from_real_user_data() -> None:
     assert "SendKeys" not in launcher
 
 
+def test_native_window_exposes_real_appbar_docking_and_compact_layouts() -> None:
+    root = ElementTree.parse(
+        ROOT / "BroadcastifyCli.WinUI" / "MainWindow.xaml"
+    ).getroot()
+    names = {
+        element.attrib.get(XAML_NAME): element
+        for element in root.iter()
+        if element.attrib.get(XAML_NAME)
+    }
+
+    assert names["DockButton"].attrib["Content"] == "Pin"
+    assert names["DockButton"].attrib["Click"] == "DockButton_Click"
+    assert names["DockButton"].attrib["RightTapped"] == "DockButton_RightTapped"
+    assert names["DockLeftMenuItem"].attrib["Text"] == "Pin left"
+    assert names["DockRightMenuItem"].attrib["Text"] == "Pin right"
+    assert names["DockUnpinMenuItem"].attrib["Text"] == "Unpin"
+    assert names["DockResizeHandle"].attrib["ManipulationMode"] == "TranslateX"
+    assert names["DockResizeHandle"].attrib["Visibility"] == "Collapsed"
+
+    for name in (
+        "LibraryContentGrid",
+        "ArchiveContentGrid",
+        "ReviewContentGrid",
+        "AreaFeedsGrid",
+        "AreaStoryContentGrid",
+        "PersistentStatusGrid",
+    ):
+        assert names[name].tag.endswith("Grid")
+
+    docking = (
+        ROOT / "BroadcastifyCli.WinUI" / "DesktopDockManager.cs"
+    ).read_text(encoding="utf-8")
+    native = (
+        ROOT / "BroadcastifyCli.WinUI" / "MainWindow.xaml.cs"
+    ).read_text(encoding="utf-8")
+    settings = (
+        ROOT / "BroadcastifyCli.WinUI" / "AppSettingsStore.cs"
+    ).read_text(encoding="utf-8")
+    ui_e2e = (
+        ROOT / "BroadcastifyCli.WinUI" / "MainWindow.UiE2E.cs"
+    ).read_text(encoding="utf-8")
+
+    assert "SHAppBarMessage(AbmNew" in docking
+    assert "SHAppBarMessage(AbmQueryPos" in docking
+    assert "SHAppBarMessage(AbmSetPos" in docking
+    assert "SHAppBarMessage(AbmRemove" in docking
+    assert 'RegisterWindowMessage("TaskbarCreated")' in docking
+    assert "MaximumMonitorWidthFraction" in docking
+    assert "MinimumWidthDips = 520" in docking
+    assert "RecommendedWidthDips = 600" in docking
+    assert "presenter.IsResizable = !pinned" in docking
+    assert "presenter.IsMaximizable = !pinned" in docking
+
+    assert "ApplyResponsiveLayout" in native
+    assert "width < 760" in native
+    assert "NavigationViewPaneDisplayMode.LeftMinimal" in native
+    assert "Grid.SetRow(LibraryDetailBorder, 1)" in native
+    assert "Grid.SetRow(ArchiveJobBorder, 1)" in native
+    assert "Grid.SetRow(ReviewTabView, 1)" in native
+    assert "Grid.SetRow(AreaQueueBorder, 1)" in native
+    assert "Grid.SetRow(AreaStoryDetailBorder, 1)" in native
+    assert "Started with Windows and kept the explicitly pinned status window visible" in native
+
+    assert "public int Version { get; init; } = 8" in settings
+    assert "public string DesktopDockSide" in settings
+    assert "public double DesktopDockWidth" in settings
+    assert "if (settings.Version < 8)" in settings
+    assert 'new UiProbeSize("pinned-width", 600, 900, true)' in ui_e2e
+    assert 'new UiProbeSize("compact-short", 720, 720, true)' in ui_e2e
+    assert 'new UiProbeSize("medium", 960, 720, false)' in ui_e2e
+    assert 'new UiProbeSize("reference", 1240, 900, false)' in ui_e2e
+    assert "ExerciseScrollAsync" in ui_e2e
+    assert "RunUiDockingProbeAsync" in ui_e2e
+    assert "VerifyMonthQuestionUiAsync" in ui_e2e
+    assert "State the archive date and time for every event mentioned" in ui_e2e
+
+
 def test_native_library_shows_feed_coverage_and_named_archive_chat() -> None:
     root = ElementTree.parse(
         ROOT / "BroadcastifyCli.WinUI" / "MainWindow.xaml"
@@ -392,10 +469,16 @@ def test_native_credentials_are_one_click_and_never_prefill_saved_secrets() -> N
     worker = (
         ROOT / "BroadcastifyCli.WinUI" / "WorkerClient.cs"
     ).read_text(encoding="utf-8")
+    credential_store = (
+        ROOT / "BroadcastifyCli.WinUI" / "CredentialStore.cs"
+    ).read_text(encoding="utf-8")
     assert "Password = saved?.Password" not in native
     assert "leave blank to reuse" in native
     assert 'startInfo.Environment["BROADCASTIFY_SECURE_PASSWORD"]' in worker
     assert 'startInfo.Environment["HUGGINGFACE_SECURE_TOKEN"]' in worker
+    assert "ScopedResource" in credential_store
+    assert "AppSettingsStore.TestDataRootEnvironment" in credential_store
+    assert 'return $"{resource}.Test.{digest[..16]}"' in credential_store
 
 
 def test_windows_startup_is_visible_configurable_and_recovery_aware() -> None:

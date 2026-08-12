@@ -50,6 +50,20 @@ version surface, media-player detachment before deletion, nonmodal completion,
 startup recovery, version consistency, immutable commit metadata, private-file
 exclusion, and installer data preservation.
 
+After the offline suite passes and the native executable is compiled, every
+desktop build launches that just-built executable in an isolated test-data
+root. The app-owned E2E probe does not use desktop-control fallbacks,
+UIAutomation, saved credentials, a model provider, or Broadcastify. It renders
+and navigates every primary page at 600×900, 720×720, 960×720, and 1240×900
+logical sizes; exercises the Library, archive setup, weekly brief, archive chat,
+Area Watch, all Settings tabs, Credentials, and About scroll ranges in both
+directions; verifies the calendar-month scope and required event day/time
+prompt; rejects horizontally clipped critical controls; and then proves real
+left/right Windows AppBar reservation, resizing, unpinning, and work-area
+restoration. A JSON report is written atomically, checked by the launcher, and
+cleaned only after success. A failed or timed-out probe fails the MSBuild target
+and retains its isolated artifacts for diagnosis.
+
 ## Running the gate
 
 Use the focused set while iterating:
@@ -64,11 +78,12 @@ Run the authoritative gate directly with:
 .\scripts\run_product_regression_gate.ps1
 ```
 
-The authoritative command is equivalent to `python -m pytest -q`. A normal
-desktop `dotnet build` or `dotnet publish` invokes it automatically after the
-committed-source check and before compilation. The Windows release workflow
-installs the ordinary project plus `dev` test dependencies before invoking the
-same build path.
+The authoritative offline command is equivalent to `python -m pytest -q`. A
+normal desktop `dotnet build` or `dotnet publish` invokes it automatically after
+the committed-source check and before compilation, then runs
+`scripts/run_windows_ui_e2e.ps1` against the compiled target. The Windows
+release workflow installs the ordinary project plus `dev` test dependencies
+before invoking the same build path.
 
 The gate clears inherited account, token, library, database, quota-ledger, and
 credential-store environment variables for its child test process. Tests use

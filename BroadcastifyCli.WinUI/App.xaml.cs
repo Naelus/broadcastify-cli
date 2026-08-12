@@ -26,12 +26,37 @@ public partial class App : Application
     {
         try
         {
-            var commandLine = Environment.GetCommandLineArgs()
-                .Skip(1)
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var arguments = Environment.GetCommandLineArgs().Skip(1).ToArray();
+            var commandLine = arguments.ToHashSet(StringComparer.OrdinalIgnoreCase);
+            string? uiEndToEndReportPath = null;
+            for (var index = 0; index < arguments.Length; index++)
+            {
+                if (arguments[index].Equals(
+                        "--ui-e2e-report",
+                        StringComparison.OrdinalIgnoreCase)
+                    && index + 1 < arguments.Length)
+                {
+                    uiEndToEndReportPath = Path.GetFullPath(arguments[++index]);
+                }
+                else if (arguments[index].StartsWith(
+                             "--ui-e2e-report=",
+                             StringComparison.OrdinalIgnoreCase))
+                {
+                    uiEndToEndReportPath = Path.GetFullPath(
+                        arguments[index].Split('=', 2)[1]);
+                }
+            }
+            if (uiEndToEndReportPath is not null
+                && string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(
+                    AppSettingsStore.TestDataRootEnvironment)))
+            {
+                throw new InvalidOperationException(
+                    "The UI end-to-end probe requires an isolated desktop test data root.");
+            }
             _window = new MainWindow(
                 startupLaunch: commandLine.Contains("--startup"),
-                promptForSetup: commandLine.Contains("--prompt-setup"));
+                promptForSetup: commandLine.Contains("--prompt-setup"),
+                uiEndToEndReportPath: uiEndToEndReportPath);
             _window.Activate();
         }
         catch (Exception exception)

@@ -12,20 +12,51 @@
         <MicaBackdrop />
     </Window.SystemBackdrop>
 
-    <Grid Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
+    <Grid x:Name="WindowRoot"
+          Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
-        <TitleBar x:Name="AppTitleBar" Title="Broadcastify Desktop" Subtitle="Local radio archive intelligence" />
+        <TitleBar x:Name="AppTitleBar" Title="Broadcastify Desktop" Subtitle="Local radio archive intelligence">
+            <TitleBar.RightHeader>
+                <Button x:Name="DockButton"
+                        Content="Pin"
+                        Click="DockButton_Click"
+                        RightTapped="DockButton_RightTapped"
+                        AutomationProperties.AutomationId="DockButton"
+                        AutomationProperties.Name="Pin to desktop"
+                        AutomationProperties.HelpText="Choose the left or right side and reserve desktop space."
+                        ToolTipService.ToolTip="Pin to the left or right desktop edge">
+                    <Button.ContextFlyout>
+                        <MenuFlyout x:Name="DockMenuFlyout">
+                            <MenuFlyoutItem x:Name="DockLeftMenuItem"
+                                            Text="Pin left"
+                                            Click="DockLeft_Click"
+                                            AutomationProperties.AutomationId="DockLeftMenuItem" />
+                            <MenuFlyoutItem x:Name="DockRightMenuItem"
+                                            Text="Pin right"
+                                            Click="DockRight_Click"
+                                            AutomationProperties.AutomationId="DockRightMenuItem" />
+                            <MenuFlyoutSeparator x:Name="DockMenuSeparator" Visibility="Collapsed" />
+                            <MenuFlyoutItem x:Name="DockUnpinMenuItem"
+                                            Text="Unpin"
+                                            Visibility="Collapsed"
+                                            Click="DockUnpin_Click"
+                                            AutomationProperties.AutomationId="DockUnpinMenuItem" />
+                        </MenuFlyout>
+                    </Button.ContextFlyout>
+                </Button>
+            </TitleBar.RightHeader>
+        </TitleBar>
 
         <NavigationView x:Name="RootNavigation"
                         Grid.Row="1"
                         IsBackButtonVisible="Collapsed"
                         IsPaneToggleButtonVisible="True"
                         IsSettingsVisible="True"
-                        PaneDisplayMode="Left"
+                        PaneDisplayMode="Auto"
                         OpenPaneLength="220"
                         SelectionChanged="RootNavigation_SelectionChanged">
             <NavigationView.MenuItems>
@@ -69,7 +100,11 @@
                             <RowDefinition Height="*" />
                         </Grid.RowDefinitions>
 
-                        <Grid ColumnSpacing="14">
+                        <Grid x:Name="LibraryHeaderGrid" ColumnSpacing="14" RowSpacing="10">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="Auto" />
@@ -79,7 +114,7 @@
                                 <TextBlock Text="See every retained feed-day, what is finished, and the exact next step—without touching Broadcastify unless a download is incomplete."
                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
                             </StackPanel>
-                            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8"
+                            <StackPanel x:Name="LibraryHeaderActions" Grid.Column="1" Orientation="Horizontal" Spacing="8"
                                         VerticalAlignment="Center">
                                 <Button x:Name="CatchUpFeedButton" Content="Catch up missing feed days…"
                                         Click="CatchUpFeed_Click"
@@ -92,23 +127,27 @@
                             </StackPanel>
                         </Grid>
 
-                        <Grid Grid.Row="1" ColumnSpacing="12">
+                        <Grid x:Name="LibraryStatsGrid" Grid.Row="1" ColumnSpacing="12" RowSpacing="12">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="*" />
                             </Grid.ColumnDefinitions>
-                            <Border Style="{StaticResource CardBorderStyle}" Padding="16">
+                            <Border x:Name="LibraryFeedsStat" Style="{StaticResource CardBorderStyle}" Padding="16">
                                 <StackPanel Spacing="3"><TextBlock Text="Feeds" Foreground="{ThemeResource TextFillColorSecondaryBrush}" /><TextBlock x:Name="LibraryFeedCountText" Text="—" FontSize="24" FontWeight="SemiBold" /></StackPanel>
                             </Border>
-                            <Border Grid.Column="1" Style="{StaticResource CardBorderStyle}" Padding="16">
+                            <Border x:Name="LibraryDaysStat" Grid.Column="1" Style="{StaticResource CardBorderStyle}" Padding="16">
                                 <StackPanel Spacing="3"><TextBlock Text="Local days" Foreground="{ThemeResource TextFillColorSecondaryBrush}" /><TextBlock x:Name="LibraryDayCountText" Text="—" FontSize="24" FontWeight="SemiBold" /></StackPanel>
                             </Border>
-                            <Border Grid.Column="2" Style="{StaticResource CardBorderStyle}" Padding="16">
+                            <Border x:Name="LibraryBacklogStat" Grid.Column="2" Style="{StaticResource CardBorderStyle}" Padding="16">
                                 <StackPanel Spacing="3"><TextBlock Text="Backlog" Foreground="{ThemeResource TextFillColorSecondaryBrush}" /><TextBlock x:Name="LibraryAttentionCountText" Text="—" FontSize="24" FontWeight="SemiBold" /></StackPanel>
                             </Border>
-                            <Border Grid.Column="3" Style="{StaticResource CardBorderStyle}" Padding="16">
+                            <Border x:Name="LibraryReadyStat" Grid.Column="3" Style="{StaticResource CardBorderStyle}" Padding="16">
                                 <StackPanel Spacing="3"><TextBlock Text="Ready to review" Foreground="{ThemeResource TextFillColorSecondaryBrush}" /><TextBlock x:Name="LibraryCompleteCountText" Text="—" FontSize="24" FontWeight="SemiBold" /></StackPanel>
                             </Border>
                         </Grid>
@@ -116,7 +155,7 @@
                         <InfoBar x:Name="LibraryActionInfoBar" Grid.Row="2"
                                  IsOpen="False" IsClosable="True" />
 
-                        <Expander Grid.Row="3" Header="Feed coverage and backlog" IsExpanded="True">
+                        <Expander x:Name="LibraryCoverageExpander" Grid.Row="3" Header="Feed coverage and backlog" IsExpanded="True">
                             <Grid RowSpacing="8" Padding="0,8,0,2">
                                 <Grid.RowDefinitions>
                                     <RowDefinition Height="Auto" />
@@ -155,7 +194,11 @@
                             </Grid>
                         </Expander>
 
-                        <Grid Grid.Row="4" ColumnSpacing="10">
+                        <Grid x:Name="LibraryFilterGrid" Grid.Row="4" ColumnSpacing="10" RowSpacing="8">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="220" />
@@ -171,8 +214,12 @@
                             </ComboBox>
                         </Grid>
 
-                        <Border Grid.Row="5" Style="{StaticResource CardBorderStyle}" Padding="0">
-                            <Grid ColumnSpacing="0">
+                        <Border x:Name="LibraryContentBorder" Grid.Row="5" Style="{StaticResource CardBorderStyle}" Padding="0">
+                            <Grid x:Name="LibraryContentGrid" ColumnSpacing="0" RowSpacing="0">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="*" />
+                                    <RowDefinition Height="*" />
+                                </Grid.RowDefinitions>
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="5*" MinWidth="330" />
                                     <ColumnDefinition Width="6*" MinWidth="390" />
@@ -209,7 +256,7 @@
                                            Visibility="Collapsed" HorizontalAlignment="Center" VerticalAlignment="Center"
                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
 
-                                <Border Grid.Column="1" BorderThickness="1,0,0,0"
+                                <Border x:Name="LibraryDetailBorder" Grid.Column="1" BorderThickness="1,0,0,0"
                                         BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}">
                                     <Grid>
                                         <StackPanel x:Name="LibraryDetailEmptyPanel" HorizontalAlignment="Center"
@@ -251,7 +298,7 @@
                                                      IsClosable="False" Severity="Informational" />
                                             <TabView Grid.Row="2" IsAddTabButtonVisible="False" TabWidthMode="SizeToContent">
                                                 <TabViewItem Header="Processing" IsClosable="False">
-                                                    <ScrollViewer HorizontalScrollBarVisibility="Disabled" Padding="4,8,8,4">
+                                                    <ScrollViewer x:Name="LibraryProcessingScroll" HorizontalScrollBarVisibility="Disabled" Padding="4,8,8,4">
                                                         <StackPanel Spacing="10">
                                                             <ProgressBar x:Name="LibraryDetailProgress" Minimum="0" Maximum="100" />
                                                             <TextBlock x:Name="LibraryDetailStatusText" TextWrapping="Wrap"
@@ -340,12 +387,16 @@
                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
                         </StackPanel>
 
-                        <Grid Grid.Row="1" ColumnSpacing="16">
+                        <Grid x:Name="ArchiveContentGrid" Grid.Row="1" ColumnSpacing="16" RowSpacing="12">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="*" />
+                                <RowDefinition Height="*" />
+                            </Grid.RowDefinitions>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="3*" />
                                 <ColumnDefinition Width="2*" />
                             </Grid.ColumnDefinitions>
-                            <Border Style="{StaticResource CardBorderStyle}">
+                            <Border x:Name="ArchiveFeedSearchBorder" Style="{StaticResource CardBorderStyle}">
                                 <Grid RowSpacing="12">
                                     <Grid.RowDefinitions>
                                         <RowDefinition Height="Auto" />
@@ -385,8 +436,8 @@
                                 </Grid>
                             </Border>
 
-                            <Border Grid.Column="1" Style="{StaticResource CardBorderStyle}">
-                                <ScrollViewer HorizontalScrollBarVisibility="Disabled">
+                            <Border x:Name="ArchiveJobBorder" Grid.Column="1" Style="{StaticResource CardBorderStyle}">
+                                <ScrollViewer x:Name="ArchiveJobScroll" HorizontalScrollBarVisibility="Disabled">
                                     <StackPanel Spacing="14">
                                         <TextBlock Text="Archive job" Style="{StaticResource SubtitleTextBlockStyle}" />
                                         <DatePicker x:Name="StartDatePicker" Header="Start date" HorizontalAlignment="Stretch" />
@@ -432,9 +483,10 @@
                             <TextBlock Text="Audit daily incidents against clips, build a seven-day brief, or ask questions across retained evidence."
                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
                         </StackPanel>
-                        <Grid Grid.Row="1" ColumnSpacing="16">
+                        <Grid x:Name="ReviewContentGrid" Grid.Row="1" ColumnSpacing="16" RowSpacing="12">
+                            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
                             <Grid.ColumnDefinitions><ColumnDefinition Width="310" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                            <Border Style="{StaticResource CardBorderStyle}">
+                            <Border x:Name="ReviewDaySelectorBorder" Style="{StaticResource CardBorderStyle}">
                                 <Grid RowSpacing="10">
                                     <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                                     <StackPanel Spacing="0">
@@ -464,8 +516,8 @@
                                 </Grid>
                             </Border>
 
-                            <TabView Grid.Column="1" IsAddTabButtonVisible="False">
-                                <TabViewItem Header="Daily review" IsClosable="False">
+                            <TabView x:Name="ReviewTabView" Grid.Column="1" IsAddTabButtonVisible="False">
+                                <TabViewItem x:Name="DailyReviewTab" Header="Daily review" IsClosable="False">
                                     <Grid Padding="4,8,4,4" RowSpacing="9">
                                         <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                                         <TextBlock x:Name="SummaryText" Text="Choose a saved day." TextWrapping="Wrap" MaxHeight="126" />
@@ -515,12 +567,12 @@
                                         <MediaPlayerElement x:Name="IncidentPlayer" Grid.Row="4" Height="72" AreTransportControlsEnabled="True" />
                                     </Grid>
                                 </TabViewItem>
-                                <TabViewItem Header="Weekly brief" IsClosable="False">
-                                    <ScrollViewer Padding="8">
+                                <TabViewItem x:Name="WeeklyBriefTab" Header="Weekly brief" IsClosable="False">
+                                    <ScrollViewer x:Name="WeeklyBriefScroll" Padding="8">
                                         <StackPanel Spacing="14" MaxWidth="900" HorizontalAlignment="Left">
                                             <TextBlock Text="Seven-day activity brief" Style="{StaticResource SubtitleTextBlockStyle}" />
                                             <TextBlock Text="Uses saved daily incidents and clearly reports missing days." Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                            <StackPanel Orientation="Horizontal" Spacing="10">
+                                            <StackPanel x:Name="WeekControls" Orientation="Horizontal" Spacing="10">
                                                 <DatePicker x:Name="WeekEndingPicker" Header="Week ending" />
                                                 <Button x:Name="GenerateWeekButton" Content="Generate weekly brief" VerticalAlignment="Bottom"
                                                         Style="{StaticResource AccentButtonStyle}" Click="GenerateWeek_Click" />
@@ -530,7 +582,7 @@
                                         </StackPanel>
                                     </ScrollViewer>
                                 </TabViewItem>
-                                <TabViewItem Header="Ask the archive" IsClosable="False">
+                                <TabViewItem x:Name="ArchiveQuestionTab" Header="Ask the archive" IsClosable="False">
                                     <ScrollViewer x:Name="ArchiveChatScroll" Padding="8">
                                         <StackPanel Spacing="12" MaxWidth="900" HorizontalAlignment="Stretch">
                                             <Grid ColumnSpacing="10">
@@ -553,7 +605,7 @@
                                                     <Button x:Name="UseQuestionMonthButton" Grid.Column="1" Content="Use selected month"
                                                             VerticalAlignment="Bottom" Click="UseQuestionMonth_Click" />
                                                 </Grid>
-                                                <StackPanel Orientation="Horizontal" Spacing="10">
+                                                <StackPanel x:Name="QuestionScopeActions" Orientation="Horizontal" Spacing="10">
                                                     <Button x:Name="UseEntireQuestionFeedButton" Content="Use entire downloaded feed"
                                                             Click="UseEntireQuestionFeed_Click" />
                                                     <Button x:Name="CheckQuestionCoverageButton" Content="Check downloaded coverage"
@@ -574,12 +626,12 @@
                                                      Message="Choose a feed and month, then check which retained days are ready for questions." />
                                             <StackPanel x:Name="ArchiveQuestionStarterPanel" Spacing="8">
                                                 <TextBlock Text="One-click question starters" Style="{StaticResource BodyStrongTextBlockStyle}" />
-                                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                                <StackPanel x:Name="QuestionStarterPrimary" Orientation="Horizontal" Spacing="8">
                                                     <Button Content="How many shots-fired reports?" Click="AskShotsExample_Click" />
                                                     <Button Content="Craziest reported events" Click="AskCraziestExample_Click" />
                                                     <Button Content="Most important this week" Click="AskImportantExample_Click" />
                                                 </StackPanel>
-                                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                                <StackPanel x:Name="QuestionStarterSecondary" Orientation="Horizontal" Spacing="8">
                                                     <Button Content="Summarize this month" Click="AskMonthExample_Click" />
                                                     <Button Content="Find whole-feed hot spots" Click="AskFeedHotspotsExample_Click" />
                                                 </StackPanel>
@@ -603,9 +655,10 @@
                                                     </DataTemplate>
                                                 </ListView.ItemTemplate>
                                             </ListView>
-                                            <Grid ColumnSpacing="10">
+                                            <Grid x:Name="QuestionSendGrid" ColumnSpacing="10" RowSpacing="8">
+                                                <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                                                 <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                                <TextBox x:Name="QuestionBox" Header="Message" MinWidth="360"
+                                                <TextBox x:Name="QuestionBox" Header="Message" MinWidth="0"
                                                          AcceptsReturn="True" TextWrapping="Wrap" MinHeight="72"
                                                          PlaceholderText="Ask about reports, patterns, notable events, places, or follow up on the prior answer." />
                                                 <Button x:Name="AskButton" Grid.Column="1" Content="Send"
@@ -629,11 +682,12 @@
                             <TextBlock Text="Choose nearby public-safety feeds explicitly, then rank evidence-backed local assignment leads."
                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
                         </StackPanel>
-                        <TabView Grid.Row="1" IsAddTabButtonVisible="False">
-                            <TabViewItem Header="Feeds &amp; coverage" IsClosable="False">
-                                <Grid Padding="6,10,6,4" ColumnSpacing="16">
+                        <TabView x:Name="AreaTabView" Grid.Row="1" IsAddTabButtonVisible="False">
+                            <TabViewItem x:Name="AreaFeedsTab" Header="Feeds &amp; coverage" IsClosable="False">
+                                <Grid x:Name="AreaFeedsGrid" Padding="6,10,6,4" ColumnSpacing="16" RowSpacing="12">
+                                    <Grid.RowDefinitions><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                                     <Grid.ColumnDefinitions><ColumnDefinition Width="3*" /><ColumnDefinition Width="2*" /></Grid.ColumnDefinitions>
-                                    <Border Style="{StaticResource CardBorderStyle}">
+                                    <Border x:Name="AreaFeedDiscoveryBorder" Style="{StaticResource CardBorderStyle}">
                                         <Grid RowSpacing="10">
                                             <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                                             <TextBox x:Name="AreaProfileNameBox" Header="Area profile name" PlaceholderText="Regional coverage desk" />
@@ -681,7 +735,7 @@
                                             <Button x:Name="SaveAreaProfileButton" Grid.Row="6" Content="Save selected nearest-first feeds" Click="SaveAreaProfile_Click" />
                                         </Grid>
                                     </Border>
-                                    <Border Grid.Column="1" Style="{StaticResource CardBorderStyle}">
+                                    <Border x:Name="AreaQueueBorder" Grid.Column="1" Style="{StaticResource CardBorderStyle}">
                                         <StackPanel Spacing="12">
                                             <ComboBox x:Name="AreaProfileCombo" Header="Saved area profile" HorizontalAlignment="Stretch" DisplayMemberPath="DisplayName" SelectionChanged="AreaProfile_SelectionChanged" />
                                             <DatePicker x:Name="AreaStartDatePicker" Header="Start date" HorizontalAlignment="Stretch" />
@@ -695,7 +749,7 @@
                                     </Border>
                                 </Grid>
                             </TabViewItem>
-                            <TabViewItem Header="Story leads" IsClosable="False">
+                            <TabViewItem x:Name="AreaStoriesTab" Header="Story leads" IsClosable="False">
                                 <Grid Padding="6,10,6,4" RowSpacing="10">
                                     <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
                                     <Grid ColumnSpacing="10">
@@ -710,14 +764,15 @@
                                               Header="Generated assignment brief"
                                               IsExpanded="False" Visibility="Collapsed"
                                               HorizontalAlignment="Stretch">
-                                        <ScrollViewer MaxHeight="150">
+                                        <ScrollViewer x:Name="AreaSummaryScroll" MaxHeight="150">
                                             <TextBlock x:Name="AreaSummaryText" TextWrapping="Wrap"
                                                        IsTextSelectionEnabled="True" />
                                         </ScrollViewer>
                                     </Expander>
-                                    <Grid Grid.Row="4" ColumnSpacing="12">
+                                    <Grid x:Name="AreaStoryContentGrid" Grid.Row="4" ColumnSpacing="12" RowSpacing="12">
+                                        <Grid.RowDefinitions><RowDefinition Height="*" /><RowDefinition Height="*" /></Grid.RowDefinitions>
                                         <Grid.ColumnDefinitions><ColumnDefinition Width="330" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                                        <Border BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8"
+                                        <Border x:Name="AreaStoryListBorder" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8"
                                                 Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
                                             <Grid RowSpacing="6">
                                                 <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
@@ -745,7 +800,7 @@
                                                 </ListView>
                                             </Grid>
                                         </Border>
-                                        <Border Grid.Column="1" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1"
+                                        <Border x:Name="AreaStoryDetailBorder" Grid.Column="1" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1"
                                                 CornerRadius="8" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
                                             <Grid>
                                                 <TextBlock x:Name="AreaStoryDetailEmptyText"
@@ -807,7 +862,7 @@
                         </StackPanel>
                         <TabView x:Name="SettingsTabView" Grid.Row="1" IsAddTabButtonVisible="False" TabWidthMode="SizeToContent">
                             <TabViewItem x:Name="SetupSettingsTab" Header="Setup" IsClosable="False">
-                                <ScrollViewer HorizontalScrollBarVisibility="Disabled">
+                                <ScrollViewer x:Name="SetupSettingsScroll" HorizontalScrollBarVisibility="Disabled">
                                     <StackPanel Spacing="16" MaxWidth="900" HorizontalAlignment="Left" Padding="0,4,12,16">
                                         <InfoBar x:Name="SetupReadinessInfoBar" IsOpen="True" IsClosable="False"
                                                  Severity="Informational" Title="Checking this computer"
@@ -929,7 +984,7 @@
                             </TabViewItem>
 
                             <TabViewItem x:Name="ProcessingSettingsTab" Header="Processing" IsClosable="False">
-                                <ScrollViewer HorizontalScrollBarVisibility="Disabled">
+                                <ScrollViewer x:Name="ProcessingSettingsScroll" HorizontalScrollBarVisibility="Disabled">
                                     <StackPanel Spacing="16" MaxWidth="1080" HorizontalAlignment="Left" Padding="0,4,12,16">
                                         <InfoBar x:Name="DiagnosticsInfoBar" IsOpen="True" IsClosable="False" Severity="Informational"
                                                  Title="Checking local models" Message="Inspecting transcription, diarization, and analysis engines…" />
@@ -1121,7 +1176,7 @@
                                                              Loaded="PythonRuntimePathBox_Loaded" />
                                                     <Button Grid.Column="1" Content="Browse…" VerticalAlignment="Bottom" Click="BrowsePythonRuntime_Click" />
                                                 </Grid>
-                                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                                <StackPanel x:Name="RuntimeControls" Orientation="Horizontal" Spacing="8">
                                                     <Button Content="Use bundled runtime" Click="ClearPythonRuntime_Click" />
                                                     <TextBlock x:Name="PythonRuntimeStatusText"
                                                                Text="Checking the active Python worker…"
@@ -1159,7 +1214,7 @@
                             </TabViewItem>
 
                             <TabViewItem x:Name="AnalysisSettingsTab" Header="Analysis &amp; AI" IsClosable="False">
-                                <ScrollViewer HorizontalScrollBarVisibility="Disabled">
+                                <ScrollViewer x:Name="AnalysisSettingsScroll" HorizontalScrollBarVisibility="Disabled">
                                     <StackPanel Spacing="16" MaxWidth="900" HorizontalAlignment="Left" Padding="0,4,12,16">
                                         <Border Style="{StaticResource CardBorderStyle}">
                                             <StackPanel Spacing="12">
@@ -1235,7 +1290,7 @@
                             </TabViewItem>
 
                             <TabViewItem x:Name="AccountSettingsTab" Header="Credentials" IsClosable="False">
-                                <ScrollViewer HorizontalScrollBarVisibility="Disabled">
+                                <ScrollViewer x:Name="CredentialsSettingsScroll" HorizontalScrollBarVisibility="Disabled">
                                     <StackPanel Spacing="16" MaxWidth="900" HorizontalAlignment="Left" Padding="0,4,12,16">
                                         <Border Style="{StaticResource CardBorderStyle}">
                                             <StackPanel Spacing="12">
@@ -1264,11 +1319,11 @@
                                                            Text="Checking Windows Credential Locker…"
                                                            TextWrapping="Wrap"
                                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                                <StackPanel x:Name="CredentialButtons" Orientation="Horizontal" Spacing="8">
                                                     <Button x:Name="SaveHuggingFaceTokenButton" Content="Save encrypted token" Click="SaveHuggingFaceToken_Click" />
                                                     <Button x:Name="ClearHuggingFaceTokenButton" Content="Forget saved token" Click="ClearHuggingFaceToken_Click" />
                                                 </StackPanel>
-                                                <StackPanel Orientation="Horizontal" Spacing="4">
+                                                <StackPanel x:Name="CredentialLinks" Orientation="Horizontal" Spacing="4">
                                                     <HyperlinkButton Content="Create a read token"
                                                                      NavigateUri="https://huggingface.co/settings/tokens" />
                                                     <HyperlinkButton Content="Token documentation"
@@ -1300,7 +1355,7 @@
                             <TextBlock Text="Version, storage locations, diagnostics, documentation, and update links."
                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                         </StackPanel>
-                        <ScrollViewer Grid.Row="1" HorizontalScrollBarVisibility="Disabled">
+                        <ScrollViewer x:Name="AboutScroll" Grid.Row="1" HorizontalScrollBarVisibility="Disabled">
                             <StackPanel Spacing="16" MaxWidth="900" HorizontalAlignment="Left" Padding="0,4,12,16">
                                 <Border Style="{StaticResource CardBorderStyle}" Padding="20">
                                     <Grid ColumnSpacing="18">
@@ -1336,7 +1391,7 @@
                                             <TextBlock x:Name="AboutDataPathText" Text="—" TextWrapping="Wrap"
                                                        IsTextSelectionEnabled="True" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                         </StackPanel>
-                                        <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <StackPanel x:Name="AboutActionButtons" Orientation="Horizontal" Spacing="8">
                                             <Button x:Name="AboutOpenLibraryButton" Content="Open library folder" Click="AboutOpenLibrary_Click" />
                                             <Button x:Name="AboutOpenDataButton" Content="Open logs &amp; settings folder" Click="AboutOpenData_Click" />
                                             <Button x:Name="AboutCopySupportButton" Content="Copy support details" Click="AboutCopySupport_Click"
@@ -1353,7 +1408,7 @@
                                         <TextBlock Text="Help and updates" Style="{StaticResource SubtitleTextBlockStyle}" />
                                         <TextBlock Text="Use the documentation for setup and recovery, compare the installed version with the latest release, or report a reproducible problem."
                                                    TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                        <StackPanel Orientation="Horizontal" Spacing="4">
+                                        <StackPanel x:Name="AboutHelpLinks" Orientation="Horizontal" Spacing="4">
                                             <HyperlinkButton Content="Documentation" NavigateUri="https://github.com/Naelus/broadcastify-cli#readme" />
                                             <HyperlinkButton Content="Check for updates" NavigateUri="https://github.com/Naelus/broadcastify-cli/releases/latest" />
                                             <HyperlinkButton Content="Report a problem" NavigateUri="https://github.com/Naelus/broadcastify-cli/issues/new" />
@@ -1370,7 +1425,8 @@
                     <!-- Persistent task status -->
                     <Border Grid.Row="1" Padding="18,9" BorderThickness="0,1,0,0" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
                             Background="{ThemeResource LayerFillColorDefaultBrush}">
-                        <Grid ColumnSpacing="12">
+                        <Grid x:Name="PersistentStatusGrid" ColumnSpacing="12" RowSpacing="6">
+                            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="260" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                             <TextBlock x:Name="StatusText" Text="Ready" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
                             <ProgressBar x:Name="JobProgress" Grid.Column="1" Minimum="0" Maximum="100" Value="0" VerticalAlignment="Center" />
@@ -1380,5 +1436,25 @@
                 </Grid>
             </NavigationView.Content>
         </NavigationView>
+
+        <Border x:Name="DockResizeHandle"
+                Grid.RowSpan="2"
+                Width="8"
+                HorizontalAlignment="Left"
+                Visibility="Collapsed"
+                Background="Transparent"
+                ManipulationMode="TranslateX"
+                ManipulationStarted="DockResizeHandle_ManipulationStarted"
+                ManipulationDelta="DockResizeHandle_ManipulationDelta"
+                ManipulationCompleted="DockResizeHandle_ManipulationCompleted"
+                AutomationProperties.AutomationId="DockResizeHandle"
+                AutomationProperties.Name="Resize pinned Broadcastify Desktop"
+                ToolTipService.ToolTip="Drag to resize the pinned window"
+                Canvas.ZIndex="100">
+            <Border Width="2"
+                    HorizontalAlignment="Center"
+                    Background="{ThemeResource AccentFillColorDefaultBrush}"
+                    Opacity="0.35" />
+        </Border>
     </Grid>
 </Window>

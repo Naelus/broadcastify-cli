@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using Windows.Security.Credentials;
 
 namespace BroadcastifyCli.WinUI;
@@ -8,9 +10,27 @@ internal sealed record SavedSecret(string Secret);
 
 internal static class CredentialStore
 {
-    private const string Resource = "BroadcastifyDesktop.Broadcastify";
-    private const string AnalysisResource = "BroadcastifyDesktop.AnalysisProvider";
-    private const string HuggingFaceResource = "BroadcastifyDesktop.HuggingFace";
+    private static string Resource =>
+        ScopedResource("BroadcastifyDesktop.Broadcastify");
+    private static string AnalysisResource =>
+        ScopedResource("BroadcastifyDesktop.AnalysisProvider");
+    private static string HuggingFaceResource =>
+        ScopedResource("BroadcastifyDesktop.HuggingFace");
+
+    private static string ScopedResource(string resource)
+    {
+        var testRoot = Environment.GetEnvironmentVariable(
+            AppSettingsStore.TestDataRootEnvironment)?.Trim();
+        if (string.IsNullOrWhiteSpace(testRoot))
+        {
+            return resource;
+        }
+
+        var identity = Path.GetFullPath(testRoot).ToUpperInvariant();
+        var digest = Convert.ToHexString(
+            SHA256.HashData(Encoding.UTF8.GetBytes(identity)));
+        return $"{resource}.Test.{digest[..16]}";
+    }
 
     public static SavedLogin? TryLoad()
     {

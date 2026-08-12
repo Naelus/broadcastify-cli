@@ -11,4 +11,10 @@
           Condition="'$(DesignTimeBuild)' != 'true' and '$(MSBuildProjectName)' == 'BroadcastifyCli.WinUI'">
     <Exec Command="powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildThisFileDirectory)scripts\run_product_regression_gate.ps1&quot;" />
   </Target>
+
+  <Target Name="RunNativeUiEndToEndGate"
+          AfterTargets="Build"
+          Condition="'$(DesignTimeBuild)' != 'true' and '$(MSBuildProjectName)' == 'BroadcastifyCli.WinUI'">
+    <Exec Command="powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildThisFileDirectory)scripts\run_windows_ui_e2e.ps1&quot; -Executable &quot;$(TargetPath)&quot;" />
+  </Target>
 </Project>
