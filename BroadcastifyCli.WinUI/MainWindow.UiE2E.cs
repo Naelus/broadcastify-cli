@@ -823,17 +823,44 @@ public sealed partial class MainWindow
         var rightSurfaces = await VerifyDockedSurfaceMatrixAsync("right");
         var rightDialog = await VerifyDockedDialogAndFlyoutAsync("right");
 
-        var resize = manager.ExerciseInteractiveResizeForEndToEndTest(-64);
+        var rightMonitorWidthDips = DesktopDockPolicy.PixelsToDips(
+            rightBeforeResize.MonitorBounds.Width,
+            rightBeforeResize.Dpi);
+        var resizeMinimumDips = DesktopDockPolicy.NormalizeWidthDips(
+            DesktopDockPolicy.MinimumWidthDips,
+            rightMonitorWidthDips);
+        var resizeMaximumDips = DesktopDockPolicy.NormalizeWidthDips(
+            DesktopDockPolicy.MaximumWidthDips,
+            rightMonitorWidthDips);
+        var hasResizeRange = resizeMaximumDips - resizeMinimumDips >= 16;
+        var resizeTowardLarger = hasResizeRange
+            && resizeMaximumDips - manager.WidthDips >= 16;
+        var resizePointerDeltaPixels = resizeTowardLarger ? -64 : 64;
+        var resize = manager.ExerciseInteractiveResizeForEndToEndTest(
+            resizePointerDeltaPixels);
         await WaitForUiLayoutAsync(180);
         var rightAfterResize = resize.After;
         Require(
             !resize.During.AppBarRegistered
                 && resize.During.InteractiveResize,
             "Interactive resize did not temporarily release the AppBar reservation.");
-        Require(
-            resize.During.WindowBounds.Width
-                >= resize.Before.WindowBounds.Width + 32,
-            "Captured pointer resizing did not increase the right-docked width.");
+        var resizeWidthDeltaPixels = resize.During.WindowBounds.Width
+            - resize.Before.WindowBounds.Width;
+        if (hasResizeRange)
+        {
+            Require(
+                Math.Abs(resizeWidthDeltaPixels) >= 16
+                    && (resizeTowardLarger
+                        ? resizeWidthDeltaPixels > 0
+                        : resizeWidthDeltaPixels < 0),
+                "Captured pointer resizing did not move toward the available legal bound.");
+        }
+        else
+        {
+            Require(
+                Math.Abs(resizeWidthDeltaPixels) <= 8,
+                "A fixed-width narrow display escaped its legal dock-width bound.");
+        }
         Require(
             resize.After.AppBarRegistered
                 && !resize.After.InteractiveResize,
@@ -987,6 +1014,10 @@ public sealed partial class MainWindow
             ["left_work_area"] = RectToReport(left.WorkArea),
             ["right_window_before_resize"] = RectToReport(rightBeforeResize.WindowBounds),
             ["right_window_after_resize"] = RectToReport(rightAfterResize.WindowBounds),
+            ["resize_minimum_dips"] = resizeMinimumDips,
+            ["resize_maximum_dips"] = resizeMaximumDips,
+            ["resize_movement_expected"] = hasResizeRange,
+            ["resize_width_delta_pixels"] = resizeWidthDeltaPixels,
             ["right_work_area"] = RectToReport(rightAfterResize.WorkArea),
             ["shell_restart_work_area"] = RectToReport(shellRestart.WorkArea),
             ["restored_work_area"] = RectToReport(restored.WorkArea),

@@ -444,6 +444,10 @@ def test_native_window_exposes_real_appbar_docking_and_compact_layouts() -> None
     assert "VerifyDockedDialogAndFlyoutAsync" in ui_e2e
     assert "GetOpenPopupsForXamlRoot" in ui_e2e
     assert "ExerciseInteractiveResizeForEndToEndTest" in ui_e2e
+    assert "resizeMaximumDips - resizeMinimumDips >= 16" in ui_e2e
+    assert "resizeMaximumDips - manager.WidthDips >= 16" in ui_e2e
+    assert '"resize_movement_expected"' in ui_e2e
+    assert "fixed-width narrow display" in ui_e2e
     assert "ReRegisterAfterShellRestartForEndToEndTest" in ui_e2e
     assert "CaptureAvailableMonitors" in ui_e2e
     assert "snapshot.MonitorBounds.Width" in ui_e2e
