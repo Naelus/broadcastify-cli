@@ -1078,7 +1078,10 @@ public sealed partial class MainWindow : Window
 
     private void ApplyResponsiveLayout(double width)
     {
-        var compact = width < 760 || _desktopDockManager?.IsDocked == true;
+        // The navigation pane, page padding, and widest master/detail surface
+        // need more than a nominal tablet width. Stack before either pane can
+        // compress the active Review/Library controls beyond their content.
+        var compact = width < 1_100 || _desktopDockManager?.IsDocked == true;
         var shortCompact = compact
             && WindowRoot.ActualHeight > 0
             && WindowRoot.ActualHeight < 820;

@@ -317,7 +317,7 @@ def test_native_window_exposes_real_appbar_docking_and_compact_layouts() -> None
     assert "presenter.IsMaximizable = !pinned" in docking
 
     assert "ApplyResponsiveLayout" in native
-    assert "width < 760" in native
+    assert "width < 1_100" in native
     assert "NavigationViewPaneDisplayMode.LeftMinimal" in native
     assert "Grid.SetRow(LibraryDetailBorder, 1)" in native
     assert "Grid.SetRow(ArchiveJobBorder, 1)" in native
@@ -332,7 +332,7 @@ def test_native_window_exposes_real_appbar_docking_and_compact_layouts() -> None
     assert "if (settings.Version < 8)" in settings
     assert 'new UiProbeSize("pinned-width", 600, 900, true)' in ui_e2e
     assert 'new UiProbeSize("compact-short", 720, 720, true)' in ui_e2e
-    assert 'new UiProbeSize("medium", 960, 720, false)' in ui_e2e
+    assert 'new UiProbeSize("medium", 960, 720, true)' in ui_e2e
     assert 'new UiProbeSize("reference", 1240, 900, false)' in ui_e2e
     assert "ExerciseScrollAsync" in ui_e2e
     assert "RunUiDockingProbeAsync" in ui_e2e

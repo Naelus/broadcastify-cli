@@ -149,7 +149,7 @@ public sealed partial class MainWindow
         {
             new UiProbeSize("pinned-width", 600, 900, true),
             new UiProbeSize("compact-short", 720, 720, true),
-            new UiProbeSize("medium", 960, 720, false),
+            new UiProbeSize("medium", 960, 720, true),
             new UiProbeSize("reference", 1240, 900, false),
         };
         var results = new List<Dictionary<string, object?>>();
