@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using System.Runtime.InteropServices;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
@@ -1315,17 +1316,38 @@ public sealed partial class MainWindow
         Control control,
         string label)
     {
+        var windowHandle = WinRT.Interop.WindowNative.GetWindowHandle(this);
         Activate();
+        var foregroundAccepted = SetForegroundWindow(windowHandle);
+        SetActiveWindow(windowHandle);
+        SetFocus(windowHandle);
         await WaitForUiLayoutAsync(35);
+        SetFocus(windowHandle);
         Require(
-            control.Focus(FocusState.Programmatic),
+            control.Focus(FocusState.Keyboard),
             $"{label}: the primary control could not receive keyboard focus.");
         await WaitForUiLayoutAsync(20);
         var focused = FocusManager.GetFocusedElement(control.XamlRoot);
         Require(
-            control.FocusState != FocusState.Unfocused
-                && ReferenceEquals(focused, control),
-            $"{label}: keyboard focus was not retained on the requested control.");
+            IsVisualDescendantOrSelf(focused as DependencyObject, control),
+            $"{label}: keyboard focus was not retained on the requested control "
+            + $"(state={control.FocusState}, focused={focused?.GetType().Name ?? "none"}, "
+            + $"foreground={foregroundAccepted}).");
+    }
+
+    private static bool IsVisualDescendantOrSelf(
+        DependencyObject? candidate,
+        DependencyObject ancestor)
+    {
+        for (var current = candidate; current is not null;)
+        {
+            if (ReferenceEquals(current, ancestor))
+            {
+                return true;
+            }
+            current = VisualTreeHelper.GetParent(current);
+        }
+        return false;
     }
 
     private static IEnumerable<T> FindVisualDescendants<T>(DependencyObject root)
@@ -1547,4 +1569,14 @@ public sealed partial class MainWindow
             new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
         File.Move(temporaryPath, fullPath, overwrite: true);
     }
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetForegroundWindow(nint windowHandle);
+
+    [DllImport("user32.dll")]
+    private static extern nint SetActiveWindow(nint windowHandle);
+
+    [DllImport("user32.dll")]
+    private static extern nint SetFocus(nint windowHandle);
 }
