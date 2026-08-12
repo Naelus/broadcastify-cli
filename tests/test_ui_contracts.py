@@ -430,6 +430,7 @@ def test_native_window_exposes_real_appbar_docking_and_compact_layouts() -> None
     assert 'VerifyDockedSurfaceMatrixAsync("left")' in ui_e2e
     assert 'VerifyDockedSurfaceMatrixAsync("right")' in ui_e2e
     assert "VerifyDockedDialogAndFlyoutAsync" in ui_e2e
+    assert "GetOpenPopupsForXamlRoot" in ui_e2e
     assert "ExerciseInteractiveResizeForEndToEndTest" in ui_e2e
     assert "ReRegisterAfterShellRestartForEndToEndTest" in ui_e2e
     assert "CaptureAvailableMonitors" in ui_e2e

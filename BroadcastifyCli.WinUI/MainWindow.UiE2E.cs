@@ -1264,12 +1264,18 @@ public sealed partial class MainWindow
         var scrollable = await ExerciseScrollAsync(
             dialogContent,
             $"docked-{label}/dialog");
-        var buttons = FindVisualDescendants<Button>(dialog).ToList();
+        var buttons = VisualTreeHelper
+            .GetOpenPopupsForXamlRoot(dialog.XamlRoot)
+            .Where(popup => popup.Child is not null)
+            .SelectMany(popup => FindVisualDescendants<Button>(popup.Child!))
+            .Where(button => button.Content?.ToString() is "Continue" or "Cancel")
+            .ToList();
         Require(
-            buttons.Count >= 2
+            buttons.Count == 2
                 && buttons.All(button =>
                     button.ActualWidth > 0 && button.ActualHeight > 0),
             $"docked-{label}: the dialog actions were not rendered and reachable.");
+        RequireHorizontalBounds($"docked-{label}/dialog-actions", [.. buttons]);
         var dialogWidth = Math.Round(dialog.ActualWidth, 1);
         var dialogHeight = Math.Round(dialog.ActualHeight, 1);
         dialog.Hide();
