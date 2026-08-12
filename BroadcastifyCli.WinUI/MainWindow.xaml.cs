@@ -1364,6 +1364,8 @@ public sealed partial class MainWindow : Window
             AreaStoryContentGrid.RowDefinitions[1].Height = new GridLength(2, GridUnitType.Star);
             Grid.SetRow(AreaStoryDetailBorder, 1);
             Grid.SetColumn(AreaStoryDetailBorder, 0);
+            AreaStoriesContentGrid.RowSpacing = shortCompact ? 4 : 10;
+            AreaSummaryScroll.MaxHeight = shortCompact ? 64 : 150;
 
             RuntimeControls.Orientation = Orientation.Vertical;
             CredentialButtons.Orientation = Orientation.Vertical;
@@ -1464,6 +1466,8 @@ public sealed partial class MainWindow : Window
             AreaStoryContentGrid.RowDefinitions[1].Height = zero;
             Grid.SetRow(AreaStoryDetailBorder, 0);
             Grid.SetColumn(AreaStoryDetailBorder, 1);
+            AreaStoriesContentGrid.RowSpacing = 10;
+            AreaSummaryScroll.MaxHeight = 150;
 
             RuntimeControls.Orientation = Orientation.Horizontal;
             CredentialButtons.Orientation = Orientation.Horizontal;

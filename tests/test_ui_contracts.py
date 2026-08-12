@@ -374,6 +374,8 @@ def test_native_window_exposes_real_appbar_docking_and_compact_layouts() -> None
     assert "IncidentPlayer.Height = shortCompact ? 44 : 72" in native
     assert "Grid.SetRow(AreaQueueBorder, 1)" in native
     assert "Grid.SetRow(AreaStoryDetailBorder, 1)" in native
+    assert "AreaStoriesContentGrid.RowSpacing = shortCompact ? 4 : 10" in native
+    assert "AreaSummaryScroll.MaxHeight = shortCompact ? 64 : 150" in native
     assert "Started with Windows and kept the explicitly pinned status window visible" in native
     assert "presenter.SetBorderAndTitleBar(hasBorder: false, hasTitleBar: false)" in native
     assert "presenter.SetBorderAndTitleBar(hasBorder: true, hasTitleBar: false)" in native

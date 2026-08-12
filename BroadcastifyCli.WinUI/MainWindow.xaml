@@ -750,7 +750,7 @@
                                 </Grid>
                             </TabViewItem>
                             <TabViewItem x:Name="AreaStoriesTab" Header="Story leads" IsClosable="False">
-                                <Grid Padding="6,10,6,4" RowSpacing="10">
+                                <Grid x:Name="AreaStoriesContentGrid" Padding="6,10,6,4" RowSpacing="10">
                                     <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
                                     <Grid ColumnSpacing="10">
                                         <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
