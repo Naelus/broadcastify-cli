@@ -387,6 +387,8 @@ def test_native_window_exposes_real_appbar_docking_and_compact_layouts() -> None
     assert "Marshal.ThrowExceptionForHR(result)" in native
     assert "DockedFrameBorder.BorderThickness" in native
     assert "ApplyDesktopDockActivationState" in native
+    assert "_suspendDesktopPlacementTracking" in native
+    assert "|| _suspendDesktopPlacementTracking" in native
     assert native.count("new ContentDialog") == 10
     assert native.count("Content = CreateDialog") == 10
     assert '"DialogScrollHost"' in native

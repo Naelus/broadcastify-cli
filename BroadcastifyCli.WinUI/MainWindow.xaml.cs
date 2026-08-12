@@ -132,6 +132,7 @@ public sealed partial class MainWindow : Window
     private bool _desktopDockRestoreAttempted;
     private bool _desktopWindowFrameDocked;
     private bool _desktopWindowActive = true;
+    private bool _suspendDesktopPlacementTracking;
     private int _desktopWindowCornerPreference = DwmCornerDefault;
     private int _desktopWindowBorderColor = DwmColorDefault;
     private bool? _compactLayoutApplied;
@@ -1001,9 +1002,17 @@ public sealed partial class MainWindow : Window
         }
         catch (Exception exception)
         {
-            _desktopDockManager.Unpin(restoreFloatingWindow: false);
-            SetDesktopWindowFrame(docked: false);
-            _desktopDockManager.RestoreFloatingWindowForStartup();
+            _suspendDesktopPlacementTracking = true;
+            try
+            {
+                _desktopDockManager.Unpin(restoreFloatingWindow: false);
+                SetDesktopWindowFrame(docked: false);
+                _desktopDockManager.RestoreFloatingWindowForStartup();
+            }
+            finally
+            {
+                _suspendDesktopPlacementTracking = false;
+            }
             _desktopDockSide = DesktopDockSide.None;
             UpdateDesktopDockUi();
             StatusText.Text = "Desktop docking unavailable";
@@ -1021,9 +1030,17 @@ public sealed partial class MainWindow : Window
 
         _desktopDockWidth = _desktopDockManager.WidthDips;
         _desktopDockMonitor = _desktopDockManager.MonitorDeviceName;
-        _desktopDockManager.Unpin(restoreFloatingWindow: false);
-        SetDesktopWindowFrame(docked: false);
-        _desktopDockManager.RestoreFloatingWindowForStartup();
+        _suspendDesktopPlacementTracking = true;
+        try
+        {
+            _desktopDockManager.Unpin(restoreFloatingWindow: false);
+            SetDesktopWindowFrame(docked: false);
+            _desktopDockManager.RestoreFloatingWindowForStartup();
+        }
+        finally
+        {
+            _suspendDesktopPlacementTracking = false;
+        }
         _desktopDockSide = DesktopDockSide.None;
         UpdateDesktopDockUi();
         ApplyResponsiveLayout(WindowRoot.ActualWidth);
@@ -1227,6 +1244,7 @@ public sealed partial class MainWindow : Window
         AppWindowChangedEventArgs args)
     {
         if (_desktopDockManager is null
+            || _suspendDesktopPlacementTracking
             || _desktopDockManager.IsDocked
             || (!args.DidPositionChange
                 && !args.DidSizeChange
