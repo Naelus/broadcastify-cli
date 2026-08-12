@@ -454,7 +454,7 @@ public sealed partial class MainWindow
             LibraryFilterGrid,
             LibraryContentBorder,
             PersistentStatusGrid);
-        if (_compactLayoutApplied && WindowRoot.ActualHeight < 820)
+        if (_compactLayoutApplied == true && WindowRoot.ActualHeight < 820)
         {
             Require(
                 LibraryStatsGrid.Visibility == Visibility.Collapsed,
@@ -727,11 +727,11 @@ public sealed partial class MainWindow
     {
         ApplyResponsiveLayout(1_099);
         Require(
-            _compactLayoutApplied,
+            _compactLayoutApplied == true,
             "The responsive layout did not enter compact mode below its breakpoint.");
         ApplyResponsiveLayout(1_101);
         Require(
-            !_compactLayoutApplied,
+            _compactLayoutApplied == false,
             "The responsive layout did not leave compact mode above its breakpoint.");
         ApplyResponsiveLayout(WindowRoot.ActualWidth);
         return new Dictionary<string, object>
