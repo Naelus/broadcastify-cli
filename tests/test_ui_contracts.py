@@ -368,6 +368,8 @@ def test_native_window_exposes_real_appbar_docking_and_compact_layouts() -> None
     assert "Grid.SetRow(ArchiveJobBorder, 1)" in native
     assert "Grid.SetRow(ReviewTabView, 1)" in native
     assert "shortCompact ? 170 : 280" in native
+    assert "ReviewDaySelectorGrid.RowSpacing = shortCompact ? 4 : 10" in native
+    assert 'AnalysisFeedCombo.Header = shortCompact ? null : "Feed"' in native
     assert "DailyReviewContentGrid.RowSpacing = shortCompact ? 4 : 9" in native
     assert "IncidentPlayer.Height = shortCompact ? 44 : 72" in native
     assert "Grid.SetRow(AreaQueueBorder, 1)" in native

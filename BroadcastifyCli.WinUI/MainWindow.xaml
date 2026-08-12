@@ -487,7 +487,7 @@
                             <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
                             <Grid.ColumnDefinitions><ColumnDefinition Width="310" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
                             <Border x:Name="ReviewDaySelectorBorder" Style="{StaticResource CardBorderStyle}">
-                                <Grid RowSpacing="10">
+                                <Grid x:Name="ReviewDaySelectorGrid" RowSpacing="10">
                                     <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                                     <StackPanel Spacing="0">
                                         <ComboBox x:Name="AnalysisFeedCombo" Header="Feed"

@@ -1335,6 +1335,8 @@ public sealed partial class MainWindow : Window
             ReviewContentGrid.RowDefinitions[1].Height = star;
             Grid.SetRow(ReviewTabView, 1);
             Grid.SetColumn(ReviewTabView, 0);
+            ReviewDaySelectorGrid.RowSpacing = shortCompact ? 4 : 10;
+            AnalysisFeedCombo.Header = shortCompact ? null : "Feed";
             DailyReviewContentGrid.RowSpacing = shortCompact ? 4 : 9;
             SummaryText.MaxHeight = shortCompact ? 40 : 126;
             PlaybackStatusText.MaxLines = shortCompact ? 1 : 0;
@@ -1433,6 +1435,8 @@ public sealed partial class MainWindow : Window
             ReviewContentGrid.RowDefinitions[1].Height = zero;
             Grid.SetRow(ReviewTabView, 0);
             Grid.SetColumn(ReviewTabView, 1);
+            ReviewDaySelectorGrid.RowSpacing = 10;
+            AnalysisFeedCombo.Header = "Feed";
             DailyReviewContentGrid.RowSpacing = 9;
             SummaryText.MaxHeight = 126;
             PlaybackStatusText.MaxLines = 0;
