@@ -439,6 +439,9 @@ def test_native_window_exposes_real_appbar_docking_and_compact_layouts() -> None
     assert "ExerciseInteractiveResizeForEndToEndTest" in ui_e2e
     assert "ReRegisterAfterShellRestartForEndToEndTest" in ui_e2e
     assert "CaptureAvailableMonitors" in ui_e2e
+    assert "snapshot.MonitorBounds.Width" in ui_e2e
+    assert "expectedWidthDips = DesktopDockPolicy.NormalizeWidthDips" in ui_e2e
+    assert "Math.Abs(manager.WidthDips - 640)" not in ui_e2e
     assert "DwmCornerDoNotRound" in ui_e2e
     assert "DwmColorNone" in ui_e2e
     assert "borderReadbackSupported" in ui_e2e

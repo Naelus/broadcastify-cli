@@ -116,9 +116,16 @@ public sealed partial class MainWindow
         Require(
             manager.Side == DesktopDockSide.Right,
             "The isolated saved right-edge preference was not restored.");
+        const double savedWidthDips = 640;
+        var expectedWidthDips = DesktopDockPolicy.NormalizeWidthDips(
+            savedWidthDips,
+            DesktopDockPolicy.PixelsToDips(
+                snapshot.MonitorBounds.Width,
+                snapshot.Dpi));
         Require(
-            Math.Abs(manager.WidthDips - 640) <= 8,
-            "The isolated saved dock width was not restored.");
+            Math.Abs(manager.WidthDips - expectedWidthDips) <= 8,
+            "The isolated saved dock width was not restored within the "
+                + "current display's safe width constraint.");
         Require(
             snapshot.AppBarRegistered,
             "Startup docking did not register its AppBar.");
@@ -129,6 +136,8 @@ public sealed partial class MainWindow
         var result = new Dictionary<string, object?>
         {
             ["side"] = manager.Side.ToString().ToLowerInvariant(),
+            ["requested_width_dips"] = savedWidthDips,
+            ["expected_width_dips"] = expectedWidthDips,
             ["width_dips"] = manager.WidthDips,
             ["monitor"] = snapshot.MonitorDeviceName,
             ["dpi"] = snapshot.Dpi,
