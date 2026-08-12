@@ -400,16 +400,12 @@ public sealed partial class MainWindow
     private async Task<Dictionary<string, object?>> VerifyUiLayoutAtSizeAsync(
         UiProbeSize size)
     {
-        var dpiScale = Math.Max(
-            1.0,
-            GetDpiForWindow(WinRT.Interop.WindowNative.GetWindowHandle(this)) / 96.0);
-        AppWindow.Resize(new SizeInt32(
-            (int)Math.Round(size.WidthDips * dpiScale),
-            (int)Math.Round(size.HeightDips * dpiScale)));
-        await WaitForUiLayoutAsync();
+        await ResizeForClientSizeAsync(size);
         Require(
-            Math.Abs(WindowRoot.ActualWidth - size.WidthDips) <= 80,
-            $"{size.Name}: requested width {size.WidthDips:N0} DIP but rendered {WindowRoot.ActualWidth:N1} DIP.");
+            Math.Abs(WindowRoot.ActualWidth - size.WidthDips) <= 3
+                && Math.Abs(WindowRoot.ActualHeight - size.HeightDips) <= 3,
+            $"{size.Name}: requested a {size.WidthDips:N0}×{size.HeightDips:N0}-DIP client "
+            + $"but rendered {WindowRoot.ActualWidth:N1}×{WindowRoot.ActualHeight:N1} DIP.");
         Require(
             _compactLayoutApplied == size.Compact,
             $"{size.Name}: compact layout state did not match the width contract.");
@@ -650,6 +646,32 @@ public sealed partial class MainWindow
             ["scrollable_heights"] = scrollResults,
             ["scrollable_lists"] = listResults,
         };
+    }
+
+    private async Task ResizeForClientSizeAsync(UiProbeSize size)
+    {
+        var dpiScale = Math.Max(
+            1.0,
+            GetDpiForWindow(WinRT.Interop.WindowNative.GetWindowHandle(this)) / 96.0);
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            var widthDelta = size.WidthDips - WindowRoot.ActualWidth;
+            var heightDelta = size.HeightDips - WindowRoot.ActualHeight;
+            if (Math.Abs(widthDelta) <= 2 && Math.Abs(heightDelta) <= 2)
+            {
+                return;
+            }
+            AppWindow.Resize(new SizeInt32(
+                Math.Max(
+                    320,
+                    AppWindow.Size.Width
+                        + (int)Math.Round(widthDelta * dpiScale)),
+                Math.Max(
+                    320,
+                    AppWindow.Size.Height
+                        + (int)Math.Round(heightDelta * dpiScale))));
+            await WaitForUiLayoutAsync(150);
+        }
     }
 
     private async Task VerifyMonthQuestionUiAsync()

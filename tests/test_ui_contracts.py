@@ -409,6 +409,8 @@ def test_native_window_exposes_real_appbar_docking_and_compact_layouts() -> None
     assert 'new UiProbeSize("threshold-above", 1101, 760, false)' in ui_e2e
     assert 'new UiProbeSize("reference", 1240, 900, false)' in ui_e2e
     assert 'new UiProbeSize("large", 1600, 1000, false)' in ui_e2e
+    assert "ResizeForClientSizeAsync" in ui_e2e
+    assert "Math.Abs(WindowRoot.ActualWidth - size.WidthDips) <= 3" in ui_e2e
     assert "ExerciseScrollAsync" in ui_e2e
     assert "ExerciseItemsScrollAsync" in ui_e2e
     assert "ExerciseTextBoxScrollAsync" in ui_e2e
