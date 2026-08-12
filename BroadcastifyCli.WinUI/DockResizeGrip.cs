@@ -3,7 +3,7 @@ using Microsoft.UI.Xaml.Controls;
 
 namespace BroadcastifyCli.WinUI;
 
-public sealed class DockResizeGrip : Border
+public sealed class DockResizeGrip : ContentControl
 {
     public DockResizeGrip()
     {
