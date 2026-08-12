@@ -414,6 +414,12 @@ internal sealed class DesktopDockManager : IDisposable
         }
     }
 
+    internal void RefreshFrameAfterPresenterChange()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        RefreshNonClientFrame();
+    }
+
     internal void Unpin(bool restoreFloatingWindow = true)
     {
         if (_disposed || !IsDocked)

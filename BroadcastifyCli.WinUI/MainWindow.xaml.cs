@@ -1044,8 +1044,24 @@ public sealed partial class MainWindow : Window
         _desktopDockSide = DesktopDockSide.None;
         UpdateDesktopDockUi();
         ApplyResponsiveLayout(WindowRoot.ActualWidth);
+        QueueFloatingTitleBarReattachment();
         PersistUserSettings(logFailure: true);
         AppendLog("Unpinned from the desktop edge and restored the floating window.");
+    }
+
+    private void QueueFloatingTitleBarReattachment()
+    {
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            if (_desktopDockManager?.IsDocked == true)
+            {
+                return;
+            }
+
+            AttachCustomTitleBar(resetFirst: true);
+            _desktopDockManager?.RefreshFrameAfterPresenterChange();
+            WindowRoot.UpdateLayout();
+        });
     }
 
     private void PrepareDesktopDockMenu()
@@ -1214,9 +1230,9 @@ public sealed partial class MainWindow : Window
 
         // The operating-system frame is suppressed while pinned, but the XAML
         // title bar remains the persistent navigation and window-control row.
-        ExtendsContentIntoTitleBar = true;
-        SetTitleBar(AppTitleBar);
-        AppTitleBar.Visibility = Visibility.Visible;
+        // Resetting first when returning to a floating frame forces WinUI to
+        // rebuild the custom drag/input regions after the presenter changes.
+        AttachCustomTitleBar(resetFirst: !docked);
 
         var cornerPreference = docked
             ? DwmCornerDoNotRound
@@ -1229,6 +1245,20 @@ public sealed partial class MainWindow : Window
         _desktopWindowCornerPreference = cornerPreference;
         _desktopWindowBorderColor = borderColor;
         _desktopWindowFrameDocked = docked;
+        _desktopDockManager?.RefreshFrameAfterPresenterChange();
+    }
+
+    private void AttachCustomTitleBar(bool resetFirst)
+    {
+        if (resetFirst)
+        {
+            SetTitleBar(null);
+            ExtendsContentIntoTitleBar = false;
+        }
+
+        ExtendsContentIntoTitleBar = true;
+        SetTitleBar(AppTitleBar);
+        AppTitleBar.Visibility = Visibility.Visible;
     }
 
     private void SetDwmWindowAttributeOrThrow(int attribute, int value)

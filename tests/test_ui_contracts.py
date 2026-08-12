@@ -391,7 +391,13 @@ def test_native_window_exposes_real_appbar_docking_and_compact_layouts() -> None
     assert "Started with Windows and kept the explicitly pinned status window visible" in native
     assert "presenter.SetBorderAndTitleBar(hasBorder: false, hasTitleBar: false)" in native
     assert "presenter.SetBorderAndTitleBar(hasBorder: true, hasTitleBar: false)" in native
-    assert "SetTitleBar(null)" not in native
+    assert "AttachCustomTitleBar(resetFirst: !docked)" in native
+    assert "QueueFloatingTitleBarReattachment" in native
+    assert "AttachCustomTitleBar(resetFirst: true)" in native
+    assert "SetTitleBar(null)" in native
+    assert "ExtendsContentIntoTitleBar = false" in native
+    assert "RefreshFrameAfterPresenterChange" in native
+    assert "RefreshFrameAfterPresenterChange" in docking
     assert "DwmWindowCornerPreference" in native
     assert "DwmWindowBorderColor" in native
     assert "DwmCornerDoNotRound" in native
@@ -468,6 +474,11 @@ def test_native_window_exposes_real_appbar_docking_and_compact_layouts() -> None
     assert "borderReadbackSupported" in ui_e2e
     assert "AppTitleBar.ActualHeight >= 32" in ui_e2e
     assert "AppTitleBar_PaneToggleRequested(AppTitleBar, new object())" in ui_e2e
+    assert 'VerifyFloatingTitleBarState("startup-unpin")' in ui_e2e
+    assert 'VerifyFloatingTitleBarState("unpin")' in ui_e2e
+    assert 'VerifyFloatingTitleBarState("maximized-unpin")' in ui_e2e
+    assert "AppWindow.TitleBar.ExtendsContentIntoTitleBar" in ui_e2e
+    assert "FindElementsInHostCoordinates" in ui_e2e
     assert "OverlappedPresenterState.Maximized" in ui_e2e
     assert "VerifyMonthQuestionUiAsync" in ui_e2e
     assert "State the archive date and time for every event mentioned" in ui_e2e

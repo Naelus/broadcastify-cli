@@ -150,6 +150,7 @@ public sealed partial class MainWindow
         Require(
             !manager.IsDocked,
             "The startup restore probe could not return to floating mode.");
+        VerifyFloatingTitleBarState("startup-unpin");
         return result;
     }
 
@@ -949,6 +950,7 @@ public sealed partial class MainWindow
                 && !AppTitleBar.IsPaneToggleButtonVisible
                 && RootNavigation.IsPaneToggleButtonVisible,
             "Unpin did not restore the floating title-bar and border mode.");
+        VerifyFloatingTitleBarState("unpin");
         Require(
             TryReadDwmWindowAttribute(DwmWindowCornerPreference, out var restoredCorners)
                 && restoredCorners == DwmCornerDefault
@@ -1000,6 +1002,7 @@ public sealed partial class MainWindow
             presenter.State == OverlappedPresenterState.Maximized,
             "Unpin did not restore the prior maximized state "
             + $"(state={presenter.State}, saved={manager.RestoreMaximized}).");
+        VerifyFloatingTitleBarState("maximized-unpin");
         presenter.Restore();
         await WaitForUiLayoutAsync(220);
         var restoredFromMaximized = manager.CaptureSnapshot();
@@ -1041,6 +1044,59 @@ public sealed partial class MainWindow
             ["alternate_monitor"] = alternateMonitor,
             ["maximized_restore"] = true,
         };
+    }
+
+    private void VerifyFloatingTitleBarState(string label)
+    {
+        var presenter = AppWindow.Presenter as OverlappedPresenter
+            ?? throw new InvalidOperationException(
+                $"{label}: the floating window did not retain an overlapped presenter.");
+        Require(
+            presenter.HasBorder
+                && !presenter.HasTitleBar
+                && AppWindow.TitleBar.ExtendsContentIntoTitleBar
+                && ExtendsContentIntoTitleBar,
+            $"{label}: the floating custom-title-bar frame was not active.");
+        Require(
+            AppTitleBar.IsLoaded
+                && AppTitleBar.XamlRoot is not null
+                && AppTitleBar.Visibility == Visibility.Visible
+                && AppTitleBar.Opacity > 0
+                && AppTitleBar.IsHitTestVisible
+                && AppTitleBar.ActualWidth >= 200
+                && AppTitleBar.ActualHeight >= 32,
+            $"{label}: the floating title bar was not rendered with usable bounds.");
+
+        var titleBarPoint = AppTitleBar
+            .TransformToVisual(WindowRoot)
+            .TransformPoint(default);
+        var navigationPoint = RootNavigation
+            .TransformToVisual(WindowRoot)
+            .TransformPoint(default);
+        Require(
+            titleBarPoint.Y >= -1
+                && titleBarPoint.Y + AppTitleBar.ActualHeight
+                    <= WindowRoot.ActualHeight + 1
+                && navigationPoint.Y
+                    >= titleBarPoint.Y + AppTitleBar.ActualHeight - 1,
+            $"{label}: the floating title bar was clipped or overlapped by navigation.");
+
+        var dockButtonPoint = DockButton
+            .TransformToVisual(WindowRoot)
+            .TransformPoint(default);
+        var dockButtonCenter = new Windows.Foundation.Point(
+            dockButtonPoint.X + DockButton.ActualWidth / 2,
+            dockButtonPoint.Y + DockButton.ActualHeight / 2);
+        var hitElements = VisualTreeHelper.FindElementsInHostCoordinates(
+            dockButtonCenter,
+            WindowRoot);
+        Require(
+            DockButton.Visibility == Visibility.Visible
+                && DockButton.ActualWidth >= 32
+                && DockButton.ActualHeight >= 24
+                && hitElements.Any(element =>
+                    IsVisualDescendantOrSelf(element, DockButton)),
+            $"{label}: the floating title-bar controls were not visible and hittable.");
     }
 
     private void VerifyDockedFrameState(
