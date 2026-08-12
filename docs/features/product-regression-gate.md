@@ -54,21 +54,32 @@ After the offline suite passes and the native executable is compiled, every
 desktop build launches that just-built executable in an isolated test-data
 root. The app-owned E2E probe does not use desktop-control fallbacks,
 UIAutomation, saved credentials, a model provider, or Broadcastify. It renders
-and navigates every primary page at 600×900, 720×720, 960×720, and 1240×900
-logical sizes; exercises the Library, archive setup, weekly brief, archive chat,
-Area Watch, all Settings tabs, Credentials, and About scroll ranges in both
-directions; verifies the calendar-month scope and required event day/time
-prompt; rejects horizontally clipped critical controls; and then proves real
-left/right Windows AppBar reservation, resizing, unpinning, and work-area
-restoration. A JSON report is written atomically, checked by the launcher, and
-cleaned only after success. A failed or timed-out probe fails the MSBuild target
-and retains its isolated artifacts for diagnosis.
+and navigates every primary page at nine logical sizes: 520×640, 600×900,
+680×840, 720×720, 960×720, 1099×760, 1101×760, 1240×900, and 1600×1000. The
+matrix brackets the compact-layout threshold and exercises every named page
+scroll host, every bounded list, the Library transcript, the activity log, all
+Settings tabs, Credentials, About, and the expanded hardware/profile content in
+both directions. It verifies keyboard focus, persistent background status,
+calendar-month scope, required event day/time wording, and rejects horizontally
+clipped critical controls.
+
+The native docking phase starts from a saved right-edge preference, then proves
+real left/right Windows AppBar reservation, a single theme-aware inner border,
+square docked corners, suppressed outer frame, active/inactive light/dark
+states, reachable dialogs and flyouts, pointer-captured resizing with temporary
+reservation release and reclaim, logical-width behavior at 96/120/144/192 DPI,
+saved monitor identity, an alternate display when present, shell restart
+re-registration, floating and maximized restoration, and work-area cleanup
+after both ordinary unpin and an intentionally abrupt isolated process exit. A
+JSON report is written atomically, checked by the launcher, and cleaned only
+after success. A failed or timed-out probe fails the MSBuild target and retains
+its isolated artifacts for diagnosis.
 
 The v0.4.32 pre-package validation passed all 418 offline tests, compiled the
-native application with no warnings or errors, and completed the four-size
-rendered matrix plus left/right/resize/unpin AppBar checks. This result promotes
-the native WinUI shell from Implemented to Validated; packaging and future
-versions must continue to pass the same build-owned gate.
+native application with no warnings or errors, and established the original
+four-size rendered matrix plus left/right/resize/unpin AppBar baseline. The
+expanded matrix and native-frame lifecycle checks above are now mandatory for
+every later native or installer build.
 
 ## Running the gate
 

@@ -42,6 +42,12 @@ public sealed partial class MainWindow : Window
     private const int RetainedVisibleActivityLogCharacters = 16_000;
     private const string VisibleActivityLogTrimMarker =
         "[Earlier activity remains available in the on-disk activity log.]";
+    private const int DwmWindowCornerPreference = 33;
+    private const int DwmWindowBorderColor = 34;
+    private const int DwmCornerDefault = 0;
+    private const int DwmCornerDoNotRound = 1;
+    private const int DwmColorDefault = -1;
+    private const int DwmColorNone = -2;
     private readonly ObservableCollection<FeedSearchResult> _feeds = [];
     private readonly ObservableCollection<FeedSearchResult> _areaFeeds = [];
     private List<FeedSearchResult> _allAreaFeeds = [];
@@ -122,7 +128,10 @@ public sealed partial class MainWindow : Window
     private DesktopDockManager? _desktopDockManager;
     private DesktopDockSide _desktopDockSide;
     private double _desktopDockWidth = DesktopDockManager.RecommendedWidthDips;
+    private string _desktopDockMonitor = "";
     private bool _desktopDockRestoreAttempted;
+    private bool _desktopWindowFrameDocked;
+    private bool _desktopWindowActive = true;
     private bool? _compactLayoutApplied;
     private bool? _shortCompactLayoutApplied;
 
@@ -142,6 +151,7 @@ public sealed partial class MainWindow : Window
         WindowRoot.SizeChanged += WindowRoot_SizeChanged;
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(AppTitleBar);
+        Activated += MainWindow_Activated;
         var windowHandle = WindowNative.GetWindowHandle(this);
         var dpiScale = Math.Max(1.0, GetDpiForWindow(windowHandle) / 96.0);
         AppWindow.Resize(new SizeInt32((int)(1240 * dpiScale), (int)(900 * dpiScale)));
@@ -149,12 +159,19 @@ public sealed partial class MainWindow : Window
         _desktopDockWidth = Math.Max(
             DesktopDockManager.MinimumWidthDips,
             startupSettings.DesktopDockWidth);
+        _desktopDockMonitor = startupSettings.DesktopDockMonitor ?? "";
         try
         {
             _desktopDockManager = new DesktopDockManager(
                 windowHandle,
                 AppWindow,
-                DispatcherQueue);
+                DispatcherQueue,
+                SavedFloatingBounds(startupSettings),
+                startupSettings.DesktopWindowMaximized);
+            _desktopDockManager.InteractiveResizeCompleted +=
+                DesktopDockManager_InteractiveResizeCompleted;
+            _desktopDockManager.RestoreFloatingWindowForStartup();
+            AppWindow.Changed += AppWindow_Changed;
         }
         catch (Exception exception)
         {
@@ -441,7 +458,7 @@ public sealed partial class MainWindow : Window
         {
             XamlRoot = ((FrameworkElement)Content).XamlRoot,
             Title = "Finish unattended setup",
-            Content = message,
+            Content = CreateDialogTextContent(message),
             PrimaryButtonText = "Open credentials",
             CloseButtonText = "Later",
             DefaultButton = ContentDialogButton.Primary,
@@ -876,6 +893,20 @@ public sealed partial class MainWindow : Window
             _ => DesktopDockSide.None,
         };
 
+    private static RectInt32? SavedFloatingBounds(DesktopSettings settings)
+    {
+        if (settings.DesktopWindowX is not int x
+            || settings.DesktopWindowY is not int y
+            || settings.DesktopWindowWidth is not int width
+            || settings.DesktopWindowHeight is not int height
+            || width <= 0
+            || height <= 0)
+        {
+            return null;
+        }
+        return new RectInt32(x, y, width, height);
+    }
+
     private string DesktopDockSideSetting =>
         (_desktopDockManager?.IsDocked == true
             ? _desktopDockManager.Side
@@ -943,9 +974,18 @@ public sealed partial class MainWindow : Window
 
         try
         {
-            _desktopDockManager.Dock(side, _desktopDockWidth);
+            var requestedMonitor = _desktopDockManager.IsDocked
+                || _desktopDockSide is DesktopDockSide.Left or DesktopDockSide.Right
+                    ? _desktopDockMonitor
+                    : null;
+            _desktopDockManager.Dock(
+                side,
+                _desktopDockWidth,
+                requestedMonitor);
+            SetDesktopWindowFrame(docked: true);
             _desktopDockSide = side;
             _desktopDockWidth = _desktopDockManager.WidthDips;
+            _desktopDockMonitor = _desktopDockManager.MonitorDeviceName;
             UpdateDesktopDockUi();
             ApplyResponsiveLayout(WindowRoot.ActualWidth);
             if (persist)
@@ -959,7 +999,9 @@ public sealed partial class MainWindow : Window
         }
         catch (Exception exception)
         {
-            _desktopDockManager.Unpin();
+            _desktopDockManager.Unpin(restoreFloatingWindow: false);
+            SetDesktopWindowFrame(docked: false);
+            _desktopDockManager.RestoreFloatingWindowForStartup();
             _desktopDockSide = DesktopDockSide.None;
             UpdateDesktopDockUi();
             StatusText.Text = "Desktop docking unavailable";
@@ -976,7 +1018,10 @@ public sealed partial class MainWindow : Window
         }
 
         _desktopDockWidth = _desktopDockManager.WidthDips;
-        _desktopDockManager.Unpin();
+        _desktopDockMonitor = _desktopDockManager.MonitorDeviceName;
+        _desktopDockManager.Unpin(restoreFloatingWindow: false);
+        SetDesktopWindowFrame(docked: false);
+        _desktopDockManager.RestoreFloatingWindowForStartup();
         _desktopDockSide = DesktopDockSide.None;
         UpdateDesktopDockUi();
         ApplyResponsiveLayout(WindowRoot.ActualWidth);
@@ -1014,9 +1059,16 @@ public sealed partial class MainWindow : Window
                 ? "Unpin (right-click to change side)"
                 : "Pin to the left or right desktop edge");
         DockResizeHandle.Visibility = pinned ? Visibility.Visible : Visibility.Collapsed;
+        DockedFrameBorder.Visibility = pinned ? Visibility.Visible : Visibility.Collapsed;
         DockResizeHandle.HorizontalAlignment = side == DesktopDockSide.Left
             ? HorizontalAlignment.Right
             : HorizontalAlignment.Left;
+        DockedFrameBorder.BorderThickness = side switch
+        {
+            DesktopDockSide.Left => new Thickness(0, 0, 1, 0),
+            DesktopDockSide.Right => new Thickness(1, 0, 0, 0),
+            _ => new Thickness(0),
+        };
         RootNavigation.PaneDisplayMode = pinned
             ? NavigationViewPaneDisplayMode.LeftMinimal
             : NavigationViewPaneDisplayMode.Auto;
@@ -1030,47 +1082,157 @@ public sealed partial class MainWindow : Window
         {
             AppTitleBar.Subtitle = "Local radio archive intelligence";
         }
+        ApplyDesktopDockActivationState(_desktopWindowActive);
         PrepareDesktopDockMenu();
     }
 
-    private void DockResizeHandle_ManipulationStarted(
+    private void DockResizeHandle_PointerPressed(
         object sender,
-        ManipulationStartedRoutedEventArgs e)
+        PointerRoutedEventArgs e)
     {
-        e.Handled = _desktopDockManager?.IsDocked == true;
+        if (e.GetCurrentPoint(DockResizeHandle).Properties.IsLeftButtonPressed
+            && _desktopDockManager?.BeginPointerResize() == true)
+        {
+            DockResizeHandle.CapturePointer(e.Pointer);
+            e.Handled = true;
+        }
     }
 
-    private void DockResizeHandle_ManipulationDelta(
+    private void DockResizeHandle_PointerMoved(
         object sender,
-        ManipulationDeltaRoutedEventArgs e)
+        PointerRoutedEventArgs e)
     {
-        if (_desktopDockManager?.IsDocked != true)
+        if (_desktopDockManager?.IsInteractiveResize != true)
         {
             return;
         }
-
-        var change = e.Delta.Translation.X;
-        if (_desktopDockManager.Side == DesktopDockSide.Right)
-        {
-            change = -change;
-        }
-        _desktopDockManager.ChangeWidth(_desktopDockManager.WidthDips + change);
+        _desktopDockManager.ContinuePointerResize();
         _desktopDockWidth = _desktopDockManager.WidthDips;
         ApplyResponsiveLayout(WindowRoot.ActualWidth);
         e.Handled = true;
     }
 
-    private void DockResizeHandle_ManipulationCompleted(
+    private void DockResizeHandle_PointerReleased(
         object sender,
-        ManipulationCompletedRoutedEventArgs e)
+        PointerRoutedEventArgs e)
     {
-        if (_desktopDockManager?.IsDocked == true)
+        if (_desktopDockManager?.IsInteractiveResize == true)
         {
-            _desktopDockWidth = _desktopDockManager.WidthDips;
-            PersistUserSettings(logFailure: true);
-            AppendLog($"Pinned width saved at {_desktopDockWidth:N0} logical pixels.");
+            _desktopDockManager.CompletePointerResize();
+            DockResizeHandle.ReleasePointerCapture(e.Pointer);
             e.Handled = true;
         }
+    }
+
+    private void DockResizeHandle_PointerCanceled(
+        object sender,
+        PointerRoutedEventArgs e) =>
+        _desktopDockManager?.CompletePointerResize();
+
+    private void DockResizeHandle_PointerCaptureLost(
+        object sender,
+        PointerRoutedEventArgs e) =>
+        _desktopDockManager?.CompletePointerResize();
+
+    private void DesktopDockManager_InteractiveResizeCompleted(double widthDips)
+    {
+        _desktopDockWidth = widthDips;
+        _desktopDockMonitor = _desktopDockManager?.MonitorDeviceName ?? "";
+        PersistUserSettings(logFailure: true);
+        AppendLog($"Pinned width saved at {_desktopDockWidth:N0} logical pixels.");
+    }
+
+    private void MainWindow_Activated(
+        object sender,
+        WindowActivatedEventArgs args) =>
+        ApplyDesktopDockActivationState(
+            args.WindowActivationState != WindowActivationState.Deactivated);
+
+    private void ApplyDesktopDockActivationState(bool active)
+    {
+        _desktopWindowActive = active;
+        if (DockedFrameBorder is null || DockResizeIndicator is null)
+        {
+            return;
+        }
+        DockedFrameBorder.Opacity = active ? 1 : 0.72;
+        DockResizeIndicator.Opacity = active ? 0.58 : 0.35;
+    }
+
+    private void SetDesktopWindowFrame(bool docked)
+    {
+        if (AppWindow.Presenter is not OverlappedPresenter presenter)
+        {
+            throw new InvalidOperationException(
+                "Desktop docking requires a normal desktop window.");
+        }
+
+        if (docked)
+        {
+            if (presenter.State != OverlappedPresenterState.Restored)
+            {
+                presenter.Restore();
+            }
+            presenter.SetBorderAndTitleBar(hasBorder: false, hasTitleBar: false);
+            ExtendsContentIntoTitleBar = false;
+            SetTitleBar(null);
+        }
+        else
+        {
+            presenter.SetBorderAndTitleBar(hasBorder: true, hasTitleBar: false);
+            ExtendsContentIntoTitleBar = true;
+            SetTitleBar(AppTitleBar);
+        }
+
+        var cornerPreference = docked
+            ? DwmCornerDoNotRound
+            : DwmCornerDefault;
+        DwmSetWindowAttribute(
+            WindowNative.GetWindowHandle(this),
+            DwmWindowCornerPreference,
+            ref cornerPreference,
+            sizeof(int));
+        var borderColor = docked ? DwmColorNone : DwmColorDefault;
+        DwmSetWindowAttribute(
+            WindowNative.GetWindowHandle(this),
+            DwmWindowBorderColor,
+            ref borderColor,
+            sizeof(int));
+        _desktopWindowFrameDocked = docked;
+    }
+
+    private bool TryReadDwmWindowAttribute(int attribute, out int value)
+    {
+        value = 0;
+        return DwmGetWindowAttribute(
+            WindowNative.GetWindowHandle(this),
+            attribute,
+            out value,
+            sizeof(int)) == 0;
+    }
+
+    private void AppWindow_Changed(
+        AppWindow sender,
+        AppWindowChangedEventArgs args)
+    {
+        if (_desktopDockManager is null
+            || _desktopDockManager.IsDocked
+            || (!args.DidPositionChange
+                && !args.DidSizeChange
+                && !args.DidPresenterChange))
+        {
+            return;
+        }
+        var maximized = sender.Presenter is OverlappedPresenter presenter
+            && presenter.State == OverlappedPresenterState.Maximized;
+        _desktopDockManager.UpdateFloatingPlacement(
+            new RectInt32(
+                sender.Position.X,
+                sender.Position.Y,
+                sender.Size.Width,
+                sender.Size.Height),
+            maximized);
+        ScheduleSettingsSave();
     }
 
     private void WindowRoot_SizeChanged(object sender, SizeChangedEventArgs e) =>
@@ -1322,13 +1484,30 @@ public sealed partial class MainWindow : Window
         _questionCancellation?.Cancel();
         PersistUserSettings(logFailure: true);
         PersistAnalysisCredentialPreference();
+        AppWindow.Changed -= AppWindow_Changed;
+        Activated -= MainWindow_Activated;
+        if (_desktopDockManager is not null)
+        {
+            _desktopDockManager.InteractiveResizeCompleted -=
+                DesktopDockManager_InteractiveResizeCompleted;
+        }
         _desktopDockManager?.Dispose();
         _worker?.StopLanNode();
         ReleaseMediaPlayerInstances(recreate: false);
     }
 
-    private DesktopSettings CaptureUserSettings() =>
-        new()
+    private DesktopSettings CaptureUserSettings()
+    {
+        var floatingBounds = _desktopDockManager?.FloatingBounds
+            ?? new RectInt32(
+                AppWindow.Position.X,
+                AppWindow.Position.Y,
+                AppWindow.Size.Width,
+                AppWindow.Size.Height);
+        var floatingMaximized = _desktopDockManager?.RestoreMaximized
+            ?? (AppWindow.Presenter is OverlappedPresenter presenter
+                && presenter.State == OverlappedPresenterState.Maximized);
+        return new DesktopSettings
         {
             PythonRuntimePath = _configuredPythonRuntimePath,
             HardwareProfile = SelectedComboValue(HardwareProfileComboBox, "auto"),
@@ -1370,7 +1549,15 @@ public sealed partial class MainWindow : Window
             DesktopDockSide = DesktopDockSideSetting,
             DesktopDockWidth = _desktopDockManager?.WidthDips
                 ?? _desktopDockWidth,
+            DesktopDockMonitor = _desktopDockManager?.MonitorDeviceName
+                ?? _desktopDockMonitor,
+            DesktopWindowX = floatingBounds.X,
+            DesktopWindowY = floatingBounds.Y,
+            DesktopWindowWidth = floatingBounds.Width,
+            DesktopWindowHeight = floatingBounds.Height,
+            DesktopWindowMaximized = floatingMaximized,
         };
+    }
 
     private string PersistedOutputDirectory()
     {
@@ -3064,7 +3251,7 @@ public sealed partial class MainWindow : Window
         {
             XamlRoot = ((FrameworkElement)Content).XamlRoot,
             Title = "Catch up missing feed days",
-            Content = content,
+            Content = CreateDialogScrollContent(content),
             PrimaryButtonText = "Find missing days",
             CloseButtonText = "Cancel",
             DefaultButton = ContentDialogButton.Close,
@@ -3273,13 +3460,7 @@ public sealed partial class MainWindow : Window
         {
             XamlRoot = ((FrameworkElement)Content).XamlRoot,
             Title = $"Resume and prioritize {plan.Days.Count:N0} pending day(s)",
-            Content = new ScrollViewer
-            {
-                MaxHeight = 620,
-                HorizontalScrollMode = ScrollMode.Disabled,
-                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
-                Content = content,
-            },
+            Content = CreateDialogScrollContent(content, 620),
             PrimaryButtonText = "Start selected work",
             CloseButtonText = "Cancel",
             DefaultButton = ContentDialogButton.Close,
@@ -4020,7 +4201,7 @@ public sealed partial class MainWindow : Window
         {
             XamlRoot = ((FrameworkElement)Content).XamlRoot,
             Title = $"Delete {selected.FeedName} from the Library?",
-            Content = content,
+            Content = CreateDialogScrollContent(content),
             PrimaryButtonText = "Delete feed",
             CloseButtonText = "Cancel",
             DefaultButton = ContentDialogButton.Close,
@@ -4229,12 +4410,12 @@ public sealed partial class MainWindow : Window
         {
             XamlRoot = ((FrameworkElement)Content).XamlRoot,
             Title = $"{action} packaged CUDA runtime?",
-            Content =
+            Content = CreateDialogTextContent(
                 $"This explicit setup uses about {current.EstimatedStorage} in "
                 + $"{current.StoragePath}. It downloads an isolated Python runtime and "
                 + "pinned binary wheels from the sources shown on this page. Package "
                 + "licenses are retained. Cancel stops the process and keeps its verified "
-                + "cache so a later retry can resume. No Broadcastify request is made.",
+                + "cache so a later retry can resume. No Broadcastify request is made."),
             PrimaryButtonText = action,
             CloseButtonText = "Not now",
             DefaultButton = ContentDialogButton.Primary,
@@ -4553,7 +4734,7 @@ public sealed partial class MainWindow : Window
             PrimaryButtonText = "Sign in",
             CloseButtonText = "Cancel",
             DefaultButton = ContentDialogButton.Primary,
-            Content = fields,
+            Content = CreateDialogScrollContent(fields),
         };
 
         dialog.PrimaryButtonClick += async (_, args) =>
@@ -5137,14 +5318,7 @@ public sealed partial class MainWindow : Window
             PrimaryButtonText = "Save schedule",
             CloseButtonText = "Cancel",
             DefaultButton = ContentDialogButton.Primary,
-            Content = new ScrollViewer
-            {
-                MaxHeight = 600,
-                HorizontalScrollMode = ScrollMode.Disabled,
-                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
-                HorizontalContentAlignment = HorizontalAlignment.Stretch,
-                Content = content,
-            },
+            Content = CreateDialogScrollContent(content, 600),
         };
         if (await dialog.ShowAsync() != ContentDialogResult.Primary)
         {
@@ -5268,14 +5442,7 @@ public sealed partial class MainWindow : Window
             {
                 XamlRoot = ((FrameworkElement)Content).XamlRoot,
                 Title = "Manage feed schedules",
-                Content = new ScrollViewer
-                {
-                    MaxHeight = 520,
-                    HorizontalScrollMode = ScrollMode.Disabled,
-                    HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
-                    HorizontalContentAlignment = HorizontalAlignment.Stretch,
-                    Content = list,
-                },
+                Content = CreateDialogScrollContent(list, 520),
                 CloseButtonText = "Done",
             };
             await manager.ShowAsync();
@@ -5296,7 +5463,8 @@ public sealed partial class MainWindow : Window
                 {
                     XamlRoot = ((FrameworkElement)Content).XamlRoot,
                     Title = $"Remove schedule · {removeSchedule.FeedName}",
-                    Content = "Retained audio, transcripts, and analysis will not be deleted.",
+                    Content = CreateDialogTextContent(
+                        "Retained audio, transcripts, and analysis will not be deleted."),
                     PrimaryButtonText = "Remove schedule",
                     CloseButtonText = "Cancel",
                     DefaultButton = ContentDialogButton.Close,
@@ -7684,11 +7852,43 @@ public sealed partial class MainWindow : Window
         {
             XamlRoot = ((FrameworkElement)Content).XamlRoot,
             Title = title,
-            Content = message,
+            Content = CreateDialogTextContent(message),
             CloseButtonText = "OK",
         };
         await dialog.ShowAsync();
     }
+
+    private static ScrollViewer CreateDialogScrollContent(
+        object content,
+        double maximumHeight = 560)
+    {
+        var scrollViewer = new ScrollViewer
+        {
+            MaxHeight = maximumHeight,
+            VerticalScrollMode = ScrollMode.Enabled,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            HorizontalScrollMode = ScrollMode.Disabled,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            HorizontalContentAlignment = HorizontalAlignment.Stretch,
+            Content = content,
+        };
+        AutomationProperties.SetAutomationId(
+            scrollViewer,
+            "DialogScrollHost");
+        return scrollViewer;
+    }
+
+    private static ScrollViewer CreateDialogTextContent(
+        string message,
+        double maximumHeight = 560) =>
+        CreateDialogScrollContent(
+            new TextBlock
+            {
+                Text = message,
+                TextWrapping = TextWrapping.Wrap,
+                IsTextSelectionEnabled = true,
+            },
+            maximumHeight);
 
     private static string SelectedComboValue(ComboBox? comboBox, string fallback)
     {
@@ -7740,4 +7940,18 @@ public sealed partial class MainWindow : Window
 
     [DllImport("user32.dll")]
     private static extern uint GetDpiForWindow(nint windowHandle);
+
+    [DllImport("dwmapi.dll")]
+    private static extern int DwmSetWindowAttribute(
+        nint windowHandle,
+        int attribute,
+        ref int value,
+        int valueSize);
+
+    [DllImport("dwmapi.dll")]
+    private static extern int DwmGetWindowAttribute(
+        nint windowHandle,
+        int attribute,
+        out int value,
+        int valueSize);
 }

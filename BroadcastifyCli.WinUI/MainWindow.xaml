@@ -296,8 +296,8 @@
                                             </Grid>
                                             <InfoBar x:Name="LibraryDetailInfoBar" Grid.Row="1" IsOpen="True"
                                                      IsClosable="False" Severity="Informational" />
-                                            <TabView Grid.Row="2" IsAddTabButtonVisible="False" TabWidthMode="SizeToContent">
-                                                <TabViewItem Header="Processing" IsClosable="False">
+                                            <TabView x:Name="LibraryDetailTabView" Grid.Row="2" IsAddTabButtonVisible="False" TabWidthMode="SizeToContent">
+                                                <TabViewItem x:Name="LibraryProcessingTab" Header="Processing" IsClosable="False">
                                                     <ScrollViewer x:Name="LibraryProcessingScroll" HorizontalScrollBarVisibility="Disabled" Padding="4,8,8,4">
                                                         <StackPanel Spacing="10">
                                                             <ProgressBar x:Name="LibraryDetailProgress" Minimum="0" Maximum="100" />
@@ -326,7 +326,7 @@
                                                         </StackPanel>
                                                     </ScrollViewer>
                                                 </TabViewItem>
-                                                <TabViewItem Header="Listen &amp; transcript" IsClosable="False">
+                                                <TabViewItem x:Name="LibraryTranscriptTab" Header="Listen &amp; transcript" IsClosable="False">
                                                     <Grid Padding="4,8,8,4" RowSpacing="9">
                                                         <Grid.RowDefinitions>
                                                             <RowDefinition Height="Auto" />
@@ -469,7 +469,7 @@
                             </Border>
                         </Grid>
 
-                        <Expander Grid.Row="2" Header="Activity log">
+                        <Expander x:Name="ActivityLogExpander" Grid.Row="2" Header="Activity log">
                             <TextBox x:Name="LogBox" Height="150" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap"
                                      FontFamily="Consolas" ScrollViewer.VerticalScrollBarVisibility="Auto" />
                         </Expander>
@@ -1014,7 +1014,7 @@
                                                          Message="Run the three generated-input tests before a long unattended job." />
                                                 <Grid ColumnSpacing="8">
                                                     <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                                    <Expander Header="Compare detected profiles" HorizontalAlignment="Stretch">
+                                                    <Expander x:Name="HardwareProfilesExpander" Header="Compare detected profiles" HorizontalAlignment="Stretch">
                                                         <ListView x:Name="HardwareProfileList" SelectionMode="None" IsItemClickEnabled="False"
                                                                   HorizontalContentAlignment="Stretch">
                                                             <ListView.ItemTemplate>
@@ -1437,24 +1437,36 @@
             </NavigationView.Content>
         </NavigationView>
 
-        <Border x:Name="DockResizeHandle"
+        <Border x:Name="DockedFrameBorder"
                 Grid.RowSpan="2"
-                Width="8"
-                HorizontalAlignment="Left"
                 Visibility="Collapsed"
-                Background="Transparent"
-                ManipulationMode="TranslateX"
-                ManipulationStarted="DockResizeHandle_ManipulationStarted"
-                ManipulationDelta="DockResizeHandle_ManipulationDelta"
-                ManipulationCompleted="DockResizeHandle_ManipulationCompleted"
-                AutomationProperties.AutomationId="DockResizeHandle"
-                AutomationProperties.Name="Resize pinned Broadcastify Desktop"
-                ToolTipService.ToolTip="Drag to resize the pinned window"
-                Canvas.ZIndex="100">
-            <Border Width="2"
+                BorderBrush="{ThemeResource AccentFillColorDefaultBrush}"
+                BorderThickness="0"
+                IsHitTestVisible="False"
+                AutomationProperties.AutomationId="DockedFrameBorder"
+                Canvas.ZIndex="99" />
+
+        <local:DockResizeGrip x:Name="DockResizeHandle"
+                              Grid.RowSpan="2"
+                              Width="10"
+                              HorizontalAlignment="Left"
+                              Visibility="Collapsed"
+                              Background="Transparent"
+                              PointerPressed="DockResizeHandle_PointerPressed"
+                              PointerMoved="DockResizeHandle_PointerMoved"
+                              PointerReleased="DockResizeHandle_PointerReleased"
+                              PointerCanceled="DockResizeHandle_PointerCanceled"
+                              PointerCaptureLost="DockResizeHandle_PointerCaptureLost"
+                              AutomationProperties.AutomationId="DockResizeHandle"
+                              AutomationProperties.Name="Resize pinned Broadcastify Desktop"
+                              AutomationProperties.HelpText="Drag the inner edge horizontally to resize the pinned window."
+                              ToolTipService.ToolTip="Drag to resize the pinned window"
+                              Canvas.ZIndex="100">
+            <Border x:Name="DockResizeIndicator"
+                    Width="2"
                     HorizontalAlignment="Center"
                     Background="{ThemeResource AccentFillColorDefaultBrush}"
-                    Opacity="0.35" />
-        </Border>
+                    Opacity="0.55" />
+        </local:DockResizeGrip>
     </Grid>
 </Window>

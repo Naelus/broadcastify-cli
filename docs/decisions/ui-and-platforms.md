@@ -57,15 +57,33 @@ cover a continuing archive/catch-up status surface. A pinned window is full
 height, starts at 600 logical pixels, has a dedicated inner resize edge, and
 uses one-click **Unpin**. Right-clicking the pinned control changes sides.
 
-The user's side and logical width are persisted in ordinary desktop settings.
+The user's side, logical width, and target monitor are persisted in ordinary
+desktop settings. Floating bounds and the prior maximized state are retained
+separately, normalized into an available monitor work area, and restored only
+after the AppBar is removed. An upgrade never treats a pinned rectangle as the
+next floating rectangle.
+
+Pinned mode intentionally has one visual frame: Windows title-bar, minimize,
+maximize, resize, rounded-corner, and outer-border treatments are disabled;
+the application draws a one-pixel theme-aware border only on the inner desktop
+edge. The inner edge provides a ten-pixel horizontal-resize pointer target.
+Pointer capture keeps the drag continuous outside the visual grip. The AppBar
+reservation is released during the drag, then atomically reclaimed at the
+bounded logical width when capture ends or is lost. Active and inactive states
+remain visually distinct in both light and dark themes.
+
 Closing or crashing the process removes the live AppBar reservation; the next
 launch safely registers it again. Explorer/taskbar restarts, DPI changes,
-display changes, and work-area changes also re-negotiate the reservation.
+display changes, and work-area changes also re-negotiate the reservation. A
+saved monitor that is no longer present falls back to the nearest available
+monitor rather than placing the window off-screen.
 
 At narrow or pinned widths, navigation becomes minimal and the main two-column
 surfaces stack vertically. Library master/detail, archive setup, review/chat,
 Area Watch, credentials, About, and the persistent job status remain reachable
-without horizontal page scrolling. Docking does not pause the worker or change
+without horizontal page scrolling. Lists, transcript/activity text, long
+dialogs, and flyouts retain reachable vertical scrolling at the minimum pinned
+width and short-window boundary. Docking does not pause the worker or change
 archive, transcript, database, schedule, quota, or credential storage.
 
 ## Local and LAN hosting

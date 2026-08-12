@@ -358,7 +358,12 @@ def test_every_desktop_build_requires_the_full_offline_product_gate() -> None:
     assert "BROADCASTIFY_SECURE_PASSWORD" in gate
     assert "BROADCASTIFY_DESKTOP_TEST_DATA_ROOT" in ui_e2e
     assert "--ui-e2e-report" in ui_e2e
-    assert "DesktopDockSide = \"none\"" in ui_e2e
+    assert "DesktopDockSide = \"right\"" in ui_e2e
+    assert "DesktopDockSide = \"left\"" in ui_e2e
+    assert "DesktopDockWidth = 640" in ui_e2e
+    assert "BROADCASTIFY_DESKTOP_TEST_ABRUPT_EXIT" in ui_e2e
+    assert "Get-DesktopWorkAreaSignature" in ui_e2e
+    assert "abrupt_cleanup = $abruptCleanupPassed" in ui_e2e
     assert "UIAutomation" not in ui_e2e
     assert "SendKeys" not in ui_e2e
     assert 'pip install --disable-pip-version-check -e ".[dev]"' in workflow

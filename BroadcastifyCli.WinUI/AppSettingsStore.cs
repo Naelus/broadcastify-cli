@@ -4,7 +4,7 @@ namespace BroadcastifyCli.WinUI;
 
 internal sealed record DesktopSettings
 {
-    public int Version { get; init; } = 8;
+    public int Version { get; init; } = 9;
     public string PythonRuntimePath { get; init; } = "";
     public string HardwareProfile { get; init; } = "auto";
     public string WhisperModel { get; init; } = "turbo";
@@ -43,6 +43,12 @@ internal sealed record DesktopSettings
     public string DesktopDockSide { get; init; } = "none";
     public double DesktopDockWidth { get; init; } =
         DesktopDockManager.RecommendedWidthDips;
+    public string DesktopDockMonitor { get; init; } = "";
+    public int? DesktopWindowX { get; init; }
+    public int? DesktopWindowY { get; init; }
+    public int? DesktopWindowWidth { get; init; }
+    public int? DesktopWindowHeight { get; init; }
+    public bool DesktopWindowMaximized { get; init; }
 }
 
 internal static class AppSettingsStore
@@ -142,17 +148,74 @@ internal static class AppSettingsStore
                 };
                 needsSave = true;
             }
+            if (settings.Version < 9)
+            {
+                // Version 9 retains the target monitor and the last floating
+                // bounds independently from the pinned AppBar rectangle. An
+                // upgrade never interprets a docked edge as a floating window.
+                settings = settings with
+                {
+                    Version = 9,
+                    DesktopDockMonitor = "",
+                    DesktopWindowX = null,
+                    DesktopWindowY = null,
+                    DesktopWindowWidth = null,
+                    DesktopWindowHeight = null,
+                    DesktopWindowMaximized = false,
+                };
+                needsSave = true;
+            }
             if (settings.DesktopDockSide is not ("none" or "left" or "right"))
             {
                 settings = settings with { DesktopDockSide = "none" };
                 needsSave = true;
             }
             if (!double.IsFinite(settings.DesktopDockWidth)
-                || settings.DesktopDockWidth < DesktopDockManager.MinimumWidthDips)
+                || settings.DesktopDockWidth < DesktopDockManager.MinimumWidthDips
+                || settings.DesktopDockWidth > DesktopDockManager.MaximumWidthDips)
             {
                 settings = settings with
                 {
-                    DesktopDockWidth = DesktopDockManager.RecommendedWidthDips,
+                    DesktopDockWidth = double.IsFinite(settings.DesktopDockWidth)
+                        ? Math.Clamp(
+                            settings.DesktopDockWidth,
+                            DesktopDockManager.MinimumWidthDips,
+                            DesktopDockManager.MaximumWidthDips)
+                        : DesktopDockManager.RecommendedWidthDips,
+                };
+                needsSave = true;
+            }
+            var hasCompleteWindowBounds =
+                settings.DesktopWindowX is not null
+                && settings.DesktopWindowY is not null
+                && settings.DesktopWindowWidth is > 0
+                && settings.DesktopWindowHeight is > 0;
+            var hasAnyWindowBounds =
+                settings.DesktopWindowX is not null
+                || settings.DesktopWindowY is not null
+                || settings.DesktopWindowWidth is not null
+                || settings.DesktopWindowHeight is not null;
+            if (hasAnyWindowBounds && !hasCompleteWindowBounds)
+            {
+                settings = settings with
+                {
+                    DesktopWindowX = null,
+                    DesktopWindowY = null,
+                    DesktopWindowWidth = null,
+                    DesktopWindowHeight = null,
+                    DesktopWindowMaximized = false,
+                };
+                needsSave = true;
+            }
+            var trimmedMonitor = (settings.DesktopDockMonitor ?? "").Trim();
+            if (!string.Equals(
+                    trimmedMonitor,
+                    settings.DesktopDockMonitor,
+                    StringComparison.Ordinal))
+            {
+                settings = settings with
+                {
+                    DesktopDockMonitor = trimmedMonitor,
                 };
                 needsSave = true;
             }

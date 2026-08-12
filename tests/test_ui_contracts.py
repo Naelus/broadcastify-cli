@@ -279,8 +279,30 @@ def test_native_window_exposes_real_appbar_docking_and_compact_layouts() -> None
     assert names["DockLeftMenuItem"].attrib["Text"] == "Pin left"
     assert names["DockRightMenuItem"].attrib["Text"] == "Pin right"
     assert names["DockUnpinMenuItem"].attrib["Text"] == "Unpin"
-    assert names["DockResizeHandle"].attrib["ManipulationMode"] == "TranslateX"
+    assert names["DockResizeHandle"].tag.endswith("DockResizeGrip")
+    assert names["DockResizeHandle"].attrib["PointerPressed"] == (
+        "DockResizeHandle_PointerPressed"
+    )
+    assert names["DockResizeHandle"].attrib["PointerMoved"] == (
+        "DockResizeHandle_PointerMoved"
+    )
+    assert names["DockResizeHandle"].attrib["PointerReleased"] == (
+        "DockResizeHandle_PointerReleased"
+    )
+    assert names["DockResizeHandle"].attrib["PointerCanceled"] == (
+        "DockResizeHandle_PointerCanceled"
+    )
+    assert names["DockResizeHandle"].attrib["PointerCaptureLost"] == (
+        "DockResizeHandle_PointerCaptureLost"
+    )
     assert names["DockResizeHandle"].attrib["Visibility"] == "Collapsed"
+    assert names["DockResizeHandle"].attrib["Width"] == "10"
+    assert names["DockedFrameBorder"].attrib["Visibility"] == "Collapsed"
+    assert names["DockedFrameBorder"].attrib["IsHitTestVisible"] == "False"
+    assert names["DockedFrameBorder"].attrib["BorderThickness"] == "0"
+    assert names["LibraryDetailTabView"].tag.endswith("TabView")
+    assert names["ActivityLogExpander"].tag.endswith("Expander")
+    assert names["HardwareProfilesExpander"].tag.endswith("Expander")
 
     for name in (
         "LibraryContentGrid",
@@ -301,6 +323,12 @@ def test_native_window_exposes_real_appbar_docking_and_compact_layouts() -> None
     settings = (
         ROOT / "BroadcastifyCli.WinUI" / "AppSettingsStore.cs"
     ).read_text(encoding="utf-8")
+    policy = (
+        ROOT / "BroadcastifyCli.WinUI" / "DesktopDockPolicy.cs"
+    ).read_text(encoding="utf-8")
+    grip = (
+        ROOT / "BroadcastifyCli.WinUI" / "DockResizeGrip.cs"
+    ).read_text(encoding="utf-8")
     ui_e2e = (
         ROOT / "BroadcastifyCli.WinUI" / "MainWindow.UiE2E.cs"
     ).read_text(encoding="utf-8")
@@ -309,12 +337,29 @@ def test_native_window_exposes_real_appbar_docking_and_compact_layouts() -> None
     assert "SHAppBarMessage(AbmQueryPos" in docking
     assert "SHAppBarMessage(AbmSetPos" in docking
     assert "SHAppBarMessage(AbmRemove" in docking
+    assert "SHAppBarMessage(AbmActivate" in docking
+    assert "SHAppBarMessage(AbmWindowPosChanged" in docking
     assert 'RegisterWindowMessage("TaskbarCreated")' in docking
-    assert "MaximumMonitorWidthFraction" in docking
-    assert "MinimumWidthDips = 520" in docking
-    assert "RecommendedWidthDips = 600" in docking
+    assert "message == WmNcCalcSize && IsDocked" in docking
+    assert "SetCapture(_windowHandle)" in docking
+    assert "GetCursorPos" in docking
+    assert "ReleaseCapture" in docking
+    assert "RemoveAppBar();" in docking
+    assert "EnumDisplayMonitors" in docking
+    assert "GetDpiForMonitor" in docking
+    assert "MonitorDeviceName" in docking
+    assert "RestoreFloatingWindowForStartup" in docking
+    assert "NormalizeFloatingBounds" in docking
+    assert "MinimumWidthDips = 520" in policy
+    assert "RecommendedWidthDips = 600" in policy
+    assert "MaximumWidthDips = 960" in policy
+    assert "availableWidth / 2" in policy
+    assert "DipsToPixels" in policy
+    assert "PixelsToDips" in policy
     assert "presenter.IsResizable = !pinned" in docking
+    assert "presenter.IsMinimizable = !pinned" in docking
     assert "presenter.IsMaximizable = !pinned" in docking
+    assert "InputSystemCursorShape.SizeWestEast" in grip
 
     assert "ApplyResponsiveLayout" in native
     assert "width < 1_100" in native
@@ -325,19 +370,63 @@ def test_native_window_exposes_real_appbar_docking_and_compact_layouts() -> None
     assert "Grid.SetRow(AreaQueueBorder, 1)" in native
     assert "Grid.SetRow(AreaStoryDetailBorder, 1)" in native
     assert "Started with Windows and kept the explicitly pinned status window visible" in native
+    assert "presenter.SetBorderAndTitleBar(hasBorder: false, hasTitleBar: false)" in native
+    assert "presenter.SetBorderAndTitleBar(hasBorder: true, hasTitleBar: false)" in native
+    assert "DwmWindowCornerPreference" in native
+    assert "DwmWindowBorderColor" in native
+    assert "DwmCornerDoNotRound" in native
+    assert "DwmColorNone" in native
+    assert "DockedFrameBorder.BorderThickness" in native
+    assert "ApplyDesktopDockActivationState" in native
+    assert native.count("new ContentDialog") == 10
+    assert native.count("Content = CreateDialog") == 10
+    assert '"DialogScrollHost"' in native
 
-    assert "public int Version { get; init; } = 8" in settings
+    assert "public int Version { get; init; } = 9" in settings
     assert "public string DesktopDockSide" in settings
     assert "public double DesktopDockWidth" in settings
+    assert "public string DesktopDockMonitor" in settings
+    assert "public int? DesktopWindowX" in settings
+    assert "public int? DesktopWindowY" in settings
+    assert "public int? DesktopWindowWidth" in settings
+    assert "public int? DesktopWindowHeight" in settings
+    assert "public bool DesktopWindowMaximized" in settings
     assert "if (settings.Version < 8)" in settings
+    assert "if (settings.Version < 9)" in settings
     assert 'new UiProbeSize("pinned-width", 600, 900, true)' in ui_e2e
+    assert 'new UiProbeSize("minimum", 520, 640, true)' in ui_e2e
+    assert 'new UiProbeSize("barely-overflowing", 680, 840, true)' in ui_e2e
     assert 'new UiProbeSize("compact-short", 720, 720, true)' in ui_e2e
     assert 'new UiProbeSize("medium", 960, 720, true)' in ui_e2e
+    assert 'new UiProbeSize("threshold-below", 1099, 760, true)' in ui_e2e
+    assert 'new UiProbeSize("threshold-above", 1101, 760, false)' in ui_e2e
     assert 'new UiProbeSize("reference", 1240, 900, false)' in ui_e2e
+    assert 'new UiProbeSize("large", 1600, 1000, false)' in ui_e2e
     assert "ExerciseScrollAsync" in ui_e2e
+    assert "ExerciseItemsScrollAsync" in ui_e2e
+    assert "ExerciseTextBoxScrollAsync" in ui_e2e
     assert "RunUiDockingProbeAsync" in ui_e2e
+    assert 'VerifyDockedSurfaceMatrixAsync("left")' in ui_e2e
+    assert 'VerifyDockedSurfaceMatrixAsync("right")' in ui_e2e
+    assert "VerifyDockedDialogAndFlyoutAsync" in ui_e2e
+    assert "ExerciseInteractiveResizeForEndToEndTest" in ui_e2e
+    assert "ReRegisterAfterShellRestartForEndToEndTest" in ui_e2e
+    assert "CaptureAvailableMonitors" in ui_e2e
+    assert "DwmCornerDoNotRound" in ui_e2e
+    assert "DwmColorNone" in ui_e2e
+    assert "OverlappedPresenterState.Maximized" in ui_e2e
     assert "VerifyMonthQuestionUiAsync" in ui_e2e
     assert "State the archive date and time for every event mentioned" in ui_e2e
+
+    for element in root.iter():
+        name = element.attrib.get(XAML_NAME)
+        if name and (
+            element.tag.endswith("ScrollViewer")
+            or element.tag.endswith("ListView")
+        ):
+            assert name in ui_e2e, f"{name} is missing from the native UI E2E gate"
+    for name in ("LibraryTranscriptPreviewText", "LogBox"):
+        assert name in ui_e2e
 
 
 def test_native_library_shows_feed_coverage_and_named_archive_chat() -> None:
