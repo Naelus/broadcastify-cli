@@ -273,6 +273,11 @@ def test_native_window_exposes_real_appbar_docking_and_compact_layouts() -> None
         if element.attrib.get(XAML_NAME)
     }
 
+    assert names["AppTitleBar"].attrib["IsPaneToggleButtonVisible"] == "False"
+    assert names["AppTitleBar"].attrib["PaneToggleRequested"] == (
+        "AppTitleBar_PaneToggleRequested"
+    )
+    assert names["RootNavigation"].attrib["IsTitleBarAutoPaddingEnabled"] == "False"
     assert names["DockButton"].attrib["Content"] == "Pin"
     assert names["DockButton"].attrib["Click"] == "DockButton_Click"
     assert names["DockButton"].attrib["RightTapped"] == "DockButton_RightTapped"
@@ -367,6 +372,10 @@ def test_native_window_exposes_real_appbar_docking_and_compact_layouts() -> None
     assert "ApplyResponsiveLayout" in native
     assert "width < 1_100" in native
     assert "NavigationViewPaneDisplayMode.LeftMinimal" in native
+    assert "AppTitleBar.IsPaneToggleButtonVisible = pinned" in native
+    assert "RootNavigation.IsPaneToggleButtonVisible = !pinned" in native
+    assert "AppTitleBar_PaneToggleRequested" in native
+    assert "RootNavigation.IsPaneOpen = !RootNavigation.IsPaneOpen" in native
     assert "Grid.SetRow(LibraryDetailBorder, 1)" in native
     assert "Grid.SetRow(ArchiveJobBorder, 1)" in native
     assert "Grid.SetRow(ReviewTabView, 1)" in native
@@ -382,6 +391,7 @@ def test_native_window_exposes_real_appbar_docking_and_compact_layouts() -> None
     assert "Started with Windows and kept the explicitly pinned status window visible" in native
     assert "presenter.SetBorderAndTitleBar(hasBorder: false, hasTitleBar: false)" in native
     assert "presenter.SetBorderAndTitleBar(hasBorder: true, hasTitleBar: false)" in native
+    assert "SetTitleBar(null)" not in native
     assert "DwmWindowCornerPreference" in native
     assert "DwmWindowBorderColor" in native
     assert "DwmCornerDoNotRound" in native
@@ -456,6 +466,8 @@ def test_native_window_exposes_real_appbar_docking_and_compact_layouts() -> None
     assert "DwmCornerDoNotRound" in ui_e2e
     assert "DwmColorNone" in ui_e2e
     assert "borderReadbackSupported" in ui_e2e
+    assert "AppTitleBar.ActualHeight >= 32" in ui_e2e
+    assert "AppTitleBar_PaneToggleRequested(AppTitleBar, new object())" in ui_e2e
     assert "OverlappedPresenterState.Maximized" in ui_e2e
     assert "VerifyMonthQuestionUiAsync" in ui_e2e
     assert "State the archive date and time for every event mentioned" in ui_e2e

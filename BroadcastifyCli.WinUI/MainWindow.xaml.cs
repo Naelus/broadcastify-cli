@@ -1058,11 +1058,24 @@ public sealed partial class MainWindow : Window
         DockUnpinMenuItem.Visibility = pinned ? Visibility.Visible : Visibility.Collapsed;
     }
 
+    private void AppTitleBar_PaneToggleRequested(TitleBar sender, object args)
+    {
+        if (_desktopDockManager?.IsDocked != true)
+        {
+            return;
+        }
+
+        RootNavigation.IsPaneOpen = !RootNavigation.IsPaneOpen;
+    }
+
     private void UpdateDesktopDockUi()
     {
         var manager = _desktopDockManager;
         var pinned = manager?.IsDocked == true;
         var side = manager?.Side ?? DesktopDockSide.None;
+        AppTitleBar.Visibility = Visibility.Visible;
+        AppTitleBar.IsPaneToggleButtonVisible = pinned;
+        RootNavigation.IsPaneToggleButtonVisible = !pinned;
         DockButton.Content = pinned ? "Unpin" : "Pin";
         AutomationProperties.SetName(
             DockButton,
@@ -1193,15 +1206,17 @@ public sealed partial class MainWindow : Window
                 presenter.Restore();
             }
             presenter.SetBorderAndTitleBar(hasBorder: false, hasTitleBar: false);
-            ExtendsContentIntoTitleBar = false;
-            SetTitleBar(null);
         }
         else
         {
             presenter.SetBorderAndTitleBar(hasBorder: true, hasTitleBar: false);
-            ExtendsContentIntoTitleBar = true;
-            SetTitleBar(AppTitleBar);
         }
+
+        // The operating-system frame is suppressed while pinned, but the XAML
+        // title bar remains the persistent navigation and window-control row.
+        ExtendsContentIntoTitleBar = true;
+        SetTitleBar(AppTitleBar);
+        AppTitleBar.Visibility = Visibility.Visible;
 
         var cornerPreference = docked
             ? DwmCornerDoNotRound

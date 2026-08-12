@@ -944,7 +944,10 @@ public sealed partial class MainWindow
         Require(
             DockedFrameBorder.Visibility == Visibility.Collapsed
                 && !_desktopWindowFrameDocked
-                && ExtendsContentIntoTitleBar,
+                && ExtendsContentIntoTitleBar
+                && AppTitleBar.Visibility == Visibility.Visible
+                && !AppTitleBar.IsPaneToggleButtonVisible
+                && RootNavigation.IsPaneToggleButtonVisible,
             "Unpin did not restore the floating title-bar and border mode.");
         Require(
             TryReadDwmWindowAttribute(DwmWindowCornerPreference, out var restoredCorners)
@@ -1076,8 +1079,10 @@ public sealed partial class MainWindow
         }
 
         Require(
-            _desktopWindowFrameDocked && !ExtendsContentIntoTitleBar,
-            $"{label}: the floating non-client frame remained enabled while pinned.");
+            _desktopWindowFrameDocked
+                && ExtendsContentIntoTitleBar
+                && AppTitleBar.Visibility == Visibility.Visible,
+            $"{label}: the persistent XAML title bar was not active while pinned.");
         var presenter = AppWindow.Presenter as OverlappedPresenter
             ?? throw new InvalidOperationException(
                 $"{label}: the pinned window did not retain an overlapped presenter.");
@@ -1103,6 +1108,30 @@ public sealed partial class MainWindow
             RootNavigation.PaneDisplayMode
                 == NavigationViewPaneDisplayMode.LeftMinimal,
             $"{label}: pinned navigation did not enter minimal mode.");
+        Require(
+            AppTitleBar.IsPaneToggleButtonVisible
+                && !RootNavigation.IsPaneToggleButtonVisible,
+            $"{label}: the sidebar toggle was not moved into the pinned title bar.");
+        var titleBarPoint = AppTitleBar
+            .TransformToVisual(WindowRoot)
+            .TransformPoint(default);
+        var navigationPoint = RootNavigation
+            .TransformToVisual(WindowRoot)
+            .TransformPoint(default);
+        Require(
+            AppTitleBar.ActualHeight >= 32
+                && navigationPoint.Y
+                    >= titleBarPoint.Y + AppTitleBar.ActualHeight - 1,
+            $"{label}: the pinned navigation surface overlapped or replaced the title bar.");
+        var paneWasOpen = RootNavigation.IsPaneOpen;
+        AppTitleBar_PaneToggleRequested(AppTitleBar, new object());
+        Require(
+            RootNavigation.IsPaneOpen != paneWasOpen,
+            $"{label}: the title-bar sidebar button did not toggle the navigation pane.");
+        AppTitleBar_PaneToggleRequested(AppTitleBar, new object());
+        Require(
+            RootNavigation.IsPaneOpen == paneWasOpen,
+            $"{label}: the title-bar sidebar button did not restore the navigation pane state.");
         var handlePoint = DockResizeHandle
             .TransformToVisual(WindowRoot)
             .TransformPoint(default);
