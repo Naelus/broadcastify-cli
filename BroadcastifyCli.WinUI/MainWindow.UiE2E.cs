@@ -1316,6 +1316,16 @@ public sealed partial class MainWindow
         Control control,
         string label)
     {
+        Require(
+            control.IsEnabled
+                && control.IsTabStop
+                && control.Visibility == Visibility.Visible,
+            $"{label}: the requested focus target was disabled, hidden, or outside the tab order.");
+        control.StartBringIntoView(new BringIntoViewOptions
+        {
+            AnimationDesired = false,
+        });
+        await WaitForUiLayoutAsync(60);
         var windowHandle = WinRT.Interop.WindowNative.GetWindowHandle(this);
         Activate();
         var foregroundAccepted = SetForegroundWindow(windowHandle);
