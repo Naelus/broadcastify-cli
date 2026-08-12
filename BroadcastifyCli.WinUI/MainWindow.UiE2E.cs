@@ -369,14 +369,22 @@ public sealed partial class MainWindow
             Enumerable.Repeat(
                 "Missing and unfinished days remain sequential, resumable, and explicitly bounded through current. ",
                 16));
+        SetupStorageDetailText.Text = string.Join(
+            Environment.NewLine,
+            Enumerable.Range(1, 56).Select(index =>
+                $"Synthetic setup readiness line {index}: retained data stays in the isolated fixture."));
         AnalysisProviderStatusText.Text = string.Join(
             Environment.NewLine,
             Enumerable.Range(1, 40).Select(index =>
                 $"Synthetic provider contract line {index}: local fixture only; no model, credential, or network request."));
+        SettingsEnvironmentText.Text = string.Join(
+            Environment.NewLine,
+            Enumerable.Range(1, 56).Select(index =>
+                $"Synthetic credential safety line {index}: no secret or account value is loaded."));
         RefreshAboutPage();
         AboutActionStatusText.Text = string.Join(
             Environment.NewLine,
-            Enumerable.Range(1, 28).Select(index =>
+            Enumerable.Range(1, 72).Select(index =>
                 $"Synthetic support detail {index}: no credential, token, transcript, or archive content."));
     }
 

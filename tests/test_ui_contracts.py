@@ -424,6 +424,8 @@ def test_native_window_exposes_real_appbar_docking_and_compact_layouts() -> None
     assert "control.IsEnabled" in ui_e2e
     assert "control.Focus(FocusState.Programmatic)" in ui_e2e
     assert "Synthetic provider contract line" in ui_e2e
+    assert "Synthetic setup readiness line" in ui_e2e
+    assert "Synthetic credential safety line" in ui_e2e
     assert "RunUiDockingProbeAsync" in ui_e2e
     assert 'VerifyDockedSurfaceMatrixAsync("left")' in ui_e2e
     assert 'VerifyDockedSurfaceMatrixAsync("right")' in ui_e2e
