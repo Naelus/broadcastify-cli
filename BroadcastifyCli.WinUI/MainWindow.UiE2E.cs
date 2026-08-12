@@ -828,11 +828,19 @@ public sealed partial class MainWindow
             "Unpin did not restore the floating title-bar and border mode.");
         Require(
             TryReadDwmWindowAttribute(DwmWindowCornerPreference, out var restoredCorners)
-                && restoredCorners == DwmCornerDefault,
+                && restoredCorners == DwmCornerDefault
+                && _desktopWindowCornerPreference == DwmCornerDefault,
             "Unpin did not restore the default DWM corner policy.");
+        // Border color is settable on all supported Windows 11 builds, but
+        // some builds reject attribute 34 in DwmGetWindowAttribute. The
+        // checked setter is authoritative; a supported readback must agree.
+        var restoredBorderReadbackSupported = TryReadDwmWindowAttribute(
+            DwmWindowBorderColor,
+            out var restoredBorder);
         Require(
-            TryReadDwmWindowAttribute(DwmWindowBorderColor, out var restoredBorder)
-                && restoredBorder == DwmColorDefault,
+            _desktopWindowBorderColor == DwmColorDefault
+                && (!restoredBorderReadbackSupported
+                    || restoredBorder == DwmColorDefault),
             "Unpin did not restore the default DWM outer-border policy.");
         Require(
             RectanglesApproximatelyEqual(baseline.WorkArea, restored.WorkArea, 8),
@@ -992,12 +1000,16 @@ public sealed partial class MainWindow
 
         Require(
             TryReadDwmWindowAttribute(DwmWindowCornerPreference, out var corners)
-                && corners == DwmCornerDoNotRound,
+                && corners == DwmCornerDoNotRound
+                && _desktopWindowCornerPreference == DwmCornerDoNotRound,
             $"{label}: DWM did not report square docked corners.");
+        var borderReadbackSupported = TryReadDwmWindowAttribute(
+            DwmWindowBorderColor,
+            out var borderColor);
         Require(
-            TryReadDwmWindowAttribute(DwmWindowBorderColor, out var borderColor)
-                && borderColor == DwmColorNone,
-            $"{label}: DWM did not report the outer border as suppressed.");
+            _desktopWindowBorderColor == DwmColorNone
+                && (!borderReadbackSupported || borderColor == DwmColorNone),
+            $"{label}: DWM did not accept or consistently report outer-border suppression.");
 
         ApplyDesktopDockActivationState(active: false);
         var inactiveOpacity = DockedFrameBorder.Opacity;

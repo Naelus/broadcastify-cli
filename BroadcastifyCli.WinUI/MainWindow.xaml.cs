@@ -132,6 +132,8 @@ public sealed partial class MainWindow : Window
     private bool _desktopDockRestoreAttempted;
     private bool _desktopWindowFrameDocked;
     private bool _desktopWindowActive = true;
+    private int _desktopWindowCornerPreference = DwmCornerDefault;
+    private int _desktopWindowBorderColor = DwmColorDefault;
     private bool? _compactLayoutApplied;
     private bool? _shortCompactLayoutApplied;
 
@@ -1187,18 +1189,27 @@ public sealed partial class MainWindow : Window
         var cornerPreference = docked
             ? DwmCornerDoNotRound
             : DwmCornerDefault;
-        DwmSetWindowAttribute(
-            WindowNative.GetWindowHandle(this),
+        SetDwmWindowAttributeOrThrow(
             DwmWindowCornerPreference,
-            ref cornerPreference,
-            sizeof(int));
+            cornerPreference);
         var borderColor = docked ? DwmColorNone : DwmColorDefault;
-        DwmSetWindowAttribute(
-            WindowNative.GetWindowHandle(this),
-            DwmWindowBorderColor,
-            ref borderColor,
-            sizeof(int));
+        SetDwmWindowAttributeOrThrow(DwmWindowBorderColor, borderColor);
+        _desktopWindowCornerPreference = cornerPreference;
+        _desktopWindowBorderColor = borderColor;
         _desktopWindowFrameDocked = docked;
+    }
+
+    private void SetDwmWindowAttributeOrThrow(int attribute, int value)
+    {
+        var result = DwmSetWindowAttribute(
+            WindowNative.GetWindowHandle(this),
+            attribute,
+            ref value,
+            sizeof(int));
+        if (result < 0)
+        {
+            Marshal.ThrowExceptionForHR(result);
+        }
     }
 
     private bool TryReadDwmWindowAttribute(int attribute, out int value)

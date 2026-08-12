@@ -383,6 +383,8 @@ def test_native_window_exposes_real_appbar_docking_and_compact_layouts() -> None
     assert "DwmWindowBorderColor" in native
     assert "DwmCornerDoNotRound" in native
     assert "DwmColorNone" in native
+    assert "SetDwmWindowAttributeOrThrow" in native
+    assert "Marshal.ThrowExceptionForHR(result)" in native
     assert "DockedFrameBorder.BorderThickness" in native
     assert "ApplyDesktopDockActivationState" in native
     assert native.count("new ContentDialog") == 10
@@ -424,6 +426,7 @@ def test_native_window_exposes_real_appbar_docking_and_compact_layouts() -> None
     assert "CaptureAvailableMonitors" in ui_e2e
     assert "DwmCornerDoNotRound" in ui_e2e
     assert "DwmColorNone" in ui_e2e
+    assert "borderReadbackSupported" in ui_e2e
     assert "OverlappedPresenterState.Maximized" in ui_e2e
     assert "VerifyMonthQuestionUiAsync" in ui_e2e
     assert "State the archive date and time for every event mentioned" in ui_e2e
