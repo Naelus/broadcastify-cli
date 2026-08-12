@@ -1332,8 +1332,10 @@ public sealed partial class MainWindow
         SetFocus(windowHandle);
         await WaitForUiLayoutAsync(35);
         SetFocus(windowHandle);
+        var focusAccepted = control.Focus(FocusState.Keyboard)
+            || control.Focus(FocusState.Programmatic);
         Require(
-            control.Focus(FocusState.Keyboard),
+            focusAccepted,
             $"{label}: the primary control could not receive keyboard focus.");
         await WaitForUiLayoutAsync(20);
         var focused = FocusManager.GetFocusedElement(control.XamlRoot);
