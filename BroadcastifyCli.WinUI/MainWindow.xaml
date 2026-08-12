@@ -12,48 +12,162 @@
         <MicaBackdrop />
     </Window.SystemBackdrop>
 
+    <Window.Resources>
+        <Style x:Key="TitleChromeButtonStyle" TargetType="Button">
+            <Setter Property="MinWidth" Value="0" />
+            <Setter Property="MinHeight" Value="0" />
+            <Setter Property="Width" Value="46" />
+            <Setter Property="Height" Value="47" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="CornerRadius" Value="0" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="HorizontalContentAlignment" Value="Center" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+            <Setter Property="UseSystemFocusVisuals" Value="True" />
+        </Style>
+    </Window.Resources>
+
     <Grid x:Name="WindowRoot"
           Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
         <Grid.RowDefinitions>
-            <RowDefinition Height="Auto" />
+            <RowDefinition Height="48" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
-        <TitleBar x:Name="AppTitleBar"
-                  Title="Broadcastify Desktop"
-                  Subtitle="Local radio archive intelligence"
-                  IsPaneToggleButtonVisible="False"
-                  PaneToggleRequested="AppTitleBar_PaneToggleRequested">
-            <TitleBar.RightHeader>
-                <Button x:Name="DockButton"
-                        Content="Pin"
-                        Click="DockButton_Click"
-                        RightTapped="DockButton_RightTapped"
-                        AutomationProperties.AutomationId="DockButton"
-                        AutomationProperties.Name="Pin to desktop"
-                        AutomationProperties.HelpText="Choose the left or right side and reserve desktop space."
-                        ToolTipService.ToolTip="Pin to the left or right desktop edge">
-                    <Button.ContextFlyout>
-                        <MenuFlyout x:Name="DockMenuFlyout">
-                            <MenuFlyoutItem x:Name="DockLeftMenuItem"
-                                            Text="Pin left"
-                                            Click="DockLeft_Click"
-                                            AutomationProperties.AutomationId="DockLeftMenuItem" />
-                            <MenuFlyoutItem x:Name="DockRightMenuItem"
-                                            Text="Pin right"
-                                            Click="DockRight_Click"
-                                            AutomationProperties.AutomationId="DockRightMenuItem" />
-                            <MenuFlyoutSeparator x:Name="DockMenuSeparator" Visibility="Collapsed" />
-                            <MenuFlyoutItem x:Name="DockUnpinMenuItem"
-                                            Text="Unpin"
-                                            Visibility="Collapsed"
-                                            Click="DockUnpin_Click"
-                                            AutomationProperties.AutomationId="DockUnpinMenuItem" />
-                        </MenuFlyout>
-                    </Button.ContextFlyout>
+        <Border x:Name="AppTitleBar"
+                Grid.Row="0"
+                Height="48"
+                MinHeight="48"
+                Background="{ThemeResource LayerFillColorDefaultBrush}"
+                BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
+                BorderThickness="0,0,0,1"
+                AutomationProperties.AutomationId="AppTitleBar">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <Button x:Name="TitleBarPaneButton"
+                        Grid.Column="0"
+                        Width="40"
+                        Height="47"
+                        Visibility="Collapsed"
+                        Style="{StaticResource TitleChromeButtonStyle}"
+                        Click="TitleBarPaneButton_Click"
+                        AutomationProperties.AutomationId="TitleBarPaneButton"
+                        AutomationProperties.Name="Open navigation"
+                        ToolTipService.ToolTip="Navigation">
+                    <FontIcon Glyph="&#xE700;" FontSize="16" />
                 </Button>
-            </TitleBar.RightHeader>
-        </TitleBar>
+
+                <Grid x:Name="TitleBarDragRegion"
+                      Grid.Column="1"
+                      MinWidth="80"
+                      Background="Transparent"
+                      AutomationProperties.AutomationId="TitleBarDragRegion">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Image Source="Assets/BroadcastifyDesktop.png"
+                           Width="18"
+                           Height="18"
+                           Margin="12,0,7,0"
+                           VerticalAlignment="Center"
+                           IsHitTestVisible="False" />
+                    <TextBlock x:Name="AppTitleText"
+                               Grid.Column="1"
+                               Text="Broadcastify Desktop"
+                               FontSize="12"
+                               FontWeight="SemiBold"
+                               VerticalAlignment="Center"
+                               TextTrimming="CharacterEllipsis"
+                               IsHitTestVisible="False" />
+                    <TextBlock x:Name="AppTitleSubtitle"
+                               Grid.Column="2"
+                               Text="Local radio archive intelligence"
+                               Margin="10,0,10,0"
+                               FontSize="12"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                               VerticalAlignment="Center"
+                               TextTrimming="CharacterEllipsis"
+                               IsHitTestVisible="False" />
+                </Grid>
+
+                <StackPanel Grid.Column="2"
+                            Orientation="Horizontal"
+                            VerticalAlignment="Stretch">
+                    <Button x:Name="DockButton"
+                            Content="Pin"
+                            MinWidth="0"
+                            MinHeight="0"
+                            Height="32"
+                            Margin="6,8"
+                            Padding="12,0"
+                            VerticalAlignment="Center"
+                            Click="DockButton_Click"
+                            RightTapped="DockButton_RightTapped"
+                            AutomationProperties.AutomationId="DockButton"
+                            AutomationProperties.Name="Pin to desktop"
+                            AutomationProperties.HelpText="Choose the left or right side and reserve desktop space."
+                            ToolTipService.ToolTip="Pin to the left or right desktop edge">
+                        <Button.ContextFlyout>
+                            <MenuFlyout x:Name="DockMenuFlyout">
+                                <MenuFlyoutItem x:Name="DockLeftMenuItem"
+                                                Text="Pin left"
+                                                Click="DockLeft_Click"
+                                                AutomationProperties.AutomationId="DockLeftMenuItem" />
+                                <MenuFlyoutItem x:Name="DockRightMenuItem"
+                                                Text="Pin right"
+                                                Click="DockRight_Click"
+                                                AutomationProperties.AutomationId="DockRightMenuItem" />
+                                <MenuFlyoutSeparator x:Name="DockMenuSeparator" Visibility="Collapsed" />
+                                <MenuFlyoutItem x:Name="DockUnpinMenuItem"
+                                                Text="Unpin"
+                                                Visibility="Collapsed"
+                                                Click="DockUnpin_Click"
+                                                AutomationProperties.AutomationId="DockUnpinMenuItem" />
+                            </MenuFlyout>
+                        </Button.ContextFlyout>
+                    </Button>
+
+                    <Button x:Name="TitleBarMinimizeButton"
+                            Style="{StaticResource TitleChromeButtonStyle}"
+                            Click="TitleBarMinimizeButton_Click"
+                            AutomationProperties.AutomationId="TitleBarMinimizeButton"
+                            AutomationProperties.Name="Minimize"
+                            ToolTipService.ToolTip="Minimize">
+                        <FontIcon Glyph="&#xE921;" FontSize="10" />
+                    </Button>
+                    <Button x:Name="TitleBarMaximizeButton"
+                            Style="{StaticResource TitleChromeButtonStyle}"
+                            Click="TitleBarMaximizeButton_Click"
+                            AutomationProperties.AutomationId="TitleBarMaximizeButton"
+                            AutomationProperties.Name="Maximize"
+                            ToolTipService.ToolTip="Maximize">
+                        <FontIcon x:Name="TitleBarMaximizeIcon" Glyph="&#xE922;" FontSize="10" />
+                    </Button>
+                    <Button x:Name="TitleBarCloseButton"
+                            Style="{StaticResource TitleChromeButtonStyle}"
+                            Click="TitleBarCloseButton_Click"
+                            AutomationProperties.AutomationId="TitleBarCloseButton"
+                            AutomationProperties.Name="Close"
+                            ToolTipService.ToolTip="Close">
+                        <Button.Resources>
+                            <SolidColorBrush x:Key="ButtonBackgroundPointerOver" Color="#C42B1C" />
+                            <SolidColorBrush x:Key="ButtonBackgroundPressed" Color="#A4262C" />
+                            <SolidColorBrush x:Key="ButtonForegroundPointerOver" Color="White" />
+                            <SolidColorBrush x:Key="ButtonForegroundPressed" Color="White" />
+                        </Button.Resources>
+                        <FontIcon Glyph="&#xE8BB;" FontSize="10" />
+                    </Button>
+                </StackPanel>
+            </Grid>
+        </Border>
 
         <NavigationView x:Name="RootNavigation"
                         Grid.Row="1"

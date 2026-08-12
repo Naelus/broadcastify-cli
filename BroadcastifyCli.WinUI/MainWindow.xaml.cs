@@ -152,8 +152,14 @@ public sealed partial class MainWindow : Window
         var startupSettings = AppSettingsStore.Load();
         InitializeComponent();
         WindowRoot.SizeChanged += WindowRoot_SizeChanged;
+        if (AppWindow.Presenter is OverlappedPresenter initialPresenter)
+        {
+            initialPresenter.SetBorderAndTitleBar(
+                hasBorder: true,
+                hasTitleBar: false);
+        }
         ExtendsContentIntoTitleBar = true;
-        SetTitleBar(AppTitleBar);
+        SetTitleBar(TitleBarDragRegion);
         Activated += MainWindow_Activated;
         var windowHandle = WindowNative.GetWindowHandle(this);
         var dpiScale = Math.Max(1.0, GetDpiForWindow(windowHandle) / 96.0);
@@ -1074,7 +1080,7 @@ public sealed partial class MainWindow : Window
         DockUnpinMenuItem.Visibility = pinned ? Visibility.Visible : Visibility.Collapsed;
     }
 
-    private void AppTitleBar_PaneToggleRequested(TitleBar sender, object args)
+    private void TitleBarPaneButton_Click(object sender, RoutedEventArgs e)
     {
         if (_desktopDockManager?.IsDocked != true)
         {
@@ -1084,13 +1090,61 @@ public sealed partial class MainWindow : Window
         RootNavigation.IsPaneOpen = !RootNavigation.IsPaneOpen;
     }
 
+    private void TitleBarMinimizeButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (AppWindow.Presenter is OverlappedPresenter presenter
+            && presenter.IsMinimizable)
+        {
+            presenter.Minimize();
+        }
+    }
+
+    private void TitleBarMaximizeButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (AppWindow.Presenter is not OverlappedPresenter presenter)
+        {
+            return;
+        }
+
+        if (presenter.State == OverlappedPresenterState.Maximized)
+        {
+            presenter.Restore();
+        }
+        else if (presenter.IsMaximizable)
+        {
+            presenter.Maximize();
+        }
+        UpdateTitleBarWindowControls();
+    }
+
+    private void TitleBarCloseButton_Click(object sender, RoutedEventArgs e) => Close();
+
+    private void UpdateTitleBarWindowControls()
+    {
+        var maximized = AppWindow.Presenter is OverlappedPresenter presenter
+            && presenter.State == OverlappedPresenterState.Maximized;
+        TitleBarMaximizeIcon.Glyph = maximized ? "\uE923" : "\uE922";
+        var action = maximized ? "Restore" : "Maximize";
+        AutomationProperties.SetName(TitleBarMaximizeButton, action);
+        ToolTipService.SetToolTip(TitleBarMaximizeButton, action);
+    }
+
     private void UpdateDesktopDockUi()
     {
         var manager = _desktopDockManager;
         var pinned = manager?.IsDocked == true;
         var side = manager?.Side ?? DesktopDockSide.None;
         AppTitleBar.Visibility = Visibility.Visible;
-        AppTitleBar.IsPaneToggleButtonVisible = pinned;
+        TitleBarPaneButton.Visibility = pinned
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        TitleBarMinimizeButton.Visibility = pinned
+            ? Visibility.Collapsed
+            : Visibility.Visible;
+        TitleBarMaximizeButton.Visibility = pinned
+            ? Visibility.Collapsed
+            : Visibility.Visible;
+        TitleBarCloseButton.Visibility = Visibility.Visible;
         RootNavigation.IsPaneToggleButtonVisible = !pinned;
         DockButton.Content = pinned ? "Unpin" : "Pin";
         AutomationProperties.SetName(
@@ -1123,13 +1177,14 @@ public sealed partial class MainWindow : Window
         if (pinned)
         {
             RootNavigation.IsPaneOpen = false;
-            AppTitleBar.Subtitle =
+            AppTitleSubtitle.Text =
                 $"Pinned {side.ToString().ToLowerInvariant()} · drag the inner edge to resize";
         }
         else
         {
-            AppTitleBar.Subtitle = "Local radio archive intelligence";
+            AppTitleSubtitle.Text = "Local radio archive intelligence";
         }
+        UpdateTitleBarWindowControls();
         ApplyDesktopDockActivationState(_desktopWindowActive);
         PrepareDesktopDockMenu();
     }
@@ -1203,6 +1258,7 @@ public sealed partial class MainWindow : Window
         {
             return;
         }
+        AppTitleBar.Opacity = active ? 1 : 0.82;
         DockedFrameBorder.Opacity = active ? 1 : 0.72;
         DockResizeIndicator.Opacity = active ? 0.58 : 0.35;
     }
@@ -1228,10 +1284,9 @@ public sealed partial class MainWindow : Window
             presenter.SetBorderAndTitleBar(hasBorder: true, hasTitleBar: false);
         }
 
-        // The operating-system frame is suppressed while pinned, but the XAML
-        // title bar remains the persistent navigation and window-control row.
-        // Resetting first when returning to a floating frame forces WinUI to
-        // rebuild the custom drag/input regions after the presenter changes.
+        // The visible chrome is ordinary fixed XAML content in either mode.
+        // Resetting only re-registers its dedicated drag surface after a
+        // presenter transition; it cannot remove the visible chrome row.
         AttachCustomTitleBar(resetFirst: !docked);
 
         var cornerPreference = docked
@@ -1257,8 +1312,9 @@ public sealed partial class MainWindow : Window
         }
 
         ExtendsContentIntoTitleBar = true;
-        SetTitleBar(AppTitleBar);
+        SetTitleBar(TitleBarDragRegion);
         AppTitleBar.Visibility = Visibility.Visible;
+        UpdateTitleBarWindowControls();
     }
 
     private void SetDwmWindowAttributeOrThrow(int attribute, int value)
@@ -1288,6 +1344,10 @@ public sealed partial class MainWindow : Window
         AppWindow sender,
         AppWindowChangedEventArgs args)
     {
+        if (args.DidPresenterChange)
+        {
+            UpdateTitleBarWindowControls();
+        }
         if (_desktopDockManager is null
             || _suspendDesktopPlacementTracking
             || _desktopDockManager.IsDocked
@@ -1559,7 +1619,7 @@ public sealed partial class MainWindow : Window
             Grid.SetColumn(CancelButton, 2);
         }
 
-        AppTitleBar.Subtitle = _desktopDockManager?.IsDocked == true
+        AppTitleSubtitle.Text = _desktopDockManager?.IsDocked == true
             ? $"Pinned {_desktopDockManager.Side.ToString().ToLowerInvariant()} · drag the inner edge to resize"
             : compact
                 ? ""

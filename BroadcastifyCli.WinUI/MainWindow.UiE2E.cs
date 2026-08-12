@@ -100,7 +100,9 @@ public sealed partial class MainWindow
                 passed = false;
             }
             Environment.ExitCode = passed ? 0 : 1;
-            Close();
+            TitleBarCloseButton_Click(
+                TitleBarCloseButton,
+                new RoutedEventArgs());
         }
     }
 
@@ -134,6 +136,13 @@ public sealed partial class MainWindow
             snapshot.WorkArea.X + snapshot.WorkArea.Width
                 <= snapshot.WindowBounds.X + 8,
             "Startup docking did not reserve the saved right edge.");
+        Require(
+            TitleBarPaneButton.Visibility == Visibility.Visible
+                && TitleBarMinimizeButton.Visibility == Visibility.Collapsed
+                && TitleBarMaximizeButton.Visibility == Visibility.Collapsed
+                && TitleBarCloseButton.Visibility == Visibility.Visible,
+            "Startup docking did not apply the pinned custom chrome controls.");
+        VerifyCustomTitleChromeBounds("startup-pinned", pinned: true);
         var result = new Dictionary<string, object?>
         {
             ["side"] = manager.Side.ToString().ToLowerInvariant(),
@@ -802,6 +811,7 @@ public sealed partial class MainWindow
         var baseline = manager.CaptureSnapshot();
         var monitorBaselines = manager.CaptureAvailableMonitors();
         var dpiPolicy = VerifyDpiAndWidthPolicy();
+        VerifyFloatingTitleBarState("startup-floating");
 
         Require(
             TryDockDesktop(DesktopDockSide.Left, persist: false),
@@ -947,7 +957,7 @@ public sealed partial class MainWindow
                 && !_desktopWindowFrameDocked
                 && ExtendsContentIntoTitleBar
                 && AppTitleBar.Visibility == Visibility.Visible
-                && !AppTitleBar.IsPaneToggleButtonVisible
+                && TitleBarPaneButton.Visibility == Visibility.Collapsed
                 && RootNavigation.IsPaneToggleButtonVisible,
             "Unpin did not restore the floating title-bar and border mode.");
         VerifyFloatingTitleBarState("unpin");
@@ -980,11 +990,15 @@ public sealed partial class MainWindow
         var presenter = AppWindow.Presenter as OverlappedPresenter
             ?? throw new InvalidOperationException(
                 "The desktop presenter was not an overlapped window.");
-        presenter.Maximize();
+        TitleBarMaximizeButton_Click(
+            TitleBarMaximizeButton,
+            new RoutedEventArgs());
         await WaitForUiLayoutAsync(220);
         Require(
-            presenter.State == OverlappedPresenterState.Maximized,
-            "The floating window could not enter its maximized state.");
+            presenter.State == OverlappedPresenterState.Maximized
+                && TitleBarMaximizeIcon.Glyph == "\uE923"
+                && AutomationProperties.GetName(TitleBarMaximizeButton) == "Restore",
+            "The custom maximize control could not enter its maximized state.");
         _desktopDockMonitor = baseline.MonitorDeviceName;
         Require(
             TryDockDesktop(DesktopDockSide.Left, persist: false),
@@ -1003,8 +1017,28 @@ public sealed partial class MainWindow
             "Unpin did not restore the prior maximized state "
             + $"(state={presenter.State}, saved={manager.RestoreMaximized}).");
         VerifyFloatingTitleBarState("maximized-unpin");
+        TitleBarMaximizeButton_Click(
+            TitleBarMaximizeButton,
+            new RoutedEventArgs());
+        await WaitForUiLayoutAsync(220);
+        Require(
+            presenter.State == OverlappedPresenterState.Restored
+                && TitleBarMaximizeIcon.Glyph == "\uE922"
+                && AutomationProperties.GetName(TitleBarMaximizeButton) == "Maximize",
+            "The custom restore control did not return to floating state.");
+        TitleBarMinimizeButton_Click(
+            TitleBarMinimizeButton,
+            new RoutedEventArgs());
+        await WaitForUiLayoutAsync(180);
+        Require(
+            presenter.State == OverlappedPresenterState.Minimized,
+            "The custom minimize control did not minimize the floating window.");
         presenter.Restore();
         await WaitForUiLayoutAsync(220);
+        Require(
+            presenter.State == OverlappedPresenterState.Restored,
+            "The floating window did not recover after the custom minimize test.");
+        VerifyFloatingTitleBarState("minimize-restore");
         var restoredFromMaximized = manager.CaptureSnapshot();
         Require(
             RectanglesApproximatelyEqual(
@@ -1043,6 +1077,7 @@ public sealed partial class MainWindow
                 }).ToList(),
             ["alternate_monitor"] = alternateMonitor,
             ["maximized_restore"] = true,
+            ["minimized_restore"] = true,
         };
     }
 
@@ -1064,9 +1099,29 @@ public sealed partial class MainWindow
                 && AppTitleBar.Opacity > 0
                 && AppTitleBar.IsHitTestVisible
                 && AppTitleBar.ActualWidth >= 200
-                && AppTitleBar.ActualHeight >= 32,
+                && AppTitleBar.ActualHeight >= 47,
             $"{label}: the floating title bar was not rendered with usable bounds.");
+        Require(
+            TitleBarPaneButton.Visibility == Visibility.Collapsed
+                && RootNavigation.IsPaneToggleButtonVisible
+                && TitleBarMinimizeButton.Visibility == Visibility.Visible
+                && TitleBarMaximizeButton.Visibility == Visibility.Visible
+                && TitleBarCloseButton.Visibility == Visibility.Visible,
+            $"{label}: the floating custom chrome showed the wrong controls.");
+        VerifyCustomTitleChromeBounds(label, pinned: false);
+    }
 
+    private void VerifyCustomTitleChromeBounds(string label, bool pinned)
+    {
+        Require(
+            WindowRoot.RowDefinitions[0].Height.GridUnitType == GridUnitType.Pixel
+                && Math.Abs(WindowRoot.RowDefinitions[0].Height.Value - 48) < 0.01
+                && AppTitleBar.ActualHeight >= 47
+                && TitleBarDragRegion.IsLoaded
+                && TitleBarDragRegion.ActualWidth >= 80
+                && TitleBarDragRegion.ActualHeight >= 47
+                && AppTitleText.Text == "Broadcastify Desktop",
+            $"{label}: the fixed custom title chrome lost its reserved row or drag region.");
         var titleBarPoint = AppTitleBar
             .TransformToVisual(WindowRoot)
             .TransformPoint(default);
@@ -1079,24 +1134,46 @@ public sealed partial class MainWindow
                     <= WindowRoot.ActualHeight + 1
                 && navigationPoint.Y
                     >= titleBarPoint.Y + AppTitleBar.ActualHeight - 1,
-            $"{label}: the floating title bar was clipped or overlapped by navigation.");
+            $"{label}: custom title chrome was clipped or overlapped by navigation.");
 
-        var dockButtonPoint = DockButton
+        RequireTitleChromeControlHitTest(DockButton, $"{label}/pin");
+        RequireTitleChromeControlHitTest(TitleBarCloseButton, $"{label}/close");
+        if (pinned)
+        {
+            RequireTitleChromeControlHitTest(
+                TitleBarPaneButton,
+                $"{label}/navigation");
+        }
+        else
+        {
+            RequireTitleChromeControlHitTest(
+                TitleBarMinimizeButton,
+                $"{label}/minimize");
+            RequireTitleChromeControlHitTest(
+                TitleBarMaximizeButton,
+                $"{label}/maximize");
+        }
+    }
+
+    private void RequireTitleChromeControlHitTest(Control control, string label)
+    {
+        var controlPoint = control
             .TransformToVisual(WindowRoot)
             .TransformPoint(default);
-        var dockButtonCenter = new Windows.Foundation.Point(
-            dockButtonPoint.X + DockButton.ActualWidth / 2,
-            dockButtonPoint.Y + DockButton.ActualHeight / 2);
+        var controlCenter = new Windows.Foundation.Point(
+            controlPoint.X + control.ActualWidth / 2,
+            controlPoint.Y + control.ActualHeight / 2);
         var hitElements = VisualTreeHelper.FindElementsInHostCoordinates(
-            dockButtonCenter,
+            controlCenter,
             WindowRoot);
         Require(
-            DockButton.Visibility == Visibility.Visible
-                && DockButton.ActualWidth >= 32
-                && DockButton.ActualHeight >= 24
+            control.Visibility == Visibility.Visible
+                && control.IsEnabled
+                && control.ActualWidth >= 32
+                && control.ActualHeight >= 24
                 && hitElements.Any(element =>
-                    IsVisualDescendantOrSelf(element, DockButton)),
-            $"{label}: the floating title-bar controls were not visible and hittable.");
+                    IsVisualDescendantOrSelf(element, control)),
+            $"{label}: the custom title-chrome control was not visible and hittable.");
     }
 
     private void VerifyDockedFrameState(
@@ -1165,26 +1242,21 @@ public sealed partial class MainWindow
                 == NavigationViewPaneDisplayMode.LeftMinimal,
             $"{label}: pinned navigation did not enter minimal mode.");
         Require(
-            AppTitleBar.IsPaneToggleButtonVisible
+            TitleBarPaneButton.Visibility == Visibility.Visible
                 && !RootNavigation.IsPaneToggleButtonVisible,
             $"{label}: the sidebar toggle was not moved into the pinned title bar.");
-        var titleBarPoint = AppTitleBar
-            .TransformToVisual(WindowRoot)
-            .TransformPoint(default);
-        var navigationPoint = RootNavigation
-            .TransformToVisual(WindowRoot)
-            .TransformPoint(default);
         Require(
-            AppTitleBar.ActualHeight >= 32
-                && navigationPoint.Y
-                    >= titleBarPoint.Y + AppTitleBar.ActualHeight - 1,
-            $"{label}: the pinned navigation surface overlapped or replaced the title bar.");
+            TitleBarMinimizeButton.Visibility == Visibility.Collapsed
+                && TitleBarMaximizeButton.Visibility == Visibility.Collapsed
+                && TitleBarCloseButton.Visibility == Visibility.Visible,
+            $"{label}: pinned custom chrome exposed invalid window-state controls.");
+        VerifyCustomTitleChromeBounds(label, pinned: true);
         var paneWasOpen = RootNavigation.IsPaneOpen;
-        AppTitleBar_PaneToggleRequested(AppTitleBar, new object());
+        TitleBarPaneButton_Click(TitleBarPaneButton, new RoutedEventArgs());
         Require(
             RootNavigation.IsPaneOpen != paneWasOpen,
             $"{label}: the title-bar sidebar button did not toggle the navigation pane.");
-        AppTitleBar_PaneToggleRequested(AppTitleBar, new object());
+        TitleBarPaneButton_Click(TitleBarPaneButton, new RoutedEventArgs());
         Require(
             RootNavigation.IsPaneOpen == paneWasOpen,
             $"{label}: the title-bar sidebar button did not restore the navigation pane state.");

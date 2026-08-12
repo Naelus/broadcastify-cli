@@ -273,10 +273,30 @@ def test_native_window_exposes_real_appbar_docking_and_compact_layouts() -> None
         if element.attrib.get(XAML_NAME)
     }
 
-    assert names["AppTitleBar"].attrib["IsPaneToggleButtonVisible"] == "False"
-    assert names["AppTitleBar"].attrib["PaneToggleRequested"] == (
-        "AppTitleBar_PaneToggleRequested"
+    assert names["AppTitleBar"].tag.endswith("Border")
+    assert names["AppTitleBar"].attrib["Height"] == "48"
+    assert names["AppTitleBar"].attrib["MinHeight"] == "48"
+    assert names["AppTitleBar"].attrib["BorderThickness"] == "0,0,0,1"
+    assert names["TitleBarDragRegion"].tag.endswith("Grid")
+    assert names["TitleBarDragRegion"].attrib["MinWidth"] == "80"
+    assert names["AppTitleText"].attrib["Text"] == "Broadcastify Desktop"
+    assert names["AppTitleSubtitle"].attrib["Text"] == (
+        "Local radio archive intelligence"
     )
+    assert names["TitleBarPaneButton"].attrib["Visibility"] == "Collapsed"
+    assert names["TitleBarPaneButton"].attrib["Click"] == (
+        "TitleBarPaneButton_Click"
+    )
+    assert names["TitleBarMinimizeButton"].attrib["Click"] == (
+        "TitleBarMinimizeButton_Click"
+    )
+    assert names["TitleBarMaximizeButton"].attrib["Click"] == (
+        "TitleBarMaximizeButton_Click"
+    )
+    assert names["TitleBarCloseButton"].attrib["Click"] == (
+        "TitleBarCloseButton_Click"
+    )
+    assert not any(element.tag.endswith("}TitleBar") for element in root.iter())
     assert names["RootNavigation"].attrib["IsTitleBarAutoPaddingEnabled"] == "False"
     assert names["DockButton"].attrib["Content"] == "Pin"
     assert names["DockButton"].attrib["Click"] == "DockButton_Click"
@@ -372,10 +392,20 @@ def test_native_window_exposes_real_appbar_docking_and_compact_layouts() -> None
     assert "ApplyResponsiveLayout" in native
     assert "width < 1_100" in native
     assert "NavigationViewPaneDisplayMode.LeftMinimal" in native
-    assert "AppTitleBar.IsPaneToggleButtonVisible = pinned" in native
+    assert "TitleBarPaneButton.Visibility = pinned" in native
     assert "RootNavigation.IsPaneToggleButtonVisible = !pinned" in native
-    assert "AppTitleBar_PaneToggleRequested" in native
+    assert "TitleBarPaneButton_Click" in native
     assert "RootNavigation.IsPaneOpen = !RootNavigation.IsPaneOpen" in native
+    assert "TitleBarMinimizeButton_Click" in native
+    assert "presenter.Minimize()" in native
+    assert "TitleBarMaximizeButton_Click" in native
+    assert 'maximized ? "\\uE923" : "\\uE922"' in native
+    assert "TitleBarCloseButton_Click" in native
+    assert "TitleBarMinimizeButton.Visibility = pinned" in native
+    assert "TitleBarMaximizeButton.Visibility = pinned" in native
+    assert "SetTitleBar(TitleBarDragRegion)" in native
+    assert "initialPresenter.SetBorderAndTitleBar(" in native
+    assert "hasTitleBar: false" in native
     assert "Grid.SetRow(LibraryDetailBorder, 1)" in native
     assert "Grid.SetRow(ArchiveJobBorder, 1)" in native
     assert "Grid.SetRow(ReviewTabView, 1)" in native
@@ -472,8 +502,17 @@ def test_native_window_exposes_real_appbar_docking_and_compact_layouts() -> None
     assert "DwmCornerDoNotRound" in ui_e2e
     assert "DwmColorNone" in ui_e2e
     assert "borderReadbackSupported" in ui_e2e
-    assert "AppTitleBar.ActualHeight >= 32" in ui_e2e
-    assert "AppTitleBar_PaneToggleRequested(AppTitleBar, new object())" in ui_e2e
+    assert "AppTitleBar.ActualHeight >= 47" in ui_e2e
+    assert "VerifyCustomTitleChromeBounds" in ui_e2e
+    assert "WindowRoot.RowDefinitions[0].Height" in ui_e2e
+    assert "TitleBarDragRegion.ActualWidth >= 80" in ui_e2e
+    assert "RequireTitleChromeControlHitTest" in ui_e2e
+    assert "TitleBarPaneButton_Click(TitleBarPaneButton, new RoutedEventArgs())" in ui_e2e
+    assert "presenter.State == OverlappedPresenterState.Minimized" in ui_e2e
+    assert 'VerifyFloatingTitleBarState("minimize-restore")' in ui_e2e
+    assert "TitleBarMaximizeButton_Click(" in ui_e2e
+    assert "TitleBarCloseButton_Click(" in ui_e2e
+    assert 'VerifyFloatingTitleBarState("startup-floating")' in ui_e2e
     assert 'VerifyFloatingTitleBarState("startup-unpin")' in ui_e2e
     assert 'VerifyFloatingTitleBarState("unpin")' in ui_e2e
     assert 'VerifyFloatingTitleBarState("maximized-unpin")' in ui_e2e
