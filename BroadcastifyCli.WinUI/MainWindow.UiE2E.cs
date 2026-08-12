@@ -141,6 +141,10 @@ public sealed partial class MainWindow
             Environment.NewLine,
             Enumerable.Range(1, 60).Select(index => $"Isolated activity line {index}"));
         RefreshAboutPage();
+        AboutActionStatusText.Text = string.Join(
+            Environment.NewLine,
+            Enumerable.Range(1, 28).Select(index =>
+                $"Synthetic support detail {index}: no credential, token, transcript, or archive content."));
     }
 
     private async Task<List<Dictionary<string, object?>>> RunUiLayoutMatrixAsync()
