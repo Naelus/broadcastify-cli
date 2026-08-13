@@ -68,6 +68,33 @@ def test_archive_quota_status_mints_one_persistent_installation_identity(
     assert statuses[0]["user_reserve"] == 10
 
 
+def test_named_account_env_never_falls_back_to_default_credentials(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (tmp_path / ".env").write_text(
+        "BROADCASTIFY_USERNAME=primary-user\n"
+        "BROADCASTIFY_PASSWORD=primary-password\n",
+        encoding="utf-8",
+    )
+    (tmp_path / ".env.accounts").write_text(
+        "BROADCASTIFY_ACCOUNT_SECONDARY_USERNAME=secondary-user\n"
+        "BROADCASTIFY_ACCOUNT_SECONDARY_PASSWORD=secondary-password\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("BROADCASTIFY_ACCOUNT_PROFILE", "secondary")
+    monkeypatch.delenv("BROADCASTIFY_SECURE_USERNAME", raising=False)
+    monkeypatch.delenv("BROADCASTIFY_SECURE_PASSWORD", raising=False)
+
+    loaded = load_worker_environment()
+
+    assert loaded == tmp_path / ".env.accounts"
+    assert os.environ["BROADCASTIFY_USERNAME"] == "secondary-user"
+    assert os.environ["BROADCASTIFY_PASSWORD"] == "secondary-password"
+    assert os.environ["BROADCASTIFY_ACCOUNT_PROFILE"] == "secondary"
+
+
 def test_library_resume_planning_reads_only_local_state_and_quota(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

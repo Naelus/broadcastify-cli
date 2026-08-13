@@ -41,6 +41,7 @@ def test_feed_schedule_is_specific_persistent_and_forces_safe_acquisition(
     assert schedules[0]["due"] is True
     assert schedules[0]["job"]["download_jobs"] == 1
     assert schedules[0]["job"]["keep_originals"] is True
+    assert schedules[0]["account_profile_id"] == "automatic"
 
     with AnalysisStore(database) as store:
         assert store.list_feed_schedules(now=now)[0]["feed_name"] == (
@@ -90,8 +91,36 @@ def test_existing_schedule_database_adds_historical_and_recurring_catch_up_colum
 
     assert "backfill_start_date" in columns
     assert "recurring_catch_up" in columns
+    assert "account_profile_id" in columns
     assert saved["backfill_start_date"] == "2026-07-03"
     assert saved["recurring_catch_up"] is False
+    assert saved["account_profile_id"] == "automatic"
+
+
+def test_schedule_persists_one_explicit_account_profile_without_credentials(
+    tmp_path: Path,
+) -> None:
+    payload = _payload()
+    payload["account_profile_id"] = "secondary"
+
+    with AnalysisStore(tmp_path / "analysis.sqlite3") as store:
+        saved = store.save_feed_schedule(payload)
+        claimed = store.claim_due_feed_schedule(
+            now=datetime(
+                2026,
+                7,
+                23,
+                3,
+                0,
+                tzinfo=timezone(timedelta(hours=-5)),
+            )
+        )
+
+    assert saved["account_profile_id"] == "secondary"
+    assert claimed is not None
+    assert claimed["account_profile_id"] == "secondary"
+    assert "username" not in claimed["job"]
+    assert "password" not in claimed["job"]
 
 
 def test_claim_is_atomic_and_quota_wait_reopens_at_next_rolling_slot(

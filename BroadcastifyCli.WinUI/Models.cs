@@ -722,6 +722,9 @@ internal sealed record FeedSchedule
     [JsonPropertyName("recurring_catch_up")]
     public bool RecurringCatchUp { get; init; }
 
+    [JsonPropertyName("account_profile_id")]
+    public string AccountProfileId { get; init; } = "automatic";
+
     [JsonPropertyName("job")]
     public JobRequest Job { get; init; } = new();
 
@@ -747,9 +750,13 @@ internal sealed record FeedSchedule
     public string DueDate { get; init; } = "";
 
     public string ScheduleSummary => string.IsNullOrWhiteSpace(BackfillStartDate)
-        ? $"Daily at {RunTimeLocal} · revisit {LookbackDays} day{(LookbackDays == 1 ? "" : "s")}"
+        ? $"Daily at {RunTimeLocal} · revisit {LookbackDays} day{(LookbackDays == 1 ? "" : "s")} · {AccountSummary}"
         : $"Daily at {RunTimeLocal} · revisit {LookbackDays} day{(LookbackDays == 1 ? "" : "s")} · "
-            + $"{(RecurringCatchUp ? "recurring catch-up" : "catch up once")} from {BackfillStartDate}";
+            + $"{(RecurringCatchUp ? "recurring catch-up" : "catch up once")} from {BackfillStartDate} · {AccountSummary}";
+
+    public string AccountSummary => AccountProfileId == "automatic"
+        ? "authorized account pool"
+        : $"account {AccountProfileId}";
 
     public string StateSummary => string.IsNullOrWhiteSpace(Message)
         ? State.Replace('_', ' ')
@@ -775,6 +782,9 @@ internal sealed record FeedScheduleSaveRequest
 
     [JsonPropertyName("recurring_catch_up")]
     public bool RecurringCatchUp { get; init; }
+
+    [JsonPropertyName("account_profile_id")]
+    public string AccountProfileId { get; init; } = "automatic";
 
     [JsonPropertyName("job")]
     public JobRequest Job { get; init; } = new();
@@ -1818,6 +1828,9 @@ public sealed record ArchiveAnswer
 
 public sealed record ArchiveQuotaStatus
 {
+    [JsonPropertyName("account_profile_id")]
+    public string AccountProfileId { get; init; } = "default";
+
     [JsonPropertyName("instance_id")]
     public string InstanceId { get; init; } = "";
 

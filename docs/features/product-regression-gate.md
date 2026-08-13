@@ -24,6 +24,13 @@ The retained catch-up workflow proves that:
 - global Resume queues only absent or unfinished days and skips completed days;
 - promotion to a recurring schedule preserves sequential download and original
   archive retention settings;
+- schedule migration retains a non-secret automatic account policy and never
+  stores a username or password;
+- authorized account ledgers exhaust and recover independently, and a 429 on
+  one profile does not close another profile;
+- the native catch-up action remains available while a sequential pipeline is
+  active and both explicit and scheduled catch-up paths select accounts through
+  the same authorization-gated pool;
 - a claimed schedule spans the historical boundary through the current day;
 - an interrupted run is recovered from persisted state;
 - successful recurring runs retain their historical boundary; and

@@ -133,7 +133,7 @@ class BroadcastifyClient:
         self,
         username: str | None = None,
         password: str | None = None,
-        cookie_path: str | Path = "cookies.json",
+        cookie_path: str | Path | None = None,
         timeout: float = 30.0,
         user_agent: str | None = None,
         download_attempts: int = 7,
@@ -156,7 +156,11 @@ class BroadcastifyClient:
             or (os.getenv("USERNAME") if legacy_password else None)
         )
         self.password = password or os.getenv("BROADCASTIFY_PASSWORD") or legacy_password
-        self.cookie_path = Path(cookie_path)
+        self.cookie_path = Path(
+            cookie_path
+            or os.getenv("BROADCASTIFY_COOKIE_PATH")
+            or "cookies.json"
+        )
         self.timeout = timeout
         self.download_attempts = max(1, int(download_attempts))
         self.download_request_interval = max(0.0, float(download_request_interval))

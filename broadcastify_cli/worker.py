@@ -5,6 +5,7 @@ import gc
 import json
 import math
 import os
+import re
 import struct
 import sys
 import tempfile
@@ -72,7 +73,7 @@ from .area_watch import (
 )
 from .area_acquisition import AreaAcquisitionRunner
 from .broadcastify import BroadcastifyClient
-from .quota import ArchiveRequestLedger
+from .quota import ArchiveRequestLedger, normalize_account_profile_id
 from .geography import CENSUS_ZCTA_YEAR, ZipCentroidCatalog
 from .jobs import JobRunner
 from .library import (
@@ -2076,12 +2077,36 @@ def load_worker_environment() -> Path | None:
     if repository_env.is_file():
         load_dotenv(repository_env, override=True)
         loaded = repository_env
+    account_env = Path.cwd() / ".env.accounts"
+    if account_env.is_file():
+        load_dotenv(account_env, override=True)
+        loaded = account_env
     configured = os.getenv("BROADCASTIFY_ENV_FILE")
     if configured:
         bundled_env = Path(configured)
         if bundled_env.is_file():
             load_dotenv(bundled_env, override=True)
             loaded = bundled_env
+    account_profile_id = normalize_account_profile_id()
+    os.environ["BROADCASTIFY_ACCOUNT_PROFILE"] = account_profile_id
+    if account_profile_id != "default":
+        suffix = re.sub(r"[^A-Z0-9]", "_", account_profile_id.upper())
+        profile_username = os.getenv(
+            f"BROADCASTIFY_ACCOUNT_{suffix}_USERNAME"
+        )
+        profile_password = os.getenv(
+            f"BROADCASTIFY_ACCOUNT_{suffix}_PASSWORD"
+        )
+        # A named profile must never fall through to the default or legacy
+        # account. That would mix cookies and quota attribution even though the
+        # profile-specific session and ledger are otherwise isolated.
+        os.environ.pop("BROADCASTIFY_USERNAME", None)
+        os.environ.pop("BROADCASTIFY_PASSWORD", None)
+        os.environ.pop("PASSWORD", None)
+        if profile_username:
+            os.environ["BROADCASTIFY_USERNAME"] = profile_username
+        if profile_password:
+            os.environ["BROADCASTIFY_PASSWORD"] = profile_password
     # Native/browser secure stores deliberately win over an optional .env.
     # These values exist only in the short-lived worker environment and are
     # never written into ordinary settings or job payloads.

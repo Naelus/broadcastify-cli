@@ -660,11 +660,54 @@ public sealed partial class MainWindow : Window
         }
         try
         {
-            var status = await _worker.GetArchiveQuotaStatusAsync(CancellationToken.None);
-            if (status is null)
+            IReadOnlyList<string> profileIds = _worker.AuthorizedAccountPoolEnabled
+                ? _worker.AvailableAccountProfileIds()
+                : new[] { "default" };
+            var statuses = new List<ArchiveQuotaStatus>();
+            foreach (var profileId in profileIds)
+            {
+                var profileStatus = await _worker.GetArchiveQuotaStatusAsync(
+                    CancellationToken.None,
+                    profileId);
+                if (profileStatus is not null)
+                {
+                    statuses.Add(profileStatus);
+                }
+            }
+            if (statuses.Count == 0)
             {
                 throw new InvalidOperationException("The quota ledger returned no status.");
             }
+            if (statuses.Count > 1)
+            {
+                var totalRemaining = statuses.Sum(value => value.Remaining);
+                var totalAutomated = statuses.Sum(value => value.AutomatedLimit);
+                var totalUsed = statuses.Sum(value => value.Used);
+                var totalReserve = statuses.Sum(value => value.UserReserve);
+                var nextPoolSlot = statuses
+                    .Select(value => DateTimeOffset.TryParse(
+                        value.NextRequestAt,
+                        out var parsed)
+                        ? parsed
+                        : (DateTimeOffset?)null)
+                    .Where(value => value is not null)
+                    .OrderBy(value => value)
+                    .FirstOrDefault();
+                ArchiveQuotaInfoBar.Severity = statuses.Any(value => value.Available)
+                    ? InfoBarSeverity.Success
+                    : InfoBarSeverity.Warning;
+                ArchiveQuotaInfoBar.Title = statuses.Any(value => value.Available)
+                    ? $"{totalRemaining} of {totalAutomated} authorized pooled archive requests available"
+                    : "All authorized account profiles are waiting";
+                ArchiveQuotaInfoBar.Message =
+                    $"{statuses.Count} profiles × each account's standard limit · {totalUsed} used in their independent rolling 24-hour windows · {totalReserve} total held for manual use. "
+                    + "Downloads remain sequential and spaced."
+                    + (nextPoolSlot is not null
+                        ? $" Next pool slot: {nextPoolSlot.Value.ToLocalTime():g}."
+                        : "");
+                return;
+            }
+            var status = statuses[0];
             var instance = status.InstanceId.Length > 8
                 ? status.InstanceId[..8]
                 : status.InstanceId;
@@ -678,7 +721,7 @@ public sealed partial class MainWindow : Window
                 ? $" Next safe request: {nextRequest.ToLocalTime():g}."
                 : "";
             ArchiveQuotaInfoBar.Message =
-                $"Rolling 24 hours · {status.Used} used · {status.UserReserve} held for manual use · instance {instance}."
+                $"Account {status.AccountProfileId} · rolling 24 hours · {status.Used} used · {status.UserReserve} held for manual use · instance {instance}."
                 + next
                 + (status.Blocked && !string.IsNullOrWhiteSpace(status.BlockedReason)
                     ? $" {status.BlockedReason}"
@@ -3435,7 +3478,7 @@ public sealed partial class MainWindow : Window
 
     private async void CatchUpFeed_Click(object sender, RoutedEventArgs e)
     {
-        if (_worker is null || _pipelineCancellation is not null)
+        if (_worker is null)
         {
             return;
         }
@@ -3744,14 +3787,6 @@ public sealed partial class MainWindow : Window
                 "Minimum speakers cannot exceed maximum speakers.");
             return;
         }
-        if (_pipelineCancellation is not null)
-        {
-            await ShowMessageAsync(
-                "Background pipeline already running",
-                "Another archive or transcription pipeline started while these options were open. Let it finish or cancel it, then resume the selected work.");
-            return;
-        }
-
         if (catchUpRange?.SaveForResume == true)
         {
             try
@@ -3775,6 +3810,24 @@ public sealed partial class MainWindow : Window
             }
         }
 
+        if (_pipelineCancellation is not null)
+        {
+            var persisted = catchUpRange?.SaveForResume == true
+                || catchUpRange?.CreateRecurringSchedule == true;
+            await ShowMessageAsync(
+                persisted
+                    ? "Catch-up saved behind the active pipeline"
+                    : "Background pipeline already running",
+                persisted
+                    ? "The selected full range is retained and will still extend through today. "
+                        + "The current archive/transcription pipeline remains sequential; when it finishes, "
+                        + "use Catch up missing feed days again or let its recurring schedule resume the saved range."
+                    : "The range was evaluated without starting a concurrent download. "
+                        + "Let the active pipeline finish, then start this catch-up again.");
+            await RefreshLibraryAsync();
+            return;
+        }
+
         var pipeline = new CancellationTokenSource();
         _pipelineCancellation = pipeline;
         _activePipelineFeedIds.UnionWith(selectedDays.Select(value => value.FeedId));
@@ -3795,31 +3848,6 @@ public sealed partial class MainWindow : Window
                         $"Could not parse library date {day.ArchiveDate}.");
                 }
                 var useNetwork = day.NeedsNetwork && selection.IncludeNetwork;
-                if (useNetwork)
-                {
-                    var quota = await worker.GetArchiveQuotaStatusAsync(
-                        pipeline.Token);
-                    if (quota is null || !quota.Available)
-                    {
-                        if (selection.IncludeLocal && day.NeedsLocalProcessing)
-                        {
-                            useNetwork = false;
-                            pausedForQuota = true;
-                            AppendLog(
-                                $"The guarded source refresh for {day.FeedName} on "
-                                + $"{day.ArchiveDate} is waiting for quota; finishing its retained local stages now.");
-                        }
-                        else
-                        {
-                            pausedForQuota = true;
-                            AppendLog(
-                                "Resume all paused before the next network day because "
-                                + "the rolling archive ledger has no safe request available.");
-                            break;
-                        }
-                    }
-                }
-
                 StatusText.Text =
                     $"Resuming {attempted + 1:N0}/{selectedDays.Count:N0}: "
                     + $"{day.FeedName} · {day.ArchiveDate}";
@@ -3829,13 +3857,57 @@ public sealed partial class MainWindow : Window
                 var workDay = useNetwork
                     ? day
                     : day with { NeedsNetwork = false, SourceCheckDue = false };
-                var result = await ContinueLibraryDayWorkAsync(
-                    workDay,
-                    archiveDate.Date,
-                    minimumSpeakers,
-                    maximumSpeakers,
-                    forceAllStages: true,
-                    cancellationToken: pipeline.Token);
+                JobRunResult? result;
+                if (useNetwork)
+                {
+                    var accountRun = await ContinueLibraryDayAcrossAccountsAsync(
+                        workDay,
+                        archiveDate.Date,
+                        minimumSpeakers,
+                        maximumSpeakers,
+                        pipeline.Token);
+                    result = accountRun.Result;
+                    if (accountRun.WaitingForQuota)
+                    {
+                        pausedForQuota = true;
+                        if (result is null
+                            && selection.IncludeLocal
+                            && day.NeedsLocalProcessing)
+                        {
+                            AppendLog(
+                                $"Every eligible account is waiting for {day.FeedName} on "
+                                + $"{day.ArchiveDate}; finishing its retained local stages now.");
+                            result = await ContinueLibraryDayWorkAsync(
+                                day with
+                                {
+                                    NeedsNetwork = false,
+                                    SourceCheckDue = false,
+                                },
+                                archiveDate.Date,
+                                minimumSpeakers,
+                                maximumSpeakers,
+                                forceAllStages: true,
+                                cancellationToken: pipeline.Token);
+                        }
+                        else if (result is null)
+                        {
+                            AppendLog(
+                                "Catch-up paused before the next network day because all "
+                                + "authorized account ledgers are waiting for a safe request slot.");
+                            break;
+                        }
+                    }
+                }
+                else
+                {
+                    result = await ContinueLibraryDayWorkAsync(
+                        workDay,
+                        archiveDate.Date,
+                        minimumSpeakers,
+                        maximumSpeakers,
+                        forceAllStages: true,
+                        cancellationToken: pipeline.Token);
+                }
                 attempted++;
                 JobProgress.Maximum = Math.Max(1, selectedDays.Count);
                 JobProgress.Value = attempted;
@@ -3843,7 +3915,7 @@ public sealed partial class MainWindow : Window
                 {
                     pausedForQuota = true;
                     AppendLog(
-                        "Resume all stopped after the archive worker reached the "
+                        "Catch-up stopped after every eligible account reached its "
                         + "rolling request boundary; retained progress will be reused.");
                     break;
                 }
@@ -4836,6 +4908,87 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    private string SelectedBroadcastifyProfileId()
+    {
+        return BroadcastifyAccountProfileBox.SelectedItem is ComboBoxItem item
+            && item.Tag is string profileId
+            ? profileId
+            : "default";
+    }
+
+    private void BroadcastifyAccountProfile_SelectionChanged(
+        object sender,
+        SelectionChangedEventArgs e)
+    {
+        if (ClearSavedLoginButton is null)
+        {
+            return;
+        }
+        var profileId = SelectedBroadcastifyProfileId();
+        ClearSavedLoginButton.IsEnabled = profileId != "__new__"
+            && CredentialStore.TryLoadBroadcastifyProfile(profileId) is not null;
+    }
+
+    private void RefreshBroadcastifyProfileControls(string? selectedProfileId = null)
+    {
+        var selected = string.IsNullOrWhiteSpace(selectedProfileId)
+            ? SelectedBroadcastifyProfileId()
+            : selectedProfileId;
+        var profiles = CredentialStore.ListBroadcastifyProfiles();
+        BroadcastifyAccountProfileBox.Items.Clear();
+        if (profiles.All(value => value.Id != "default"))
+        {
+            BroadcastifyAccountProfileBox.Items.Add(new ComboBoxItem
+            {
+                Content = "Primary account · environment or saved session",
+                Tag = "default",
+            });
+        }
+        foreach (var profile in profiles)
+        {
+            BroadcastifyAccountProfileBox.Items.Add(new ComboBoxItem
+            {
+                Content = $"{profile.Label} · {profile.Username}",
+                Tag = profile.Id,
+            });
+        }
+        if (_worker is not null)
+        {
+            foreach (var profileId in _worker.AvailableAccountProfileIds()
+                         .Where(profileId => BroadcastifyAccountProfileBox.Items
+                             .OfType<ComboBoxItem>()
+                             .All(item => !string.Equals(
+                                 item.Tag as string,
+                                 profileId,
+                                 StringComparison.OrdinalIgnoreCase))))
+            {
+                BroadcastifyAccountProfileBox.Items.Add(new ComboBoxItem
+                {
+                    Content = profileId == "default"
+                        ? "Primary account · private environment or saved session"
+                        : $"{profileId} · private environment or saved session",
+                    Tag = profileId,
+                });
+            }
+        }
+        BroadcastifyAccountProfileBox.Items.Add(new ComboBoxItem
+        {
+            Content = "Add another authorized account…",
+            Tag = "__new__",
+        });
+        BroadcastifyAccountProfileBox.SelectedItem =
+            BroadcastifyAccountProfileBox.Items
+                .OfType<ComboBoxItem>()
+                .FirstOrDefault(value => string.Equals(
+                    value.Tag as string,
+                    selected,
+                    StringComparison.OrdinalIgnoreCase))
+            ?? BroadcastifyAccountProfileBox.Items.OfType<ComboBoxItem>().First();
+        var selectedId = SelectedBroadcastifyProfileId();
+        ClearSavedLoginButton.IsEnabled = selectedId != "__new__"
+            && CredentialStore.TryLoadBroadcastifyProfile(selectedId) is not null;
+    }
+
     private async void SignIn_Click(object sender, RoutedEventArgs e)
     {
         if (_worker is null)
@@ -4843,7 +4996,22 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        var saved = CredentialStore.TryLoad();
+        RefreshBroadcastifyProfileControls();
+        var selectedProfileId = SelectedBroadcastifyProfileId();
+        var addingProfile = selectedProfileId == "__new__";
+        var saved = addingProfile
+            ? null
+            : CredentialStore.TryLoadBroadcastifyProfile(selectedProfileId);
+        var labelBox = new TextBox
+        {
+            Header = "Account label",
+            Text = saved?.Label ?? (addingProfile
+                ? "Secondary account"
+                : selectedProfileId == "default"
+                    ? "Primary account"
+                    : selectedProfileId),
+            IsReadOnly = !addingProfile && selectedProfileId == "default",
+        };
         var usernameBox = new TextBox
         {
             Header = "Broadcastify username",
@@ -4870,9 +5038,10 @@ public sealed partial class MainWindow : Window
         var fields = new StackPanel { Spacing = 12 };
         fields.Children.Add(new TextBlock
         {
-            Text = "Credentials are sent only to Broadcastify. When saving is enabled, Windows Credential Locker encrypts the login for this Windows account so an expired session can refresh automatically.",
+            Text = "Credentials are sent only to Broadcastify. Windows Credential Locker encrypts each account separately; session cookies and rolling quota records use the same non-secret profile ID. Add profiles only when you have provider authorization for aggregate account capacity.",
             TextWrapping = TextWrapping.Wrap,
         });
+        fields.Children.Add(labelBox);
         fields.Children.Add(usernameBox);
         fields.Children.Add(passwordBox);
         fields.Children.Add(rememberCheckBox);
@@ -4881,7 +5050,9 @@ public sealed partial class MainWindow : Window
         var dialog = new ContentDialog
         {
             XamlRoot = ((FrameworkElement)Content).XamlRoot,
-            Title = "Sign in for premium archives",
+            Title = addingProfile
+                ? "Add an authorized premium account"
+                : $"Sign in · {labelBox.Text}",
             PrimaryButtonText = "Sign in",
             CloseButtonText = "Cancel",
             DefaultButton = ContentDialogButton.Primary,
@@ -4909,30 +5080,60 @@ public sealed partial class MainWindow : Window
                         : "Enter a password, or keep the saved username to reuse the encrypted password.";
                     return;
                 }
+                var profileId = selectedProfileId;
+                if (addingProfile)
+                {
+                    if (string.IsNullOrWhiteSpace(labelBox.Text))
+                    {
+                        args.Cancel = true;
+                        errorText.Text = "Enter a short label for this account.";
+                        return;
+                    }
+                    var baseId = CredentialStore.CreateProfileId(labelBox.Text);
+                    profileId = baseId;
+                    var existingIds = CredentialStore.ListBroadcastifyProfiles()
+                        .Select(value => value.Id)
+                        .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                    for (var suffix = 2; existingIds.Contains(profileId); suffix++)
+                    {
+                        profileId = $"{baseId}-{suffix}";
+                    }
+                }
                 await _worker.AuthenticateAsync(
-                    username, password, HandleWorkerMessage, CancellationToken.None);
+                    username,
+                    password,
+                    HandleWorkerMessage,
+                    CancellationToken.None,
+                    profileId);
                 if (rememberCheckBox.IsChecked == true)
                 {
-                    CredentialStore.Save(username, password);
+                    CredentialStore.SaveBroadcastifyProfile(
+                        profileId,
+                        labelBox.Text,
+                        username,
+                        password);
                     SettingsAuthStatusText.Text =
-                        $"Saved login for {username} with password "
+                        $"Saved {labelBox.Text.Trim()} ({profileId}) for {username} with password "
                         + $"{CredentialStore.CreateSecretPreview(password, 2)} in Windows Credential Locker. "
-                        + "Automatic session refresh is enabled.";
+                        + "Its session and request allowance are isolated from every other profile.";
                 }
                 else
                 {
-                    CredentialStore.Clear();
+                    if (!addingProfile)
+                    {
+                        CredentialStore.ClearBroadcastifyProfile(profileId);
+                    }
                     SettingsAuthStatusText.Text = "Signed in for this session; the username and password were not saved.";
                 }
                 passwordBox.Password = "";
                 AuthInfoBar.Severity = InfoBarSeverity.Success;
                 AuthInfoBar.Title = "Signed in";
-                AuthInfoBar.Message = "Premium archive session is ready and can refresh automatically when a saved login is available.";
+                AuthInfoBar.Message = $"Premium archive session {profileId} is ready and uses its own cookie and rolling allowance.";
                 _archiveAccessConfigured = true;
                 _archiveAccessVerified = true;
-                ClearSavedLoginButton.IsEnabled = rememberCheckBox.IsChecked == true;
+                RefreshBroadcastifyProfileControls(profileId);
                 UpdateSetupSummary();
-                AppendLog("Broadcastify sign-in succeeded.");
+                AppendLog($"Broadcastify sign-in succeeded for account profile {profileId}.");
             }
             catch (Exception exception)
             {
@@ -4954,20 +5155,22 @@ public sealed partial class MainWindow : Window
         {
             return;
         }
-        var saved = CredentialStore.TryLoad();
+        RefreshBroadcastifyProfileControls("default");
+        var profiles = CredentialStore.ListBroadcastifyProfiles();
+        var saved = profiles.FirstOrDefault();
         if (saved is null)
         {
-            _archiveAccessConfigured = _worker.HasBundledEnvironment;
-            SettingsAuthStatusText.Text = _worker.HasBundledEnvironment
-                ? "A private bundled .env is available. Archive jobs can refresh the Broadcastify session automatically."
+            _archiveAccessConfigured = _worker.HasConfiguredAccountCredentials;
+            SettingsAuthStatusText.Text = _worker.HasConfiguredAccountCredentials
+                ? "A private account environment or isolated saved session is available. Archive jobs can refresh the selected profile automatically."
                 : "No Windows Credential Locker login is saved. An existing session cookie or repository .env can still provide access.";
-            ClearSavedLoginButton.IsEnabled = false;
+            RefreshBroadcastifyProfileControls("default");
             UpdateSetupSummary();
             return;
         }
         _archiveAccessConfigured = true;
-        ClearSavedLoginButton.IsEnabled = true;
-        SettingsAuthStatusText.Text = $"Refreshing the saved Broadcastify session for {saved.Username}…";
+        RefreshBroadcastifyProfileControls(saved.Id);
+        SettingsAuthStatusText.Text = $"Refreshing {saved.Label} for {saved.Username}…";
         try
         {
             using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(45));
@@ -4975,14 +5178,19 @@ public sealed partial class MainWindow : Window
                 saved.Username,
                 saved.Password,
                 HandleWorkerMessage,
-                cancellation.Token);
+                cancellation.Token,
+                saved.Id);
             AuthInfoBar.Severity = InfoBarSeverity.Success;
             AuthInfoBar.Title = "Signed in automatically";
-            AuthInfoBar.Message = "Windows Credential Locker supplied the saved login and refreshed the premium session.";
+            AuthInfoBar.Message = $"Windows Credential Locker refreshed {saved.Label}; other profiles remain isolated and will refresh when used.";
             SettingsAuthStatusText.Text =
-                $"Automatic sign-in is enabled for {saved.Username} with password "
+                $"{profiles.Count} saved account profile{(profiles.Count == 1 ? "" : "s")}. "
+                + $"Automatic sign-in is enabled for {saved.Username} with password "
                 + $"{CredentialStore.CreateSecretPreview(saved.Password, 2)}. "
-                + "The complete password remains in Windows Credential Locker.";
+                + "Complete passwords remain in Windows Credential Locker."
+                + (_worker.AuthorizedAccountPoolEnabled
+                    ? " Written-authorization pooling is enabled locally."
+                    : " Automatic multi-account pooling is off until locally authorized.");
             _archiveAccessVerified = true;
             UpdateSetupSummary();
         }
@@ -5000,15 +5208,21 @@ public sealed partial class MainWindow : Window
 
     private void ClearSavedLogin_Click(object sender, RoutedEventArgs e)
     {
-        CredentialStore.Clear();
-        ClearSavedLoginButton.IsEnabled = false;
+        var profileId = SelectedBroadcastifyProfileId();
+        if (profileId == "__new__")
+        {
+            return;
+        }
+        CredentialStore.ClearBroadcastifyProfile(profileId);
+        RefreshBroadcastifyProfileControls("default");
         SettingsAuthStatusText.Text =
-            "The saved username and password were removed from Windows Credential Locker. The current session cookie was left intact.";
-        _archiveAccessConfigured = _archiveAccessVerified;
+            $"Account profile {profileId} was removed from Windows Credential Locker. Its current isolated session cookie and quota history were retained.";
+        _archiveAccessConfigured = _archiveAccessVerified
+            || (_worker?.HasConfiguredAccountCredentials ?? false);
         UpdateSetupSummary();
         AuthInfoBar.Severity = InfoBarSeverity.Informational;
         AuthInfoBar.Title = "Saved login removed";
-        AuthInfoBar.Message = "You can continue with the current session or sign in again later.";
+        AuthInfoBar.Message = "You can continue with retained sessions or add the account again later.";
     }
 
     private async void Browse_Click(object sender, RoutedEventArgs e)
@@ -5024,6 +5238,84 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    private async Task<(JobRunResult? Result, bool WaitingForQuota)>
+        ContinueLibraryDayAcrossAccountsAsync(
+            LibraryDay day,
+            DateTime archiveDate,
+            int? minimumSpeakers,
+            int? maximumSpeakers,
+            CancellationToken cancellationToken)
+    {
+        if (_worker is null)
+        {
+            return (null, false);
+        }
+        IReadOnlyList<string> profileIds = _worker.AuthorizedAccountPoolEnabled
+            ? _worker.AvailableAccountProfileIds()
+            : new[] { "default" };
+        var statuses = new List<ArchiveQuotaStatus>();
+        foreach (var profileId in profileIds)
+        {
+            var status = await _worker.GetArchiveQuotaStatusAsync(
+                cancellationToken,
+                profileId);
+            if (status is not null)
+            {
+                statuses.Add(status);
+            }
+        }
+        var eligible = statuses
+            .Where(value => value.Available)
+            .OrderByDescending(value => value.Remaining)
+            .ThenBy(value => value.AccountProfileId, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (eligible.Count == 0)
+        {
+            return (null, true);
+        }
+        JobRunResult? lastResult = null;
+        Exception? lastAuthenticationFailure = null;
+        foreach (var status in eligible)
+        {
+            try
+            {
+                AppendLog(
+                    $"Catch-up is using account profile {status.AccountProfileId} "
+                    + $"for {day.FeedName} on {day.ArchiveDate}; "
+                    + $"{status.Remaining}/{status.AutomatedLimit} requests remain in its window.");
+                lastResult = await ContinueLibraryDayWorkAsync(
+                    day,
+                    archiveDate,
+                    minimumSpeakers,
+                    maximumSpeakers,
+                    forceAllStages: true,
+                    accountProfileId: status.AccountProfileId,
+                    cancellationToken: cancellationToken);
+                if (lastResult?.DownloadLimited != true)
+                {
+                    return (lastResult, false);
+                }
+                AppendLog(
+                    $"Account profile {status.AccountProfileId} reached its boundary; "
+                    + "the same retained day will continue on the next eligible profile.");
+            }
+            catch (InvalidOperationException exception)
+                when (_worker.AuthorizedAccountPoolEnabled
+                    && IsAccountAuthenticationFailure(exception.Message))
+            {
+                lastAuthenticationFailure = exception;
+                AppendLog(
+                    $"Account profile {status.AccountProfileId} needs sign-in; "
+                    + "trying the next authorized profile.");
+            }
+        }
+        if (lastResult is null && lastAuthenticationFailure is not null)
+        {
+            throw lastAuthenticationFailure;
+        }
+        return (lastResult, true);
+    }
+
     private async Task<JobRunResult?> ContinueLibraryDayWorkAsync(
         LibraryDay day,
         DateTime archiveDate,
@@ -5032,6 +5324,7 @@ public sealed partial class MainWindow : Window
         string? diarizationEngineOverride = null,
         bool forceSourceCheck = false,
         bool forceAllStages = false,
+        string accountProfileId = "default",
         CancellationToken cancellationToken = default)
     {
         if (_worker is null)
@@ -5068,7 +5361,8 @@ public sealed partial class MainWindow : Window
             return await RunAndAnalyzeJobAsync(
                 request,
                 cancellationToken,
-                forceAllStages ? true : null);
+                forceAllStages ? true : null,
+                accountProfileId);
         }
 
         await _worker.ContinueLocalDayAsync(
@@ -5361,6 +5655,62 @@ public sealed partial class MainWindow : Window
         }
         backfillPicker.DateChanged += (_, _) => UpdateRecurringCatchUpState();
         UpdateRecurringCatchUpState();
+        var accountProfileBox = new ComboBox
+        {
+            Header = "Archive account",
+            MinWidth = 320,
+        };
+        if (_worker.AuthorizedAccountPoolEnabled)
+        {
+            accountProfileBox.Items.Add(new ComboBoxItem
+            {
+                Content = "Automatic authorized pool · use the next eligible account",
+                Tag = "automatic",
+            });
+        }
+        foreach (var profile in CredentialStore.ListBroadcastifyProfiles())
+        {
+            accountProfileBox.Items.Add(new ComboBoxItem
+            {
+                Content = $"{profile.Label} · {profile.Username}",
+                Tag = profile.Id,
+            });
+        }
+        foreach (var profileId in _worker.AvailableAccountProfileIds()
+                     .Where(profileId => accountProfileBox.Items
+                         .OfType<ComboBoxItem>()
+                         .All(item => !string.Equals(
+                             item.Tag as string,
+                             profileId,
+                             StringComparison.OrdinalIgnoreCase))))
+        {
+            accountProfileBox.Items.Add(new ComboBoxItem
+            {
+                Content = $"{profileId} · private environment or saved session",
+                Tag = profileId,
+            });
+        }
+        if (!accountProfileBox.Items.OfType<ComboBoxItem>().Any(value =>
+                string.Equals(
+                    value.Tag as string,
+                    "default",
+                    StringComparison.OrdinalIgnoreCase)))
+        {
+            accountProfileBox.Items.Add(new ComboBoxItem
+            {
+                Content = "Primary account · environment or saved session",
+                Tag = "default",
+            });
+        }
+        var existingProfileId = existing?.AccountProfileId ?? (
+            _worker.AuthorizedAccountPoolEnabled ? "automatic" : "default");
+        accountProfileBox.SelectedItem = accountProfileBox.Items
+            .OfType<ComboBoxItem>()
+            .FirstOrDefault(value => string.Equals(
+                value.Tag as string,
+                existingProfileId,
+                StringComparison.OrdinalIgnoreCase))
+            ?? accountProfileBox.Items.OfType<ComboBoxItem>().First();
         var enabledBox = new CheckBox
         {
             Content = "Schedule enabled",
@@ -5437,6 +5787,7 @@ public sealed partial class MainWindow : Window
         {
             Text = "The schedule reuses retained work and waits for rolling request slots. "
                 + "An optional catch-up date can clear after the first complete run or remain active for a recurring full-range gap check. "
+                + "An authorized pool rotates only after an account is unavailable, with one spaced download at a time. "
                 + "Changing only the time or processing stages keeps its saved model and hardware choices.",
             TextWrapping = TextWrapping.Wrap,
         };
@@ -5450,6 +5801,7 @@ public sealed partial class MainWindow : Window
         content.Children.Add(lookbackBox);
         content.Children.Add(backfillPicker);
         content.Children.Add(recurringCatchUpBox);
+        content.Children.Add(accountProfileBox);
         content.Children.Add(enabledBox);
         content.Children.Add(new TextBlock
         {
@@ -5511,6 +5863,9 @@ public sealed partial class MainWindow : Window
                 LookbackDays = RequiredInteger(lookbackBox.Value, 2),
                 BackfillStartDate = backfillPicker.Date?.ToString("yyyy-MM-dd") ?? "",
                 RecurringCatchUp = recurringCatchUpBox.IsChecked == true,
+                AccountProfileId =
+                    (accountProfileBox.SelectedItem as ComboBoxItem)?.Tag as string
+                    ?? "default",
                 Job = request,
                 Analyze = analyzeBox.IsChecked == true,
                 Enabled = enabledBox.IsChecked == true,
@@ -5733,12 +6088,11 @@ public sealed partial class MainWindow : Window
             SetPipelineBusy(true, $"Scheduled feed running in the background: {schedule.FeedName}");
             JobProgress.IsIndeterminate = true;
             AppendLog($"Scheduled run starting for {schedule.FeedName} ({schedule.FeedId}).");
-            var result = await RunAndAnalyzeJobAsync(
-                schedule.Job,
-                pipeline.Token,
-                schedule.Analyze);
-            var quota = await _worker.GetArchiveQuotaStatusAsync(CancellationToken.None);
-            var waitingForQuota = result?.DownloadLimited == true;
+            var accountRun = await RunScheduledJobAcrossAccountsAsync(
+                schedule,
+                pipeline.Token);
+            var result = accountRun.Result;
+            var waitingForQuota = accountRun.WaitingForQuota;
             var incomplete = (result?.MissingDays.Count ?? 0) > 0;
             await _worker.FinishFeedScheduleAsync(
                 new FeedScheduleFinishRequest
@@ -5751,11 +6105,13 @@ public sealed partial class MainWindow : Window
                             ? "deferred"
                             : "complete",
                     Message = waitingForQuota
-                        ? "Waiting for the next rolling archive-request slot."
+                        ? accountRun.Message
                         : incomplete
                             ? "Some archive days were deferred; retrying retained work shortly."
                             : "Scheduled feed run completed.",
-                    NextRequestAt = waitingForQuota ? quota?.NextRequestAt ?? "" : "",
+                    NextRequestAt = waitingForQuota
+                        ? accountRun.NextRequestAt
+                        : "",
                 },
                 CancellationToken.None);
         }
@@ -5805,6 +6161,127 @@ public sealed partial class MainWindow : Window
             _checkingFeedSchedule = false;
             await RefreshFeedScheduleStatusAsync();
         }
+    }
+
+    private async Task<(
+        JobRunResult? Result,
+        bool WaitingForQuota,
+        string NextRequestAt,
+        string Message)> RunScheduledJobAcrossAccountsAsync(
+        FeedSchedule schedule,
+        CancellationToken cancellationToken)
+    {
+        if (_worker is null)
+        {
+            return (null, false, "", "The worker is unavailable.");
+        }
+        var automatic = string.Equals(
+            schedule.AccountProfileId,
+            "automatic",
+            StringComparison.OrdinalIgnoreCase);
+        IReadOnlyList<string> profileIds = automatic && _worker.AuthorizedAccountPoolEnabled
+            ? _worker.AvailableAccountProfileIds()
+            : new[]
+            {
+                automatic ? "default" : schedule.AccountProfileId,
+            };
+        var statuses = new List<ArchiveQuotaStatus>();
+        foreach (var profileId in profileIds)
+        {
+            var status = await _worker.GetArchiveQuotaStatusAsync(
+                cancellationToken,
+                profileId);
+            if (status is not null)
+            {
+                statuses.Add(status);
+            }
+        }
+        var eligible = statuses
+            .Where(value => value.Available)
+            .OrderByDescending(value => value.Remaining)
+            .ThenBy(value => value.AccountProfileId, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        JobRunResult? lastResult = null;
+        Exception? lastFailure = null;
+        foreach (var status in eligible)
+        {
+            try
+            {
+                AppendLog(
+                    $"Scheduled catch-up is using account profile {status.AccountProfileId} "
+                    + $"({status.Remaining}/{status.AutomatedLimit} automated requests available)."
+                );
+                lastResult = await RunAndAnalyzeJobAsync(
+                    schedule.Job,
+                    cancellationToken,
+                    schedule.Analyze,
+                    status.AccountProfileId);
+                if (lastResult?.DownloadLimited != true)
+                {
+                    return (
+                        lastResult,
+                        false,
+                        "",
+                        $"Scheduled feed run completed with account profile {status.AccountProfileId}.");
+                }
+                var refreshed = await _worker.GetArchiveQuotaStatusAsync(
+                    CancellationToken.None,
+                    status.AccountProfileId);
+                if (refreshed is not null)
+                {
+                    statuses.RemoveAll(value => value.AccountProfileId.Equals(
+                        refreshed.AccountProfileId,
+                        StringComparison.OrdinalIgnoreCase));
+                    statuses.Add(refreshed);
+                }
+                if (!automatic || !_worker.AuthorizedAccountPoolEnabled)
+                {
+                    break;
+                }
+                AppendLog(
+                    $"Account profile {status.AccountProfileId} reached its rolling boundary; "
+                    + "continuing retained missing days on the next eligible authorized profile.");
+            }
+            catch (InvalidOperationException exception)
+                when (automatic
+                    && _worker.AuthorizedAccountPoolEnabled
+                    && IsAccountAuthenticationFailure(exception.Message))
+            {
+                lastFailure = exception;
+                AppendLog(
+                    $"Account profile {status.AccountProfileId} could not authenticate; "
+                    + "trying the next authorized profile without discarding retained work.");
+            }
+        }
+        if (lastResult is null && lastFailure is not null && eligible.Count > 0)
+        {
+            throw lastFailure;
+        }
+        var nextRequestAt = statuses
+            .Select(value => DateTimeOffset.TryParse(
+                value.NextRequestAt,
+                out var parsed)
+                ? parsed
+                : (DateTimeOffset?)null)
+            .Where(value => value is not null)
+            .OrderBy(value => value)
+            .FirstOrDefault()
+            ?.ToString("O") ?? "";
+        var accountCount = profileIds.Count;
+        var message = automatic && _worker.AuthorizedAccountPoolEnabled
+            ? $"All {accountCount} authorized account profile{(accountCount == 1 ? "" : "s")} are waiting for their next rolling archive-request slot."
+            : $"Account profile {profileIds[0]} is waiting for its next rolling archive-request slot.";
+        return (lastResult, true, nextRequestAt, message);
+    }
+
+    private static bool IsAccountAuthenticationFailure(string message)
+    {
+        var normalized = message.ToLowerInvariant();
+        return normalized.Contains("authentication")
+            || normalized.Contains("sign in")
+            || normalized.Contains("login")
+            || normalized.Contains("credentials")
+            || normalized.Contains("premium archive access");
     }
 
     private JobRequest CreateJobRequest(
@@ -5859,7 +6336,8 @@ public sealed partial class MainWindow : Window
     private async Task<JobRunResult?> RunAndAnalyzeJobAsync(
         JobRequest request,
         CancellationToken cancellationToken,
-        bool? analyzeOverride = null)
+        bool? analyzeOverride = null,
+        string accountProfileId = "default")
     {
         if (_worker is null)
         {
@@ -5870,7 +6348,10 @@ public sealed partial class MainWindow : Window
         // whether this PC can own the shared LAN acquisition lease.
         await ConfigureLanSharingAsync();
         var jobResult = await _worker.RunJobAsync(
-            request, HandleWorkerMessage, cancellationToken);
+            request,
+            HandleWorkerMessage,
+            cancellationToken,
+            accountProfileId);
         await AnalyzeCompletedJobAsync(
             request,
             jobResult,
@@ -7917,8 +8398,8 @@ public sealed partial class MainWindow : Window
         SetupAnalysisActionButton.IsEnabled = interactive && pipelineIdle;
         AreaProfileCombo.IsEnabled = interactive;
         RefreshLibraryButton.IsEnabled = interactive;
-        CatchUpFeedButton.IsEnabled = interactive
-            && pipelineIdle
+        CatchUpFeedButton.IsEnabled = ready
+            && !_libraryMutationBusy
             && _libraryFeeds.Count > 0;
         ResumeAllLibraryButton.IsEnabled = interactive
             && pipelineIdle
@@ -7944,8 +8425,11 @@ public sealed partial class MainWindow : Window
             && selectedDay is not null
             && !IsFeedPipelineBusy(selectedDay.FeedId)
             && File.Exists(selectedDay.TranscriptPath);
+        var selectedAccountProfile = SelectedBroadcastifyProfileId();
         ClearSavedLoginButton.IsEnabled = interactive
-            && CredentialStore.TryLoad() is not null;
+            && selectedAccountProfile != "__new__"
+            && CredentialStore.TryLoadBroadcastifyProfile(
+                selectedAccountProfile) is not null;
         SaveHuggingFaceTokenButton.IsEnabled = interactive;
         ClearHuggingFaceTokenButton.IsEnabled = interactive
             && CredentialStore.TryLoadHuggingFaceToken() is not null;

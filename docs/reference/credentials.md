@@ -8,15 +8,21 @@ application credentials, not official Broadcastify API credentials.
 
 **Credentials** is a one-click footer item in the native navigation.
 
-- Broadcastify username/password use
-  `BroadcastifyDesktop.Broadcastify` in Windows Credential Locker.
+- The primary Broadcastify username/password retain the legacy
+  `BroadcastifyDesktop.Broadcastify` Credential Locker resource so upgrades do
+  not lose the existing login.
+- Additional authorized accounts use isolated entries under
+  `BroadcastifyDesktop.BroadcastifyProfiles`. The UI stores only a non-secret
+  profile ID in schedules; username/password values never enter schedule JSON.
 - The Hugging Face token uses
   `BroadcastifyDesktop.HuggingFace`.
 - An explicitly remembered hosted-analysis key uses a separate resource.
 - Password and token fields are blank on reopen. Status shows only a short,
   non-reversible prefix.
 - The complete value is supplied only to a short-lived Python child
-  environment. Scheduled jobs use the same path.
+  environment. Each account receives a distinct cookie path and quota scope.
+  Scheduled and explicit missing-day catch-ups may rotate sequentially across
+  the locally authorized pool, reusing retained work between profiles.
 
 Credential Locker entries are scoped to the current Windows account. Uninstall
 does not silently delete them; **Forget** is the explicit removal action.
@@ -63,6 +69,21 @@ For Broadcastify and Hugging Face values:
 Secure values override environment values only in the child worker. They are
 not copied into `.env`, ordinary settings, schedules, analysis SQLite, logs, or
 job snapshots.
+
+For an authorized named profile such as `secondary`, an ignored
+`.env.accounts` may alternatively contain:
+
+```dotenv
+BROADCASTIFY_AUTHORIZED_ACCOUNT_POOL=1
+BROADCASTIFY_ACCOUNT_PROFILES=default,secondary
+BROADCASTIFY_ACCOUNT_SECONDARY_USERNAME=
+BROADCASTIFY_ACCOUNT_SECONDARY_PASSWORD=
+```
+
+The worker maps only the selected named pair to its short-lived standard
+variables. If either named value is missing it does not fall back to the
+primary account. `.env.accounts`, `.env`, Credential Locker contents, and
+session cookies must never be staged or packaged in a public release.
 
 ## Hugging Face links
 

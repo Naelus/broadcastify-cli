@@ -1413,15 +1413,27 @@
                                     <StackPanel Spacing="16" MaxWidth="900" HorizontalAlignment="Left" Padding="0,4,12,16">
                                         <Border Style="{StaticResource CardBorderStyle}">
                                             <StackPanel Spacing="12">
-                                                <TextBlock Text="Broadcastify account" Style="{StaticResource SubtitleTextBlockStyle}" />
+                                                <TextBlock Text="Broadcastify account profiles" Style="{StaticResource SubtitleTextBlockStyle}" />
                                                 <InfoBar x:Name="AuthInfoBar" IsOpen="True" IsClosable="False" Severity="Informational"
-                                                         Title="Premium archive access" Message="A saved session, Windows Credential Locker login, or private bundled .env can refresh access.">
+                                                         Title="Premium archive access" Message="Each profile keeps separate encrypted credentials, session cookies, and rolling request accounting.">
                                                     <InfoBar.ActionButton><Button Content="Sign in" Click="SignIn_Click" /></InfoBar.ActionButton>
                                                 </InfoBar>
+                                                <ComboBox x:Name="BroadcastifyAccountProfileBox"
+                                                          Header="Account profile"
+                                                          MinWidth="320"
+                                                          SelectionChanged="BroadcastifyAccountProfile_SelectionChanged" />
                                                 <TextBlock x:Name="SettingsAuthStatusText" Text="Checking saved login…" TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                <TextBlock Text="Automatic pooling is available only when local written-authorization mode is enabled. Pool jobs remain sequential, space requests, and keep the manual reserve on every account."
+                                                           TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                                 <StackPanel Orientation="Horizontal" Spacing="8">
-                                                    <Button Content="Sign in or replace saved login" Click="SignIn_Click" />
-                                                    <Button x:Name="ClearSavedLoginButton" Content="Forget saved login" Click="ClearSavedLogin_Click" />
+                                                    <Button Content="Add or replace account" Click="SignIn_Click" />
+                                                    <Button x:Name="ClearSavedLoginButton" Content="Forget selected account" Click="ClearSavedLogin_Click" />
+                                                </StackPanel>
+                                                <StackPanel Orientation="Horizontal" Spacing="4">
+                                                    <HyperlinkButton Content="Create another account"
+                                                                     NavigateUri="https://www.broadcastify.com/register/" />
+                                                    <HyperlinkButton Content="Manage premium subscription"
+                                                                     NavigateUri="https://www.radioreference.com/premium/plan/1" />
                                                 </StackPanel>
                                             </StackPanel>
                                         </Border>

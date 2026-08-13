@@ -116,3 +116,40 @@ def test_hugging_face_token_requires_expected_prefix(tmp_path: Path) -> None:
     )
     with pytest.raises(ValueError, match="start with hf_"):
         store.save_huggingface("not-a-token")
+
+
+def test_named_broadcastify_profiles_are_encrypted_and_selected_in_isolation(
+    tmp_path: Path,
+) -> None:
+    pytest.importorskip("cryptography")
+    path = tmp_path / "credentials.enc"
+    store = EncryptedCredentialStore(path, protector="aes-gcm-local-key")
+    store.save_broadcastify("primary-user", "primary-password")
+    store.save_broadcastify(
+        "secondary-user",
+        "secondary-password",
+        profile_id="secondary",
+        label="Secondary account",
+    )
+
+    raw = path.read_text(encoding="utf-8")
+    assert "primary-password" not in raw
+    assert "secondary-password" not in raw
+    assert store.worker_environment("secondary") == {
+        "BROADCASTIFY_SECURE_USERNAME": "secondary-user",
+        "BROADCASTIFY_SECURE_PASSWORD": "secondary-password",
+        "BROADCASTIFY_ACCOUNT_PROFILE": "secondary",
+    }
+    status = store.status()
+    assert [profile["id"] for profile in status["broadcastify_profiles"]] == [
+        "default",
+        "secondary",
+    ]
+
+    store.clear_broadcastify("secondary")
+    assert store.worker_environment("secondary") == {
+        "BROADCASTIFY_ACCOUNT_PROFILE": "secondary"
+    }
+    assert store.worker_environment()["BROADCASTIFY_SECURE_USERNAME"] == (
+        "primary-user"
+    )

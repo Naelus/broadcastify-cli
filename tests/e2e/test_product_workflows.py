@@ -69,11 +69,17 @@ def _run_worker(
     database: Path,
     *arguments: str,
     payload: dict[str, Any] | None = None,
+    account_profile_id: str = "default",
 ) -> list[dict[str, Any]]:
+    environment = _worker_environment(session_root, library_root, database)
+    environment["BROADCASTIFY_ACCOUNT_PROFILE"] = account_profile_id
+    environment["BROADCASTIFY_COOKIE_PATH"] = str(
+        session_root / "account-sessions" / f"{account_profile_id}.json"
+    )
     result = subprocess.run(
         [sys.executable, "-m", "broadcastify_cli.worker", *arguments],
         cwd=session_root,
-        env=_worker_environment(session_root, library_root, database),
+        env=environment,
         input=json.dumps(payload) if payload is not None else None,
         capture_output=True,
         text=True,
@@ -281,12 +287,14 @@ def test_saved_resume_recurring_restart_and_live_session_delete(
             "lookback_days": 2,
             "backfill_start_date": start_date.isoformat(),
             "recurring_catch_up": True,
+            "account_profile_id": "automatic",
             "enabled": True,
             "analyze": True,
             "job": {"combine": True, "transcribe": True, "diarize": True},
         },
     )[-1]["schedule"]
     assert schedule["recurring_catch_up"] is True
+    assert schedule["account_profile_id"] == "automatic"
     assert schedule["job"]["download_jobs"] == 1
     assert schedule["job"]["keep_originals"] is True
 
@@ -299,7 +307,27 @@ def test_saved_resume_recurring_restart_and_live_session_delete(
     assert claimed is not None
     assert claimed["job"]["start_date"] == start_date.isoformat()
     assert claimed["job"]["end_date"] == today.isoformat()
+    assert claimed["account_profile_id"] == "automatic"
     assert Path(claimed["job"]["output_dir"]) == library_root.resolve()
+
+    primary_quota = _run_worker(
+        tmp_path,
+        library_root,
+        database,
+        "quota-status",
+        account_profile_id="default",
+    )[-1]["status"]
+    secondary_quota = _run_worker(
+        tmp_path,
+        library_root,
+        database,
+        "quota-status",
+        account_profile_id="secondary",
+    )[-1]["status"]
+    assert primary_quota["account_profile_id"] == "default"
+    assert secondary_quota["account_profile_id"] == "secondary"
+    assert primary_quota["instance_id"] != secondary_quota["instance_id"]
+    assert primary_quota["automated_limit"] == secondary_quota["automated_limit"] == 240
 
     recovered = _run_worker(
         tmp_path,

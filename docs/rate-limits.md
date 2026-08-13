@@ -1,6 +1,6 @@
 # Broadcastify archive request limits
 
-Last reviewed: August 1, 2026.
+Last reviewed: August 13, 2026.
 
 ## Authorization comes first
 
@@ -24,13 +24,42 @@ account details, or identifying deployment information. It is an operational
 boundary, not a guarantee that every request will succeed or that the service
 will never change its policy.
 
-## Application policy: 240 plus a reserve of 10
+## Authorized account capacity
 
-Every installed app or service creates a durable random `instance_id` in its
-own SQLite request ledger. Before each `/archives/download/...` attempt it
-atomically reserves one of **240 automated requests** in the previous 24 hours.
-The remaining **10 of 250** are intentionally unavailable to automation so a
-person can still play or download a small number of archives manually.
+The provider has supplied written, deployment-specific authorization for this
+development/testing installation to create and operate multiple accounts. Each
+account retains its standard allowance, so the effective aggregate allowance
+is **N × the standard account limit** for N authorized accounts. The same
+authorization requires limited concurrency, spaced requests, and avoidance of
+unnecessary load; it does not waive any other term or apply automatically to
+other users or deployments.
+
+Accordingly, multi-account pooling is off unless the private local setting
+`BROADCASTIFY_AUTHORIZED_ACCOUNT_POOL=1` is present. Account IDs may be listed
+in `BROADCASTIFY_ACCOUNT_PROFILES` and contain no secrets. This repository does
+not retain the private correspondence, personal details, or credentials that
+establish authorization. Anyone without equivalent written permission must
+leave pooling off and use one account.
+
+## Application policy: 240 plus a reserve of 10 per account
+
+Every account profile creates a durable random `instance_id` in the app's
+SQLite request ledger. Before each `/archives/download/...` attempt it
+atomically reserves one of that profile's **240 automated requests** in the
+previous 24 hours. The remaining **10 of 250 on that account** are intentionally
+unavailable to automation so a person can still play or download a small
+number of archives manually. With N authorized profiles the UI therefore shows
+N × 240 automated capacity and N × 10 total reserve, while every underlying
+decision remains account-specific.
+
+Credentials, premium cookies, 429 blocks, request attempts, and next-safe times
+are isolated by the same non-secret account profile ID. The runner never uses a
+default account cookie for a named profile. An automatic catch-up checks local
+cache/LAN state first, selects an eligible profile, and continues retained
+missing work on the next eligible profile only after the current one becomes
+unavailable. It never runs two archive downloads concurrently: `download_jobs`
+remains forced to one and the normal inter-request spacing still applies across
+the whole coding session.
 
 The ledger counts attempts, not just successful files:
 
@@ -67,16 +96,18 @@ can selected source/network days enter the normal sequential guarded runner;
 the user can instead select local processing only and spend zero archive
 requests.
 
-The desktop and browser UIs show used, remaining, reserve, next-safe time, and a
-short form of the installation identity. The Windows package keeps its ledger
+The desktop UI shows used, remaining, reserve, next-safe time, and a short form
+of each account identity; authorized-pool mode also shows aggregate capacity.
+The Windows package keeps its ledger
 under the app's local data directory. Web/CLI deployments default to
 `.broadcastify-archive-quota.sqlite3` in their working directory and may set
 `BROADCASTIFY_QUOTA_LEDGER` to another durable installation-local path.
 
 ## What an installation cannot know
 
-This is deliberately a per-installation safety account, not a claim to create a
-new provider allowance. It cannot see:
+Each scope is deliberately a local safety account for one provider account. A
+new scope does not create capacity by itself; only a separately authorized and
+configured account does. The app cannot see:
 
 - archive plays or downloads made manually in a browser;
 - requests made before this ledger was created or while its storage was lost;
@@ -85,12 +116,12 @@ new provider allowance. It cannot see:
 - server-side policy, IP-level controls, or requests counted differently by the
   provider.
 
-Do not run two installations concurrently against one provider allowance. If a
-user switches between a desktop and NAS, finish or stop one before using the
-other and remember that the provider's rolling window carries over even though
-the installations' local ledgers do not. The 10-request reserve is protection
-for modest unseen manual activity, not enough to reconcile multiple active
-clients.
+Do not run two installations concurrently against the same account profile. If
+a user switches between a desktop and NAS, finish or stop one before using the
+other and remember that each account's provider window carries over even though
+the installations' local ledgers do not. The 10-request reserve on each account
+is protection for modest unseen manual activity, not enough to reconcile
+multiple active clients.
 
 On first use after an upgrade, the new ledger starts with no knowledge of older
 requests. Start conservatively until the previous 24-hour provider window has
@@ -149,7 +180,7 @@ The one exact provider-ID mapping for each inventoried or completed block
 travels with it. Legacy peer blocks that claim several timeline identities are
 rejected so a damaged cache cannot spread across the LAN.
 
-LAN coordination does **not** merge request ledgers, credentials, or provider
-allowances. Each installed desktop or service retains its own 240-request
-ledger as requested. Use only one installation at a time when they rely on the
-same provider account. See [Trusted-LAN archive reuse](lan-archive-sync.md).
+LAN coordination does **not** merge request ledgers, credentials, account
+profiles, or provider allowances. Use only one installation at a time when they
+rely on the same provider account. See [Trusted-LAN archive
+reuse](lan-archive-sync.md).

@@ -1,10 +1,22 @@
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using Windows.Security.Credentials;
 
 namespace BroadcastifyCli.WinUI;
 
 internal sealed record SavedLogin(string Username, string Password);
+
+internal sealed record SavedLoginProfile(
+    string Id,
+    string Label,
+    string Username,
+    string Password);
+
+internal sealed record BroadcastifyProfilePayload(
+    string Label,
+    string Username,
+    string Password);
 
 internal sealed record SavedSecret(string Secret);
 
@@ -12,6 +24,8 @@ internal static class CredentialStore
 {
     private static string Resource =>
         ScopedResource("BroadcastifyDesktop.Broadcastify");
+    private static string ProfileResource =>
+        ScopedResource("BroadcastifyDesktop.BroadcastifyProfiles");
     private static string AnalysisResource =>
         ScopedResource("BroadcastifyDesktop.AnalysisProvider");
     private static string HuggingFaceResource =>
@@ -73,6 +87,160 @@ internal static class CredentialStore
         {
             // FindAllByResource throws when no matching credentials exist.
         }
+    }
+
+    public static IReadOnlyList<SavedLoginProfile> ListBroadcastifyProfiles()
+    {
+        var profiles = new List<SavedLoginProfile>();
+        var primary = TryLoad();
+        if (primary is not null)
+        {
+            profiles.Add(new SavedLoginProfile(
+                "default",
+                "Primary account",
+                primary.Username,
+                primary.Password));
+        }
+        var vault = new PasswordVault();
+        IReadOnlyList<PasswordCredential> credentials;
+        try
+        {
+            credentials = vault.FindAllByResource(ProfileResource);
+        }
+        catch
+        {
+            return profiles;
+        }
+        foreach (var credential in credentials)
+        {
+            try
+            {
+                credential.RetrievePassword();
+                var payload = JsonSerializer.Deserialize<BroadcastifyProfilePayload>(
+                    credential.Password);
+                var profileId = NormalizeProfileId(credential.UserName);
+                if (profileId == "default"
+                    || payload is null
+                    || string.IsNullOrWhiteSpace(payload.Username)
+                    || string.IsNullOrEmpty(payload.Password))
+                {
+                    continue;
+                }
+                profiles.Add(new SavedLoginProfile(
+                    profileId,
+                    string.IsNullOrWhiteSpace(payload.Label)
+                        ? profileId
+                        : payload.Label.Trim(),
+                    payload.Username.Trim(),
+                    payload.Password));
+            }
+            catch
+            {
+                // Ignore one malformed legacy entry without hiding valid profiles.
+            }
+        }
+        return profiles
+            .OrderBy(value => value.Id == "default" ? 0 : 1)
+            .ThenBy(value => value.Label, StringComparer.CurrentCultureIgnoreCase)
+            .ToList();
+    }
+
+    public static SavedLoginProfile? TryLoadBroadcastifyProfile(string profileId)
+    {
+        var normalized = NormalizeProfileId(profileId);
+        return ListBroadcastifyProfiles()
+            .FirstOrDefault(value => value.Id == normalized);
+    }
+
+    public static void SaveBroadcastifyProfile(
+        string profileId,
+        string label,
+        string username,
+        string password)
+    {
+        var normalized = NormalizeProfileId(profileId);
+        if (normalized == "default")
+        {
+            Save(username, password);
+            return;
+        }
+        ClearBroadcastifyProfile(normalized);
+        var payload = JsonSerializer.Serialize(new BroadcastifyProfilePayload(
+            string.IsNullOrWhiteSpace(label) ? normalized : label.Trim(),
+            username.Trim(),
+            password));
+        new PasswordVault().Add(new PasswordCredential(
+            ProfileResource,
+            normalized,
+            payload));
+    }
+
+    public static void ClearBroadcastifyProfile(string profileId)
+    {
+        var normalized = NormalizeProfileId(profileId);
+        if (normalized == "default")
+        {
+            Clear();
+            return;
+        }
+        var vault = new PasswordVault();
+        try
+        {
+            foreach (var credential in vault.FindAllByResource(ProfileResource))
+            {
+                if (credential.UserName.Equals(
+                        normalized,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    vault.Remove(credential);
+                }
+            }
+        }
+        catch
+        {
+            // FindAllByResource throws when no matching credentials exist.
+        }
+    }
+
+    public static string NormalizeProfileId(string? profileId)
+    {
+        var normalized = string.IsNullOrWhiteSpace(profileId)
+            ? "default"
+            : profileId.Trim().ToLowerInvariant();
+        if (normalized.Length > 64
+            || !char.IsLetterOrDigit(normalized[0])
+            || normalized.Any(value =>
+                !char.IsLetterOrDigit(value) && value is not '_' and not '-'))
+        {
+            throw new ArgumentException(
+                "Account profile IDs may contain letters, numbers, underscores, and hyphens.",
+                nameof(profileId));
+        }
+        return normalized;
+    }
+
+    public static string CreateProfileId(string label)
+    {
+        var builder = new StringBuilder();
+        foreach (var value in (label ?? "").Trim().ToLowerInvariant())
+        {
+            if (char.IsLetterOrDigit(value))
+            {
+                builder.Append(value);
+            }
+            else if (builder.Length > 0 && builder[^1] != '-')
+            {
+                builder.Append('-');
+            }
+            if (builder.Length >= 48)
+            {
+                break;
+            }
+        }
+        var candidate = builder.ToString().Trim('-');
+        return NormalizeProfileId(string.IsNullOrWhiteSpace(candidate)
+            ? "account"
+            : candidate);
     }
 
     public static SavedSecret? TryLoadAnalysisKey()

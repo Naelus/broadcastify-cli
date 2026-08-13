@@ -386,20 +386,23 @@ internal sealed class WorkerClient
         string username,
         string password,
         Action<JsonElement> onMessage,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string accountProfileId = "default")
     {
         var json = JsonSerializer.Serialize(new { username, password });
         return RunWorkerAsync(
             ["-m", "broadcastify_cli.worker", "authenticate"],
             json,
             onMessage,
-            cancellationToken);
+            cancellationToken,
+            AccountProfileEnvironment(accountProfileId));
     }
 
     public async Task<JobRunResult?> RunJobAsync(
         JobRequest request,
         Action<JsonElement> onMessage,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string accountProfileId = "default")
     {
         JobRunResult? result = null;
         var json = JsonSerializer.Serialize(request, JsonOptions);
@@ -416,7 +419,8 @@ internal sealed class WorkerClient
                 }
                 onMessage(message);
             },
-            cancellationToken);
+            cancellationToken,
+            AccountProfileEnvironment(accountProfileId));
         return result;
     }
 
@@ -950,7 +954,8 @@ internal sealed class WorkerClient
     }
 
     public async Task<ArchiveQuotaStatus?> GetArchiveQuotaStatusAsync(
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string accountProfileId = "default")
     {
         ArchiveQuotaStatus? status = null;
         await RunWorkerAsync(
@@ -965,9 +970,48 @@ internal sealed class WorkerClient
                     status = value.Deserialize<ArchiveQuotaStatus>(JsonOptions);
                 }
             },
-            cancellationToken);
+            cancellationToken,
+            AccountProfileEnvironment(accountProfileId));
         return status;
     }
+
+    public IReadOnlyList<string> AvailableAccountProfileIds()
+    {
+        var ids = CredentialStore.ListBroadcastifyProfiles()
+            .Select(value => value.Id)
+            .ToList();
+        var configuredProfiles = ReadPrivateSetting(
+            "BROADCASTIFY_ACCOUNT_PROFILES");
+        if (!string.IsNullOrWhiteSpace(configuredProfiles))
+        {
+            foreach (var value in configuredProfiles.Split(
+                         new[] { ',', ';', ' ', '\t', '\r', '\n' },
+                         StringSplitOptions.RemoveEmptyEntries
+                             | StringSplitOptions.TrimEntries))
+            {
+                var profileId = CredentialStore.NormalizeProfileId(value);
+                if (PrivateAccountProfileConfigured(profileId)
+                    || File.Exists(AccountCookiePath(profileId)))
+                {
+                    ids.Add(profileId);
+                }
+            }
+        }
+        if (!ids.Contains("default", StringComparer.OrdinalIgnoreCase))
+        {
+            ids.Insert(0, "default");
+        }
+        return ids.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    public bool AuthorizedAccountPoolEnabled =>
+        ReadPrivateBooleanSetting("BROADCASTIFY_AUTHORIZED_ACCOUNT_POOL");
+
+    public bool HasConfiguredAccountCredentials =>
+        CredentialStore.ListBroadcastifyProfiles().Count > 0
+        || AvailableAccountProfileIds().Any(profileId =>
+            PrivateAccountProfileConfigured(profileId)
+            || File.Exists(AccountCookiePath(profileId)));
 
     public async Task<IReadOnlyList<FeedSchedule>> ListFeedSchedulesAsync(
         CancellationToken cancellationToken)
@@ -1418,13 +1462,26 @@ internal sealed class WorkerClient
         {
             startInfo.Environment["BROADCASTIFY_ENV_FILE"] = BundledEnvironmentPath;
         }
-        var savedLogin = CredentialStore.TryLoad();
-        if (savedLogin is not null)
+        var requestedProfileId = "default";
+        if (environment is not null
+            && environment.TryGetValue(
+                "BROADCASTIFY_ACCOUNT_PROFILE",
+                out var configuredProfileId)
+            && !string.IsNullOrWhiteSpace(configuredProfileId))
+        {
+            requestedProfileId = CredentialStore.NormalizeProfileId(
+                configuredProfileId);
+        }
+        var savedProfile = CredentialStore.TryLoadBroadcastifyProfile(
+            requestedProfileId);
+        startInfo.Environment.Remove("BROADCASTIFY_SECURE_USERNAME");
+        startInfo.Environment.Remove("BROADCASTIFY_SECURE_PASSWORD");
+        if (savedProfile is not null)
         {
             startInfo.Environment["BROADCASTIFY_SECURE_USERNAME"] =
-                savedLogin.Username;
+                savedProfile.Username;
             startInfo.Environment["BROADCASTIFY_SECURE_PASSWORD"] =
-                savedLogin.Password;
+                savedProfile.Password;
         }
         var savedHuggingFaceToken = CredentialStore.TryLoadHuggingFaceToken();
         if (savedHuggingFaceToken is not null)
@@ -1453,6 +1510,124 @@ internal sealed class WorkerClient
             }
         }
         return startInfo;
+    }
+
+    private static IReadOnlyDictionary<string, string> AccountProfileEnvironment(
+        string accountProfileId)
+    {
+        var profileId = CredentialStore.NormalizeProfileId(accountProfileId);
+        return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["BROADCASTIFY_ACCOUNT_PROFILE"] = profileId,
+            ["BROADCASTIFY_COOKIE_PATH"] = AccountCookiePath(profileId),
+            ["BROADCASTIFY_GLOBAL_REQUEST_SPACING_SECONDS"] = "5",
+        };
+    }
+
+    private static string AccountCookiePath(string profileId)
+    {
+        return profileId == "default"
+            ? Path.Combine(AppSettingsStore.LocalDataDirectory, "cookies.json")
+            : Path.Combine(
+                AppSettingsStore.LocalDataDirectory,
+                "account-sessions",
+                $"{profileId}.json");
+    }
+
+    private bool PrivateAccountProfileConfigured(string profileId)
+    {
+        if (profileId == "default")
+        {
+            var username = ReadPrivateSetting("BROADCASTIFY_USERNAME")
+                ?? ReadPrivateSetting("USERNAME");
+            var password = ReadPrivateSetting("BROADCASTIFY_PASSWORD")
+                ?? ReadPrivateSetting("PASSWORD");
+            return !string.IsNullOrWhiteSpace(username)
+                && !string.IsNullOrWhiteSpace(password);
+        }
+        var suffix = new string(profileId
+            .ToUpperInvariant()
+            .Select(value => char.IsLetterOrDigit(value) ? value : '_')
+            .ToArray());
+        return !string.IsNullOrWhiteSpace(ReadPrivateSetting(
+                $"BROADCASTIFY_ACCOUNT_{suffix}_USERNAME"))
+            && !string.IsNullOrWhiteSpace(ReadPrivateSetting(
+                $"BROADCASTIFY_ACCOUNT_{suffix}_PASSWORD"));
+    }
+
+    private bool ReadPrivateBooleanSetting(string name)
+    {
+        return TryBoolean(ReadPrivateSetting(name), out var enabled) && enabled;
+    }
+
+    private string? ReadPrivateSetting(string name)
+    {
+        var inherited = Environment.GetEnvironmentVariable(name);
+        if (!string.IsNullOrWhiteSpace(inherited))
+        {
+            return inherited.Trim();
+        }
+        foreach (var path in new[]
+        {
+            Path.Combine(RepositoryRoot, ".env"),
+            Path.Combine(RepositoryRoot, ".env.accounts"),
+            Path.Combine(WorkingDirectory, ".env.accounts"),
+            BundledEnvironmentPath,
+        }.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            if (!File.Exists(path))
+            {
+                continue;
+            }
+            try
+            {
+                foreach (var line in File.ReadLines(path))
+                {
+                    var trimmed = line.Trim();
+                    if (trimmed.StartsWith('#') || !trimmed.Contains('='))
+                    {
+                        continue;
+                    }
+                    var separator = trimmed.IndexOf('=');
+                    if (!trimmed[..separator].Trim().Equals(
+                            name,
+                            StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+                    var value = trimmed[(separator + 1)..].Trim().Trim('"', '\'');
+                    return value;
+                }
+            }
+            catch (IOException)
+            {
+                // A worker can still use its default single account if a
+                // private environment file is momentarily unavailable.
+            }
+        }
+        return null;
+    }
+
+    private static bool TryBoolean(string? value, out bool result)
+    {
+        switch (value?.Trim().ToLowerInvariant())
+        {
+            case "1":
+            case "true":
+            case "yes":
+            case "on":
+                result = true;
+                return true;
+            case "0":
+            case "false":
+            case "no":
+            case "off":
+                result = false;
+                return true;
+            default:
+                result = false;
+                return false;
+        }
     }
 
     private static string FindRepositoryRoot()

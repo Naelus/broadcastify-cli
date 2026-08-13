@@ -221,7 +221,8 @@ def test_native_library_exposes_guarded_feed_delete_and_resume_all() -> None:
     assert "A chosen feed first" in native
     assert "value.NeedsLocalProcessing" in native
     assert "finishing its retained local stages now" in native
-    assert "if (quota is null || !quota.Available)" in native
+    assert "ContinueLibraryDayAcrossAccountsAsync" in native
+    assert "AvailableAccountProfileIds" in native
     assert "result?.DownloadLimited == true" in native
     assert "DownloadJobs = 1" in native
     assert "ShowLibraryCatchUpRangeAsync" in native
@@ -231,6 +232,11 @@ def test_native_library_exposes_guarded_feed_delete_and_resume_all() -> None:
     assert "endPicker" not in native
     assert "SaveLibraryCatchUpAsync" in native
     assert "FinalizeLibraryCatchUpsAsync" in native
+    assert "CatchUpFeedButton.IsEnabled = ready" in native
+    catchup_enablement = native.split(
+        "CatchUpFeedButton.IsEnabled = ready", 1
+    )[1].split(";", 1)[0]
+    assert "pipelineIdle" not in catchup_enablement
     assert 'LibraryActionInfoBar.Title = "Feed deleted"' in native
     assert 'Removed feed {result.FeedId} from the selected Library.' in native
     assert 'DaysDeleted:N0} local day(s)' not in native
@@ -654,6 +660,9 @@ def test_native_credentials_are_one_click_and_never_prefill_saved_secrets() -> N
     }
 
     assert names["CredentialsNavigationItem"].attrib["Tag"] == "credentials"
+    assert names["BroadcastifyAccountProfileBox"].attrib[
+        "SelectionChanged"
+    ] == "BroadcastifyAccountProfile_SelectionChanged"
     assert names["HuggingFaceTokenBox"].attrib["PasswordRevealMode"] == "Peek"
     assert (
         names["SaveHuggingFaceTokenButton"].attrib["Click"]
@@ -672,10 +681,17 @@ def test_native_credentials_are_one_click_and_never_prefill_saved_secrets() -> N
     assert "Password = saved?.Password" not in native
     assert "leave blank to reuse" in native
     assert 'startInfo.Environment["BROADCASTIFY_SECURE_PASSWORD"]' in worker
+    assert '"BROADCASTIFY_AUTHORIZED_ACCOUNT_POOL"' in worker
+    assert '"BROADCASTIFY_ACCOUNT_PROFILE"' in worker
+    assert '"BROADCASTIFY_COOKIE_PATH"' in worker
+    assert '"BROADCASTIFY_GLOBAL_REQUEST_SPACING_SECONDS"' in worker
+    assert '"account-sessions"' in worker
     assert 'startInfo.Environment["HUGGINGFACE_SECURE_TOKEN"]' in worker
     assert "ScopedResource" in credential_store
     assert "AppSettingsStore.TestDataRootEnvironment" in credential_store
     assert 'return $"{resource}.Test.{digest[..16]}"' in credential_store
+    assert "BroadcastifyDesktop.BroadcastifyProfiles" in credential_store
+    assert "SavedLoginProfile" in credential_store
 
 
 def test_windows_startup_is_visible_configurable_and_recovery_aware() -> None:
@@ -720,6 +736,9 @@ def test_windows_startup_is_visible_configurable_and_recovery_aware() -> None:
     assert "RecurringCatchUp = recurringCatchUpBox.IsChecked" in window
     assert "suggestRecurringCatchUp: true" in window
     assert "result?.MissingDays.Count" in window
+    assert "AccountProfileId" in window
+    assert "RunScheduledJobAcrossAccountsAsync" in window
+    assert "Automatic authorized pool" in window
     assert 'Status = waitingForQuota' in window
     assert "Task<int> RecoverFeedSchedulesAsync" in worker
     assert window.index("await ApplyLaunchBehaviorAsync();") < window.index(

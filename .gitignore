@@ -153,6 +153,7 @@ celerybeat.pid
 
 # Environments
 .env
+.env.accounts
 .broadcastify-archive-quota.sqlite3
 .broadcastify-archive-quota.sqlite3-*
 archive-quota.sqlite3

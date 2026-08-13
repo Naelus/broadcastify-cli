@@ -21,8 +21,8 @@ a browser UI for Windows, Linux, macOS, and TrueNAS, plus command-line tools.
 - Searches feeds by agency, place, or ZIP and builds explicit radius-based area
   profiles.
 - Downloads archive blocks conservatively with cache reuse, sequential pacing,
-  resumable jobs, a durable 240-of-250 rolling-window guard, and optional
-  trusted-LAN sharing.
+  resumable jobs, a durable 240-of-250 rolling-window guard per account, an
+  authorization-gated sequential account pool, and optional trusted-LAN sharing.
 - Saves daily schedules for explicitly selected feeds; each run revisits a
   short recent window, can clear an older catch-up boundary after completion
   or keep it as a recurring full-range gap check, and continues at rolling
@@ -91,7 +91,9 @@ In the app:
 
 1. Open **Credentials** to enter the Broadcastify website login and optional
    Hugging Face read token. Windows encrypts them for the current account and
-   shows only a short prefix afterward.
+   shows only a short prefix afterward. A deployment with written provider
+   authorization can add named premium accounts; their credentials, cookies,
+   and rolling ledgers remain isolated.
 2. Open **Settings → Setup**, review **Start with Windows**, and configure
    storage, processing, and analysis. For the NVIDIA profile, explicitly choose
    **Install runtime** in the **Packaged CUDA runtime** card; allow about 5.9 GB.
@@ -99,9 +101,9 @@ In the app:
 3. Use **Verify profile** to execute all three model stages on generated local
    input without consuming archive quota.
 4. Open **New archive**, search for a feed, and select an inclusive date range.
-5. Optionally choose **Schedule this feed** to save a daily time and recent-day
-   lookback for that specific result. A historical boundary can run once or
-   remain active as a recurring catch-up through current.
+5. Optionally choose **Schedule this feed** to save a daily time, recent-day
+   lookback, and account policy for that specific result. A historical boundary
+   can run once or remain active as a recurring catch-up through current.
 6. Leave combination enabled when transcribing or adding speaker labels.
 7. Review completed or interrupted days in **Local library**. Expand feed
    coverage to see scheduled gaps and last-known provider blocks, or use

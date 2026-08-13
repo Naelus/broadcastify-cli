@@ -9,6 +9,8 @@ from datetime import date, datetime, time as datetime_time, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable, Iterator, Sequence
 
+from .quota import normalize_account_profile_id
+
 
 SCHEMA_VERSION = 1
 
@@ -239,6 +241,7 @@ class AnalysisStore:
                 lookback_days INTEGER NOT NULL DEFAULT 2,
                 backfill_start_date TEXT NOT NULL DEFAULT '',
                 recurring_catch_up INTEGER NOT NULL DEFAULT 0,
+                account_profile_id TEXT NOT NULL DEFAULT 'automatic',
                 job_json TEXT NOT NULL,
                 analyze INTEGER NOT NULL DEFAULT 1,
                 enabled INTEGER NOT NULL DEFAULT 1,
@@ -370,6 +373,11 @@ class AnalysisStore:
                 "ALTER TABLE feed_schedules ADD COLUMN "
                 "recurring_catch_up INTEGER NOT NULL DEFAULT 0"
             )
+        if "account_profile_id" not in feed_schedule_columns:
+            self.connection.execute(
+                "ALTER TABLE feed_schedules ADD COLUMN "
+                "account_profile_id TEXT NOT NULL DEFAULT 'automatic'"
+            )
         library_catchup_columns = {
             str(row["name"])
             for row in self.connection.execute(
@@ -461,6 +469,7 @@ class AnalysisStore:
             "lookback_days": int(row["lookback_days"]),
             "backfill_start_date": str(row["backfill_start_date"] or ""),
             "recurring_catch_up": bool(row["recurring_catch_up"]),
+            "account_profile_id": str(row["account_profile_id"] or "automatic"),
             "job": json.loads(str(row["job_json"])),
             "analyze": bool(row["analyze"]),
             "enabled": bool(row["enabled"]),
@@ -493,6 +502,11 @@ class AnalysisStore:
         recurring_catch_up = bool(payload.get("recurring_catch_up", False))
         if recurring_catch_up and not backfill_start_date:
             raise ValueError("A recurring catch-up requires a catch-up start date.")
+        account_profile_id = str(
+            payload.get("account_profile_id") or "automatic"
+        ).strip().lower()
+        if account_profile_id != "automatic":
+            account_profile_id = normalize_account_profile_id(account_profile_id)
         job = dict(payload.get("job") or {})
         for key in (
             "feed_id",
@@ -512,15 +526,16 @@ class AnalysisStore:
                 INSERT INTO feed_schedules(
                     feed_id, feed_name, run_time_local, lookback_days,
                     backfill_start_date, recurring_catch_up,
-                    job_json, analyze, enabled, state, message,
+                    account_profile_id, job_json, analyze, enabled, state, message,
                     created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'scheduled', '', ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'scheduled', '', ?, ?)
                 ON CONFLICT(feed_id) DO UPDATE SET
                     feed_name=excluded.feed_name,
                     run_time_local=excluded.run_time_local,
                     lookback_days=excluded.lookback_days,
                     backfill_start_date=excluded.backfill_start_date,
                     recurring_catch_up=excluded.recurring_catch_up,
+                    account_profile_id=excluded.account_profile_id,
                     job_json=excluded.job_json,
                     analyze=excluded.analyze,
                     enabled=excluded.enabled,
@@ -539,6 +554,7 @@ class AnalysisStore:
                     lookback_days,
                     backfill_start_date,
                     int(recurring_catch_up),
+                    account_profile_id,
                     json.dumps(job, sort_keys=True),
                     int(bool(payload.get("analyze", True))),
                     int(bool(payload.get("enabled", True))),

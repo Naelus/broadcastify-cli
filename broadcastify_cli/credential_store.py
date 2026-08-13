@@ -11,6 +11,8 @@ from ctypes import wintypes
 from pathlib import Path
 from typing import Any, Mapping
 
+from .quota import DEFAULT_ACCOUNT_PROFILE_ID, normalize_account_profile_id
+
 
 _FORMAT_VERSION = 1
 _ASSOCIATED_DATA = b"broadcastify-cli-credentials-v1"
@@ -163,6 +165,15 @@ class EncryptedCredentialStore:
         values = self._load()
         environment = environment or {}
         broadcastify = dict(values.get("broadcastify") or {})
+        profiles = {
+            str(profile_id): dict(profile)
+            for profile_id, profile in dict(
+                values.get("broadcastify_profiles") or {}
+            ).items()
+            if isinstance(profile, dict)
+        }
+        if broadcastify:
+            profiles[DEFAULT_ACCOUNT_PROFILE_ID] = broadcastify
         huggingface = dict(values.get("huggingface") or {})
         username = str(broadcastify.get("username") or "")
         password = str(broadcastify.get("password") or "")
@@ -186,6 +197,23 @@ class EncryptedCredentialStore:
             or environment.get("HF_TOKEN")
             or ""
         )
+        profile_status: list[dict[str, Any]] = []
+        for profile_id, profile in sorted(profiles.items()):
+            profile_username = str(profile.get("username") or "")
+            profile_password = str(profile.get("password") or "")
+            if not profile_username or not profile_password:
+                continue
+            profile_status.append(
+                {
+                    "id": profile_id,
+                    "label": str(profile.get("label") or profile_id),
+                    "username": profile_username,
+                    "password_preview": masked_secret(
+                        profile_password, prefix_length=2
+                    ),
+                    "source": "encrypted-store",
+                }
+            )
         return {
             "storage": self.protector,
             "broadcastify": {
@@ -216,11 +244,22 @@ class EncryptedCredentialStore:
                 ),
                 "source": "encrypted-store" if token else "environment" if environment_token else "",
             },
+            "broadcastify_profiles": profile_status,
         }
 
-    def worker_environment(self) -> dict[str, str]:
+    def worker_environment(
+        self,
+        account_profile_id: str = DEFAULT_ACCOUNT_PROFILE_ID,
+    ) -> dict[str, str]:
         values = self._load()
-        broadcastify = dict(values.get("broadcastify") or {})
+        profile_id = normalize_account_profile_id(account_profile_id)
+        if profile_id == DEFAULT_ACCOUNT_PROFILE_ID:
+            broadcastify = dict(values.get("broadcastify") or {})
+        else:
+            broadcastify = dict(
+                dict(values.get("broadcastify_profiles") or {}).get(profile_id)
+                or {}
+            )
         huggingface = dict(values.get("huggingface") or {})
         result: dict[str, str] = {}
         username = str(broadcastify.get("username") or "")
@@ -229,22 +268,40 @@ class EncryptedCredentialStore:
         if username and password:
             result["BROADCASTIFY_SECURE_USERNAME"] = username
             result["BROADCASTIFY_SECURE_PASSWORD"] = password
+        if profile_id != DEFAULT_ACCOUNT_PROFILE_ID:
+            result["BROADCASTIFY_ACCOUNT_PROFILE"] = profile_id
         if token:
             result["HUGGINGFACE_SECURE_TOKEN"] = token
         return result
 
-    def save_broadcastify(self, username: str, password: str) -> None:
+    def save_broadcastify(
+        self,
+        username: str,
+        password: str,
+        *,
+        profile_id: str = DEFAULT_ACCOUNT_PROFILE_ID,
+        label: str = "",
+    ) -> None:
         clean_username = str(username or "").strip()
         clean_password = str(password or "")
+        clean_profile_id = normalize_account_profile_id(profile_id)
+        clean_label = str(label or clean_profile_id).strip()[:80]
         if not clean_username or len(clean_username) > _MAX_USERNAME_LENGTH:
             raise ValueError("Enter a valid Broadcastify username.")
         self._validate_secret(clean_password, "Broadcastify password")
         with self._lock:
             values = self._load_unlocked()
-            values["broadcastify"] = {
+            profile = {
                 "username": clean_username,
                 "password": clean_password,
+                "label": clean_label,
             }
+            if clean_profile_id == DEFAULT_ACCOUNT_PROFILE_ID:
+                values["broadcastify"] = profile
+            else:
+                profiles = dict(values.get("broadcastify_profiles") or {})
+                profiles[clean_profile_id] = profile
+                values["broadcastify_profiles"] = profiles
             self._save_unlocked(values)
 
     def save_huggingface(self, token: str) -> None:
@@ -257,8 +314,26 @@ class EncryptedCredentialStore:
             values["huggingface"] = {"token": clean_token}
             self._save_unlocked(values)
 
-    def clear_broadcastify(self) -> None:
-        self._clear_kind("broadcastify")
+    def clear_broadcastify(
+        self,
+        profile_id: str = DEFAULT_ACCOUNT_PROFILE_ID,
+    ) -> None:
+        clean_profile_id = normalize_account_profile_id(profile_id)
+        if clean_profile_id == DEFAULT_ACCOUNT_PROFILE_ID:
+            self._clear_kind("broadcastify")
+            return
+        with self._lock:
+            values = self._load_unlocked()
+            profiles = dict(values.get("broadcastify_profiles") or {})
+            profiles.pop(clean_profile_id, None)
+            if profiles:
+                values["broadcastify_profiles"] = profiles
+            else:
+                values.pop("broadcastify_profiles", None)
+            if any(values.values()):
+                self._save_unlocked(values)
+                return
+            self.path.unlink(missing_ok=True)
 
     def clear_huggingface(self) -> None:
         self._clear_kind("huggingface")
@@ -276,7 +351,7 @@ class EncryptedCredentialStore:
         with self._lock:
             values = self._load_unlocked()
             values.pop(kind, None)
-            if any(values.get(name) for name in ("broadcastify", "huggingface")):
+            if any(values.values()):
                 self._save_unlocked(values)
                 return
             try:

@@ -190,3 +190,96 @@ def test_legacy_429_migration_does_not_shift_release_forward(
     status = ledger.status()
     assert status["available"] is True
     assert status["blocked"] is False
+
+
+def test_authorized_accounts_have_independent_limits_in_one_durable_ledger(
+    tmp_path: Path,
+) -> None:
+    now = [1_800_000_000.0]
+    path = tmp_path / "quota.sqlite3"
+    primary = ArchiveRequestLedger(
+        path,
+        limit=1,
+        provider_limit=2,
+        window_seconds=100,
+        clock=lambda: now[0],
+        account_profile_id="default",
+    )
+    secondary = ArchiveRequestLedger(
+        path,
+        limit=1,
+        provider_limit=2,
+        window_seconds=100,
+        clock=lambda: now[0],
+        account_profile_id="secondary",
+    )
+
+    primary.reserve(
+        feed_id="90001",
+        archive_date="2026-07-22",
+        archive_id="primary-request",
+    )
+
+    assert primary.status()["available"] is False
+    assert primary.status()["account_profile_id"] == "default"
+    assert secondary.status()["available"] is True
+    assert secondary.status()["account_profile_id"] == "secondary"
+    secondary.reserve(
+        feed_id="90001",
+        archive_date="2026-07-22",
+        archive_id="secondary-request",
+    )
+    assert secondary.status()["remaining"] == 0
+
+
+def test_rate_limit_block_is_confined_to_the_account_that_received_it(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "quota.sqlite3"
+    primary = ArchiveRequestLedger(path, account_profile_id="default")
+    secondary = ArchiveRequestLedger(path, account_profile_id="secondary")
+
+    primary.mark_rate_limited("primary account reached its provider boundary")
+
+    assert primary.status()["blocked"] is True
+    assert secondary.status()["blocked"] is False
+    assert secondary.status()["remaining"] == 240
+
+
+def test_account_rotation_obeys_one_cross_profile_spacing_gate(
+    tmp_path: Path,
+) -> None:
+    now = [1_800_000_000.0]
+    sleeps: list[float] = []
+
+    def advance(delay: float) -> None:
+        sleeps.append(delay)
+        now[0] += delay
+
+    path = tmp_path / "quota.sqlite3"
+    primary = ArchiveRequestLedger(
+        path,
+        clock=lambda: now[0],
+        account_profile_id="default",
+        request_spacing_seconds=5,
+        sleeper=advance,
+    )
+    secondary = ArchiveRequestLedger(
+        path,
+        clock=lambda: now[0],
+        account_profile_id="secondary",
+        request_spacing_seconds=5,
+        sleeper=advance,
+    )
+    primary.reserve(
+        feed_id="90001",
+        archive_date="2026-07-22",
+        archive_id="primary-request",
+    )
+    secondary.reserve(
+        feed_id="90001",
+        archive_date="2026-07-22",
+        archive_id="secondary-request",
+    )
+
+    assert sleeps == [5.0]

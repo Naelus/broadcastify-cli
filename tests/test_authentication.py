@@ -89,6 +89,17 @@ def _client(
     return client, session
 
 
+def test_account_profile_cookie_path_comes_from_isolated_worker_environment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    secondary_cookie = tmp_path / "account-sessions" / "secondary.json"
+    monkeypatch.setenv("BROADCASTIFY_COOKIE_PATH", str(secondary_cookie))
+
+    with BroadcastifyClient(username="secondary", password="secret") as client:
+        assert client.cookie_path == secondary_cookie
+
+
 def test_authentication_accepts_cookie_from_initial_redirect(
     tmp_path: Path,
 ) -> None:

@@ -166,7 +166,7 @@ def _readiness_environment(working_dir: Path) -> tuple[dict[str, str], str]:
 
     values = {key: str(value) for key, value in os.environ.items()}
     loaded_path = ""
-    candidates = [working_dir / ".env"]
+    candidates = [working_dir / ".env", working_dir / ".env.accounts"]
     configured = os.getenv("BROADCASTIFY_ENV_FILE")
     if configured:
         candidates.append(Path(configured).expanduser())
@@ -1456,12 +1456,15 @@ def create_server(
                 action = str(body.get("action") or "save").strip().lower()
                 try:
                     if kind == "broadcastify":
+                        profile_id = str(body.get("profile_id") or "default")
                         if action == "clear":
-                            state.credential_store.clear_broadcastify()
+                            state.credential_store.clear_broadcastify(profile_id)
                         elif action == "save":
                             state.credential_store.save_broadcastify(
                                 str(body.get("username") or ""),
                                 str(body.get("secret") or ""),
+                                profile_id=profile_id,
+                                label=str(body.get("label") or ""),
                             )
                         else:
                             raise ValueError("Unknown credential action.")

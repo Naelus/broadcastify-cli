@@ -69,9 +69,12 @@ visible without mistaking cache reuse for a new request.
 ## Quota behavior
 
 Operational account guidance describes a 250-request rolling 24-hour allowance
-that counts archive play and download requests. Each installation mints a stable
-local ledger identity and admits at most 240 automated archive requests in its
-own rolling 24-hour window, leaving 10 unspent for manual review.
+that counts archive play and download requests. Each configured account profile
+mints a stable local ledger identity and admits at most 240 automated archive
+requests in its own rolling 24-hour window, leaving 10 unspent for manual
+review. A locally authorization-gated development/testing deployment can use N
+approved accounts for N × standard capacity; other deployments remain on one
+profile.
 
 The ledger is reserved immediately before every archive-media request. Network
 and 5xx retries therefore consume another entry, just as they do upstream.
@@ -95,6 +98,7 @@ hardcoded locality. It stores:
 - one local wall-clock time;
 - a one-to-fourteen-day lookback, including the current day;
 - an optional fixed historical catch-up start date and one-time or recurring mode;
+- one non-secret account profile or the locally authorized automatic pool;
 - the selected combination, ASR, speaker, analysis, and LAN settings; and
 - enabled, last-run, retry, and recovery state.
 
@@ -125,8 +129,16 @@ local worker job runs at a time. Stored schedule JSON removes direct Hugging
 Face and analysis API-key values; those secrets must remain in the platform
 credential store, active session, or private environment.
 
+Automatic account mode is still one worker and one spaced archive request at a
+time. Credentials, cookies, request attempts, 429 blocks, and next-safe times
+are isolated per profile. When one account becomes unavailable, the same saved
+job is replayed with the next eligible profile; exact cache identities and
+completion snapshots prevent already retained blocks from being requested
+again. If every profile is closed, the schedule persists the earliest next-safe
+time and resumes there.
+
 On Windows, **Manage schedules** can edit the daily time, lookback, historical
-catch-up date, one-time/recurring mode, enabled state, local processing stages, and incident analysis
+catch-up date, one-time/recurring mode, account policy, enabled state, local processing stages, and incident analysis
 for an existing feed. The Web/TrueNAS schedule list exposes the same edit and
 enable/disable controls rather than requiring removal and recreation.
 Changing those basics preserves the schedule's saved model, accelerator,

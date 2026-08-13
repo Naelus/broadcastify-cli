@@ -47,7 +47,12 @@ requested flag or filename.
   boundary after a complete run and checks it through the then-current day at
   each scheduled time. Starting and resuming use the
   same sequential quota checks and checkpoints, so completed days and retained
-  stages are never repeated.
+  stages are never repeated. The entry remains available while another
+  background pipeline is active: the chosen resumable range is saved behind
+  that pipeline instead of disappearing or starting a concurrent download.
+  With locally recorded written authorization, source-needed days rotate across
+  eligible account profiles one at a time; each profile keeps independent
+  credentials, cookies, 240+10 ledger state, and 429 release time.
 - **Resume / prioritize…** builds a fresh read-only plan, synthesizes missing
   days from enabled feed schedules, and skips work already current. Before
   execution, the user chooses feeds, local-only work, whether to check/download
