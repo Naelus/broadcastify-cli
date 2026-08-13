@@ -7,7 +7,7 @@
   <meta name="color-scheme" content="light dark">
   <title>Radio Archive Intelligence</title>
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/static/app.css?v=21">
+  <link rel="stylesheet" href="/static/app.css?v=22">
 </head>
 <body>
   <div class="app-shell">
@@ -27,6 +27,7 @@
       </nav>
       <div class="sidebar-spacer"></div>
       <button class="nav-item" data-view="settings" data-settings-section-target="account"><span aria-hidden="true">⚿</span>Credentials &amp; settings</button>
+      <button class="nav-item" data-view="about"><span aria-hidden="true">ⓘ</span>About</button>
       <div class="local-only" id="accessScopeStatus"><span class="status-dot"></span>Checking access…</div>
     </aside>
     <button class="sidebar-scrim" id="sidebarScrim" type="button" aria-label="Close navigation"></button>
@@ -77,6 +78,17 @@
             <p>Search the website-backed feed catalog, then retain one carefully paced date range.</p>
           </div>
         </div>
+        <div class="card padded catch-up-card">
+          <div class="section-heading"><div><h2>Catch up an existing feed</h2><p>Evaluate every calendar day from the chosen start through today, reuse retained or LAN blocks first, and acquire only missing source audio.</p></div></div>
+          <div class="form-grid three">
+            <label><span>Existing feed</span><select id="catchUpFeedSelect"><option value="">Choose a retained or scheduled feed</option></select></label>
+            <label><span>Catch up from</span><input id="catchUpStartDate" type="date"></label>
+            <label><span>Authorized account</span><select id="archiveAccountProfile"><option value="automatic">Automatic — use every available account</option></select></label>
+          </div>
+          <label class="check-row"><input id="catchUpSaveForResume" type="checkbox" checked><span><strong>Keep this one-time catch-up resumable</strong><small>The saved start automatically extends through the current day and clears only after every date is complete.</small></span></label>
+          <div class="notice" id="catchUpStatus"><strong>Select an existing feed</strong><span>No website request is made while evaluating coverage.</span></div>
+          <div class="button-row"><button class="button primary" id="catchUpMissingDaysButton" type="button">Catch up missing days through today</button><button class="button secondary" id="clearCatchUpButton" type="button" disabled>Clear saved catch-up</button></div>
+        </div>
         <div class="two-column">
           <div class="card padded">
             <div class="section-heading"><div><h2>1. Find a feed</h2><p>Agency, city, county, state, ZIP, or feed ID.</p></div></div>
@@ -109,6 +121,7 @@
                     <label><span>Run at local time</span><input id="scheduleRunTime" type="time" value="02:00" step="300"></label>
                     <label><span>Revisit latest days</span><input id="scheduleLookbackDays" type="number" min="1" max="14" value="2"></label>
                     <label><span>Catch up from (optional)</span><input id="scheduleBackfillStartDate" type="date"></label>
+                    <label><span>Account use</span><select id="scheduleAccountProfile"><option value="automatic">Automatic pooled accounts</option></select></label>
                   </div>
                   <label class="check-row"><input id="scheduleRecurringCatchUp" type="checkbox"><span><strong>Recurring full-range catch-up</strong><small>Keep the catch-up start after a successful run and recheck missing days through current every day.</small></span></label>
                   <label class="check-row"><input id="scheduleEnabled" type="checkbox" checked><span><strong>Schedule enabled</strong><small>Disabled schedules remain saved but do not run.</small></span></label>
@@ -306,12 +319,21 @@
               <div class="card padded">
                 <div class="section-heading"><div><h2>Broadcastify website login</h2><p>Uses the premium website session, not the official API. The encrypted login can refresh expired sessions and scheduled jobs.</p></div></div>
                 <form id="loginForm" class="form-stack">
+                  <div class="form-grid two">
+                    <label><span>Account profile ID</span><input id="loginProfileId" value="default" maxlength="64" pattern="[A-Za-z0-9][A-Za-z0-9_-]{0,63}" autocomplete="off"></label>
+                    <label><span>Display label</span><input id="loginProfileLabel" value="Primary / default" maxlength="80" autocomplete="off"></label>
+                  </div>
                   <label><span>Username</span><input id="loginUsername" autocomplete="username"></label>
                   <label><span>Password</span><input id="loginPassword" type="password" autocomplete="current-password" placeholder="Leave blank to reuse the encrypted login"></label>
                   <label class="check-row"><input id="rememberBroadcastifyLogin" type="checkbox" checked><span><strong>Remember on this app server</strong><small>Windows uses current-user DPAPI. Linux and TrueNAS use AES-GCM with an owner-only local key.</small></span></label>
                   <div class="button-row"><button class="button primary" type="submit">Sign in</button><button class="button secondary" id="forgetBroadcastifyLoginButton" type="button">Forget saved login</button></div>
                 </form>
                 <div class="notice" id="loginNotice"><strong>Checking access</strong><span>Looking for an encrypted login, environment login, or saved website session.</span></div>
+                <div id="accountProfileList" class="result-list"><div class="empty-compact">No account profiles loaded yet.</div></div>
+                <div class="button-row">
+                  <a class="button secondary small" href="https://www.radioreference.com/account/register/" target="_blank" rel="noopener noreferrer">Create an account</a>
+                  <a class="button secondary small" href="https://www.radioreference.com/premium/" target="_blank" rel="noopener noreferrer">Premium subscription</a>
+                </div>
               </div>
               <div class="card padded">
                 <div class="section-heading"><div><h2>Hugging Face model access</h2><p>A read token is used only to download gated local models such as Community-1 speaker diarization.</p></div></div>
@@ -328,6 +350,20 @@
               </div>
             </div>
           </section>
+        </div>
+      </section>
+
+      <section class="view" id="view-about" aria-labelledby="aboutTitle">
+        <div class="page-heading">
+          <div><p class="eyebrow">Installed product</p><h1 id="aboutTitle">About</h1><p>Version, build identity, storage, and service scope for this installation.</p></div>
+        </div>
+        <div class="settings-grid settings-grid-focused">
+          <div class="card padded">
+            <div class="section-heading"><div><h2>Broadcastify Desktop</h2><p>The browser and Windows clients use the same acquisition, resume, analysis, scheduling, and quota rules.</p></div></div>
+            <div class="runtime-facts" id="aboutFacts"><div class="runtime-fact"><span>Version</span><strong id="aboutVersion">Loading…</strong></div><div class="runtime-fact"><span>Source commit</span><strong id="aboutSourceCommit">Loading…</strong></div><div class="runtime-fact"><span>Runtime</span><strong id="aboutRuntime">Loading…</strong></div><div class="runtime-fact"><span>Access scope</span><strong id="aboutAccessScope">Loading…</strong></div></div>
+            <div class="notice" id="aboutStorage"><strong>Storage paths</strong><span>Loading retained data locations…</span></div>
+            <div class="notice" id="aboutLan"><strong>Shared archive pool</strong><span>Loading LAN reuse and coordination status…</span></div>
+          </div>
         </div>
       </section>
     </main>
@@ -347,6 +383,6 @@
   </aside>
 
   <div class="toast-region" id="toastRegion" aria-live="polite"></div>
-  <script src="/static/app.js?v=35" defer></script>
+  <script src="/static/app.js?v=36" defer></script>
 </body>
 </html>

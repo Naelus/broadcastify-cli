@@ -137,6 +137,14 @@ completion snapshots prevent already retained blocks from being requested
 again. If every profile is closed, the schedule persists the earliest next-safe
 time and resumes there.
 
+The Windows and Web/TrueNAS account surfaces use the same profile IDs and
+automatic policy. The Web service may load named profiles from its encrypted
+AES-GCM credential store or its private, persistent environment file. It shows
+only profile labels, usernames, session availability, and per-profile quota
+status; passwords never enter bootstrap/status responses. A real sign-in writes
+one cookie file per profile, and aggregate capacity is reported as the sum of
+the independent 240-request automated budgets plus each ten-request reserve.
+
 On Windows, **Manage schedules** can edit the daily time, lookback, historical
 catch-up date, one-time/recurring mode, account policy, enabled state, local processing stages, and incident analysis
 for an existing feed. The Web/TrueNAS schedule list exposes the same edit and

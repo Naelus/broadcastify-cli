@@ -5,7 +5,7 @@ import http.client
 import json
 import socket
 import threading
-from datetime import date
+from datetime import date, timedelta
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -15,7 +15,9 @@ import pytest
 import broadcastify_cli.lan_sync as lan_sync
 from broadcastify_cli.archive_cache import (
     cached_archive_for_id,
+    complete_cached_archive_day,
     remember_archive_identity,
+    remember_complete_archive_day,
 )
 from broadcastify_cli.lan_sync import (
     LanArchiveCatalog,
@@ -31,6 +33,11 @@ from broadcastify_cli.lan_sync import (
 )
 from broadcastify_cli.models import JobRequest
 from broadcastify_cli.lan_node import create_lan_node_server, validate_lan_host
+from broadcastify_cli.quota import (
+    ArchiveQuotaCoordinatorUnavailable,
+    ArchiveRequestLedger,
+    RemoteArchiveRequestLedger,
+)
 from broadcastify_cli.web_app import create_server
 
 
@@ -48,6 +55,53 @@ def _raw_day(root: Path) -> tuple[Path, list[Path]]:
     return day, raw
 
 
+def _retained_transcribed_feed_day(
+    root: Path,
+    feed_id: str,
+    archive_date: date,
+    processing_fingerprint: str,
+) -> None:
+    day = root / feed_id / archive_date.strftime("%Y%m%d")
+    transcripts = day / "transcripts"
+    transcripts.mkdir(parents=True)
+    archive_id = f"{archive_date:%Y%m%d}0000"
+    raw = day / f"{archive_date:%Y%m%d}0000-{archive_id}-{feed_id}.mp3"
+    raw.write_bytes(f"raw {feed_id} {archive_date.isoformat()}".encode())
+    remember_archive_identity(
+        day,
+        feed_id,
+        archive_date,
+        archive_id,
+        raw,
+        listing_prefix=f"{archive_date:%Y%m%d}0000",
+    )
+    assert remember_complete_archive_day(
+        day,
+        feed_id,
+        archive_date,
+        [archive_id],
+    )
+    audio = day / f"combined_{feed_id}_{archive_date:%Y%m%d}.mp3"
+    audio.write_bytes(f"combined {feed_id} {archive_date.isoformat()}".encode())
+    rendered = f"[{archive_date.isoformat()} 00:00:00] Dispatch retained.\n"
+    text_path = transcripts / f"{audio.stem}.txt"
+    text_path.write_text(rendered, encoding="utf-8")
+    (transcripts / f"{audio.stem}.json").write_text(
+        json.dumps(
+            {
+                "audio_file": audio.name,
+                "audio_sha256": hashlib.sha256(audio.read_bytes()).hexdigest(),
+                "processing_fingerprint": processing_fingerprint,
+                "rendered_text_sha256": hashlib.sha256(
+                    text_path.read_bytes()
+                ).hexdigest(),
+                "segments": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
 def _force_unusable_system_proxy(monkeypatch: pytest.MonkeyPatch) -> None:
     for name in (
         "HTTP_PROXY",
@@ -60,6 +114,65 @@ def _force_unusable_system_proxy(monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv(name, "http://127.0.0.1:1")
     monkeypatch.setenv("NO_PROXY", "")
     monkeypatch.setenv("no_proxy", "")
+
+
+def test_remote_quota_ledger_counts_once_at_the_lan_coordinator_and_fails_closed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    central_path = tmp_path / "central-quota.sqlite3"
+    monkeypatch.setenv("BROADCASTIFY_QUOTA_LEDGER", str(central_path))
+    server = create_lan_node_server(
+        tmp_path / "coordinator-library",
+        host="127.0.0.1",
+        port=0,
+        sync_key="shared-test-key",
+        discovery_enabled=False,
+    )
+    server.quiet = True  # type: ignore[attr-defined]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    coordinator = f"http://127.0.0.1:{server.server_port}"
+    remote = RemoteArchiveRequestLedger(
+        coordinator,
+        local_path=tmp_path / "windows-mirror.sqlite3",
+        sync_key="shared-test-key",
+        timeout_seconds=2,
+    )
+    try:
+        request_id = remote.reserve(
+            feed_id="90001",
+            archive_date="2026-07-12",
+            archive_id="123456",
+        )
+        remote.finish(request_id, outcome="http_200", http_status=200)
+
+        shared = ArchiveRequestLedger(central_path).status()
+        mirror = ArchiveRequestLedger(tmp_path / "windows-mirror.sqlite3").status()
+        status = remote.status()
+        assert shared["used"] == 1
+        assert mirror["used"] == 1
+        assert status["used"] == 1
+        assert status["remaining"] == 239
+        assert status["coordinated"] is True
+
+        rejected = RemoteArchiveRequestLedger(
+            coordinator,
+            local_path=tmp_path / "rejected-mirror.sqlite3",
+            sync_key="wrong-key",
+            timeout_seconds=2,
+        )
+        assert rejected.status()["available"] is False
+        with pytest.raises(ArchiveQuotaCoordinatorUnavailable):
+            rejected.reserve(
+                feed_id="90001",
+                archive_date="2026-07-12",
+                archive_id="654321",
+            )
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
 
 
 def test_peer_urls_are_limited_to_numeric_private_addresses() -> None:
@@ -208,6 +321,109 @@ def test_hash_verified_peer_sync_copies_missing_blocks_without_a_session(
         server.shutdown()
         server.server_close()
         thread.join(timeout=3)
+
+
+def test_followed_feed_reconciliation_converges_month_and_few_day_nodes(
+    tmp_path: Path,
+) -> None:
+    feed_id = "91059"
+    fingerprint = "a" * 64
+    month = [date(2026, 7, 1) + timedelta(days=value) for value in range(31)]
+    node_a = tmp_path / "node-a"
+    node_b = tmp_path / "node-b"
+    for archive_date in month[:28]:
+        _retained_transcribed_feed_day(
+            node_a,
+            feed_id,
+            archive_date,
+            fingerprint,
+        )
+    for archive_date in month[28:]:
+        _retained_transcribed_feed_day(
+            node_b,
+            feed_id,
+            archive_date,
+            fingerprint,
+        )
+
+    server_a = create_lan_node_server(
+        node_a,
+        host="127.0.0.1",
+        port=0,
+        sync_key="shared-test-key",
+        discovery_enabled=False,
+    )
+    server_b = create_lan_node_server(
+        node_b,
+        host="127.0.0.1",
+        port=0,
+        sync_key="shared-test-key",
+        discovery_enabled=False,
+    )
+    server_a.quiet = True  # type: ignore[attr-defined]
+    server_b.quiet = True  # type: ignore[attr-defined]
+    thread_a = threading.Thread(target=server_a.serve_forever, daemon=True)
+    thread_b = threading.Thread(target=server_b.serve_forever, daemon=True)
+    thread_a.start()
+    thread_b.start()
+    url_a = f"http://127.0.0.1:{server_a.server_port}"
+    url_b = f"http://127.0.0.1:{server_b.server_port}"
+    try:
+        result_a = LanArchiveSyncClient(
+            enabled=True,
+            peer_urls=[url_b],
+            discovery_enabled=False,
+            sync_key="shared-test-key",
+        ).sync_feed(
+            node_a,
+            feed_id,
+            processing_fingerprint=fingerprint,
+        )
+        result_b = LanArchiveSyncClient(
+            enabled=True,
+            peer_urls=[url_a],
+            discovery_enabled=False,
+            sync_key="shared-test-key",
+        ).sync_feed(
+            node_b,
+            feed_id,
+            processing_fingerprint=fingerprint,
+        )
+
+        assert result_a.dates_discovered == tuple(
+            value.isoformat() for value in month[28:]
+        )
+        assert result_a.blocks_copied == 3
+        assert result_a.transcript_artifacts_copied == 9
+        assert result_b.dates_discovered == tuple(
+            value.isoformat() for value in month
+        )
+        assert result_b.blocks_copied == 28
+        assert result_b.transcript_artifacts_copied == 84
+        assert result_a.failures == ()
+        assert result_b.failures == ()
+
+        for root in (node_a, node_b):
+            assert len(list((root / feed_id).glob("*/transcripts/*.json"))) == 31
+            for archive_date in month:
+                day = root / feed_id / archive_date.strftime("%Y%m%d")
+                complete = complete_cached_archive_day(
+                    day,
+                    feed_id,
+                    archive_date,
+                )
+                assert complete is not None
+                assert len(complete[0]) == 1
+                assert (
+                    day / "transcripts" / f"combined_{feed_id}_{archive_date:%Y%m%d}.json"
+                ).is_file()
+    finally:
+        server_a.shutdown()
+        server_b.shutdown()
+        server_a.server_close()
+        server_b.server_close()
+        thread_a.join(timeout=3)
+        thread_b.join(timeout=3)
 
 
 def test_shared_acquisition_queue_grants_one_expiring_producer_lease() -> None:

@@ -149,6 +149,8 @@ input::placeholder, textarea::placeholder { color: #929b95; }
 .transcript-row p { margin: 0; }
 
 .two-column { display: grid; grid-template-columns: minmax(0, 1fr) minmax(360px, .85fr); gap: 16px; align-items: start; }
+.catch-up-card { margin-bottom: 16px; }
+.catch-up-card .notice { margin-top: 12px; }
 .review-columns { grid-template-columns: 1fr 1fr; }
 .section-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; margin-bottom: 17px; }
 .section-heading h2 { margin: 0 0 3px; font-size: 19px; letter-spacing: -.02em; }

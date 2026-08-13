@@ -26,6 +26,11 @@ from .lan_sync import (
     normalize_peer_url,
     normalize_peer_urls,
 )
+from .quota import (
+    ArchiveRequestBudgetExceeded,
+    ArchiveRequestLedger,
+    normalize_account_profile_id,
+)
 
 
 def validate_lan_host(value: str) -> str:
@@ -176,6 +181,8 @@ def create_lan_node_server(
             try:
                 self._authorize()
                 self._post()
+            except ArchiveRequestBudgetExceeded as exc:
+                self._json(HTTPStatus.TOO_MANY_REQUESTS, {"error": str(exc)})
             except PermissionError as exc:
                 self._json(HTTPStatus.FORBIDDEN, {"error": str(exc)})
             except FileNotFoundError:
@@ -206,6 +213,22 @@ def create_lan_node_server(
             if parsed.path == "/api/lan/v1/info":
                 self._json(HTTPStatus.OK, catalog.info())
                 return
+            if parsed.path == "/api/lan/v1/feed-days":
+                query = parse_qs(parsed.query)
+                feed_id = str((query.get("feed_id") or [""])[0]).strip()
+                self._json(
+                    HTTPStatus.OK,
+                    {
+                        "protocol": LAN_PROTOCOL,
+                        "node_id": catalog.node_id,
+                        "feed_id": feed_id,
+                        "dates": [
+                            value.isoformat() for value in catalog.feed_dates(feed_id)
+                        ],
+                        "peers": list(catalog.peer_urls),
+                    },
+                )
+                return
             if parsed.path == "/api/lan/v1/blocks":
                 query = parse_qs(parsed.query)
                 feed_id = str((query.get("feed_id") or [""])[0]).strip()
@@ -213,6 +236,10 @@ def create_lan_node_server(
                     str((query.get("date") or [""])[0]).strip()
                 )
                 blocks = catalog.inventory(feed_id, archive_date)
+                complete, completion_blocks = catalog.completion_inventory(
+                    feed_id,
+                    archive_date,
+                )
                 self._json(
                     HTTPStatus.OK,
                     {
@@ -221,6 +248,10 @@ def create_lan_node_server(
                         "feed_id": feed_id,
                         "archive_date": archive_date.isoformat(),
                         "blocks": [block.to_dict() for block in blocks],
+                        "complete": complete,
+                        "completion_blocks": [
+                            block.to_dict() for block in completion_blocks
+                        ],
                         "peers": list(catalog.peer_urls),
                     },
                 )
@@ -245,6 +276,70 @@ def create_lan_node_server(
                     ),
                 )
                 return
+            if parsed.path == "/api/lan/v1/quota":
+                query = parse_qs(parsed.query)
+                profile_id = normalize_account_profile_id(
+                    str(
+                        (query.get("account_profile_id") or ["default"])[0]
+                    )
+                )
+                self._json(
+                    HTTPStatus.OK,
+                    {
+                        "protocol": LAN_PROTOCOL,
+                        **ArchiveRequestLedger(
+                            account_profile_id=profile_id
+                        ).status(),
+                    },
+                )
+                return
+            if parsed.path == "/api/lan/v1/transcripts":
+                query = parse_qs(parsed.query)
+                feed_id = str((query.get("feed_id") or [""])[0]).strip()
+                archive_date = _date_value(
+                    str((query.get("date") or [""])[0]).strip()
+                )
+                fingerprint = str(
+                    (query.get("processing_fingerprint") or [""])[0]
+                ).strip()
+                artifacts = catalog.transcript_inventory(
+                    feed_id,
+                    archive_date,
+                    fingerprint,
+                )
+                self._json(
+                    HTTPStatus.OK,
+                    {
+                        "protocol": LAN_PROTOCOL,
+                        "node_id": catalog.node_id,
+                        "feed_id": feed_id,
+                        "archive_date": archive_date.isoformat(),
+                        "processing_fingerprint": fingerprint,
+                        "artifacts": [value.to_dict() for value in artifacts],
+                        "peers": list(catalog.peer_urls),
+                    },
+                )
+                return
+            if parsed.path == "/api/lan/v1/processing":
+                if not catalog.processing_queue.enabled:
+                    raise FileNotFoundError
+                query = parse_qs(parsed.query)
+                feed_id = str((query.get("feed_id") or [""])[0]).strip()
+                archive_date = _date_value(
+                    str((query.get("date") or [""])[0]).strip()
+                )
+                fingerprint = str(
+                    (query.get("processing_fingerprint") or [""])[0]
+                ).strip()
+                self._json(
+                    HTTPStatus.OK,
+                    catalog.processing_queue.status(
+                        fingerprint,
+                        feed_id,
+                        archive_date,
+                    ),
+                )
+                return
             if parsed.path.startswith("/api/lan/v1/blocks/"):
                 parts = parsed.path.removeprefix("/api/lan/v1/blocks/").split("/")
                 if len(parts) != 3:
@@ -257,10 +352,37 @@ def create_lan_node_server(
                 )
                 self._block(path, block.sha256)
                 return
+            if parsed.path.startswith("/api/lan/v1/transcripts/"):
+                parts = parsed.path.removeprefix(
+                    "/api/lan/v1/transcripts/"
+                ).split("/")
+                if len(parts) != 4:
+                    raise FileNotFoundError
+                feed_id, raw_date, fingerprint, filename = (
+                    unquote(value) for value in parts
+                )
+                path, artifact = catalog.resolve_transcript_artifact(
+                    feed_id,
+                    _date_value(raw_date),
+                    fingerprint,
+                    filename,
+                )
+                self._artifact(path, artifact.sha256)
+                return
             raise FileNotFoundError
 
         def _post(self) -> None:
             parsed = urlparse(self.path)
+            quota_prefix = "/api/lan/v1/quota/"
+            if parsed.path.startswith(quota_prefix):
+                self._post_quota(parsed.path.removeprefix(quota_prefix))
+                return
+            processing_prefix = "/api/lan/v1/processing/"
+            if parsed.path.startswith(processing_prefix):
+                self._post_processing(
+                    parsed.path.removeprefix(processing_prefix)
+                )
+                return
             prefix = "/api/lan/v1/acquisition/"
             if (
                 not catalog.acquisition_queue.enabled
@@ -313,6 +435,102 @@ def create_lan_node_server(
                 raise FileNotFoundError
             self._json(HTTPStatus.OK, value)
 
+        def _post_processing(self, action: str) -> None:
+            if not catalog.processing_queue.enabled:
+                raise FileNotFoundError
+            body = self._body()
+            feed_id = str(body.get("feed_id") or "").strip()
+            archive_date = _date_value(
+                str(body.get("archive_date") or "").strip()
+            )
+            fingerprint = str(
+                body.get("processing_fingerprint") or ""
+            ).strip()
+            if action == "claim":
+                owner_node_id = str(body.get("owner_node_id") or "")
+                producer_url = str(body.get("producer_url") or "")
+                value = catalog.processing_queue.claim(
+                    fingerprint,
+                    feed_id,
+                    archive_date,
+                    owner_node_id=owner_node_id,
+                    producer_url=producer_url,
+                    requester_address=str(self.client_address[0]),
+                    allow_multihomed_self=bool(
+                        configured_advertisement
+                        and owner_node_id == catalog.node_id
+                        and normalize_peer_url(producer_url)
+                        == configured_advertisement
+                    ),
+                )
+            elif action == "renew":
+                value = catalog.processing_queue.renew(
+                    fingerprint,
+                    feed_id,
+                    archive_date,
+                    lease_token=str(body.get("lease_token") or ""),
+                )
+            elif action == "finish":
+                value = catalog.processing_queue.finish(
+                    fingerprint,
+                    feed_id,
+                    archive_date,
+                    lease_token=str(body.get("lease_token") or ""),
+                    outcome=str(body.get("outcome") or ""),
+                    artifact_count=int(body.get("artifact_count") or 0),
+                )
+            else:
+                raise FileNotFoundError
+            self._json(HTTPStatus.OK, value)
+
+        def _post_quota(self, action: str) -> None:
+            body = self._body()
+            profile_id = normalize_account_profile_id(
+                str(body.get("account_profile_id") or "default")
+            )
+            ledger = ArchiveRequestLedger(account_profile_id=profile_id)
+            if action == "reserve":
+                feed_id = str(body.get("feed_id") or "").strip()
+                archive_date = str(body.get("archive_date") or "").strip()
+                archive_id = str(body.get("archive_id") or "").strip()
+                if not feed_id.isdigit():
+                    raise ValueError("A numeric feed ID is required.")
+                _date_value(archive_date)
+                if not archive_id.isdigit() or len(archive_id) > 40:
+                    raise ValueError("A numeric archive ID is required.")
+                value: dict[str, object] = {
+                    "request_id": ledger.reserve(
+                        feed_id=feed_id,
+                        archive_date=archive_date,
+                        archive_id=archive_id,
+                    )
+                }
+            elif action == "finish":
+                request_id = int(body.get("request_id") or 0)
+                if request_id < 1:
+                    raise ValueError("A positive quota request ID is required.")
+                raw_status = body.get("http_status")
+                http_status = int(raw_status) if raw_status is not None else None
+                if http_status is not None and not 100 <= http_status <= 599:
+                    raise ValueError("The archive HTTP status is not valid.")
+                ledger.finish(
+                    request_id,
+                    outcome=str(body.get("outcome") or "")[:80],
+                    http_status=http_status,
+                )
+                value = ledger.status()
+            elif action == "rate-limit":
+                reason = str(body.get("reason") or "").strip()
+                if not reason:
+                    raise ValueError("A rate-limit reason is required.")
+                value = ledger.mark_rate_limited(reason[:800])
+            else:
+                raise FileNotFoundError
+            self._json(
+                HTTPStatus.OK,
+                {"protocol": LAN_PROTOCOL, **value},
+            )
+
         def _authorize(self) -> None:
             supplied = self.headers.get("X-Radio-Archive-LAN-Key", "")
             if catalog.sync_key and not hmac.compare_digest(
@@ -362,6 +580,27 @@ def create_lan_node_server(
             size = path.stat().st_size
             self.send_response(HTTPStatus.OK)
             self.send_header("Content-Type", "audio/mpeg")
+            self.send_header("Content-Length", str(size))
+            self.send_header("X-Radio-Archive-Protocol", LAN_PROTOCOL)
+            self.send_header("X-Radio-Archive-SHA256", sha256)
+            self.send_header("Cache-Control", "private, no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.end_headers()
+            with path.open("rb") as handle:
+                for chunk in iter(lambda: handle.read(256 * 1024), b""):
+                    self.wfile.write(chunk)
+
+        def _artifact(self, path: Path, sha256: str) -> None:
+            size = path.stat().st_size
+            self.send_response(HTTPStatus.OK)
+            content_type = {
+                ".json": "application/json; charset=utf-8",
+                ".mp3": "audio/mpeg",
+            }.get(path.suffix.lower(), "text/plain; charset=utf-8")
+            self.send_header(
+                "Content-Type",
+                content_type,
+            )
             self.send_header("Content-Length", str(size))
             self.send_header("X-Radio-Archive-Protocol", LAN_PROTOCOL)
             self.send_header("X-Radio-Archive-SHA256", sha256)

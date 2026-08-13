@@ -21,6 +21,8 @@ from broadcastify_cli.transcription import (
     format_timestamp,
     group_words,
     speaker_for_interval,
+    stable_file_sha256,
+    transcription_processing_fingerprint,
     transcript_quality_report,
 )
 
@@ -283,8 +285,27 @@ def test_external_asr_records_actual_fallback_backend(tmp_path: Path) -> None:
     assert payload["asr_backend"] == "OpenVINO CPU (fallback from GPU)"
     assert payload["model"] == "tiny"
     assert payload["requested_model"] == "tiny.en"
+    assert payload["audio_sha256"] == stable_file_sha256(audio)
+    assert payload["processing_fingerprint"] == (
+        transcription_processing_fingerprint(
+            model_name="tiny.en",
+            asr_engine="openvino",
+            diarize=False,
+        )
+    )
     assert payload["asr_metadata"]["fallback_stage"] == "generation"
     assert transcriber._existing_transcript_is_current(
+        audio,
+        transcript_path,
+        transcript_path.with_suffix(".txt"),
+    )
+
+    # Content identity, not timestamp ordering, protects LAN transcript reuse.
+    audio.write_bytes(b"different audio")
+    audio.touch()
+    transcript_path.touch()
+    transcript_path.with_suffix(".txt").touch()
+    assert not transcriber._existing_transcript_is_current(
         audio,
         transcript_path,
         transcript_path.with_suffix(".txt"),

@@ -73,7 +73,7 @@ from .area_watch import (
 )
 from .area_acquisition import AreaAcquisitionRunner
 from .broadcastify import BroadcastifyClient
-from .quota import ArchiveRequestLedger, normalize_account_profile_id
+from .quota import archive_request_ledger, normalize_account_profile_id
 from .geography import CENSUS_ZCTA_YEAR, ZipCentroidCatalog
 from .jobs import JobRunner
 from .library import (
@@ -382,7 +382,7 @@ def authenticate() -> int:
 
 
 def archive_quota_status() -> int:
-    emit({"type": "archive_quota_status", "status": ArchiveRequestLedger().status()})
+    emit({"type": "archive_quota_status", "status": archive_request_ledger().status()})
     return 0
 
 
@@ -443,7 +443,7 @@ def claim_due_feed_schedule() -> int:
         {
             "type": "feed_schedule_claim",
             "schedule": schedule,
-            "archive_quota": ArchiveRequestLedger().status(),
+            "archive_quota": archive_request_ledger().status(),
         }
     )
     return 0
@@ -587,7 +587,7 @@ def diagnostics(settings: dict[str, Any] | None = None) -> int:
         else "",
         "analysis_database": str(DEFAULT_DATABASE.resolve()),
         "analysis_stats": {},
-        "archive_quota": ArchiveRequestLedger().status(),
+        "archive_quota": archive_request_ledger().status(),
         "managed_runtimes": {
             "cuda": packaged_managed_runtime_status("cuda"),
         },
@@ -1379,7 +1379,7 @@ def library_resume_plan(
     requested_end = date.fromisoformat(end_date) if end_date else None
     result = build_library_resume_plan(
         days,
-        ArchiveRequestLedger().status(),
+        archive_request_ledger().status(),
         schedules,
         catchups,
         requested_feed_id=feed_id,

@@ -3,11 +3,16 @@ from __future__ import annotations
 import os
 import re
 import sqlite3
+import threading
 import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
+
+import requests
+
+from .lan_sync import LAN_PROTOCOL, normalize_peer_url
 
 
 PROVIDER_ARCHIVE_REQUEST_LIMIT = 250
@@ -23,6 +28,10 @@ _ACCOUNT_PROFILE_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 
 
 class ArchiveRequestBudgetExceeded(RuntimeError):
+    pass
+
+
+class ArchiveQuotaCoordinatorUnavailable(RuntimeError):
     pass
 
 
@@ -492,3 +501,233 @@ class ArchiveRequestLedger:
             raise
         finally:
             connection.close()
+
+
+class RemoteArchiveRequestLedger:
+    """Use one trusted-LAN ledger while retaining a local fail-safe mirror."""
+
+    def __init__(
+        self,
+        coordinator_url: str,
+        *,
+        local_path: str | Path | None = None,
+        base_dir: str | Path | None = None,
+        account_profile_id: str | None = None,
+        sync_key: str = "",
+        timeout_seconds: float = 15.0,
+        local_ledger: ArchiveRequestLedger | None = None,
+        session: requests.Session | None = None,
+    ) -> None:
+        self.coordinator_url = normalize_peer_url(coordinator_url)
+        self.account_profile_id = normalize_account_profile_id(account_profile_id)
+        self.sync_key = str(sync_key or "")
+        self.timeout_seconds = min(60.0, max(2.0, float(timeout_seconds)))
+        self.local = local_ledger or ArchiveRequestLedger(
+            local_path,
+            base_dir=base_dir,
+            account_profile_id=self.account_profile_id,
+        )
+        self.path = self.local.path
+        self._session = session or requests.Session()
+        self._session.trust_env = False
+        self._local_request_ids: dict[int, int] = {}
+        self._lock = threading.RLock()
+
+    def _request(
+        self,
+        method: str,
+        path: str,
+        *,
+        payload: dict[str, Any] | None = None,
+        params: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        headers = {"Accept": "application/json"}
+        if self.sync_key:
+            headers["X-Radio-Archive-LAN-Key"] = self.sync_key
+        try:
+            response = self._session.request(
+                method,
+                f"{self.coordinator_url}{path}",
+                json=payload,
+                params=params,
+                headers=headers,
+                timeout=(3.0, self.timeout_seconds),
+                allow_redirects=False,
+            )
+        except requests.RequestException as exc:
+            raise ArchiveQuotaCoordinatorUnavailable(
+                "The trusted-LAN quota coordinator is unavailable; archive "
+                "requests are paused rather than risking a duplicate account count."
+            ) from exc
+        try:
+            value = response.json()
+        except (TypeError, ValueError) as exc:
+            raise ArchiveQuotaCoordinatorUnavailable(
+                "The trusted-LAN quota coordinator returned an invalid response; "
+                "archive requests are paused."
+            ) from exc
+        if not isinstance(value, dict):
+            raise ArchiveQuotaCoordinatorUnavailable(
+                "The trusted-LAN quota coordinator returned an invalid response; "
+                "archive requests are paused."
+            )
+        if response.status_code == 429:
+            raise ArchiveRequestBudgetExceeded(
+                str(value.get("error") or "The shared account quota is exhausted.")
+            )
+        if response.status_code >= 400:
+            raise ArchiveQuotaCoordinatorUnavailable(
+                str(value.get("error") or f"Quota coordinator HTTP {response.status_code}.")
+            )
+        if value.get("protocol") != LAN_PROTOCOL:
+            raise ArchiveQuotaCoordinatorUnavailable(
+                "The trusted-LAN quota coordinator protocol does not match this app."
+            )
+        return value
+
+    def status(self) -> dict[str, Any]:
+        local = self.local.status()
+        try:
+            remote = self._request(
+                "GET",
+                "/api/lan/v1/quota",
+                params={"account_profile_id": self.account_profile_id},
+            )
+        except (ArchiveQuotaCoordinatorUnavailable, ArchiveRequestBudgetExceeded) as exc:
+            return {
+                **local,
+                "available": False,
+                "blocked": True,
+                "remaining": 0,
+                "blocked_reason": str(exc),
+                "coordinator_url": self.coordinator_url,
+                "coordinated": True,
+            }
+        available = bool(remote.get("available")) and bool(local.get("available"))
+        reasons = [
+            str(value).strip()
+            for value in (remote.get("blocked_reason"), local.get("blocked_reason"))
+            if str(value or "").strip()
+        ]
+        return {
+            **remote,
+            "remaining": min(
+                int(remote.get("remaining") or 0),
+                int(local.get("remaining") or 0),
+            ),
+            "available": available,
+            "blocked": not available,
+            "blocked_reason": "; ".join(dict.fromkeys(reasons)),
+            "coordinator_url": self.coordinator_url,
+            "coordinated": True,
+            "local_instance_id": str(local.get("instance_id") or ""),
+        }
+
+    def reserve(
+        self,
+        *,
+        feed_id: str,
+        archive_date: str,
+        archive_id: str,
+    ) -> int:
+        remote = self._request(
+            "POST",
+            "/api/lan/v1/quota/reserve",
+            payload={
+                "account_profile_id": self.account_profile_id,
+                "feed_id": str(feed_id),
+                "archive_date": str(archive_date),
+                "archive_id": str(archive_id),
+            },
+        )
+        request_id = int(remote["request_id"])
+        try:
+            local_request_id = self.local.reserve(
+                feed_id=feed_id,
+                archive_date=archive_date,
+                archive_id=archive_id,
+            )
+        except Exception:
+            # The coordinator reservation is deliberately retained. Counting a
+            # request that was stopped locally is safer than ever undercounting.
+            raise
+        with self._lock:
+            self._local_request_ids[request_id] = local_request_id
+        return request_id
+
+    def finish(
+        self,
+        request_id: int,
+        *,
+        outcome: str,
+        http_status: int | None = None,
+    ) -> None:
+        with self._lock:
+            local_request_id = self._local_request_ids.pop(int(request_id), None)
+        if local_request_id is not None:
+            self.local.finish(
+                local_request_id,
+                outcome=outcome,
+                http_status=http_status,
+            )
+        try:
+            self._request(
+                "POST",
+                "/api/lan/v1/quota/finish",
+                payload={
+                    "account_profile_id": self.account_profile_id,
+                    "request_id": int(request_id),
+                    "outcome": str(outcome),
+                    "http_status": http_status,
+                },
+            )
+        except ArchiveQuotaCoordinatorUnavailable:
+            # The central reservation already counts against the rolling limit.
+            # Outcome annotation is diagnostic and must not repeat a request.
+            return
+
+    def mark_rate_limited(self, reason: str) -> dict[str, Any]:
+        local = self.local.mark_rate_limited(reason)
+        try:
+            return self._request(
+                "POST",
+                "/api/lan/v1/quota/rate-limit",
+                payload={
+                    "account_profile_id": self.account_profile_id,
+                    "reason": str(reason),
+                },
+            )
+        except ArchiveQuotaCoordinatorUnavailable:
+            return {
+                **local,
+                "available": False,
+                "blocked": True,
+                "coordinator_url": self.coordinator_url,
+                "coordinated": True,
+            }
+
+
+def archive_request_ledger(
+    path: str | Path | None = None,
+    *,
+    base_dir: str | Path | None = None,
+    account_profile_id: str | None = None,
+) -> ArchiveRequestLedger | RemoteArchiveRequestLedger:
+    """Return the configured shared ledger, or the installation-local guard."""
+
+    coordinator = str(
+        os.getenv("BROADCASTIFY_LAN_QUOTA_COORDINATOR") or ""
+    ).strip()
+    if not coordinator:
+        return ArchiveRequestLedger(
+            path,
+            base_dir=base_dir,
+            account_profile_id=account_profile_id,
+        )
+    return RemoteArchiveRequestLedger(
+        coordinator,
+        local_path=path,
+        base_dir=base_dir,
+        account_profile_id=account_profile_id,
+        sync_key=str(os.getenv("BROADCASTIFY_LAN_SYNC_KEY") or ""),
+    )

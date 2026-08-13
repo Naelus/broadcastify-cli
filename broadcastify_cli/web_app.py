@@ -28,6 +28,7 @@ from urllib.parse import parse_qs, quote, unquote, urlparse
 
 from dotenv import dotenv_values
 
+from . import __version__
 from .analysis import (
     PROMPT_VERSION,
     WEEKLY_PROMPT_VERSION,
@@ -48,8 +49,19 @@ from .lan_sync import (
     normalize_peer_url,
     normalize_peer_urls,
 )
-from .library import require_current_range_evidence, scan_local_library
-from .quota import ArchiveRequestLedger
+from .library import (
+    build_library_feed_coverage,
+    completed_library_catchup_feed_ids,
+    require_current_range_evidence,
+    scan_local_library,
+)
+from .quota import (
+    DEFAULT_ACCOUNT_PROFILE_ID,
+    ArchiveRequestLedger,
+    ArchiveRequestBudgetExceeded,
+    archive_request_ledger,
+    normalize_account_profile_id,
+)
 from .storage import AnalysisStore
 
 
@@ -184,6 +196,199 @@ def _readiness_environment(working_dir: Path) -> tuple[dict[str, str], str]:
     return values, loaded_path
 
 
+def _account_cookie_path(working_dir: Path, profile_id: str) -> Path:
+    clean_profile_id = normalize_account_profile_id(profile_id)
+    if clean_profile_id == DEFAULT_ACCOUNT_PROFILE_ID:
+        return working_dir / "cookies.json"
+    return working_dir / "account-sessions" / f"{clean_profile_id}.json"
+
+
+def _account_profile_environment_suffix(profile_id: str) -> str:
+    return "".join(
+        value if value.isalnum() else "_"
+        for value in normalize_account_profile_id(profile_id).upper()
+    )
+
+
+def _account_pool_profiles(
+    working_dir: Path,
+    credential_store: EncryptedCredentialStore,
+) -> dict[str, Any]:
+    """Return non-secret configured profiles and their independent ledgers."""
+
+    values, _environment_file = _readiness_environment(working_dir)
+    credential_status = credential_store.status(values)
+    authorized = _environment_flag(
+        values,
+        "BROADCASTIFY_AUTHORIZED_ACCOUNT_POOL",
+    )
+    requested_ids = [DEFAULT_ACCOUNT_PROFILE_ID]
+    if authorized:
+        requested_ids.extend(
+            value.strip()
+            for value in str(
+                values.get("BROADCASTIFY_ACCOUNT_PROFILES") or ""
+            ).split(",")
+            if value.strip()
+        )
+        requested_ids.extend(
+            str(value.get("id") or "")
+            for value in credential_status.get("broadcastify_profiles", [])
+        )
+        session_dir = working_dir / "account-sessions"
+        if session_dir.is_dir():
+            requested_ids.extend(path.stem for path in session_dir.glob("*.json"))
+
+    encrypted_profiles = {
+        normalize_account_profile_id(str(value.get("id") or "default")): value
+        for value in credential_status.get("broadcastify_profiles", [])
+        if value.get("id")
+    }
+    profiles: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for raw_profile_id in requested_ids:
+        try:
+            profile_id = normalize_account_profile_id(raw_profile_id)
+        except ValueError:
+            continue
+        if profile_id in seen:
+            continue
+        seen.add(profile_id)
+        cookie_path = _account_cookie_path(working_dir, profile_id)
+        if profile_id == DEFAULT_ACCOUNT_PROFILE_ID:
+            default_status = dict(credential_status.get("broadcastify") or {})
+            configured = bool(default_status.get("configured"))
+            username = str(default_status.get("username") or "")
+            source = str(default_status.get("source") or "")
+            saved = bool(default_status.get("saved"))
+            label = "Primary / default"
+        else:
+            suffix = _account_profile_environment_suffix(profile_id)
+            environment_username = str(
+                values.get(f"BROADCASTIFY_ACCOUNT_{suffix}_USERNAME") or ""
+            ).strip()
+            environment_password = str(
+                values.get(f"BROADCASTIFY_ACCOUNT_{suffix}_PASSWORD") or ""
+            )
+            encrypted = dict(encrypted_profiles.get(profile_id) or {})
+            configured = bool(
+                (environment_username and environment_password) or encrypted
+            )
+            username = str(encrypted.get("username") or environment_username)
+            source = "encrypted-store" if encrypted else (
+                "environment" if environment_username and environment_password else ""
+            )
+            saved = bool(encrypted)
+            label = str(encrypted.get("label") or profile_id.replace("_", " ").title())
+        session_available = cookie_path.is_file()
+        configured = configured or session_available
+        if profile_id != DEFAULT_ACCOUNT_PROFILE_ID and not configured:
+            continue
+        quota = archive_request_ledger(
+            base_dir=working_dir,
+            account_profile_id=profile_id,
+        ).status()
+        profiles.append(
+            {
+                "id": profile_id,
+                "label": label,
+                "username": username,
+                "configured": configured,
+                "saved": saved,
+                "source": source,
+                "session_available": session_available,
+                "quota": quota,
+            }
+        )
+
+    configured_profiles = [value for value in profiles if value["configured"]]
+    quota_profiles = configured_profiles or profiles[:1]
+    quotas = [dict(value["quota"]) for value in quota_profiles]
+    next_values = sorted(
+        str(value.get("next_request_at") or "")
+        for value in quotas
+        if value.get("next_request_at")
+    )
+    aggregate = {
+        "account_profile_id": "automatic" if len(quotas) > 1 else (
+            str(quotas[0].get("account_profile_id") or "default") if quotas else "default"
+        ),
+        "account_count": len(quotas),
+        "authorized_pool": authorized,
+        "provider_limit": sum(int(value.get("provider_limit") or 0) for value in quotas),
+        "automated_limit": sum(int(value.get("automated_limit") or 0) for value in quotas),
+        "user_reserve": sum(int(value.get("user_reserve") or 0) for value in quotas),
+        "used": sum(int(value.get("used") or 0) for value in quotas),
+        "remaining": sum(int(value.get("remaining") or 0) for value in quotas),
+        "available": any(bool(value.get("available")) for value in quotas),
+        "blocked": bool(quotas) and all(bool(value.get("blocked")) for value in quotas),
+        "blocked_reason": "; ".join(
+            str(value.get("blocked_reason") or "")
+            for value in quotas
+            if value.get("blocked_reason")
+        ),
+        "next_request_at": next_values[0] if next_values else "",
+        "next_request_seconds": min(
+            (int(value.get("next_request_seconds") or 0) for value in quotas),
+            default=0,
+        ),
+        "instance_id": (
+            str(quotas[0].get("instance_id") or "") if len(quotas) == 1 else "pooled"
+        ),
+        "profiles": profiles,
+    }
+    return {
+        "authorized": authorized,
+        "profiles": profiles,
+        "configured_profile_ids": [value["id"] for value in configured_profiles],
+        "quota": aggregate,
+    }
+
+
+def _select_account_profile(
+    working_dir: Path,
+    credential_store: EncryptedCredentialStore,
+    requested_profile_id: str,
+    *,
+    excluded_profile_ids: set[str] | None = None,
+    allow_unconfigured_requested: bool = False,
+) -> str:
+    excluded = {
+        normalize_account_profile_id(value) for value in excluded_profile_ids or set()
+    }
+    pool = _account_pool_profiles(working_dir, credential_store)
+    requested = str(requested_profile_id or "default").strip().lower()
+    if requested != "automatic":
+        profile_id = normalize_account_profile_id(requested)
+        configured = profile_id in set(pool["configured_profile_ids"])
+        if not configured and not allow_unconfigured_requested:
+            raise WebRequestError(
+                HTTPStatus.BAD_REQUEST,
+                f"Account profile {profile_id} is not configured on this app server.",
+            )
+        return profile_id
+
+    candidates = [
+        value
+        for value in pool["profiles"]
+        if value["configured"] and value["id"] not in excluded
+    ]
+    if not candidates:
+        raise WebRequestError(
+            HTTPStatus.TOO_MANY_REQUESTS,
+            "No untried authorized account profile is available for this job.",
+        )
+    candidates.sort(
+        key=lambda value: (
+            not bool(value["quota"].get("available")),
+            -int(value["quota"].get("remaining") or 0),
+            int(value["quota"].get("next_request_seconds") or 0),
+            str(value["id"]),
+        )
+    )
+    return str(candidates[0]["id"])
+
+
 def _processing_defaults(values: dict[str, str]) -> dict[str, Any]:
     """Return a validated, non-secret processing preset for this deployment."""
 
@@ -260,27 +465,36 @@ def _apply_automatic_processing_defaults(
 def _runtime_readiness(state: "WebAppState") -> dict[str, Any]:
     values, environment_file = _readiness_environment(state.working_dir)
     credentials = state.credential_store.status(values)
-    session_path = state.working_dir / "cookies.json"
+    account_pool = _account_pool_profiles(
+        state.working_dir,
+        state.credential_store,
+    )
     probe = state.output_dir if state.output_dir.exists() else state.output_dir.parent
     storage_ready = bool(
         probe.is_dir()
         and os.access(probe, os.R_OK | os.W_OK)
         and (not state.output_dir.exists() or state.output_dir.is_dir())
     )
-    credentials_configured = bool(credentials["broadcastify"]["configured"])
-    saved_session = session_path.is_file()
+    credentials_configured = any(
+        bool(value.get("configured")) for value in account_pool["profiles"]
+    )
+    saved_session = any(
+        bool(value.get("session_available"))
+        for value in account_pool["profiles"]
+    )
     return {
         "storage_ready": storage_ready,
         "credentials": credentials,
         "account": {
             "configured": credentials_configured or saved_session,
             "credentials_configured": credentials_configured,
-            "encrypted_credentials_saved": bool(
-                credentials["broadcastify"]["saved"]
+            "encrypted_credentials_saved": any(
+                bool(value.get("saved")) for value in account_pool["profiles"]
             ),
             "saved_session_available": saved_session,
             "environment_file_available": bool(environment_file),
         },
+        "account_pool": account_pool,
     }
 
 
@@ -294,6 +508,7 @@ class WebRequestError(Exception):
 class JobRecord:
     id: str
     command: str
+    account_profile_id: str = DEFAULT_ACCOUNT_PROFILE_ID
     status: str = "queued"
     created_at: str = field(default_factory=utc_now)
     started_at: str = ""
@@ -308,6 +523,7 @@ class JobRecord:
         return {
             "id": self.id,
             "command": self.command,
+            "account_profile_id": self.account_profile_id,
             "status": self.status,
             "created_at": self.created_at,
             "started_at": self.started_at,
@@ -384,18 +600,45 @@ class JobManager:
         self._lock = threading.RLock()
 
     def start(self, command: str, payload: dict[str, Any]) -> dict[str, Any]:
-        arguments, stdin_payload = self._worker_request(command, payload)
+        request_payload = dict(payload)
+        requested_profile_id = str(
+            request_payload.pop("account_profile_id", "default") or "default"
+        )
+        excluded_profile_ids = {
+            normalize_account_profile_id(str(value))
+            for value in request_payload.pop("exclude_account_profile_ids", [])
+        }
+        account_profile_id = _select_account_profile(
+            self.working_dir,
+            self.credential_store,
+            requested_profile_id,
+            excluded_profile_ids=excluded_profile_ids,
+            allow_unconfigured_requested=(
+                command
+                not in {"search", "area-search", "run", "run-scheduled", "run-area"}
+                or (
+                    command == "authenticate"
+                    and bool(request_payload.get("username"))
+                    and bool(request_payload.get("password"))
+                )
+            ),
+        )
+        arguments, stdin_payload = self._worker_request(command, request_payload)
         with self._lock:
             if any(job.status in {"queued", "running", "canceling"} for job in self._jobs.values()):
                 raise WebRequestError(
                     HTTPStatus.CONFLICT,
                     "Another archive or model job is already active. Wait for it or cancel it first.",
                 )
-            job = JobRecord(id=secrets.token_hex(8), command=command)
+            job = JobRecord(
+                id=secrets.token_hex(8),
+                command=command,
+                account_profile_id=account_profile_id,
+            )
             self._jobs[job.id] = job
         threading.Thread(
             target=self._run,
-            args=(job, arguments, stdin_payload),
+            args=(job, arguments, stdin_payload, account_profile_id),
             name=f"radio-job-{job.id}",
             daemon=True,
         ).start()
@@ -472,6 +715,7 @@ class JobManager:
         job: JobRecord,
         arguments: list[str],
         stdin_payload: dict[str, Any] | None,
+        account_profile_id: str,
     ) -> None:
         with self._lock:
             job.status = "running"
@@ -484,7 +728,21 @@ class JobManager:
         environment["BROADCASTIFY_LIBRARY_ROOT"] = str(self.output_dir)
         environment["PYTHONIOENCODING"] = "utf-8"
         environment["PYTHONUTF8"] = "1"
-        environment.update(self.credential_store.worker_environment())
+        for name in (
+            "BROADCASTIFY_SECURE_USERNAME",
+            "BROADCASTIFY_SECURE_PASSWORD",
+            "BROADCASTIFY_ACCOUNT_PROFILE",
+            "BROADCASTIFY_COOKIE_PATH",
+        ):
+            environment.pop(name, None)
+        environment.update(
+            self.credential_store.worker_environment(account_profile_id)
+        )
+        environment["BROADCASTIFY_ACCOUNT_PROFILE"] = account_profile_id
+        environment["BROADCASTIFY_COOKIE_PATH"] = str(
+            _account_cookie_path(self.working_dir, account_profile_id)
+        )
+        environment.setdefault("BROADCASTIFY_GLOBAL_REQUEST_SPACING_SECONDS", "5")
         creation_flags = 0
         start_new_session = os.name != "nt"
         if os.name == "nt":
@@ -719,7 +977,7 @@ class FeedScheduleCoordinator:
         self.poll_seconds = max(0.05, float(poll_seconds))
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
-        self._active: tuple[str, dict[str, Any]] | None = None
+        self._active: tuple[str, dict[str, Any], set[str]] | None = None
 
     def start(self) -> None:
         if self._thread is not None:
@@ -740,17 +998,27 @@ class FeedScheduleCoordinator:
 
     def check_once(self) -> None:
         if self._active is not None:
-            job_id, schedule = self._active
+            job_id, schedule, attempted_profile_ids = self._active
             snapshot = self.jobs.get(job_id)
             if snapshot["status"] in {"queued", "running", "canceling"}:
                 return
+            selected_profile_id = normalize_account_profile_id(
+                str(snapshot.get("account_profile_id") or "default")
+            )
+            attempted_profile_ids.add(selected_profile_id)
+            automatic_pool = str(
+                schedule.get("account_profile_id") or "automatic"
+            ) == "automatic"
             if snapshot["status"] == "completed":
                 event = snapshot.get("result") or {}
                 result = event.get("result") if isinstance(event, dict) else {}
                 result = result if isinstance(result, dict) else {}
                 limited = bool(result.get("download_limited"))
                 incomplete = bool(result.get("missing_days"))
-                quota = ArchiveRequestLedger(base_dir=self.working_dir).status()
+                if limited and automatic_pool:
+                    if self._try_next_account(schedule, attempted_profile_ids):
+                        return
+                quota = self._quota_status()
                 status = (
                     "waiting_quota"
                     if limited
@@ -767,8 +1035,19 @@ class FeedScheduleCoordinator:
                 )
                 next_request_at = str(quota.get("next_request_at") or "") if limited else ""
             else:
-                status = "canceled" if snapshot["status"] == "canceled" else "failed"
                 message = str(snapshot.get("error") or "Scheduled feed job failed.")
+                if (
+                    automatic_pool
+                    and snapshot["status"] == "failed"
+                    and re.search(
+                        r"auth|credential|forbidden|login|premium|unauthori[sz]ed",
+                        message,
+                        flags=re.IGNORECASE,
+                    )
+                    and self._try_next_account(schedule, attempted_profile_ids)
+                ):
+                    return
+                status = "canceled" if snapshot["status"] == "canceled" else "failed"
                 next_request_at = ""
             with AnalysisStore(self.database_path) as store:
                 store.finish_feed_schedule(
@@ -788,20 +1067,66 @@ class FeedScheduleCoordinator:
         if schedule is None:
             return
         try:
-            job = self.jobs.start(
-                "run-scheduled",
-                {"job": schedule["job"], "analyze": schedule["analyze"]},
-            )
-        except WebRequestError:
+            job = self._start_schedule_job(schedule, set())
+        except WebRequestError as exc:
             with AnalysisStore(self.database_path) as store:
                 store.finish_feed_schedule(
                     int(schedule["id"]),
                     due_date=str(schedule["due_date"]),
-                    status="deferred",
-                    message="Another local job is active.",
+                    status=(
+                        "waiting_quota"
+                        if exc.status == HTTPStatus.TOO_MANY_REQUESTS
+                        else "deferred"
+                    ),
+                    message=str(exc),
+                    next_request_at=str(
+                        self._quota_status().get("next_request_at") or ""
+                    ),
                 )
             return
-        self._active = (str(job["id"]), schedule)
+        self._active = (str(job["id"]), schedule, set())
+
+    def _start_schedule_job(
+        self,
+        schedule: dict[str, Any],
+        attempted_profile_ids: set[str],
+    ) -> dict[str, Any]:
+        return self.jobs.start(
+            "run-scheduled",
+            {
+                "job": schedule["job"],
+                "analyze": schedule["analyze"],
+                "account_profile_id": str(
+                    schedule.get("account_profile_id") or "automatic"
+                ),
+                "exclude_account_profile_ids": sorted(attempted_profile_ids),
+            },
+        )
+
+    def _try_next_account(
+        self,
+        schedule: dict[str, Any],
+        attempted_profile_ids: set[str],
+    ) -> bool:
+        try:
+            job = self._start_schedule_job(schedule, attempted_profile_ids)
+        except WebRequestError:
+            return False
+        self._active = (
+            str(job["id"]),
+            schedule,
+            set(attempted_profile_ids),
+        )
+        return True
+
+    def _quota_status(self) -> dict[str, Any]:
+        credential_store = getattr(self.jobs, "credential_store", None)
+        if credential_store is None:
+            return archive_request_ledger(base_dir=self.working_dir).status()
+        return _account_pool_profiles(
+            self.working_dir,
+            credential_store,
+        )["quota"]
 
     def _run(self) -> None:
         while not self._stop.is_set():
@@ -850,8 +1175,21 @@ def _media_url(state: WebAppState, path_value: str | Path | None) -> str:
 
 def _library_payload(state: WebAppState) -> dict[str, Any]:
     days = scan_local_library(state.output_dir, state.database_path)
+    with AnalysisStore(state.database_path) as store:
+        schedules = store.list_feed_schedules()
+        catchups = store.list_library_catchups()
+        for feed_id in completed_library_catchup_feed_ids(days, catchups):
+            store.delete_library_catchup(feed_id)
+        if catchups:
+            catchups = store.list_library_catchups()
     return {
         "days": days,
+        "feed_coverage": build_library_feed_coverage(
+            days,
+            schedules,
+            catchups,
+        ),
+        "catchups": catchups,
         "summary": {
             "feed_count": len({value["feed_id"] for value in days}),
             "day_count": len(days),
@@ -1112,6 +1450,14 @@ def create_server(
                     self._require_lan_access()
                     self._post_lan_acquisition(parsed.path)
                     return
+                if parsed.path.startswith("/api/lan/v1/quota/"):
+                    self._require_lan_access()
+                    self._post_lan_quota(parsed.path)
+                    return
+                if parsed.path.startswith("/api/lan/v1/processing/"):
+                    self._require_lan_access()
+                    self._post_lan_processing(parsed.path)
+                    return
                 self._require_session(write=True)
                 self._post()
             except WebRequestError as exc:
@@ -1133,12 +1479,37 @@ def create_server(
                 self._require_lan_access()
                 self._json(HTTPStatus.OK, state.lan_catalog.info())
                 return
+            if parsed.path == "/api/lan/v1/feed-days":
+                self._require_lan_access()
+                query = parse_qs(parsed.query)
+                feed_id = str((query.get("feed_id") or [""])[0]).strip()
+                try:
+                    dates = state.lan_catalog.feed_dates(feed_id)
+                except LanSyncError as exc:
+                    raise WebRequestError(HTTPStatus.BAD_REQUEST, str(exc)) from exc
+                self._json(
+                    HTTPStatus.OK,
+                    {
+                        "protocol": LAN_PROTOCOL,
+                        "node_id": state.lan_catalog.node_id,
+                        "feed_id": feed_id,
+                        "dates": [value.isoformat() for value in dates],
+                        "peers": list(state.lan_catalog.peer_urls),
+                    },
+                )
+                return
             if parsed.path == "/api/lan/v1/blocks":
                 self._require_lan_access()
                 query = parse_qs(parsed.query)
                 feed_id, archive_date = self._feed_date(query)
                 try:
                     blocks = state.lan_catalog.inventory(feed_id, archive_date)
+                    complete, completion_blocks = (
+                        state.lan_catalog.completion_inventory(
+                            feed_id,
+                            archive_date,
+                        )
+                    )
                 except LanSyncError as exc:
                     raise WebRequestError(HTTPStatus.BAD_REQUEST, str(exc)) from exc
                 self._json(
@@ -1149,6 +1520,10 @@ def create_server(
                         "feed_id": feed_id,
                         "archive_date": archive_date.isoformat(),
                         "blocks": [block.to_dict() for block in blocks],
+                        "complete": complete,
+                        "completion_blocks": [
+                            block.to_dict() for block in completion_blocks
+                        ],
                         "peers": list(state.lan_catalog.peer_urls),
                     },
                 )
@@ -1168,6 +1543,85 @@ def create_server(
                 try:
                     value = state.lan_catalog.acquisition_queue.status(
                         quota_scope,
+                        feed_id,
+                        archive_date,
+                    )
+                except LanSyncError as exc:
+                    raise WebRequestError(
+                        HTTPStatus.BAD_REQUEST,
+                        str(exc),
+                    ) from exc
+                self._json(HTTPStatus.OK, value)
+                return
+            if parsed.path == "/api/lan/v1/quota":
+                self._require_lan_access()
+                query = parse_qs(parsed.query)
+                try:
+                    profile_id = normalize_account_profile_id(
+                        str(
+                            (query.get("account_profile_id") or ["default"])[0]
+                        )
+                    )
+                except ValueError as exc:
+                    raise WebRequestError(
+                        HTTPStatus.BAD_REQUEST,
+                        str(exc),
+                    ) from exc
+                status = ArchiveRequestLedger(
+                    base_dir=state.working_dir,
+                    account_profile_id=profile_id,
+                ).status()
+                self._json(
+                    HTTPStatus.OK,
+                    {"protocol": LAN_PROTOCOL, **status},
+                )
+                return
+            if parsed.path == "/api/lan/v1/transcripts":
+                self._require_lan_access()
+                query = parse_qs(parsed.query)
+                feed_id, archive_date = self._feed_date(query)
+                fingerprint = str(
+                    (query.get("processing_fingerprint") or [""])[0]
+                ).strip()
+                try:
+                    artifacts = state.lan_catalog.transcript_inventory(
+                        feed_id,
+                        archive_date,
+                        fingerprint,
+                    )
+                except LanSyncError as exc:
+                    raise WebRequestError(
+                        HTTPStatus.BAD_REQUEST,
+                        str(exc),
+                    ) from exc
+                self._json(
+                    HTTPStatus.OK,
+                    {
+                        "protocol": LAN_PROTOCOL,
+                        "node_id": state.lan_catalog.node_id,
+                        "feed_id": feed_id,
+                        "archive_date": archive_date.isoformat(),
+                        "processing_fingerprint": fingerprint,
+                        "artifacts": [value.to_dict() for value in artifacts],
+                        "peers": list(state.lan_catalog.peer_urls),
+                    },
+                )
+                return
+            if parsed.path == "/api/lan/v1/processing":
+                self._require_lan_access()
+                if not state.lan_catalog.processing_queue.enabled:
+                    raise WebRequestError(
+                        HTTPStatus.NOT_FOUND,
+                        "LAN processing coordination is not enabled.",
+                    )
+                query = parse_qs(parsed.query)
+                feed_id, archive_date = self._feed_date(query)
+                fingerprint = str(
+                    (query.get("processing_fingerprint") or [""])[0]
+                ).strip()
+                try:
+                    value = state.lan_catalog.processing_queue.status(
+                        fingerprint,
                         feed_id,
                         archive_date,
                     )
@@ -1208,6 +1662,44 @@ def create_server(
                     raise WebRequestError(HTTPStatus.BAD_REQUEST, str(exc)) from exc
                 self._lan_block(path, block.sha256)
                 return
+            if parsed.path.startswith("/api/lan/v1/transcripts/"):
+                self._require_lan_access()
+                parts = parsed.path.removeprefix(
+                    "/api/lan/v1/transcripts/"
+                ).split("/")
+                if len(parts) != 4:
+                    raise WebRequestError(
+                        HTTPStatus.NOT_FOUND,
+                        "Transcript artifact not found.",
+                    )
+                feed_id, date_value, fingerprint, filename = (
+                    unquote(value) for value in parts
+                )
+                if not FEED_ID_PATTERN.fullmatch(feed_id):
+                    raise WebRequestError(
+                        HTTPStatus.BAD_REQUEST,
+                        "A numeric feed ID is required.",
+                    )
+                archive_date = self._date_value(date_value)
+                try:
+                    path, artifact = state.lan_catalog.resolve_transcript_artifact(
+                        feed_id,
+                        archive_date,
+                        fingerprint,
+                        filename,
+                    )
+                except FileNotFoundError:
+                    raise WebRequestError(
+                        HTTPStatus.NOT_FOUND,
+                        "Transcript artifact not found.",
+                    ) from None
+                except LanSyncError as exc:
+                    raise WebRequestError(
+                        HTTPStatus.BAD_REQUEST,
+                        str(exc),
+                    ) from exc
+                self._lan_artifact(path, artifact.sha256)
+                return
             if parsed.path == "/":
                 index_path = state.static_dir / "index.html"
                 html = index_path.read_text(encoding="utf-8").replace("__SESSION_TOKEN__", state.session_token)
@@ -1237,6 +1729,10 @@ def create_server(
                 readiness_values, _environment_file = _readiness_environment(
                     state.working_dir
                 )
+                account_pool = _account_pool_profiles(
+                    state.working_dir,
+                    state.credential_store,
+                )
                 with AnalysisStore(state.database_path) as store:
                     profiles = store.list_area_profiles()
                     area_runs = store.list_area_acquisition_runs(limit=20)
@@ -1249,6 +1745,10 @@ def create_server(
                         "area_runs": area_runs,
                         "schedules": schedules,
                         "runtime": {
+                            "version": __version__,
+                            "source_commit": str(
+                                os.getenv("BROADCASTIFY_SOURCE_COMMIT") or ""
+                            ).strip(),
                             "platform": platform.system(),
                             "platform_release": platform.release(),
                             "python": platform.python_version(),
@@ -1257,9 +1757,7 @@ def create_server(
                             "loopback_only": state.loopback_only,
                             "access_scope": state.access_scope,
                             "bind_host": state.bind_host,
-                            "archive_quota": ArchiveRequestLedger(
-                                base_dir=state.working_dir
-                            ).status(),
+                            "archive_quota": account_pool["quota"],
                             "processing_defaults": _processing_defaults(
                                 readiness_values
                             ),
@@ -1277,6 +1775,9 @@ def create_server(
                                 ),
                                 "acquisition_queue_available": bool(
                                     state.lan_catalog.acquisition_queue.enabled
+                                ),
+                                "processing_queue_available": bool(
+                                    state.lan_catalog.processing_queue.enabled
                                 ),
                             },
                             **_runtime_readiness(state),
@@ -1503,9 +2004,51 @@ def create_server(
                 return
             if parsed.path == "/api/schedules":
                 body = self._body()
+                requested_profile_id = str(
+                    body.get("account_profile_id") or "automatic"
+                ).strip().lower()
+                if requested_profile_id != "automatic":
+                    _select_account_profile(
+                        state.working_dir,
+                        state.credential_store,
+                        requested_profile_id,
+                    )
                 with AnalysisStore(state.database_path) as store:
                     schedule = store.save_feed_schedule(body)
                 self._json(HTTPStatus.OK, {"schedule": schedule})
+                return
+            if parsed.path == "/api/catchups":
+                body = self._body()
+                action = str(body.get("action") or "save").strip().lower()
+                try:
+                    with AnalysisStore(state.database_path) as store:
+                        if action == "save":
+                            catchup = store.save_library_catchup(
+                                {
+                                    **body,
+                                    "through_current": True,
+                                    "end_date": "",
+                                }
+                            )
+                            self._json(
+                                HTTPStatus.OK,
+                                {"catchup": catchup},
+                            )
+                        elif action == "clear":
+                            deleted = store.delete_library_catchup(
+                                str(body.get("feed_id") or "")
+                            )
+                            self._json(
+                                HTTPStatus.OK,
+                                {"deleted": deleted},
+                            )
+                        else:
+                            raise ValueError("Unknown catch-up action.")
+                except ValueError as exc:
+                    raise WebRequestError(
+                        HTTPStatus.BAD_REQUEST,
+                        str(exc),
+                    ) from exc
                 return
             if parsed.path.startswith("/api/schedules/") and parsed.path.endswith("/delete"):
                 value = parsed.path.removeprefix("/api/schedules/").removesuffix("/delete")
@@ -1583,6 +2126,146 @@ def create_server(
                     raise WebRequestError(
                         HTTPStatus.NOT_FOUND,
                         "LAN acquisition action not found.",
+                    )
+            except PermissionError as exc:
+                raise WebRequestError(HTTPStatus.FORBIDDEN, str(exc)) from exc
+            except (LanSyncError, TypeError, ValueError) as exc:
+                raise WebRequestError(HTTPStatus.BAD_REQUEST, str(exc)) from exc
+            self._json(HTTPStatus.OK, value)
+
+        def _post_lan_quota(self, path: str) -> None:
+            action = path.removeprefix("/api/lan/v1/quota/")
+            body = self._body()
+            try:
+                profile_id = normalize_account_profile_id(
+                    str(body.get("account_profile_id") or "default")
+                )
+            except ValueError as exc:
+                raise WebRequestError(
+                    HTTPStatus.BAD_REQUEST,
+                    str(exc),
+                ) from exc
+            ledger = ArchiveRequestLedger(
+                base_dir=state.working_dir,
+                account_profile_id=profile_id,
+            )
+            try:
+                if action == "reserve":
+                    feed_id = str(body.get("feed_id") or "").strip()
+                    archive_date = str(body.get("archive_date") or "").strip()
+                    archive_id = str(body.get("archive_id") or "").strip()
+                    if not FEED_ID_PATTERN.fullmatch(feed_id):
+                        raise ValueError("A numeric feed ID is required.")
+                    _ = date.fromisoformat(archive_date)
+                    if not archive_id.isdigit() or len(archive_id) > 40:
+                        raise ValueError("A numeric archive ID is required.")
+                    request_id = ledger.reserve(
+                        feed_id=feed_id,
+                        archive_date=archive_date,
+                        archive_id=archive_id,
+                    )
+                    value: dict[str, Any] = {"request_id": request_id}
+                elif action == "finish":
+                    request_id = int(body.get("request_id") or 0)
+                    if request_id < 1:
+                        raise ValueError("A positive quota request ID is required.")
+                    http_status_value = body.get("http_status")
+                    http_status = (
+                        int(http_status_value)
+                        if http_status_value is not None
+                        else None
+                    )
+                    if http_status is not None and not 100 <= http_status <= 599:
+                        raise ValueError("The archive HTTP status is not valid.")
+                    ledger.finish(
+                        request_id,
+                        outcome=str(body.get("outcome") or "")[:80],
+                        http_status=http_status,
+                    )
+                    value = ledger.status()
+                elif action == "rate-limit":
+                    reason = str(body.get("reason") or "").strip()
+                    if not reason:
+                        raise ValueError("A rate-limit reason is required.")
+                    value = ledger.mark_rate_limited(reason[:800])
+                else:
+                    raise WebRequestError(
+                        HTTPStatus.NOT_FOUND,
+                        "LAN quota action not found.",
+                    )
+            except ArchiveRequestBudgetExceeded as exc:
+                raise WebRequestError(
+                    HTTPStatus.TOO_MANY_REQUESTS,
+                    str(exc),
+                ) from exc
+            except (TypeError, ValueError) as exc:
+                raise WebRequestError(
+                    HTTPStatus.BAD_REQUEST,
+                    str(exc),
+                ) from exc
+            self._json(
+                HTTPStatus.OK,
+                {"protocol": LAN_PROTOCOL, **value},
+            )
+
+        def _post_lan_processing(self, path: str) -> None:
+            if not state.lan_catalog.processing_queue.enabled:
+                raise WebRequestError(
+                    HTTPStatus.NOT_FOUND,
+                    "LAN processing coordination is not enabled.",
+                )
+            action = path.removeprefix("/api/lan/v1/processing/")
+            body = self._body()
+            feed_id = str(body.get("feed_id") or "").strip()
+            if not FEED_ID_PATTERN.fullmatch(feed_id):
+                raise WebRequestError(
+                    HTTPStatus.BAD_REQUEST,
+                    "A numeric feed ID is required.",
+                )
+            archive_date = self._date_value(
+                str(body.get("archive_date") or "")
+            )
+            fingerprint = str(
+                body.get("processing_fingerprint") or ""
+            ).strip()
+            try:
+                if action == "claim":
+                    owner_node_id = str(body.get("owner_node_id") or "")
+                    producer_url = str(body.get("producer_url") or "")
+                    value = state.lan_catalog.processing_queue.claim(
+                        fingerprint,
+                        feed_id,
+                        archive_date,
+                        owner_node_id=owner_node_id,
+                        producer_url=producer_url,
+                        requester_address=str(self.client_address[0]),
+                        allow_multihomed_self=bool(
+                            configured_advertisement
+                            and owner_node_id == state.lan_catalog.node_id
+                            and normalize_peer_url(producer_url)
+                            == configured_advertisement
+                        ),
+                    )
+                elif action == "renew":
+                    value = state.lan_catalog.processing_queue.renew(
+                        fingerprint,
+                        feed_id,
+                        archive_date,
+                        lease_token=str(body.get("lease_token") or ""),
+                    )
+                elif action == "finish":
+                    value = state.lan_catalog.processing_queue.finish(
+                        fingerprint,
+                        feed_id,
+                        archive_date,
+                        lease_token=str(body.get("lease_token") or ""),
+                        outcome=str(body.get("outcome") or ""),
+                        artifact_count=int(body.get("artifact_count") or 0),
+                    )
+                else:
+                    raise WebRequestError(
+                        HTTPStatus.NOT_FOUND,
+                        "LAN processing action not found.",
                     )
             except PermissionError as exc:
                 raise WebRequestError(HTTPStatus.FORBIDDEN, str(exc)) from exc
@@ -1747,6 +2430,28 @@ def create_server(
             size = path.stat().st_size
             self.send_response(HTTPStatus.OK)
             self.send_header("Content-Type", "audio/mpeg")
+            self.send_header("Content-Length", str(size))
+            self.send_header("X-Radio-Archive-Protocol", LAN_PROTOCOL)
+            self.send_header("X-Radio-Archive-SHA256", sha256)
+            self.send_header("Cache-Control", "private, no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Cross-Origin-Resource-Policy", "same-origin")
+            self.end_headers()
+            with path.open("rb") as handle:
+                for chunk in iter(lambda: handle.read(256 * 1024), b""):
+                    self.wfile.write(chunk)
+
+        def _lan_artifact(self, path: Path, sha256: str) -> None:
+            size = path.stat().st_size
+            self.send_response(HTTPStatus.OK)
+            content_type = {
+                ".json": "application/json; charset=utf-8",
+                ".mp3": "audio/mpeg",
+            }.get(path.suffix.lower(), "text/plain; charset=utf-8")
+            self.send_header(
+                "Content-Type",
+                content_type,
+            )
             self.send_header("Content-Length", str(size))
             self.send_header("X-Radio-Archive-Protocol", LAN_PROTOCOL)
             self.send_header("X-Radio-Archive-SHA256", sha256)

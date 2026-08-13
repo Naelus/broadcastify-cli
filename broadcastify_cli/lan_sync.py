@@ -28,7 +28,9 @@ import requests
 
 from .archive_cache import (
     archive_identities_for_filename,
+    complete_cached_archive_day,
     remember_archive_identity,
+    remember_complete_archive_day,
 )
 
 LAN_PROTOCOL = "radio-archive-lan/1"
@@ -36,17 +38,23 @@ LAN_DISCOVERY_MAGIC = b"RADIO-ARCHIVE-LAN-DISCOVER/1 "
 LAN_DISCOVERY_PORT = 48_765
 LAN_MULTICAST_ADDRESS = "239.255.77.77"
 MAX_LAN_PEERS = 24
+MAX_FEED_DAYS = 20_000
 MAX_BLOCKS_PER_DAY = 128
 MAX_ARCHIVE_BLOCK_BYTES = 256 * 1024 * 1024
 MAX_INVENTORY_BYTES = 1024 * 1024
 MAX_LAN_QUEUE_ENTRIES = 512
+MAX_TRANSCRIPT_ARTIFACTS_PER_DAY = 32
+MAX_TRANSCRIPT_ARTIFACT_BYTES = 64 * 1024 * 1024
+MAX_DERIVED_AUDIO_BYTES = 8 * 1024 * 1024 * 1024
 LAN_QUEUE_LEASE_SECONDS = 90.0
+LAN_PROCESSING_LEASE_SECONDS = 180.0
 LAN_QUEUE_RESULT_SECONDS = 24 * 60 * 60.0
 LAN_QUEUE_ROLLING_RESULT_SECONDS = 5 * 60.0
 LAN_QUEUE_REQUEST_BYTES = 256 * 1024
 LAN_QUEUE_RESPONSE_BYTES = 256 * 1024
 LAN_QUEUE_NODE_PATTERN = re.compile(r"^[A-Za-z0-9_-]{8,80}$")
 LAN_QUEUE_SCOPE_PATTERN = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
+PROCESSING_FINGERPRINT_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 RAW_ARCHIVE_PATTERN = re.compile(
     r"^(?P<stamp>\d{12})-(?P<archive_id>\d+)-(?P<feed_id>\d+)\.mp3$",
     re.IGNORECASE,
@@ -311,6 +319,127 @@ class ArchiveBlock:
         return asdict(self)
 
 
+@dataclass(frozen=True)
+class TranscriptArtifact:
+    """One hash-verified transcript file tied to exact audio and model input."""
+
+    feed_id: str
+    archive_date: str
+    audio_filename: str
+    audio_sha256: str
+    processing_fingerprint: str
+    filename: str
+    kind: str
+    size: int
+    sha256: str
+    modified_ns: int
+
+    @classmethod
+    def from_mapping(
+        cls,
+        value: Mapping[str, Any],
+        *,
+        expected_feed_id: str,
+        expected_date: date,
+        expected_fingerprint: str,
+    ) -> "TranscriptArtifact":
+        artifact = cls(
+            feed_id=str(value.get("feed_id") or ""),
+            archive_date=str(value.get("archive_date") or ""),
+            audio_filename=str(value.get("audio_filename") or ""),
+            audio_sha256=str(value.get("audio_sha256") or "").lower(),
+            processing_fingerprint=str(
+                value.get("processing_fingerprint") or ""
+            ).lower(),
+            filename=str(value.get("filename") or ""),
+            kind=str(value.get("kind") or ""),
+            size=int(value.get("size") or 0),
+            sha256=str(value.get("sha256") or "").lower(),
+            modified_ns=int(value.get("modified_ns") or 0),
+        )
+        artifact.validate(
+            expected_feed_id=expected_feed_id,
+            expected_date=expected_date,
+            expected_fingerprint=expected_fingerprint,
+        )
+        return artifact
+
+    def validate(
+        self,
+        *,
+        expected_feed_id: str,
+        expected_date: date,
+        expected_fingerprint: str,
+    ) -> None:
+        if (
+            self.feed_id != expected_feed_id
+            or self.archive_date != expected_date.isoformat()
+            or self.processing_fingerprint != expected_fingerprint
+            or not PROCESSING_FINGERPRINT_PATTERN.fullmatch(
+                self.processing_fingerprint
+            )
+        ):
+            raise LanSyncError(
+                "A LAN peer advertised an incompatible transcript artifact."
+            )
+        if not _valid_day_audio_filename(
+            self.audio_filename,
+            expected_feed_id,
+            expected_date,
+        ):
+            raise LanSyncError(
+                "A LAN peer advertised an invalid transcript audio identity."
+            )
+        expected_stem = Path(self.audio_filename).stem
+        expected_names = {
+            "audio": self.audio_filename,
+            "json": f"{expected_stem}.json",
+            "text": f"{expected_stem}.txt",
+        }
+        if self.kind not in expected_names or self.filename != expected_names[self.kind]:
+            raise LanSyncError(
+                "A LAN peer advertised an invalid transcript artifact name."
+            )
+        minimum_size = 0 if self.kind == "text" else 1
+        maximum_size = (
+            MAX_DERIVED_AUDIO_BYTES
+            if self.kind == "audio"
+            else MAX_TRANSCRIPT_ARTIFACT_BYTES
+        )
+        if not minimum_size <= self.size <= maximum_size:
+            raise LanSyncError(
+                "A LAN peer advertised an invalid transcript artifact size."
+            )
+        if not re.fullmatch(r"[0-9a-f]{64}", self.sha256):
+            raise LanSyncError(
+                "A LAN peer advertised an invalid transcript artifact hash."
+            )
+        if not re.fullmatch(r"[0-9a-f]{64}", self.audio_sha256):
+            raise LanSyncError(
+                "A LAN peer advertised an invalid transcript audio hash."
+            )
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+def _valid_day_audio_filename(
+    filename: str,
+    feed_id: str,
+    archive_date: date,
+) -> bool:
+    if Path(filename).name != filename or not filename.lower().endswith(".mp3"):
+        return False
+    if filename == f"combined_{feed_id}_{archive_date:%Y%m%d}.mp3":
+        return True
+    match = RAW_ARCHIVE_PATTERN.fullmatch(filename)
+    return bool(
+        match
+        and match.group("feed_id") == feed_id
+        and _archive_stamp_matches_day(match.group("stamp"), archive_date)
+    )
+
+
 def _block_archive_identities(
     day_directory: Path,
     feed_id: str,
@@ -359,6 +488,44 @@ class LanSyncResult:
     blocks_copied: int = 0
     bytes_copied: int = 0
     conflicts: int = 0
+    completion_proven: bool = False
+    failures: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class LanTranscriptSyncResult:
+    enabled: bool
+    peers_considered: int = 0
+    peers_reached: int = 0
+    artifacts_available: int = 0
+    artifacts_already_local: int = 0
+    artifacts_copied: int = 0
+    bytes_copied: int = 0
+    conflicts: int = 0
+    transcripts: tuple[Path, ...] = ()
+    failures: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        value = asdict(self)
+        value["transcripts"] = [str(path) for path in self.transcripts]
+        return value
+
+
+@dataclass(frozen=True)
+class LanFeedSyncResult:
+    """Feed-wide pull result used to converge followed feeds across nodes."""
+
+    enabled: bool
+    dates_discovered: tuple[str, ...] = ()
+    days_considered: int = 0
+    days_with_download_changes: int = 0
+    days_with_transcript_changes: int = 0
+    blocks_copied: int = 0
+    transcript_artifacts_copied: int = 0
+    bytes_copied: int = 0
     failures: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
@@ -399,6 +566,7 @@ def merge_lan_sync_results(
         blocks_copied=sum(result.blocks_copied for result in results),
         bytes_copied=sum(result.bytes_copied for result in results),
         conflicts=sum(result.conflicts for result in results),
+        completion_proven=any(result.completion_proven for result in results),
         failures=failures[:50],
     )
 
@@ -420,6 +588,28 @@ class LanDownloadTurn:
     blocks: tuple[ArchiveBlock, ...] = ()
     audio_files: tuple[Path, ...] = ()
     sync_result: LanSyncResult = LanSyncResult(enabled=False)
+    warnings: tuple[str, ...] = ()
+
+    @property
+    def is_leader(self) -> bool:
+        return self.role == "leader"
+
+
+@dataclass(frozen=True)
+class LanProcessingTurn:
+    """One node's role for a model-specific feed/day transcript operation."""
+
+    role: str
+    feed_id: str = ""
+    archive_date: str = ""
+    processing_fingerprint: str = ""
+    coordinator_url: str = ""
+    producer_url: str = ""
+    owner_node_id: str = ""
+    lease_token: str = ""
+    lease_seconds: float = 0.0
+    transcripts: tuple[Path, ...] = ()
+    sync_result: LanTranscriptSyncResult = LanTranscriptSyncResult(enabled=False)
     warnings: tuple[str, ...] = ()
 
     @property
@@ -754,6 +944,216 @@ class LanAcquisitionQueue:
         )
 
 
+@dataclass
+class _LanProcessingEntry:
+    state: str
+    owner_node_id: str
+    producer_url: str
+    lease_token: str
+    expires_at: float
+    artifact_count: int = 0
+
+
+class LanProcessingQueue:
+    """Bounded renewable leases for model-specific transcript work."""
+
+    def __init__(
+        self,
+        *,
+        enabled: bool = True,
+        lease_seconds: float = LAN_PROCESSING_LEASE_SECONDS,
+        result_seconds: float = LAN_QUEUE_RESULT_SECONDS,
+        maximum_entries: int = MAX_LAN_QUEUE_ENTRIES,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self.enabled = bool(enabled)
+        self.lease_seconds = min(15 * 60.0, max(30.0, float(lease_seconds)))
+        self.result_seconds = min(
+            24 * 60 * 60.0,
+            max(5 * 60.0, float(result_seconds)),
+        )
+        self.maximum_entries = min(
+            MAX_LAN_QUEUE_ENTRIES,
+            max(16, int(maximum_entries)),
+        )
+        self._clock = clock
+        self._entries: dict[tuple[str, str, str], _LanProcessingEntry] = {}
+        self._lock = threading.RLock()
+
+    def status(
+        self,
+        processing_fingerprint: str,
+        feed_id: str,
+        archive_date: date,
+    ) -> dict[str, Any]:
+        fingerprint = self._validate_key(processing_fingerprint, feed_id)
+        key = (fingerprint, feed_id, archive_date.isoformat())
+        with self._lock:
+            now = self._clock()
+            self._cleanup_locked(now)
+            return self._payload_locked(key, now)
+
+    def claim(
+        self,
+        processing_fingerprint: str,
+        feed_id: str,
+        archive_date: date,
+        *,
+        owner_node_id: str,
+        producer_url: str,
+        requester_address: str = "",
+        allow_multihomed_self: bool = False,
+    ) -> dict[str, Any]:
+        fingerprint = self._validate_key(processing_fingerprint, feed_id)
+        owner = LanAcquisitionQueue._validate_node_id(owner_node_id)
+        producer = normalize_peer_url(producer_url)
+        LanAcquisitionQueue._validate_requester(
+            producer,
+            requester_address,
+            allow_multihomed_self=allow_multihomed_self,
+        )
+        key = (fingerprint, feed_id, archive_date.isoformat())
+        with self._lock:
+            now = self._clock()
+            self._cleanup_locked(now)
+            if key in self._entries:
+                value = self._payload_locked(key, now)
+                value["granted"] = False
+                return value
+            if len(self._entries) >= self.maximum_entries:
+                raise LanSyncError(
+                    "The LAN processing queue is full; retry after older leases expire."
+                )
+            token = secrets.token_urlsafe(32)
+            self._entries[key] = _LanProcessingEntry(
+                state="active",
+                owner_node_id=owner,
+                producer_url=producer,
+                lease_token=token,
+                expires_at=now + self.lease_seconds,
+            )
+            value = self._payload_locked(key, now)
+            value["granted"] = True
+            value["lease_token"] = token
+            return value
+
+    def renew(
+        self,
+        processing_fingerprint: str,
+        feed_id: str,
+        archive_date: date,
+        *,
+        lease_token: str,
+    ) -> dict[str, Any]:
+        fingerprint = self._validate_key(processing_fingerprint, feed_id)
+        key = (fingerprint, feed_id, archive_date.isoformat())
+        with self._lock:
+            now = self._clock()
+            self._cleanup_locked(now)
+            entry = self._authorized_active_entry(key, lease_token)
+            entry.expires_at = now + self.lease_seconds
+            return self._payload_locked(key, now)
+
+    def finish(
+        self,
+        processing_fingerprint: str,
+        feed_id: str,
+        archive_date: date,
+        *,
+        lease_token: str,
+        outcome: str,
+        artifact_count: int = 0,
+    ) -> dict[str, Any]:
+        fingerprint = self._validate_key(processing_fingerprint, feed_id)
+        if outcome not in {"complete", "failed"}:
+            raise LanSyncError("The LAN processing outcome is not valid.")
+        if not 0 <= int(artifact_count) <= MAX_TRANSCRIPT_ARTIFACTS_PER_DAY:
+            raise LanSyncError("The LAN transcript artifact count is not valid.")
+        if outcome == "complete" and int(artifact_count) < 2:
+            raise LanSyncError(
+                "Completed LAN transcript work must publish a JSON/text pair."
+            )
+        key = (fingerprint, feed_id, archive_date.isoformat())
+        with self._lock:
+            now = self._clock()
+            self._cleanup_locked(now)
+            entry = self._authorized_active_entry(key, lease_token)
+            if outcome == "failed":
+                del self._entries[key]
+                return self._payload_locked(key, now)
+            entry.state = "complete"
+            entry.lease_token = ""
+            entry.artifact_count = int(artifact_count)
+            entry.expires_at = now + self.result_seconds
+            return self._payload_locked(key, now)
+
+    def _authorized_active_entry(
+        self,
+        key: tuple[str, str, str],
+        lease_token: str,
+    ) -> _LanProcessingEntry:
+        entry = self._entries.get(key)
+        supplied = str(lease_token or "")
+        if (
+            entry is None
+            or entry.state != "active"
+            or not supplied
+            or not hmac.compare_digest(entry.lease_token, supplied)
+        ):
+            raise PermissionError("The LAN processing lease is missing or expired.")
+        return entry
+
+    def _payload_locked(
+        self,
+        key: tuple[str, str, str],
+        now: float,
+    ) -> dict[str, Any]:
+        fingerprint, feed_id, archive_date = key
+        entry = self._entries.get(key)
+        value: dict[str, Any] = {
+            "protocol": LAN_PROTOCOL,
+            "processing_fingerprint": fingerprint,
+            "feed_id": feed_id,
+            "archive_date": archive_date,
+            "state": "available",
+            "producer_url": "",
+            "owner_node_id": "",
+            "lease_seconds": 0.0,
+            "artifact_count": 0,
+        }
+        if entry is not None:
+            value.update(
+                {
+                    "state": entry.state,
+                    "producer_url": entry.producer_url,
+                    "owner_node_id": entry.owner_node_id,
+                    "lease_seconds": round(
+                        max(0.0, entry.expires_at - now),
+                        3,
+                    ),
+                    "artifact_count": entry.artifact_count,
+                }
+            )
+        return value
+
+    def _cleanup_locked(self, now: float) -> None:
+        for key in [
+            value
+            for value, entry in self._entries.items()
+            if entry.expires_at <= now
+        ]:
+            self._entries.pop(key, None)
+
+    @staticmethod
+    def _validate_key(processing_fingerprint: str, feed_id: str) -> str:
+        fingerprint = str(processing_fingerprint or "").strip().lower()
+        if not PROCESSING_FINGERPRINT_PATTERN.fullmatch(fingerprint):
+            raise LanSyncError("The LAN processing fingerprint is not valid.")
+        if not str(feed_id or "").isdigit():
+            raise LanSyncError("A numeric feed ID is required.")
+        return fingerprint
+
+
 class ArchiveHashCache:
     """Bounded, thread-safe hash cache keyed by immutable file metadata."""
 
@@ -801,6 +1201,7 @@ class LanArchiveCatalog:
         peer_urls: Sequence[str] = (),
         node_id: str | None = None,
         acquisition_queue: LanAcquisitionQueue | None = None,
+        processing_queue: LanProcessingQueue | None = None,
         queue_enabled: bool = True,
     ) -> None:
         self.output_dir = Path(output_dir).expanduser().resolve()
@@ -832,6 +1233,21 @@ class LanArchiveCatalog:
                 maximum=30 * 60.0,
             ),
         )
+        self.processing_queue = processing_queue or LanProcessingQueue(
+            enabled=self.enabled and queue_enabled,
+            lease_seconds=environment_float(
+                "BROADCASTIFY_LAN_PROCESSING_LEASE_SECONDS",
+                LAN_PROCESSING_LEASE_SECONDS,
+                minimum=30.0,
+                maximum=15 * 60.0,
+            ),
+            result_seconds=environment_float(
+                "BROADCASTIFY_LAN_PROCESSING_RESULT_SECONDS",
+                LAN_QUEUE_RESULT_SECONDS,
+                minimum=5 * 60.0,
+                maximum=24 * 60 * 60.0,
+            ),
+        )
 
     def authorized(self, supplied_key: str) -> bool:
         if not self.sync_key:
@@ -849,7 +1265,62 @@ class LanArchiveCatalog:
             "acquisition_queue_available": bool(
                 self.enabled and self.acquisition_queue.enabled
             ),
+            "processing_queue_available": bool(
+                self.enabled and self.processing_queue.enabled
+            ),
         }
+
+    def feed_dates(self, feed_id: str) -> list[date]:
+        """List retained dates for one feed without exposing unrelated paths."""
+
+        if not feed_id.isdigit():
+            raise LanSyncError("A numeric feed ID is required.")
+        feed_dir = (self.output_dir / feed_id).resolve()
+        try:
+            feed_dir.relative_to(self.output_dir)
+        except ValueError as exc:
+            raise LanSyncError("The feed is outside the archive library.") from exc
+        if (
+            not feed_dir.is_dir()
+            or feed_dir.is_symlink()
+            or feed_dir.parent != self.output_dir
+        ):
+            return []
+        values: list[date] = []
+        for candidate in sorted(feed_dir.iterdir(), key=lambda value: value.name):
+            if (
+                len(values) >= MAX_FEED_DAYS
+                or candidate.is_symlink()
+                or not candidate.is_dir()
+                or not re.fullmatch(r"\d{8}", candidate.name)
+            ):
+                continue
+            try:
+                archive_date = datetime.strptime(candidate.name, "%Y%m%d").date()
+            except ValueError:
+                continue
+            if candidate.resolve().parent != feed_dir:
+                continue
+            complete = complete_cached_archive_day(
+                candidate,
+                feed_id,
+                archive_date,
+            )
+            has_source = any(
+                RAW_ARCHIVE_PATTERN.fullmatch(path.name)
+                and not path.is_symlink()
+                and path.is_file()
+                for path in candidate.glob("*.mp3")
+            )
+            transcript_dir = candidate / "transcripts"
+            has_derived_transcript = (
+                transcript_dir.is_dir()
+                and not transcript_dir.is_symlink()
+                and any(transcript_dir.glob("*.json"))
+            )
+            if complete is not None or has_source or has_derived_transcript:
+                values.append(archive_date)
+        return values
 
     def inventory(self, feed_id: str, archive_date: date) -> list[ArchiveBlock]:
         if not feed_id.isdigit():
@@ -895,6 +1366,24 @@ class LanArchiveCatalog:
                 break
         return blocks
 
+    def completion_inventory(
+        self,
+        feed_id: str,
+        archive_date: date,
+    ) -> tuple[bool, tuple[ArchiveBlock, ...]]:
+        """Return a durable exact day-completion proof, including empty days."""
+
+        day_dir = self._day_directory(feed_id, archive_date)
+        complete = complete_cached_archive_day(day_dir, feed_id, archive_date)
+        if complete is None:
+            return False, ()
+        files, expected_count = complete
+        by_name = {value.filename: value for value in self.inventory(feed_id, archive_date)}
+        blocks = tuple(by_name[path.name] for path in files if path.name in by_name)
+        if len(blocks) != expected_count or len(blocks) != len(files):
+            return False, ()
+        return True, blocks
+
     def resolve_block(
         self,
         feed_id: str,
@@ -938,6 +1427,159 @@ class LanArchiveCatalog:
             archive_identities=archive_identities,
         )
         return path, block
+
+    def transcript_inventory(
+        self,
+        feed_id: str,
+        archive_date: date,
+        processing_fingerprint: str,
+    ) -> list[TranscriptArtifact]:
+        fingerprint = LanProcessingQueue._validate_key(
+            processing_fingerprint,
+            feed_id,
+        )
+        day_dir = self._day_directory(feed_id, archive_date)
+        transcript_dir = day_dir / "transcripts"
+        if (
+            not transcript_dir.is_dir()
+            or transcript_dir.is_symlink()
+            or transcript_dir.resolve().parent != day_dir
+        ):
+            return []
+        artifacts: list[TranscriptArtifact] = []
+        for json_path in sorted(transcript_dir.glob("*.json")):
+            if len(artifacts) + 3 > MAX_TRANSCRIPT_ARTIFACTS_PER_DAY:
+                break
+            if json_path.is_symlink() or json_path.resolve().parent != transcript_dir:
+                continue
+            try:
+                json_stat = json_path.stat()
+                if not 0 < json_stat.st_size <= MAX_TRANSCRIPT_ARTIFACT_BYTES:
+                    continue
+                payload = json.loads(json_path.read_text(encoding="utf-8"))
+            except (OSError, UnicodeDecodeError, ValueError):
+                continue
+            if not isinstance(payload, Mapping):
+                continue
+            audio_filename = str(payload.get("audio_file") or "")
+            audio_sha256 = str(payload.get("audio_sha256") or "").lower()
+            if (
+                str(payload.get("processing_fingerprint") or "").lower()
+                != fingerprint
+                or not _valid_day_audio_filename(
+                    audio_filename,
+                    feed_id,
+                    archive_date,
+                )
+                or not re.fullmatch(r"[0-9a-f]{64}", audio_sha256)
+                or json_path.name != f"{Path(audio_filename).stem}.json"
+            ):
+                continue
+            audio_path = day_dir / audio_filename
+            if (
+                audio_path.is_symlink()
+                or not audio_path.is_file()
+                or audio_path.resolve().parent != day_dir
+            ):
+                continue
+            try:
+                if self.hashes.sha256(audio_path) != audio_sha256:
+                    continue
+            except OSError:
+                continue
+            text_path = transcript_dir / f"{Path(audio_filename).stem}.txt"
+            if (
+                text_path.is_symlink()
+                or not text_path.is_file()
+                or text_path.resolve().parent != transcript_dir
+            ):
+                continue
+            try:
+                text_stat = text_path.stat()
+                if not 0 <= text_stat.st_size <= MAX_TRANSCRIPT_ARTIFACT_BYTES:
+                    continue
+                rendered_hash = str(
+                    payload.get("rendered_text_sha256") or ""
+                ).lower()
+                if (
+                    not re.fullmatch(r"[0-9a-f]{64}", rendered_hash)
+                    or self.hashes.sha256(text_path) != rendered_hash
+                ):
+                    continue
+                artifacts.extend(
+                    (
+                        TranscriptArtifact(
+                            feed_id=feed_id,
+                            archive_date=archive_date.isoformat(),
+                            audio_filename=audio_filename,
+                            audio_sha256=audio_sha256,
+                            processing_fingerprint=fingerprint,
+                            filename=audio_filename,
+                            kind="audio",
+                            size=audio_path.stat().st_size,
+                            sha256=audio_sha256,
+                            modified_ns=audio_path.stat().st_mtime_ns,
+                        ),
+                        TranscriptArtifact(
+                            feed_id=feed_id,
+                            archive_date=archive_date.isoformat(),
+                            audio_filename=audio_filename,
+                            audio_sha256=audio_sha256,
+                            processing_fingerprint=fingerprint,
+                            filename=json_path.name,
+                            kind="json",
+                            size=json_stat.st_size,
+                            sha256=self.hashes.sha256(json_path),
+                            modified_ns=json_stat.st_mtime_ns,
+                        ),
+                        TranscriptArtifact(
+                            feed_id=feed_id,
+                            archive_date=archive_date.isoformat(),
+                            audio_filename=audio_filename,
+                            audio_sha256=audio_sha256,
+                            processing_fingerprint=fingerprint,
+                            filename=text_path.name,
+                            kind="text",
+                            size=text_stat.st_size,
+                            sha256=rendered_hash,
+                            modified_ns=text_stat.st_mtime_ns,
+                        ),
+                    )
+                )
+            except OSError:
+                continue
+        return artifacts
+
+    def resolve_transcript_artifact(
+        self,
+        feed_id: str,
+        archive_date: date,
+        processing_fingerprint: str,
+        filename: str,
+    ) -> tuple[Path, TranscriptArtifact]:
+        if Path(filename).name != filename:
+            raise LanSyncError("The transcript artifact name is not valid.")
+        for artifact in self.transcript_inventory(
+            feed_id,
+            archive_date,
+            processing_fingerprint,
+        ):
+            if artifact.filename != filename:
+                continue
+            day_dir = self._day_directory(feed_id, archive_date)
+            candidate = (
+                day_dir / filename
+                if artifact.kind == "audio"
+                else day_dir / "transcripts" / filename
+            )
+            path = candidate.resolve()
+            expected_parent = (
+                day_dir if artifact.kind == "audio" else day_dir / "transcripts"
+            )
+            if path.parent != expected_parent or not path.is_file():
+                break
+            return path, artifact
+        raise FileNotFoundError(filename)
 
     def _day_directory(self, feed_id: str, archive_date: date) -> Path:
         candidate = (
@@ -1430,13 +2072,14 @@ class LanArchiveSyncClient:
         reachable: list[str] = []
         reached = 0
         candidates: dict[str, list[tuple[str, ArchiveBlock]]] = {}
+        completion_manifests: list[tuple[str, tuple[ArchiveBlock, ...]]] = []
         while queue and len(considered) < MAX_LAN_PEERS:
             peer = queue.pop(0)
             if peer in considered:
                 continue
             considered.append(peer)
             try:
-                blocks, advertised_peers = self._inventory(
+                blocks, advertised_peers, complete, completion_blocks = self._inventory(
                     peer,
                     feed_id,
                     archive_date,
@@ -1445,6 +2088,8 @@ class LanArchiveSyncClient:
                 reachable.append(peer)
                 for block in blocks:
                     candidates.setdefault(block.filename, []).append((peer, block))
+                if complete:
+                    completion_manifests.append((peer, completion_blocks))
                 for advertised in advertised_peers:
                     if (
                         advertised not in considered
@@ -1478,6 +2123,7 @@ class LanArchiveSyncClient:
         copied_bytes = 0
         already_local = 0
         conflicts = 0
+        completion_proven = False
         for filename in sorted(candidates):
             sources = candidates[filename]
             signatures = {(block.size, block.sha256) for _peer, block in sources}
@@ -1547,6 +2193,55 @@ class LanArchiveSyncClient:
                     failures.append(f"{peer} / {filename}: {exc}")
             if not copied_from_peer:
                 continue
+        if completion_manifests:
+            signatures = {
+                tuple(
+                    (
+                        block.filename,
+                        block.size,
+                        block.sha256,
+                        tuple(
+                            (identity.archive_id, identity.listing_prefix)
+                            for identity in block.identities()
+                        ),
+                    )
+                    for block in manifest
+                )
+                for _peer, manifest in completion_manifests
+            }
+            if len(signatures) != 1:
+                conflicts += 1
+                failures.append(
+                    "LAN peers disagree on the exact completion proof for this day."
+                )
+            else:
+                completion_blocks = completion_manifests[0][1]
+                verified = self.verified_local_blocks(
+                    output_root,
+                    feed_id,
+                    archive_date,
+                    completion_blocks,
+                )
+                archive_ids = [
+                    identity.archive_id
+                    for block in completion_blocks
+                    for identity in block.identities()
+                ]
+                if (
+                    len(verified) == len(completion_blocks)
+                    and len(archive_ids) == len(completion_blocks)
+                    and remember_complete_archive_day(
+                        day_dir,
+                        feed_id,
+                        archive_date,
+                        archive_ids,
+                    )
+                ):
+                    completion_proven = True
+                else:
+                    failures.append(
+                        "The LAN completion proof could not be verified locally."
+                    )
         return LanSyncResult(
             enabled=True,
             peers_considered=len(considered),
@@ -1556,7 +2251,269 @@ class LanArchiveSyncClient:
             blocks_copied=copied,
             bytes_copied=copied_bytes,
             conflicts=conflicts,
+            completion_proven=completion_proven,
             failures=tuple(failures[:50]),
+        )
+
+    def sync_transcripts(
+        self,
+        output_dir: str | Path,
+        feed_id: str,
+        archive_date: date,
+        processing_fingerprint: str,
+        *,
+        progress: ProgressCallback | None = None,
+        additional_peer_urls: Sequence[str] = (),
+    ) -> LanTranscriptSyncResult:
+        """Pull hash-verified audio/JSON/text produced by an equivalent model."""
+
+        if not self.enabled:
+            return LanTranscriptSyncResult(enabled=False)
+        fingerprint = LanProcessingQueue._validate_key(
+            processing_fingerprint,
+            feed_id,
+        )
+        seeds = list(
+            dict.fromkeys(
+                (
+                    *self.peer_urls,
+                    *normalize_peer_urls(additional_peer_urls, strict=False),
+                    *self._recent_peer_urls(),
+                )
+            )
+        )
+        failures: list[str] = []
+        if self.discovery_enabled:
+            try:
+                seeds.extend(discover_lan_peers())
+            except OSError as exc:
+                failures.append(f"LAN discovery: {exc}")
+        queue = list(dict.fromkeys(seeds))[:MAX_LAN_PEERS]
+        considered: list[str] = []
+        reachable: list[str] = []
+        candidates: dict[
+            tuple[str, str], list[tuple[str, TranscriptArtifact]]
+        ] = {}
+        while queue and len(considered) < MAX_LAN_PEERS:
+            peer = queue.pop(0)
+            if peer in considered:
+                continue
+            considered.append(peer)
+            try:
+                artifacts, advertised_peers = self._transcript_inventory(
+                    peer,
+                    feed_id,
+                    archive_date,
+                    fingerprint,
+                )
+                reachable.append(peer)
+                for artifact in artifacts:
+                    candidates.setdefault(
+                        (artifact.kind, artifact.filename),
+                        [],
+                    ).append((peer, artifact))
+                for advertised in advertised_peers:
+                    if (
+                        advertised not in considered
+                        and advertised not in queue
+                        and len(considered) + len(queue) < MAX_LAN_PEERS
+                    ):
+                        queue.append(advertised)
+            except (LanSyncError, requests.RequestException, ValueError) as exc:
+                failures.append(f"{peer}: {exc}")
+        self._remember_peers(reachable)
+
+        output_root = Path(output_dir).expanduser().resolve()
+        day_dir = (
+            output_root / feed_id / archive_date.strftime("%Y%m%d")
+        ).resolve()
+        try:
+            day_dir.relative_to(output_root)
+        except ValueError as exc:
+            raise LanSyncError(
+                "The LAN transcript target is outside the archive library."
+            ) from exc
+        day_dir.mkdir(parents=True, exist_ok=True)
+        transcript_dir = day_dir / "transcripts"
+        if transcript_dir.exists() and (
+            transcript_dir.is_symlink() or not transcript_dir.is_dir()
+        ):
+            raise LanSyncError("The local transcript directory is not safe to use.")
+        transcript_dir.mkdir(parents=True, exist_ok=True)
+        if transcript_dir.resolve().parent != day_dir:
+            raise LanSyncError("The local transcript directory escaped the archive day.")
+
+        copied = 0
+        copied_bytes = 0
+        already_local = 0
+        conflicts = 0
+        order = {"audio": 0, "json": 1, "text": 2}
+        for key in sorted(candidates, key=lambda value: (order[value[0]], value[1])):
+            sources = candidates[key]
+            signatures = {
+                (
+                    artifact.size,
+                    artifact.sha256,
+                    artifact.audio_filename,
+                    artifact.audio_sha256,
+                )
+                for _peer, artifact in sources
+            }
+            if len(signatures) != 1:
+                conflicts += 1
+                failures.append(
+                    f"{key[1]}: peers disagree on the transcript artifact."
+                )
+                continue
+            expected = sources[0][1]
+            target = (
+                day_dir / expected.filename
+                if expected.kind == "audio"
+                else transcript_dir / expected.filename
+            )
+            if target.is_symlink():
+                conflicts += 1
+                failures.append(
+                    f"{expected.filename}: a local symbolic link uses this name."
+                )
+                continue
+            if target.exists():
+                try:
+                    if (
+                        target.is_file()
+                        and target.stat().st_size == expected.size
+                        and self.hashes.sha256(target) == expected.sha256
+                    ):
+                        already_local += 1
+                    else:
+                        conflicts += 1
+                        failures.append(
+                            f"{expected.filename}: different local content uses this name."
+                        )
+                except OSError as exc:
+                    failures.append(f"{expected.filename}: {exc}")
+                continue
+            for peer, artifact in sources:
+                try:
+                    transferred = self._download_transcript_artifact(
+                        peer,
+                        artifact,
+                        target,
+                    )
+                    copied += 1
+                    copied_bytes += transferred
+                    if progress:
+                        progress(
+                            f"Copied {artifact.kind} artifact {artifact.filename} "
+                            f"from a LAN peer ({copied_bytes / (1024 * 1024):.1f} MiB)."
+                        )
+                    break
+                except (LanSyncError, requests.RequestException, OSError) as exc:
+                    failures.append(f"{peer} / {artifact.filename}: {exc}")
+
+        local_catalog = LanArchiveCatalog(
+            output_root,
+            enabled=True,
+            queue_enabled=False,
+        )
+        verified = local_catalog.transcript_inventory(
+            feed_id,
+            archive_date,
+            fingerprint,
+        )
+        transcripts = tuple(
+            transcript_dir / value.filename
+            for value in verified
+            if value.kind == "json"
+        )
+        return LanTranscriptSyncResult(
+            enabled=True,
+            peers_considered=len(considered),
+            peers_reached=len(reachable),
+            artifacts_available=len(candidates),
+            artifacts_already_local=already_local,
+            artifacts_copied=copied,
+            bytes_copied=copied_bytes,
+            conflicts=conflicts,
+            transcripts=transcripts,
+            failures=tuple(failures[:50]),
+        )
+
+    def sync_feed(
+        self,
+        output_dir: str | Path,
+        feed_id: str,
+        *,
+        processing_fingerprint: str = "",
+        progress: ProgressCallback | None = None,
+    ) -> LanFeedSyncResult:
+        """Converge every retained peer date for one followed feed."""
+
+        if not self.enabled:
+            return LanFeedSyncResult(enabled=False)
+        if not feed_id.isdigit():
+            raise ValueError("A numeric feed ID is required for LAN feed sync.")
+        fingerprint = str(processing_fingerprint or "").strip().lower()
+        if fingerprint:
+            fingerprint = LanProcessingQueue._validate_key(fingerprint, feed_id)
+        dates, peers, failures = self._feed_date_union(feed_id)
+        day_results: list[LanSyncResult] = []
+        transcript_results: list[LanTranscriptSyncResult] = []
+        for current, archive_date in enumerate(dates, start=1):
+            if progress:
+                progress(
+                    f"Reconciling retained feed {feed_id} day {archive_date.isoformat()} "
+                    f"({current}/{len(dates)})."
+                )
+            try:
+                day_result = self.sync_day(
+                    output_dir,
+                    feed_id,
+                    archive_date,
+                    additional_peer_urls=peers,
+                )
+                day_results.append(day_result)
+                failures.extend(day_result.failures)
+            except (LanSyncError, requests.RequestException, OSError, ValueError) as exc:
+                failures.append(f"{archive_date.isoformat()}: {exc}")
+            if fingerprint:
+                try:
+                    transcript_result = self.sync_transcripts(
+                        output_dir,
+                        feed_id,
+                        archive_date,
+                        fingerprint,
+                        additional_peer_urls=peers,
+                    )
+                    transcript_results.append(transcript_result)
+                    failures.extend(transcript_result.failures)
+                except (
+                    LanSyncError,
+                    requests.RequestException,
+                    OSError,
+                    ValueError,
+                ) as exc:
+                    failures.append(
+                        f"{archive_date.isoformat()} transcripts: {exc}"
+                    )
+        block_bytes = sum(value.bytes_copied for value in day_results)
+        transcript_bytes = sum(value.bytes_copied for value in transcript_results)
+        return LanFeedSyncResult(
+            enabled=True,
+            dates_discovered=tuple(value.isoformat() for value in dates),
+            days_considered=len(dates),
+            days_with_download_changes=sum(
+                value.blocks_copied > 0 for value in day_results
+            ),
+            days_with_transcript_changes=sum(
+                value.artifacts_copied > 0 for value in transcript_results
+            ),
+            blocks_copied=sum(value.blocks_copied for value in day_results),
+            transcript_artifacts_copied=sum(
+                value.artifacts_copied for value in transcript_results
+            ),
+            bytes_copied=block_bytes + transcript_bytes,
+            failures=tuple(dict.fromkeys(failures))[:50],
         )
 
     def wait_for_download_turn(
@@ -2270,7 +3227,12 @@ class LanArchiveSyncClient:
         peer: str,
         feed_id: str,
         archive_date: date,
-    ) -> tuple[list[ArchiveBlock], tuple[str, ...]]:
+    ) -> tuple[
+        list[ArchiveBlock],
+        tuple[str, ...],
+        bool,
+        tuple[ArchiveBlock, ...],
+    ]:
         with self._lan_session() as session:
             with session.get(
                 f"{peer}/api/lan/v1/blocks",
@@ -2322,8 +3284,262 @@ class LanArchiveSyncClient:
             )
             for value in raw_blocks
         ]
+        if len({block.filename for block in blocks}) != len(blocks):
+            raise LanSyncError("The peer returned duplicate archive blocks.")
+        complete = bool(payload.get("complete"))
+        raw_completion = payload.get("completion_blocks") or []
+        if (
+            not isinstance(raw_completion, list)
+            or len(raw_completion) > MAX_BLOCKS_PER_DAY
+            or any(not isinstance(value, Mapping) for value in raw_completion)
+        ):
+            raise LanSyncError("The peer returned an invalid completion proof.")
+        completion_blocks = tuple(
+            ArchiveBlock.from_mapping(
+                value,
+                expected_feed_id=feed_id,
+                expected_date=archive_date,
+            )
+            for value in raw_completion
+        )
+        available = {
+            (block.filename, block.size, block.sha256): block for block in blocks
+        }
+        if (
+            len({block.filename for block in completion_blocks})
+            != len(completion_blocks)
+            or (not complete and completion_blocks)
+            or any(
+                (block.filename, block.size, block.sha256) not in available
+                for block in completion_blocks
+            )
+        ):
+            raise LanSyncError("The peer returned an incompatible completion proof.")
         peers = normalize_peer_urls(payload.get("peers") or (), strict=False)
-        return blocks, peers
+        return blocks, peers, complete, completion_blocks
+
+    def _feed_date_union(
+        self,
+        feed_id: str,
+    ) -> tuple[tuple[date, ...], tuple[str, ...], list[str]]:
+        seeds = list(dict.fromkeys((*self.peer_urls, *self._recent_peer_urls())))
+        failures: list[str] = []
+        if self.discovery_enabled:
+            try:
+                seeds.extend(discover_lan_peers())
+            except OSError as exc:
+                failures.append(f"LAN discovery: {exc}")
+        queue = list(dict.fromkeys(seeds))[:MAX_LAN_PEERS]
+        considered: list[str] = []
+        reachable: list[str] = []
+        dates: set[date] = set()
+        while queue and len(considered) < MAX_LAN_PEERS:
+            peer = queue.pop(0)
+            if peer in considered:
+                continue
+            considered.append(peer)
+            try:
+                peer_dates, advertised = self._peer_feed_dates(peer, feed_id)
+                reachable.append(peer)
+                dates.update(peer_dates)
+                if len(dates) > MAX_FEED_DAYS:
+                    raise LanSyncError(
+                        "The LAN feed date union exceeded the safety limit."
+                    )
+                for value in advertised:
+                    if (
+                        value not in considered
+                        and value not in queue
+                        and len(considered) + len(queue) < MAX_LAN_PEERS
+                    ):
+                        queue.append(value)
+            except (LanSyncError, requests.RequestException, ValueError) as exc:
+                failures.append(f"{peer}: {exc}")
+        self._remember_peers(reachable)
+        return tuple(sorted(dates)), tuple(reachable), failures
+
+    def _peer_feed_dates(
+        self,
+        peer: str,
+        feed_id: str,
+    ) -> tuple[tuple[date, ...], tuple[str, ...]]:
+        with self._lan_session() as session:
+            with session.get(
+                f"{peer}/api/lan/v1/feed-days",
+                params={"feed_id": feed_id},
+                headers=self._headers(),
+                timeout=(self.connect_timeout, min(self.read_timeout, 30.0)),
+                allow_redirects=False,
+                stream=True,
+            ) as response:
+                response.raise_for_status()
+                payload = self._bounded_json(response, MAX_INVENTORY_BYTES)
+        if (
+            not isinstance(payload, Mapping)
+            or payload.get("protocol") != LAN_PROTOCOL
+            or str(payload.get("feed_id") or "") != feed_id
+        ):
+            raise LanSyncError("The peer returned an incompatible feed date list.")
+        raw_dates = payload.get("dates")
+        if not isinstance(raw_dates, list) or len(raw_dates) > MAX_FEED_DAYS:
+            raise LanSyncError("The peer returned too many or invalid feed dates.")
+        try:
+            dates = tuple(date.fromisoformat(str(value)) for value in raw_dates)
+        except ValueError as exc:
+            raise LanSyncError("The peer returned an invalid feed date.") from exc
+        if len(set(dates)) != len(dates):
+            raise LanSyncError("The peer returned duplicate feed dates.")
+        peers = normalize_peer_urls(payload.get("peers") or (), strict=False)
+        return dates, peers
+
+    def _transcript_inventory(
+        self,
+        peer: str,
+        feed_id: str,
+        archive_date: date,
+        processing_fingerprint: str,
+    ) -> tuple[list[TranscriptArtifact], tuple[str, ...]]:
+        with self._lan_session() as session:
+            with session.get(
+                f"{peer}/api/lan/v1/transcripts",
+                params={
+                    "feed_id": feed_id,
+                    "date": archive_date.isoformat(),
+                    "processing_fingerprint": processing_fingerprint,
+                },
+                headers=self._headers(),
+                timeout=(self.connect_timeout, min(self.read_timeout, 30.0)),
+                allow_redirects=False,
+                stream=True,
+            ) as response:
+                response.raise_for_status()
+                payload = self._bounded_json(response, MAX_INVENTORY_BYTES)
+        if (
+            not isinstance(payload, Mapping)
+            or payload.get("protocol") != LAN_PROTOCOL
+            or str(payload.get("feed_id") or "") != feed_id
+            or str(payload.get("archive_date") or "") != archive_date.isoformat()
+            or str(payload.get("processing_fingerprint") or "").lower()
+            != processing_fingerprint
+        ):
+            raise LanSyncError(
+                "The peer returned an incompatible transcript inventory."
+            )
+        raw_artifacts = payload.get("artifacts")
+        if (
+            not isinstance(raw_artifacts, list)
+            or len(raw_artifacts) > MAX_TRANSCRIPT_ARTIFACTS_PER_DAY
+            or any(not isinstance(value, Mapping) for value in raw_artifacts)
+        ):
+            raise LanSyncError("The peer returned invalid transcript artifacts.")
+        artifacts = [
+            TranscriptArtifact.from_mapping(
+                value,
+                expected_feed_id=feed_id,
+                expected_date=archive_date,
+                expected_fingerprint=processing_fingerprint,
+            )
+            for value in raw_artifacts
+        ]
+        if len({(value.kind, value.filename) for value in artifacts}) != len(
+            artifacts
+        ):
+            raise LanSyncError("The peer returned duplicate transcript artifacts.")
+        groups: dict[str, list[TranscriptArtifact]] = {}
+        for artifact in artifacts:
+            groups.setdefault(artifact.audio_filename, []).append(artifact)
+        for group in groups.values():
+            if (
+                {value.kind for value in group} != {"audio", "json", "text"}
+                or len({value.audio_sha256 for value in group}) != 1
+            ):
+                raise LanSyncError(
+                    "The peer returned an incomplete transcript artifact set."
+                )
+        peers = normalize_peer_urls(payload.get("peers") or (), strict=False)
+        return artifacts, peers
+
+    def _download_transcript_artifact(
+        self,
+        peer: str,
+        artifact: TranscriptArtifact,
+        target: Path,
+    ) -> int:
+        endpoint = (
+            f"{peer}/api/lan/v1/transcripts/{quote(artifact.feed_id, safe='')}/"
+            f"{quote(artifact.archive_date, safe='')}/"
+            f"{quote(artifact.processing_fingerprint, safe='')}/"
+            f"{quote(artifact.filename, safe='')}"
+        )
+        headers = self._headers()
+        headers["Accept"] = "application/octet-stream"
+        partial = target.with_name(
+            f".{target.name}.{os.getpid()}.{uuid.uuid4().hex}.lan-part"
+        )
+        digest = hashlib.sha256()
+        received = 0
+        try:
+            with self._lan_session() as session:
+                with session.get(
+                    endpoint,
+                    headers=headers,
+                    stream=True,
+                    timeout=(self.connect_timeout, self.read_timeout),
+                    allow_redirects=False,
+                ) as response:
+                    response.raise_for_status()
+                    if str(
+                        response.headers.get("X-Radio-Archive-SHA256") or ""
+                    ).lower() != artifact.sha256:
+                        raise LanSyncError(
+                            "The transcript response hash changed after inventory."
+                        )
+                    try:
+                        content_length = int(
+                            response.headers.get("Content-Length") or 0
+                        )
+                    except ValueError as exc:
+                        raise LanSyncError(
+                            "The peer returned an invalid artifact length."
+                        ) from exc
+                    if content_length != artifact.size:
+                        raise LanSyncError(
+                            "The transcript response size changed after inventory."
+                        )
+                    with partial.open("xb") as handle:
+                        for chunk in response.iter_content(chunk_size=256 * 1024):
+                            if not chunk:
+                                continue
+                            received += len(chunk)
+                            if received > artifact.size:
+                                raise LanSyncError(
+                                    "The peer sent more transcript data than advertised."
+                                )
+                            digest.update(chunk)
+                            handle.write(chunk)
+                        handle.flush()
+                        os.fsync(handle.fileno())
+            if received != artifact.size or digest.hexdigest() != artifact.sha256:
+                raise LanSyncError(
+                    "The copied transcript artifact failed size/hash verification."
+                )
+            try:
+                os.link(partial, target)
+            except FileExistsError as exc:
+                raise LanSyncError(
+                    "A local artifact appeared before the transfer completed."
+                ) from exc
+            except OSError as exc:
+                raise LanSyncError(
+                    "The verified transcript artifact could not be published atomically."
+                ) from exc
+            partial.unlink()
+            return received
+        finally:
+            try:
+                partial.unlink(missing_ok=True)
+            except OSError:
+                pass
 
     def _download_block(
         self,

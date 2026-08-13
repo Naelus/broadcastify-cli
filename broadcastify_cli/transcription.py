@@ -142,6 +142,66 @@ class TranscriptionQualityError(RuntimeError):
 
 
 LOCALIZED_REPETITION_POLICY = "localized-repetition-collapse-v1"
+TRANSCRIPTION_FINGERPRINT_VERSION = 1
+
+
+def stable_file_sha256(path: str | Path) -> str:
+    """Hash an immutable processing input and reject concurrent mutation."""
+
+    value = Path(path)
+    initial = value.stat()
+    digest = hashlib.sha256()
+    with value.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    final = value.stat()
+    if (
+        initial.st_size != final.st_size
+        or initial.st_mtime_ns != final.st_mtime_ns
+    ):
+        raise RuntimeError(f"{value.name} changed while its hash was calculated.")
+    return digest.hexdigest()
+
+
+def transcription_processing_fingerprint(
+    *,
+    model_name: str,
+    asr_engine: str,
+    diarize: bool,
+    diarization_engine: str = COMMUNITY_DIARIZATION_ENGINE,
+    min_speakers: int | None = None,
+    max_speakers: int | None = None,
+) -> str:
+    """Return the portable identity of transcript-affecting model settings."""
+
+    engine = str(asr_engine or "faster-whisper").strip().lower()
+    raw_model = str(model_name or "turbo").strip()
+    try:
+        model = (
+            normalize_qwen3_asr_model_name(raw_model)
+            if engine == "qwen3-asr"
+            else normalize_whisper_model_name(raw_model)
+        )
+    except ValueError:
+        model = raw_model.casefold()
+    speaker_engine = "none"
+    if diarize:
+        try:
+            speaker_engine = normalize_diarization_engine(diarization_engine)
+        except ValueError:
+            speaker_engine = str(diarization_engine or "").strip().casefold()
+    payload = {
+        "version": TRANSCRIPTION_FINGERPRINT_VERSION,
+        "asr_engine": engine,
+        "model": model,
+        "diarize": bool(diarize),
+        "diarization_engine": speaker_engine,
+        "min_speakers": int(min_speakers) if min_speakers is not None else None,
+        "max_speakers": int(max_speakers) if max_speakers is not None else None,
+    }
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
 
 
 def _is_localized_repetition_collapse(text: str) -> bool:
@@ -544,6 +604,23 @@ class LocalTranscriber:
     """Fast local ASR with an accuracy or portable-preview diarization stage."""
 
     DIARIZATION_MODEL = "pyannote/speaker-diarization-community-1"
+
+    @property
+    def processing_fingerprint(self) -> str:
+        return transcription_processing_fingerprint(
+            model_name=str(getattr(self, "model_name", "turbo")),
+            asr_engine=str(getattr(self, "asr_engine", "faster-whisper")),
+            diarize=bool(getattr(self, "diarize", False)),
+            diarization_engine=str(
+                getattr(
+                    self,
+                    "diarization_engine",
+                    COMMUNITY_DIARIZATION_ENGINE,
+                )
+            ),
+            min_speakers=getattr(self, "min_speakers", None),
+            max_speakers=getattr(self, "max_speakers", None),
+        )
 
     def __init__(
         self,
@@ -990,6 +1067,8 @@ class LocalTranscriber:
         rendered_text = _render_transcript_segments(output_segments)
         payload = {
             "audio_file": audio_path.name,
+            "audio_sha256": stable_file_sha256(audio_path),
+            "processing_fingerprint": self.processing_fingerprint,
             "model": actual_model,
             "requested_model": self.model_name,
             "asr_engine": self.asr_engine,
@@ -1177,6 +1256,16 @@ class LocalTranscriber:
         try:
             payload = json.loads(json_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
+            return False
+        saved_audio_sha256 = str(payload.get("audio_sha256") or "")
+        if saved_audio_sha256:
+            try:
+                if stable_file_sha256(audio_path) != saved_audio_sha256:
+                    return False
+            except (OSError, RuntimeError):
+                return False
+        saved_fingerprint = str(payload.get("processing_fingerprint") or "")
+        if saved_fingerprint and saved_fingerprint != self.processing_fingerprint:
             return False
         quality = transcript_quality_report(
             [

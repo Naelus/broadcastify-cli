@@ -50,7 +50,7 @@ const HARDWARE_PROFILE_DESCRIPTIONS = {
 };
 
 const state = {
-  bootstrap: { days: [], profiles: [], schedules: [], summary: {}, runtime: {} },
+  bootstrap: { days: [], feed_coverage: [], catchups: [], profiles: [], schedules: [], summary: {}, runtime: {} },
   selectedDay: null,
   selectedDayDetail: null,
   editingSchedule: null,
@@ -67,6 +67,7 @@ const state = {
   activeJob: null,
   jobTimer: null,
   jobCallback: null,
+  jobFailureCallback: null,
   analysisQueue: [],
   hardwareDiagnostics: null,
   asrSelfTest: null,
@@ -460,6 +461,7 @@ function setView(name) {
     review: ["Review & ask", "Evidence-grounded summaries and questions"],
     area: ["Area watch", "Regional profiles and local story leads"],
     settings: ["Settings", "Local processing and analysis defaults"],
+    about: ["About", "Installed version and shared runtime identity"],
   };
   byId("topbarTitle").textContent = labels[name][0];
   byId("topbarSubtitle").textContent = labels[name][1];
@@ -481,34 +483,153 @@ function credentialStatus() {
   };
 }
 
+function accountPool() {
+  return state.bootstrap.runtime?.account_pool || {
+    authorized: false,
+    profiles: [],
+    configured_profile_ids: [],
+    quota: state.bootstrap.runtime?.archive_quota || {},
+  };
+}
+
+function configuredAccountProfiles() {
+  return (accountPool().profiles || []).filter((value) => value.configured);
+}
+
+function selectedArchiveProfile() {
+  return byId("archiveAccountProfile")?.value || "automatic";
+}
+
+function replaceAccountOptions(select, { preserve = true } = {}) {
+  if (!select) return;
+  const previous = preserve ? select.value : "automatic";
+  const profiles = configuredAccountProfiles();
+  select.innerHTML = `<option value="automatic">Automatic — use every available account</option>${profiles.map((profile) => `<option value="${html(profile.id)}">${html(profile.label || profile.id)} · ${html(profile.id)}</option>`).join("")}`;
+  select.value = [...select.options].some((option) => option.value === previous)
+    ? previous
+    : "automatic";
+}
+
+function renderAccountProfiles() {
+  replaceAccountOptions(byId("archiveAccountProfile"));
+  replaceAccountOptions(byId("scheduleAccountProfile"));
+  const target = byId("accountProfileList");
+  if (!target) return;
+  const profiles = accountPool().profiles || [];
+  if (!profiles.length) {
+    target.innerHTML = '<div class="empty-compact">No account profiles are configured on this app server.</div>';
+    return;
+  }
+  target.innerHTML = profiles.map((profile) => {
+    const quota = profile.quota || {};
+    const source = profile.saved ? "encrypted" : profile.session_available ? "saved session" : profile.source || "not configured";
+    return `<button class="result-row selectable" type="button" data-account-profile="${html(profile.id)}"><div><strong>${html(profile.label || profile.id)}</strong><small>${html(profile.username || "No username shown")} · ${html(profile.id)} · ${html(source)}</small><small>${Number(quota.remaining) || 0}/${Number(quota.automated_limit) || 240} automated requests available</small></div><span class="status-chip${profile.configured ? " ready" : ""}">${profile.configured ? "Ready" : "Needs sign-in"}</span></button>`;
+  }).join("");
+}
+
+function renderAbout() {
+  const runtime = state.bootstrap.runtime || {};
+  if (!byId("aboutVersion")) return;
+  byId("aboutVersion").textContent = runtime.version || "Unknown";
+  byId("aboutSourceCommit").textContent = runtime.source_commit || "Development source";
+  byId("aboutRuntime").textContent = `${runtime.platform || "Unknown"} ${runtime.platform_release || ""} · Python ${runtime.python || "Unknown"}`;
+  byId("aboutAccessScope").textContent = runtime.access_scope || "Unknown";
+  byId("aboutStorage").querySelector("span").textContent = `Library: ${runtime.output_dir || "Unknown"} · Database: ${runtime.database_path || "Unknown"}`;
+  const lan = runtime.lan_sync || {};
+  const accounts = runtime.account_pool?.quota?.account_count || 0;
+  byId("aboutLan").className = `notice${lan.sharing_enabled && lan.acquisition_queue_available ? " success" : " warning"}`;
+  byId("aboutLan").querySelector("span").textContent = `${lan.sharing_enabled ? "Original-block sharing enabled" : "Original-block sharing disabled"} · ${lan.acquisition_queue_available ? "shared acquisition queue ready" : "shared queue unavailable"} · ${accounts} configured account profile${accounts === 1 ? "" : "s"}.`;
+}
+
+function catchUpFeed() {
+  const feedId = byId("catchUpFeedSelect")?.value || "";
+  return (state.bootstrap.feed_coverage || []).find((value) => String(value.feed_id) === feedId) || null;
+}
+
+function updateCatchUpStatus({ resetStart = false } = {}) {
+  const feed = catchUpFeed();
+  const notice = byId("catchUpStatus");
+  if (!feed || !notice) {
+    if (notice) {
+      notice.className = "notice";
+      notice.querySelector("strong").textContent = "Select an existing feed";
+      notice.querySelector("span").textContent = "No website request is made while evaluating coverage.";
+    }
+    byId("clearCatchUpButton").disabled = true;
+    return;
+  }
+  const retainedDates = (state.bootstrap.days || [])
+    .filter((day) => String(day.feed_id) === String(feed.feed_id))
+    .map((day) => String(day.archive_date || ""))
+    .filter((value) => /^\d{4}-\d{2}-\d{2}$/.test(value))
+    .sort();
+  if (resetStart || !byId("catchUpStartDate").value) {
+    byId("catchUpStartDate").value = feed.catch_up_start_date || feed.target_start_date || retainedDates[0] || localToday;
+  }
+  const start = byId("catchUpStartDate").value;
+  const targetDays = start && start <= localToday
+    ? Math.floor((new Date(`${localToday}T12:00:00`) - new Date(`${start}T12:00:00`)) / 86400000) + 1
+    : 0;
+  const readyDates = new Set((state.bootstrap.days || [])
+    .filter((day) => String(day.feed_id) === String(feed.feed_id) && day.is_complete && String(day.archive_date) >= start && String(day.archive_date) <= localToday)
+    .map((day) => String(day.archive_date)));
+  const workDays = Math.max(0, targetDays - readyDates.size);
+  const saved = Boolean(feed.catch_up_saved);
+  notice.className = `notice${workDays ? " warning" : " success"}`;
+  notice.querySelector("strong").textContent = workDays
+    ? `${workDays} of ${targetDays} calendar days need work`
+    : `${targetDays} calendar days already complete`;
+  notice.querySelector("span").textContent = `${feed.feed_name} · ${start || "choose a start"} through ${localToday} · ${readyDates.size} complete locally${saved ? " · resumable catch-up saved" : ""}.`;
+  byId("clearCatchUpButton").disabled = !saved;
+}
+
+function renderCatchUpFeeds() {
+  const select = byId("catchUpFeedSelect");
+  if (!select) return;
+  const previous = select.value;
+  const feeds = state.bootstrap.feed_coverage || [];
+  select.innerHTML = `<option value="">Choose a retained or scheduled feed</option>${feeds.map((feed) => `<option value="${html(feed.feed_id)}">${html(feed.feed_name)} · feed ${html(feed.feed_id)}</option>`).join("")}`;
+  select.value = feeds.some((feed) => String(feed.feed_id) === previous)
+    ? previous
+    : feeds.length === 1
+      ? String(feeds[0].feed_id)
+      : "";
+  updateCatchUpStatus({ resetStart: true });
+}
+
 function renderCredentials() {
   const credentials = credentialStatus();
-  const broadcastify = credentials.broadcastify || {};
+  const requestedProfileId = String(byId("loginProfileId")?.value || "default").trim().toLowerCase();
+  const poolProfile = (accountPool().profiles || []).find((value) => value.id === requestedProfileId) || {};
+  const savedProfile = requestedProfileId === "default"
+    ? credentials.broadcastify || {}
+    : (credentials.broadcastify_profiles || []).find((value) => value.id === requestedProfileId) || {};
+  const broadcastify = { ...poolProfile, ...savedProfile };
   const huggingface = credentials.huggingface || {};
   if (byId("loginUsername") && !byId("loginUsername").value) {
     byId("loginUsername").value = broadcastify.username || "";
   }
-  byId("forgetBroadcastifyLoginButton").disabled = !broadcastify.saved;
+  byId("forgetBroadcastifyLoginButton").disabled = !poolProfile.saved;
   byId("forgetHuggingFaceTokenButton").disabled = !huggingface.saved;
 
   const loginNotice = byId("loginNotice");
   if (loginNotice) {
-    const ready = Boolean(state.accountVerified || broadcastify.configured || state.bootstrap.runtime?.account?.saved_session_available);
+    const ready = Boolean(state.accountVerified || poolProfile.configured || poolProfile.session_available);
     loginNotice.className = `notice${ready ? " success" : " warning"}`;
     loginNotice.querySelector("strong").textContent = state.accountVerified
       ? "Session verified"
-      : broadcastify.saved
+      : poolProfile.saved
         ? "Encrypted login saved"
         : ready
           ? "Archive access configured"
           : "Sign-in needed";
-    loginNotice.querySelector("span").textContent = broadcastify.saved
-      ? `${broadcastify.username} · password ${broadcastify.password_preview} · encrypted with ${credentials.storage}`
-      : broadcastify.configured
+    loginNotice.querySelector("span").textContent = poolProfile.saved
+      ? `${broadcastify.username} · password ${broadcastify.password_preview || "saved"} · encrypted with ${credentials.storage}`
+      : poolProfile.configured
         ? `${broadcastify.username || "Broadcastify login"} · configured in the server environment`
-        : state.bootstrap.runtime?.account?.saved_session_available
+        : poolProfile.session_available
           ? "A saved website session is available, but no refresh login is stored."
-          : "Enter a premium Broadcastify website login before acquiring archives.";
+          : `Enter a premium Broadcastify website login for profile ${requestedProfileId}.`;
   }
 
   const huggingFaceNotice = byId("huggingFaceCredentialNotice");
@@ -543,7 +664,7 @@ function setViewFromLocation() {
   if (Object.hasOwn(SETTINGS_SECTIONS, requestedSettingsSection)) {
     state.settingsSection = requestedSettingsSection;
   }
-  const view = requestedView in { library: 1, archive: 1, review: 1, area: 1, settings: 1 }
+  const view = requestedView in { library: 1, archive: 1, review: 1, area: 1, settings: 1, about: 1 }
     ? requestedView
     : "library";
   setView(view);
@@ -579,8 +700,11 @@ async function refreshBootstrap({ preserveSelection = true } = {}) {
     renderProfiles();
     renderRuntime();
     renderArchiveQuota();
+    renderAccountProfiles();
+    renderCatchUpFeeds();
     renderFeedSchedules();
     renderCredentials();
+    renderAbout();
     if (preserveSelection && state.selectedDay) {
       const replacement = state.bootstrap.days.find((value) => value.feed_id === state.selectedDay.feed_id && value.archive_date === state.selectedDay.archive_date);
       if (replacement) await selectDay(replacement, false);
@@ -613,7 +737,7 @@ function renderFeedSchedules() {
       ? ` · ${schedule.recurring_catch_up ? "recurring catch-up" : "catching up once"} from ${html(schedule.backfill_start_date)}`
       : "";
     return `<div class="result-row">
-      <div><strong>${html(schedule.feed_name)}</strong><small>Feed ${html(schedule.feed_id)} · daily ${html(schedule.run_time_local)} · latest ${html(schedule.lookback_days)} day${Number(schedule.lookback_days) === 1 ? "" : "s"}${catchUp}</small><small>${schedule.enabled ? "Enabled" : "Disabled"} · ${html(words(schedule.state))}${schedule.message ? ` · ${html(schedule.message)}` : ""}</small></div>
+      <div><strong>${html(schedule.feed_name)}</strong><small>Feed ${html(schedule.feed_id)} · daily ${html(schedule.run_time_local)} · latest ${html(schedule.lookback_days)} day${Number(schedule.lookback_days) === 1 ? "" : "s"}${catchUp}</small><small>${schedule.enabled ? "Enabled" : "Disabled"} · ${html(words(schedule.state))} · ${schedule.account_profile_id === "automatic" ? "all authorized accounts, sequentially" : `account ${html(schedule.account_profile_id || "default")}`}${schedule.message ? ` · ${html(schedule.message)}` : ""}</small></div>
       <div class="button-row"><button class="button subtle small" type="button" data-edit-schedule="${html(schedule.id)}">Edit</button><button class="button subtle small" type="button" data-delete-schedule="${html(schedule.id)}">Remove</button></div>
     </div>`;
   }).join("");
@@ -632,14 +756,16 @@ function renderArchiveQuota() {
   const available = Boolean(quota.available);
   notice.className = available ? "notice success" : "notice warning";
   notice.querySelector("strong").textContent = available
-    ? `${quota.remaining} of ${quota.automated_limit} automated archive requests available`
+    ? `${quota.remaining} of ${quota.automated_limit} pooled automated archive requests available`
     : "Archive requests are paused for this installation";
   const instance = String(quota.instance_id || "").slice(0, 8);
   const next = quota.next_request_at
     ? ` Next safe request: ${new Date(quota.next_request_at).toLocaleString()}.`
     : "";
   const reason = quota.blocked_reason ? ` ${quota.blocked_reason}` : "";
-  notice.querySelector("span").textContent = `Rolling 24 hours · ${quota.used} used · ${quota.user_reserve} held for manual use · instance ${instance}.${next}${reason}`;
+  const accounts = Number(quota.account_count) || 1;
+  const profileSummary = (quota.profiles || []).filter((profile) => profile.configured).map((profile) => `${profile.label || profile.id}: ${profile.quota?.remaining ?? 0}/${profile.quota?.automated_limit ?? 240}`).join(" · ");
+  notice.querySelector("span").textContent = `Rolling 24 hours · ${accounts} authorized account${accounts === 1 ? "" : "s"} · ${quota.used} used · ${quota.user_reserve} total held for manual use${instance ? ` · ledger ${instance}` : ""}.${next}${reason}${profileSummary ? ` ${profileSummary}.` : ""}`;
 }
 
 function renderMetrics() {
@@ -1066,6 +1192,7 @@ async function startJob(command, payload = {}, options = {}) {
     const job = await api("/api/jobs", { method: "POST", body: JSON.stringify({ command, payload }) });
     state.activeJob = job;
     state.jobCallback = options.onComplete || null;
+    state.jobFailureCallback = options.onFailure || null;
     byId("jobDrawer").classList.add("open");
     byId("jobDrawerToggle").setAttribute("aria-expanded", "true");
     byId("jobTitle").textContent = options.label || command.replaceAll("-", " ");
@@ -1089,8 +1216,10 @@ async function pollJob() {
     if (["completed", "failed", "canceled"].includes(job.status)) {
       clearTimeout(state.jobTimer);
       const callback = state.jobCallback;
+      const failureCallback = state.jobFailureCallback;
       state.activeJob = null;
       state.jobCallback = null;
+      state.jobFailureCallback = null;
       byId("cancelJobButton").disabled = true;
       byId("jobDrawer").classList.remove("open");
       byId("jobDrawerToggle").setAttribute("aria-expanded", "false");
@@ -1098,7 +1227,8 @@ async function pollJob() {
         const handled = callback ? await callback(job) : undefined;
         if (handled !== false) toast(`${job.command.replaceAll("-", " ")} completed.`);
       } else {
-        toast(job.error || `${job.command} ${job.status}.`, true);
+        const handled = failureCallback ? await failureCallback(job) : undefined;
+        if (handled !== false) toast(job.error || `${job.command} ${job.status}.`, true);
       }
       return;
     }
@@ -1159,6 +1289,50 @@ function renderAnswer(result) {
     ? `<div class="notice ${coverage.complete_coverage ? "success" : "warning"}"><strong>${Number(coverage.question_ready_day_count) || 0}/${Number(coverage.requested_day_count) || 0} days question-ready</strong><span>${html(coverage.summary || "")}</span></div>`
     : "";
   byId("answerPanel").innerHTML = `<h3>Evidence-grounded answer</h3>${coverageMarkup}<p>${html(result.answer || "No answer text was returned.")}</p>${evidence.length ? `<div class="citation-list">${evidence.map((value) => `<div class="citation">Evidence ${html(value)}</div>`).join("")}</div>` : ""}${limitations.length ? `<div class="notice warning"><strong>Limitations</strong><span>${html(limitations.join("; "))}</span></div>` : ""}`;
+}
+
+function archiveJobResult(job) {
+  return eventOf(job, "complete")?.result
+    || eventOf(job, "area_complete")?.result
+    || eventOf(job, "scheduled_complete")?.result
+    || {};
+}
+
+function hasUntriedAccount(attempted) {
+  return configuredAccountProfiles().some((profile) => !attempted.includes(profile.id));
+}
+
+async function startPooledArchiveJob(command, payload, options = {}, attempted = []) {
+  const requested = payload.account_profile_id || selectedArchiveProfile();
+  const automatic = requested === "automatic";
+  const runPayload = {
+    ...payload,
+    account_profile_id: requested,
+    ...(automatic ? { exclude_account_profile_ids: attempted } : {}),
+  };
+  return startJob(command, runPayload, {
+    ...options,
+    onComplete: async (job) => {
+      const nextAttempted = [...new Set([...attempted, job.account_profile_id].filter(Boolean))];
+      const result = archiveJobResult(job);
+      if (automatic && result.download_limited && hasUntriedAccount(nextAttempted)) {
+        toast(`Account ${job.account_profile_id} reached its rolling boundary; continuing sequentially with the next authorized account.`);
+        await startPooledArchiveJob(command, payload, options, nextAttempted);
+        return false;
+      }
+      return options.onComplete ? options.onComplete(job) : undefined;
+    },
+    onFailure: async (job) => {
+      const nextAttempted = [...new Set([...attempted, job.account_profile_id].filter(Boolean))];
+      const credentialFailure = /auth|credential|forbidden|login|premium|unauthori[sz]ed/i.test(job.error || "");
+      if (automatic && credentialFailure && hasUntriedAccount(nextAttempted)) {
+        toast(`Account ${job.account_profile_id} could not authenticate; trying the next authorized account.`);
+        await startPooledArchiveJob(command, payload, options, nextAttempted);
+        return false;
+      }
+      return options.onFailure ? options.onFailure(job) : undefined;
+    },
+  });
 }
 
 function renderWeek(result) {
@@ -1374,6 +1548,17 @@ document.addEventListener("click", async (event) => {
     }
     return setView(button.dataset.view);
   }
+  if (button.dataset.accountProfile) {
+    const profile = (accountPool().profiles || []).find((value) => value.id === button.dataset.accountProfile);
+    if (!profile) return;
+    byId("loginProfileId").value = profile.id;
+    byId("loginProfileLabel").value = profile.label || profile.id;
+    byId("loginUsername").value = profile.username || "";
+    state.accountVerified = false;
+    renderCredentials();
+    byId("loginPassword").focus();
+    return;
+  }
   if (button.classList.contains("day-row")) {
     const day = state.bootstrap.days.find((value) => value.feed_id === button.dataset.feedId && value.archive_date === button.dataset.date);
     if (day) await selectDay(day);
@@ -1553,7 +1738,7 @@ byId("cancelJobButton").addEventListener("click", async () => {
 
 byId("feedSearchForm").addEventListener("submit", async (event) => {
   event.preventDefault();
-  await startJob("search", { query: byId("feedSearchInput").value }, { label: "Searching website feeds", onComplete: (job) => renderFeedResults(eventOf(job, "result")?.results || []) });
+  await startJob("search", { query: byId("feedSearchInput").value, account_profile_id: selectedArchiveProfile() }, { label: "Searching website feeds", onComplete: (job) => renderFeedResults(eventOf(job, "result")?.results || []) });
 });
 
 byId("archiveDiarize").addEventListener("change", () => {
@@ -1562,12 +1747,70 @@ byId("archiveDiarize").addEventListener("change", () => {
     byId("archiveTranscribe").checked = true;
   }
 });
+byId("catchUpFeedSelect").addEventListener("change", () => updateCatchUpStatus({ resetStart: true }));
+byId("catchUpStartDate").addEventListener("input", () => updateCatchUpStatus());
+byId("catchUpMissingDaysButton").addEventListener("click", async () => {
+  const feed = catchUpFeed();
+  const startDate = byId("catchUpStartDate").value;
+  if (!feed) return toast("Choose an existing retained or scheduled feed first.", true);
+  if (!startDate || startDate > localToday) return toast("Choose a catch-up start date no later than today.", true);
+  try {
+    if (byId("catchUpSaveForResume").checked) {
+      await api("/api/catchups", {
+        method: "POST",
+        body: JSON.stringify({ action: "save", feed_id: feed.feed_id, feed_name: feed.feed_name, start_date: startDate }),
+      });
+    } else if (feed.catch_up_saved) {
+      await api("/api/catchups", {
+        method: "POST",
+        body: JSON.stringify({ action: "clear", feed_id: feed.feed_id }),
+      });
+    }
+  } catch (error) {
+    toast(error.message, true);
+    return;
+  }
+  const analyze = byId("archiveAnalyze").checked;
+  await startPooledArchiveJob("run", {
+    feed_id: feed.feed_id,
+    feed_name: feed.feed_name,
+    start_date: startDate,
+    end_date: localToday,
+    combine: byId("archiveCombine").checked,
+    transcribe: byId("archiveTranscribe").checked,
+    diarize: byId("archiveDiarize").checked,
+    account_profile_id: selectedArchiveProfile(),
+    ...processingPayload(),
+  }, {
+    label: `Catching up ${feed.feed_name} through today`,
+    onComplete: async (job) => {
+      await refreshBootstrap({ preserveSelection: false });
+      const result = archiveJobResult(job);
+      const transcriptDates = (result.days || []).filter((day) => (day.transcripts || []).length).map((day) => day.date);
+      if (analyze && transcriptDates.length) await queueAnalyses(feed.feed_id, transcriptDates);
+    },
+  });
+});
+byId("clearCatchUpButton").addEventListener("click", async () => {
+  const feed = catchUpFeed();
+  if (!feed?.catch_up_saved) return;
+  try {
+    await api("/api/catchups", {
+      method: "POST",
+      body: JSON.stringify({ action: "clear", feed_id: feed.feed_id }),
+    });
+    await refreshBootstrap();
+    toast(`Cleared the saved one-time catch-up for ${feed.feed_name}.`);
+  } catch (error) {
+    toast(error.message, true);
+  }
+});
 byId("archiveForm").addEventListener("submit", async (event) => {
   event.preventDefault();
   const feedId = byId("archiveFeedId").value;
   if (!feedId) return toast("Select a feed from the search results first.", true);
   const analyze = byId("archiveAnalyze").checked;
-  await startJob("run", {
+  await startPooledArchiveJob("run", {
     feed_id: feedId,
     feed_name: state.selectedFeed?.name || "",
     start_date: byId("archiveStartDate").value,
@@ -1575,6 +1818,7 @@ byId("archiveForm").addEventListener("submit", async (event) => {
     combine: byId("archiveCombine").checked,
     transcribe: byId("archiveTranscribe").checked,
     diarize: byId("archiveDiarize").checked,
+    account_profile_id: selectedArchiveProfile(),
     ...processingPayload(),
   }, {
     label: `Archiving feed ${feedId}`,
@@ -1618,6 +1862,7 @@ byId("saveFeedScheduleButton").addEventListener("click", async () => {
         lookback_days: lookback,
         backfill_start_date: byId("scheduleBackfillStartDate").value || "",
         recurring_catch_up: byId("scheduleRecurringCatchUp").checked,
+        account_profile_id: byId("scheduleAccountProfile").value || "automatic",
         analyze: byId("archiveAnalyze").checked,
         enabled: byId("scheduleEnabled").checked,
         job,
@@ -1647,6 +1892,9 @@ byId("feedScheduleList").addEventListener("click", async (event) => {
     byId("scheduleLookbackDays").value = Number(schedule.lookback_days) || 2;
     byId("scheduleBackfillStartDate").value = schedule.backfill_start_date || "";
     byId("scheduleRecurringCatchUp").checked = Boolean(schedule.recurring_catch_up);
+    byId("scheduleAccountProfile").value = [...byId("scheduleAccountProfile").options].some((option) => option.value === (schedule.account_profile_id || "automatic"))
+      ? schedule.account_profile_id || "automatic"
+      : "automatic";
     syncRecurringCatchUpInput();
     byId("scheduleEnabled").checked = Boolean(schedule.enabled);
     byId("archiveCombine").checked = Boolean(schedule.job?.combine);
@@ -1692,7 +1940,7 @@ byId("areaSearchForm").addEventListener("submit", async (event) => {
   const payload = radiusMode
     ? { center_zip: zipCodes[0], radius_miles: Number(byId("areaRadiusMiles").value), max_zip_codes: Number(byId("areaMaxZipCodes").value) }
     : { zip_codes: zipCodes };
-  await startJob("area-search", payload, { label: "Discovering nearby feeds", onComplete: (job) => {
+  await startJob("area-search", { ...payload, account_profile_id: selectedArchiveProfile() }, { label: "Discovering nearby feeds", onComplete: (job) => {
     const result = eventOf(job, "area_search") || {};
     state.areaCoverage = result.coverage || state.areaCoverage;
     renderAreaResults(result.results || []);
@@ -1754,8 +2002,9 @@ byId("runAreaQueueButton").addEventListener("click", async () => {
   const profileName = byId("areaProfileSelect").value;
   if (!profileName) return toast("Choose and save an area profile first.", true);
   const analyze = byId("areaRunAnalyze").checked;
-  await startJob("run-area", {
+  await startPooledArchiveJob("run-area", {
     profile_name: profileName,
+    account_profile_id: selectedArchiveProfile(),
     job: {
       feed_id: "0",
       start_date: byId("areaStartDate").value,
@@ -2119,7 +2368,13 @@ byId("asrPrepareButton").addEventListener("click", runAsrModelPreparation);
 byId("diarizationSelfTestButton").addEventListener("click", runDiarizationSelfTest);
 byId("loginForm").addEventListener("submit", async (event) => {
   event.preventDefault();
-  const saved = credentialStatus().broadcastify || {};
+  const profileId = byId("loginProfileId").value.trim().toLowerCase();
+  const label = byId("loginProfileLabel").value.trim() || profileId;
+  if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(profileId)) {
+    toast("Account profile IDs may use letters, numbers, underscores, and hyphens.", true);
+    return;
+  }
+  const saved = (accountPool().profiles || []).find((value) => value.id === profileId) || {};
   const username = byId("loginUsername").value.trim() || saved.username || "";
   const password = byId("loginPassword").value;
   const remember = byId("rememberBroadcastifyLogin").checked;
@@ -2133,17 +2388,17 @@ byId("loginForm").addEventListener("submit", async (event) => {
     return;
   }
   byId("loginPassword").value = "";
-  const payload = password ? { username, password } : {};
+  const payload = password ? { username, password, account_profile_id: profileId } : { account_profile_id: profileId };
   await startJob("authenticate", payload, { label: "Signing in to Broadcastify", onComplete: async () => {
     if (password && remember) {
       await api("/api/credentials", {
         method: "POST",
-        body: JSON.stringify({ kind: "broadcastify", action: "save", username, secret: password }),
+        body: JSON.stringify({ kind: "broadcastify", action: "save", profile_id: profileId, label, username, secret: password }),
       });
     } else if (!remember) {
       await api("/api/credentials", {
         method: "POST",
-        body: JSON.stringify({ kind: "broadcastify", action: "clear" }),
+        body: JSON.stringify({ kind: "broadcastify", action: "clear", profile_id: profileId }),
       });
     }
     state.accountVerified = true;
@@ -2151,6 +2406,10 @@ byId("loginForm").addEventListener("submit", async (event) => {
     renderSetupReadiness();
     toast(remember ? "Broadcastify session refreshed; encrypted login is ready." : "Broadcastify session refreshed without saving the login.");
   } });
+});
+byId("loginProfileId").addEventListener("input", () => {
+  state.accountVerified = false;
+  renderCredentials();
 });
 byId("useAskMonthButton").addEventListener("click", () => {
   const month = byId("askMonth").value;
@@ -2198,13 +2457,14 @@ function syncRecurringCatchUpInput() {
 }
 byId("scheduleBackfillStartDate").addEventListener("input", syncRecurringCatchUpInput);
 byId("forgetBroadcastifyLoginButton").addEventListener("click", async () => {
+  const profileId = byId("loginProfileId").value.trim().toLowerCase() || "default";
   try {
     await api("/api/credentials", {
       method: "POST",
-      body: JSON.stringify({ kind: "broadcastify", action: "clear" }),
+      body: JSON.stringify({ kind: "broadcastify", action: "clear", profile_id: profileId }),
     });
     await refreshBootstrap();
-    toast("Encrypted Broadcastify login removed; the current website session remains.");
+    toast(`Encrypted Broadcastify login ${profileId} removed; its current website session remains.`);
   } catch (error) {
     toast(error.message, true);
   }

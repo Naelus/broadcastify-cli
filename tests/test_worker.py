@@ -135,7 +135,10 @@ def test_library_resume_planning_reads_only_local_state_and_quota(
             }
         ],
     )
-    monkeypatch.setattr("broadcastify_cli.worker.ArchiveRequestLedger", FakeLedger)
+    monkeypatch.setattr(
+        "broadcastify_cli.worker.archive_request_ledger",
+        lambda: FakeLedger(),
+    )
     monkeypatch.setattr("broadcastify_cli.worker.AnalysisStore", FakeStore)
     monkeypatch.setattr(
         "broadcastify_cli.worker.BroadcastifyClient",

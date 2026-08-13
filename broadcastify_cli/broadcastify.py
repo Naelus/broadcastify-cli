@@ -29,7 +29,12 @@ from .archive_cache import (
     remember_archive_identity,
 )
 from .models import FeedSearchResult
-from .quota import ArchiveRequestBudgetExceeded, ArchiveRequestLedger
+from .quota import (
+    ArchiveRequestBudgetExceeded,
+    ArchiveRequestLedger,
+    RemoteArchiveRequestLedger,
+    archive_request_ledger,
+)
 
 
 ProgressCallback = Callable[[int, int, str], None]
@@ -143,7 +148,7 @@ class BroadcastifyClient:
         rate_limit_backoff_base: float = 30.0,
         rate_limit_backoff_max: float = 300.0,
         random_uniform: Callable[[float, float], float] | None = None,
-        quota_ledger: ArchiveRequestLedger | None = None,
+        quota_ledger: ArchiveRequestLedger | RemoteArchiveRequestLedger | None = None,
         quota_ledger_path: str | Path | None = None,
     ) -> None:
         # BROADCASTIFY_* avoids colliding with Windows' built-in USERNAME
@@ -1228,9 +1233,11 @@ class BroadcastifyClient:
             f"Archive {archive_id} did not download after {self.download_attempts} attempts."
         )
 
-    def _archive_quota(self) -> ArchiveRequestLedger:
+    def _archive_quota(
+        self,
+    ) -> ArchiveRequestLedger | RemoteArchiveRequestLedger:
         if self._quota_ledger is None:
-            self._quota_ledger = ArchiveRequestLedger(self._quota_ledger_path)
+            self._quota_ledger = archive_request_ledger(self._quota_ledger_path)
         return self._quota_ledger
 
     def archive_quota_status(self) -> dict[str, object]:

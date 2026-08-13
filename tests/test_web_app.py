@@ -21,11 +21,14 @@ from broadcastify_cli.area_watch import (
     current_area_story_source_fingerprint,
 )
 from broadcastify_cli.storage import AnalysisStore
+from broadcastify_cli.credential_store import EncryptedCredentialStore
 from broadcastify_cli.web_app import (
     FeedScheduleCoordinator,
     JobManager,
     WebRequestError,
+    _account_pool_profiles,
     _area_stories_for_web,
+    _select_account_profile,
     create_server,
 )
 
@@ -238,7 +241,7 @@ def test_loopback_web_app_serves_library_transcript_and_media(
     output = tmp_path / "archives"
     database = output / "broadcastify-analysis.sqlite3"
     _retained_day(output, database)
-    server = create_server(output, database, port=0, working_dir=Path.cwd())
+    server = create_server(output, database, port=0, working_dir=tmp_path)
     server.quiet = True  # type: ignore[attr-defined]
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -251,7 +254,10 @@ def test_loopback_web_app_serves_library_transcript_and_media(
         assert cookie.startswith("radio_archive_session=")
         assert token_match is not None
         assert b'id="areaPublicSafetyOnly"' in body
-        assert b'/static/app.js?v=35' in body
+        assert b'/static/app.js?v=36' in body
+        assert b'data-view="about"' in body
+        assert b'id="catchUpMissingDaysButton"' in body
+        assert b'id="accountProfileList"' in body
         assert b'id="archiveQuotaNotice"' in body
         assert b'id="saveFeedScheduleButton"' in body
         assert b'id="scheduleBackfillStartDate"' in body
@@ -282,7 +288,7 @@ def test_loopback_web_app_serves_library_transcript_and_media(
         assert response.getheader("Content-Type") == "image/svg+xml"
         assert b"<svg" in body
 
-        response, body = _request(connection, "GET", "/static/app.js?v=35")
+        response, body = _request(connection, "GET", "/static/app.js?v=36")
         assert response.status == 200
         assert b"areaSelectedStoryIndex" in body
         assert b"data-area-story-index" in body
@@ -327,8 +333,11 @@ def test_loopback_web_app_serves_library_transcript_and_media(
         assert b"function renderFeedSchedules" in body
         assert b"function renderCredentials" in body
         assert b'api("/api/credentials"' in body
+        assert b"function renderAbout" in body
+        assert b"function updateCatchUpStatus" in body
+        assert b"exclude_account_profile_ids" in body
 
-        response, body = _request(connection, "GET", "/static/app.css?v=20")
+        response, body = _request(connection, "GET", "/static/app.css?v=22")
         assert response.status == 200
         assert b".story-browser" in body
         assert b".story-index-item.active" in body
@@ -554,6 +563,84 @@ def test_web_credentials_are_encrypted_server_side_and_only_previewed(
         connection.close()
         server.shutdown()
         server.server_close()
+    thread.join(timeout=3)
+
+
+def test_web_authorized_account_pool_exposes_two_isolated_profiles_and_rotates(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(
+        "BROADCASTIFY_QUOTA_LEDGER",
+        str(tmp_path / "archive-quota.sqlite3"),
+    )
+    (tmp_path / ".env").write_text(
+        "BROADCASTIFY_USERNAME=primary-user\n"
+        "BROADCASTIFY_PASSWORD=primary-secret\n",
+        encoding="utf-8",
+    )
+    (tmp_path / ".env.accounts").write_text(
+        "BROADCASTIFY_AUTHORIZED_ACCOUNT_POOL=true\n"
+        "BROADCASTIFY_ACCOUNT_PROFILES=secondary\n"
+        "BROADCASTIFY_ACCOUNT_SECONDARY_USERNAME=secondary-user\n"
+        "BROADCASTIFY_ACCOUNT_SECONDARY_PASSWORD=secondary-secret\n",
+        encoding="utf-8",
+    )
+    output = tmp_path / "archives"
+    output.mkdir()
+    credential_path = tmp_path / "credentials.enc"
+    server = create_server(
+        output,
+        port=0,
+        working_dir=tmp_path,
+        credential_store_path=credential_path,
+    )
+    server.quiet = True  # type: ignore[attr-defined]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    connection = http.client.HTTPConnection(
+        "127.0.0.1",
+        server.server_port,
+        timeout=5,
+    )
+    try:
+        response, body = _request(connection, "GET", "/")
+        assert response.status == 200
+        cookie = response.getheader("Set-Cookie", "").split(";", 1)[0]
+        response, body = _request(
+            connection,
+            "GET",
+            "/api/bootstrap",
+            cookie=cookie,
+        )
+        assert response.status == 200
+        bootstrap = json.loads(body)
+        pool = bootstrap["runtime"]["account_pool"]
+        assert pool["authorized"] is True
+        assert pool["configured_profile_ids"] == ["default", "secondary"]
+        assert [value["id"] for value in pool["profiles"]] == [
+            "default",
+            "secondary",
+        ]
+        assert pool["quota"]["account_count"] == 2
+        assert pool["quota"]["provider_limit"] == 500
+        assert pool["quota"]["automated_limit"] == 480
+        assert pool["quota"]["user_reserve"] == 20
+        assert b"primary-secret" not in body
+        assert b"secondary-secret" not in body
+
+        store = EncryptedCredentialStore(credential_path)
+        assert _select_account_profile(tmp_path, store, "automatic") == "default"
+        assert _select_account_profile(
+            tmp_path,
+            store,
+            "automatic",
+            excluded_profile_ids={"default"},
+        ) == "secondary"
+    finally:
+        connection.close()
+        server.shutdown()
+        server.server_close()
         thread.join(timeout=3)
 
 
@@ -605,7 +692,7 @@ def test_loopback_web_app_hides_results_for_refreshed_combined_audio(
     audio.write_bytes(b"refreshed combined recording")
     future = time.time() + 10
     os.utime(audio, (future, future))
-    server = create_server(output, database, port=0, working_dir=Path.cwd())
+    server = create_server(output, database, port=0, working_dir=tmp_path)
     server.quiet = True  # type: ignore[attr-defined]
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -685,7 +772,7 @@ def test_loopback_web_app_reads_current_file_when_import_revision_is_older(
         ),
         encoding="utf-8",
     )
-    server = create_server(output, database, port=0, working_dir=Path.cwd())
+    server = create_server(output, database, port=0, working_dir=tmp_path)
     server.quiet = True  # type: ignore[attr-defined]
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
