@@ -114,7 +114,7 @@ public sealed partial class MainWindow
         Require(
             manager.IsDocked,
             "The isolated saved dock preference was not restored at startup.");
-        await WaitForUiLayoutAsync(180);
+        await WaitForStableCustomTitleChromeAsync();
         var snapshot = manager.CaptureSnapshot();
         Require(
             manager.Side == DesktopDockSide.Right,
@@ -1113,15 +1113,16 @@ public sealed partial class MainWindow
 
     private void VerifyCustomTitleChromeBounds(string label, bool pinned)
     {
+        var titleRow = WindowRoot.RowDefinitions[0].Height;
         Require(
-            WindowRoot.RowDefinitions[0].Height.GridUnitType == GridUnitType.Pixel
-                && Math.Abs(WindowRoot.RowDefinitions[0].Height.Value - 48) < 0.01
-                && AppTitleBar.ActualHeight >= 47
-                && TitleBarDragRegion.IsLoaded
-                && TitleBarDragRegion.ActualWidth >= 80
-                && TitleBarDragRegion.ActualHeight >= 47
-                && AppTitleText.Text == "Broadcastify Desktop",
-            $"{label}: the fixed custom title chrome lost its reserved row or drag region.");
+            HasUsableCustomTitleChromeBounds(),
+            $"{label}: the fixed custom title chrome lost its reserved row or "
+                + $"drag region (row={titleRow.Value:N1}/{titleRow.GridUnitType}, "
+                + $"root={WindowRoot.ActualWidth:N1}x{WindowRoot.ActualHeight:N1}, "
+                + $"title={AppTitleBar.ActualWidth:N1}x{AppTitleBar.ActualHeight:N1}, "
+                + $"drag={TitleBarDragRegion.ActualWidth:N1}x"
+                + $"{TitleBarDragRegion.ActualHeight:N1}, "
+                + $"drag-loaded={TitleBarDragRegion.IsLoaded}).");
         var titleBarPoint = AppTitleBar
             .TransformToVisual(WindowRoot)
             .TransformPoint(default);
@@ -1826,6 +1827,42 @@ public sealed partial class MainWindow
         await Task.Delay(milliseconds);
         WindowRoot.UpdateLayout();
         await Task.Yield();
+    }
+
+    private bool HasUsableCustomTitleChromeBounds()
+    {
+        var titleRow = WindowRoot.RowDefinitions[0].Height;
+        return titleRow.GridUnitType == GridUnitType.Pixel
+            && Math.Abs(titleRow.Value - 48) < 0.01
+            && AppTitleBar.ActualHeight >= 47
+            && TitleBarDragRegion.IsLoaded
+            && TitleBarDragRegion.ActualWidth >= 80
+            && TitleBarDragRegion.ActualHeight >= 47
+            && AppTitleText.Text == "Broadcastify Desktop";
+    }
+
+    private async Task WaitForStableCustomTitleChromeAsync()
+    {
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(3);
+        var stableLayoutPasses = 0;
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            WindowRoot.UpdateLayout();
+            if (HasUsableCustomTitleChromeBounds())
+            {
+                stableLayoutPasses += 1;
+                if (stableLayoutPasses >= 2)
+                {
+                    return;
+                }
+            }
+            else
+            {
+                stableLayoutPasses = 0;
+            }
+            await Task.Delay(35);
+            await Task.Yield();
+        }
     }
 
     private static bool RectanglesApproximatelyEqual(
