@@ -736,6 +736,7 @@ def test_windows_startup_is_visible_configurable_and_recovery_aware() -> None:
     assert "RecurringCatchUp = recurringCatchUpBox.IsChecked" in window
     assert "suggestRecurringCatchUp: true" in window
     assert "result?.MissingDays.Count" in window
+    assert "result?.PendingProcessingDays.Count" in window
     assert "AccountProfileId" in window
     assert "RunScheduledJobAcrossAccountsAsync" in window
     assert "Automatic authorized pool" in window

@@ -25,6 +25,7 @@ from broadcastify_cli.lan_sync import (
     LanAcquisitionQueue,
     LanDiscoveryResponder,
     LanDownloadTurn,
+    LanProcessingQueue,
     LanSyncResult,
     discovery_destinations,
     discover_lan_peers,
@@ -83,6 +84,26 @@ def _retained_transcribed_feed_day(
     )
     audio = day / f"combined_{feed_id}_{archive_date:%Y%m%d}.mp3"
     audio.write_bytes(f"combined {feed_id} {archive_date.isoformat()}".encode())
+    (day / f"{audio.stem}.manifest.json").write_text(
+        json.dumps(
+            {
+                "timeline_version": 2,
+                "feed_id": feed_id,
+                "archive_date": archive_date.isoformat(),
+                "combined_file": audio.name,
+                "sources": [
+                    {
+                        "source_file": raw.name,
+                        "archive_start": f"{archive_date.isoformat()}T00:00:00",
+                        "combined_start_seconds": 0.0,
+                        "trimmed_duration_seconds": 1800.0,
+                        "duration_source": "archive_interval",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
     rendered = f"[{archive_date.isoformat()} 00:00:00] Dispatch retained.\n"
     text_path = transcripts / f"{audio.stem}.txt"
     text_path.write_text(rendered, encoding="utf-8")
@@ -394,12 +415,12 @@ def test_followed_feed_reconciliation_converges_month_and_few_day_nodes(
             value.isoformat() for value in month[28:]
         )
         assert result_a.blocks_copied == 3
-        assert result_a.transcript_artifacts_copied == 9
+        assert result_a.transcript_artifacts_copied == 12
         assert result_b.dates_discovered == tuple(
             value.isoformat() for value in month
         )
         assert result_b.blocks_copied == 28
-        assert result_b.transcript_artifacts_copied == 84
+        assert result_b.transcript_artifacts_copied == 112
         assert result_a.failures == ()
         assert result_b.failures == ()
 
@@ -416,6 +437,9 @@ def test_followed_feed_reconciliation_converges_month_and_few_day_nodes(
                 assert len(complete[0]) == 1
                 assert (
                     day / "transcripts" / f"combined_{feed_id}_{archive_date:%Y%m%d}.json"
+                ).is_file()
+                assert (
+                    day / f"combined_{feed_id}_{archive_date:%Y%m%d}.manifest.json"
                 ).is_file()
     finally:
         server_a.shutdown()
@@ -468,6 +492,301 @@ def test_shared_acquisition_queue_grants_one_expiring_producer_lease() -> None:
     )
     assert takeover["granted"] is True
     assert takeover["owner_node_id"] == "producer_two"
+
+
+def test_acquisition_queue_allows_only_one_global_website_stream() -> None:
+    queue = LanAcquisitionQueue(lease_seconds=30.0)
+    first_day = date(2026, 7, 12)
+    second_day = date(2026, 7, 13)
+
+    first = queue.claim(
+        "primary-account",
+        "90001",
+        first_day,
+        owner_node_id="producer_one",
+        producer_url="http://10.20.30.40:8766",
+        requester_address="10.20.30.40",
+    )
+    second = queue.claim(
+        "secondary-account",
+        "20305",
+        second_day,
+        owner_node_id="producer_two",
+        producer_url="http://10.20.30.41:8766",
+        requester_address="10.20.30.41",
+    )
+
+    assert first["granted"] is True
+    assert second["granted"] is False
+    assert second["state"] == "available"
+    assert second["global_busy"] is True
+
+    queue.finish(
+        "primary-account",
+        "90001",
+        first_day,
+        lease_token=str(first["lease_token"]),
+        outcome="failed",
+    )
+    retry = queue.claim(
+        "secondary-account",
+        "20305",
+        second_day,
+        owner_node_id="producer_two",
+        producer_url="http://10.20.30.41:8766",
+        requester_address="10.20.30.41",
+    )
+    assert retry["granted"] is True
+
+
+def test_quota_limited_account_does_not_block_a_different_account_scope() -> None:
+    queue = LanAcquisitionQueue(lease_seconds=30.0)
+    archive_date = date(2026, 7, 12)
+    primary = queue.claim(
+        "pool.default",
+        "91059",
+        archive_date,
+        owner_node_id="producer_one",
+        producer_url="http://10.20.30.40:8766",
+        requester_address="10.20.30.40",
+    )
+    queue.finish(
+        "pool.default",
+        "91059",
+        archive_date,
+        lease_token=str(primary["lease_token"]),
+        outcome="quota_limited",
+        retry_after_seconds=60.0,
+    )
+
+    secondary = queue.claim(
+        "pool.secondary",
+        "91059",
+        archive_date,
+        owner_node_id="producer_two",
+        producer_url="http://10.20.30.41:8766",
+        requester_address="10.20.30.41",
+    )
+
+    assert secondary["granted"] is True
+
+
+def test_settings_scope_queue_results_per_account_and_use_one_coordinator(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("BROADCASTIFY_LAN_QUOTA_SCOPE", "authorized-pool")
+    monkeypatch.setenv(
+        "BROADCASTIFY_LAN_QUOTA_COORDINATOR",
+        "http://10.200.1.227:8765",
+    )
+    monkeypatch.setenv("BROADCASTIFY_ACCOUNT_PROFILE", "default")
+    primary = LanArchiveSyncClient.from_settings(
+        enabled=True,
+        peer_urls=(),
+        discovery_enabled=False,
+    )
+    monkeypatch.setenv("BROADCASTIFY_ACCOUNT_PROFILE", "secondary")
+    secondary = LanArchiveSyncClient.from_settings(
+        enabled=True,
+        peer_urls=(),
+        discovery_enabled=False,
+    )
+
+    assert primary.quota_scope == "authorized-pool.default"
+    assert secondary.quota_scope == "authorized-pool.secondary"
+    assert primary._select_coordinator() == (
+        "http://10.200.1.227:8765",
+        {
+            "node_id": "configured-coordinator",
+            "acquisition_queue_available": True,
+        },
+    )
+    assert secondary._select_coordinator("processing_queue_available") == (
+        "http://10.200.1.227:8765",
+        {
+            "node_id": "configured-coordinator",
+            "processing_queue_available": True,
+        },
+    )
+
+
+def test_processing_queue_releases_failure_and_expired_leases() -> None:
+    now = [500.0]
+    queue = LanProcessingQueue(
+        lease_seconds=30.0,
+        result_seconds=300.0,
+        clock=lambda: now[0],
+    )
+    archive_date = date(2026, 7, 12)
+    fingerprint = "b" * 64
+
+    first = queue.claim(
+        fingerprint,
+        "91059",
+        archive_date,
+        owner_node_id="producer_one",
+        producer_url="http://10.20.30.40:8766",
+        requester_address="10.20.30.40",
+    )
+    queue.finish(
+        fingerprint,
+        "91059",
+        archive_date,
+        lease_token=str(first["lease_token"]),
+        outcome="failed",
+    )
+    second = queue.claim(
+        fingerprint,
+        "91059",
+        archive_date,
+        owner_node_id="producer_two",
+        producer_url="http://10.20.30.41:8766",
+        requester_address="10.20.30.41",
+    )
+    assert second["granted"] is True
+
+    now[0] += 31.0
+    third = queue.claim(
+        fingerprint,
+        "91059",
+        archive_date,
+        owner_node_id="producer_three",
+        producer_url="http://10.20.30.42:8766",
+        requester_address="10.20.30.42",
+    )
+    assert third["granted"] is True
+    assert third["owner_node_id"] == "producer_three"
+
+
+def test_lan_clients_claim_different_model_days_without_duplicate_work(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "coordinator"
+    root.mkdir()
+    server = create_lan_node_server(
+        root,
+        host="127.0.0.1",
+        port=0,
+        discovery_enabled=False,
+    )
+    server.quiet = True  # type: ignore[attr-defined]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    peer_url = f"http://127.0.0.1:{server.server_port}"
+    first = LanArchiveSyncClient(
+        enabled=True,
+        peer_urls=(peer_url,),
+        discovery_enabled=False,
+        producer_url=peer_url,
+    )
+    second = LanArchiveSyncClient(
+        enabled=True,
+        peer_urls=(peer_url,),
+        discovery_enabled=False,
+        producer_url=peer_url,
+    )
+    fingerprint = "c" * 64
+    first_day = date(2026, 7, 12)
+    second_day = date(2026, 7, 13)
+    try:
+        first_turn = first.claim_processing_turn(
+            "91059",
+            first_day,
+            fingerprint,
+        )
+        duplicate_turn = second.claim_processing_turn(
+            "91059",
+            first_day,
+            fingerprint,
+        )
+        parallel_turn = second.claim_processing_turn(
+            "91059",
+            second_day,
+            fingerprint,
+        )
+
+        assert first_turn.role == "leader"
+        assert duplicate_turn.role == "deferred"
+        assert parallel_turn.role == "leader"
+
+        assert first.finish_processing_turn(
+            first_turn,
+            outcome="complete",
+            artifact_count=4,
+        ) == ""
+        completed_turn = second.claim_processing_turn(
+            "91059",
+            first_day,
+            fingerprint,
+        )
+        assert completed_turn.role == "completed"
+        assert completed_turn.artifact_count == 4
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=3)
+
+
+def test_truenas_web_node_coordinates_model_work_for_windows_client(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "truenas"
+    root.mkdir()
+    monkeypatch.setenv("BROADCASTIFY_LAN_SHARING", "true")
+    monkeypatch.setenv("BROADCASTIFY_LAN_QUEUE_ENABLED", "true")
+    monkeypatch.setenv("BROADCASTIFY_LAN_DISCOVERY_ENABLED", "false")
+    server = create_server(root, port=0, working_dir=tmp_path)
+    server.quiet = True  # type: ignore[attr-defined]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    coordinator_url = f"http://127.0.0.1:{server.server_port}"
+    windows = LanArchiveSyncClient(
+        enabled=True,
+        peer_urls=(coordinator_url,),
+        discovery_enabled=False,
+        coordinator_url=coordinator_url,
+        producer_url=coordinator_url,
+    )
+    peer = LanArchiveSyncClient(
+        enabled=True,
+        peer_urls=(coordinator_url,),
+        discovery_enabled=False,
+        coordinator_url=coordinator_url,
+        producer_url=coordinator_url,
+    )
+    fingerprint = "f" * 64
+    archive_date = date(2026, 7, 14)
+    try:
+        leader = windows.claim_processing_turn(
+            "91059",
+            archive_date,
+            fingerprint,
+        )
+        duplicate = peer.claim_processing_turn(
+            "91059",
+            archive_date,
+            fingerprint,
+        )
+
+        assert leader.role == "leader"
+        assert duplicate.role == "deferred"
+        assert windows.finish_processing_turn(
+            leader,
+            outcome="complete",
+            artifact_count=4,
+        ) == ""
+        completed = peer.claim_processing_turn(
+            "91059",
+            archive_date,
+            fingerprint,
+        )
+        assert completed.role == "completed"
+        assert completed.artifact_count == 4
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=3)
 
 
 def test_multihomed_self_claim_requires_an_explicit_private_exception() -> None:
@@ -707,6 +1026,58 @@ def test_web_queue_elects_one_producer_and_follower_pulls_completed_blocks(
         copied = follower_result[0].audio_files
         assert len(copied) == 1
         assert copied[0].read_bytes() == block.read_bytes()
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=3)
+
+
+def test_job_mode_defers_an_active_download_without_sleeping(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "producer"
+    source.mkdir()
+    monkeypatch.setenv("BROADCASTIFY_LAN_SHARING", "true")
+    monkeypatch.setenv("BROADCASTIFY_LAN_DISCOVERY_ENABLED", "false")
+    server = create_server(source, port=0, working_dir=tmp_path)
+    server.quiet = True  # type: ignore[attr-defined]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    peer_url = f"http://127.0.0.1:{server.server_port}"
+    archive_date = date(2026, 7, 12)
+    leader = LanArchiveSyncClient(
+        enabled=True,
+        peer_urls=(peer_url,),
+        discovery_enabled=False,
+        producer_url=peer_url,
+    )
+    follower = LanArchiveSyncClient(
+        enabled=True,
+        peer_urls=(peer_url,),
+        discovery_enabled=False,
+        sleep=lambda _seconds: pytest.fail(
+            "deferred job mode must continue without queue polling sleeps"
+        ),
+    )
+    try:
+        leader_turn = leader.wait_for_download_turn(
+            source,
+            "90001",
+            archive_date,
+        )
+        assert leader_turn.role == "leader"
+
+        deferred = follower.wait_for_download_turn(
+            tmp_path / "consumer",
+            "90001",
+            archive_date,
+            defer_active=True,
+        )
+
+        assert deferred.role == "deferred"
+        assert deferred.owner_node_id == leader_turn.owner_node_id
+        assert leader.finish_download_turn(leader_turn, outcome="failed") == ""
     finally:
         server.shutdown()
         server.server_close()

@@ -2,15 +2,21 @@ from __future__ import annotations
 
 import os
 from collections.abc import Callable
+from datetime import date
 from pathlib import Path
 from typing import Any
 
 from .audio import combine_mp3_files
 from .broadcastify import BroadcastifyClient, DownloadLimitExceeded
 from .lan_sync import (
+    LanArchiveCatalog,
     LanArchiveSyncClient,
     LanDownloadTurn,
+    LanFeedSyncResult,
+    LanProcessingTurn,
     LanSyncResult,
+    LanTranscriptSyncResult,
+    LanSyncError,
     merge_lan_sync_results,
 )
 from .models import JobRequest
@@ -82,7 +88,12 @@ class JobRunner:
                     ),
                 }
             )
+        processing_fingerprint = str(
+            getattr(transcriber, "processing_fingerprint", "") or ""
+        )
+        feed_reconciliation = LanFeedSyncResult(enabled=False)
         lan_results: dict[str, LanSyncResult] = {}
+        lan_transcript_results: dict[str, LanTranscriptSyncResult] = {}
         if self.lan_sync.enabled:
             self.emit(
                 {
@@ -94,6 +105,28 @@ class JobRunner:
                     ),
                 }
             )
+            reconcile_feed = getattr(self.lan_sync, "sync_feed", None)
+            if callable(reconcile_feed):
+                try:
+                    feed_reconciliation = reconcile_feed(
+                        self.request.output_dir,
+                        self.request.feed_id,
+                        processing_fingerprint=processing_fingerprint,
+                        progress=lambda message: self.emit(
+                            {
+                                "type": "progress",
+                                "stage": "lan_reconcile",
+                                "current": 0,
+                                "total": 0,
+                                "message": message,
+                            }
+                        ),
+                    )
+                except Exception as exc:
+                    feed_reconciliation = LanFeedSyncResult(
+                        enabled=True,
+                        failures=(str(exc),),
+                    )
             for day_number, archive_date in enumerate(dates, start=1):
                 day_label = archive_date.isoformat()
 
@@ -276,6 +309,7 @@ class JobRunner:
                     self.request.feed_id,
                     archive_date,
                     progress=queue_progress,
+                    defer_active=True,
                 )
                 if self.lan_sync.enabled and callable(coordinate)
                 else LanDownloadTurn(role="uncoordinated")
@@ -507,6 +541,56 @@ class JobRunner:
             downloaded_days.append((archive_date, audio_files))
 
         day_results: list[dict[str, Any]] = []
+        pending_processing_days: list[str] = []
+        processing_roles = {
+            "leader": 0,
+            "completed": 0,
+            "deferred": 0,
+            "uncoordinated": 0,
+            "local_cache": 0,
+        }
+
+        def matching_transcripts(inputs: list[Path]) -> list[Path]:
+            current = getattr(transcriber, "current_transcripts", None)
+            if transcriber is None or not callable(current):
+                return []
+            return list(current(inputs))
+
+        def sync_matching_transcripts(
+            archive_date: Any,
+            inputs: list[Path],
+        ) -> list[Path]:
+            if (
+                not self.lan_sync.enabled
+                or not processing_fingerprint
+                or not inputs
+            ):
+                return matching_transcripts(inputs)
+            sync_transcripts = getattr(self.lan_sync, "sync_transcripts", None)
+            if callable(sync_transcripts):
+                try:
+                    value = sync_transcripts(
+                        self.request.output_dir,
+                        self.request.feed_id,
+                        archive_date,
+                        processing_fingerprint,
+                    )
+                except Exception as exc:
+                    value = LanTranscriptSyncResult(
+                        enabled=True,
+                        failures=(str(exc),),
+                    )
+                lan_transcript_results[archive_date.isoformat()] = value
+                for warning in value.failures:
+                    self.emit(
+                        {
+                            "type": "log",
+                            "stage": "lan_processing",
+                            "message": warning,
+                        }
+                    )
+            return matching_transcripts(inputs)
+
         for archive_date, audio_files in downloaded_days:
             day_label = archive_date.isoformat()
             day_dir = (
@@ -539,28 +623,177 @@ class JobRunner:
             transcription_inputs = [combined] if combined else audio_files
             transcripts: list[Path] = []
             if transcriber and transcription_inputs:
-                self.emit(
-                    {
-                        "type": "stage",
-                        "stage": "transcribe",
-                        "message": f"Transcribing {day_label}",
-                    }
+                transcripts = sync_matching_transcripts(
+                    archive_date,
+                    transcription_inputs,
                 )
-
-                def transcription_progress(current: int, total: int, message: str) -> None:
+                if transcripts:
+                    processing_roles["local_cache"] += 1
                     self.emit(
                         {
-                            "type": "progress",
-                            "stage": "transcribe",
-                            "current": current,
-                            "total": total,
-                            "message": message,
+                            "type": "log",
+                            "stage": "lan_processing",
+                            "message": (
+                                f"Reused matching local or LAN transcript artifacts "
+                                f"for {day_label}; the model was not run again."
+                            ),
                         }
                     )
 
-                transcripts = transcriber.transcribe_files(
-                    transcription_inputs, progress=transcription_progress
+                claim_processing = getattr(
+                    self.lan_sync,
+                    "claim_processing_turn",
+                    None,
                 )
+                processing_turn = (
+                    claim_processing(
+                        self.request.feed_id,
+                        archive_date,
+                        processing_fingerprint,
+                        progress=lambda message: self.emit(
+                            {
+                                "type": "progress",
+                                "stage": "lan_processing",
+                                "current": 0,
+                                "total": 0,
+                                "message": message,
+                            }
+                        ),
+                    )
+                    if not transcripts
+                    and self.lan_sync.enabled
+                    and processing_fingerprint
+                    and callable(claim_processing)
+                    else LanProcessingTurn(role="uncoordinated")
+                )
+                if not transcripts:
+                    processing_roles[processing_turn.role] = (
+                        processing_roles.get(processing_turn.role, 0) + 1
+                    )
+                for warning in processing_turn.warnings:
+                    self.emit(
+                        {
+                            "type": "log",
+                            "stage": "lan_processing",
+                            "message": warning,
+                        }
+                    )
+
+                if not transcripts and processing_turn.role in {
+                    "completed",
+                    "deferred",
+                }:
+                    transcripts = sync_matching_transcripts(
+                        archive_date,
+                        transcription_inputs,
+                    )
+                    if not transcripts:
+                        pending_processing_days.append(day_label)
+                        self.emit(
+                            {
+                                "type": "log",
+                                "stage": "lan_processing",
+                                "message": (
+                                    f"Deferred model work for {day_label}; another "
+                                    "node owns or just completed the identical model/day. "
+                                    "This job will reconcile its artifacts again before exit."
+                                ),
+                            }
+                        )
+                elif not transcripts:
+                    self.emit(
+                        {
+                            "type": "stage",
+                            "stage": "transcribe",
+                            "message": f"Transcribing {day_label}",
+                        }
+                    )
+
+                    def transcription_progress(
+                        current: int,
+                        total: int,
+                        message: str,
+                    ) -> None:
+                        self.emit(
+                            {
+                                "type": "progress",
+                                "stage": "transcribe",
+                                "current": current,
+                                "total": total,
+                                "message": message,
+                            }
+                        )
+
+                    if processing_turn.is_leader:
+                        heartbeat_manager = self.lan_sync.maintain_processing_lease(
+                            processing_turn
+                        )
+                        with heartbeat_manager as heartbeat:
+                            try:
+                                heartbeat.assert_active()
+                                transcripts = transcriber.transcribe_files(
+                                    transcription_inputs,
+                                    progress=transcription_progress,
+                                )
+                                heartbeat.assert_active()
+                                artifact_count = len(
+                                    LanArchiveCatalog(
+                                        self.request.output_dir,
+                                        enabled=True,
+                                        queue_enabled=False,
+                                    ).transcript_inventory(
+                                        self.request.feed_id,
+                                        archive_date,
+                                        processing_fingerprint,
+                                    )
+                                )
+                                minimum_artifacts = 3 * len(transcription_inputs)
+                                if artifact_count < minimum_artifacts:
+                                    raise LanSyncError(
+                                        "The completed model run did not publish a "
+                                        "complete hash-verified transcript artifact set."
+                                    )
+                            except Exception:
+                                warning = self.lan_sync.finish_processing_turn(
+                                    processing_turn,
+                                    outcome="failed",
+                                )
+                                if warning:
+                                    self.emit(
+                                        {
+                                            "type": "log",
+                                            "stage": "lan_processing",
+                                            "message": warning,
+                                        }
+                                    )
+                                raise
+                            else:
+                                warning = self.lan_sync.finish_processing_turn(
+                                    processing_turn,
+                                    outcome="complete",
+                                    artifact_count=artifact_count,
+                                )
+                                if warning:
+                                    self.emit(
+                                        {
+                                            "type": "log",
+                                            "stage": "lan_processing",
+                                            "message": warning,
+                                        }
+                                    )
+                        for warning in heartbeat.warnings:
+                            self.emit(
+                                {
+                                    "type": "log",
+                                    "stage": "lan_processing",
+                                    "message": warning,
+                                }
+                            )
+                    else:
+                        transcripts = transcriber.transcribe_files(
+                            transcription_inputs,
+                            progress=transcription_progress,
+                        )
 
             day_results.append(
                 {
@@ -570,6 +803,29 @@ class JobRunner:
                     "combined_file": str(combined) if combined else None,
                 }
             )
+
+        # A peer may finish while this node processes another day. Pull those
+        # artifacts once more without waiting; anything still active remains a
+        # durable scheduled retry instead of being duplicated here.
+        if transcriber and pending_processing_days:
+            still_pending: list[str] = []
+            by_date = {value["date"]: value for value in day_results}
+            for day_label in pending_processing_days:
+                value = by_date[day_label]
+                inputs = (
+                    [Path(value["combined_file"])]
+                    if value["combined_file"]
+                    else [Path(path) for path in value["audio_files"]]
+                )
+                transcripts = sync_matching_transcripts(
+                    date.fromisoformat(day_label),
+                    inputs,
+                )
+                if transcripts:
+                    value["transcripts"] = [str(path) for path in transcripts]
+                else:
+                    still_pending.append(day_label)
+            pending_processing_days = still_pending
 
         completed_dates = {day for day, _files in downloaded_days}
         missing_days = [
@@ -587,6 +843,7 @@ class JobRunner:
             "completed_days": len(day_results),
             "download_limited": download_limited,
             "missing_days": missing_days,
+            "pending_processing_days": pending_processing_days,
             "lan_sync": {
                 "enabled": self.lan_sync.enabled,
                 "blocks_copied": sum(
@@ -599,9 +856,21 @@ class JobRunner:
                     day: value.to_dict() for day, value in lan_results.items()
                 },
                 "acquisition_queue": queue_roles,
+                "processing_queue": processing_roles,
+                "transcripts": {
+                    day: value.to_dict()
+                    for day, value in lan_transcript_results.items()
+                },
+                "feed_reconciliation": feed_reconciliation.to_dict(),
             },
         }
-        if not download_limited:
+        if pending_processing_days:
+            message = (
+                f"Archive acquisition completed; {len(pending_processing_days)} "
+                "model/day result(s) remain assigned to another LAN node and "
+                "will reconcile on the next scheduled pass."
+            )
+        elif not download_limited:
             message = "All operations completed."
         else:
             message = (

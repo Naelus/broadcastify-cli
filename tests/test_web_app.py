@@ -230,6 +230,59 @@ def test_web_schedule_coordinator_retries_deferred_missing_days(
     assert result["due"] is False
 
 
+def test_web_schedule_coordinator_retries_peer_owned_model_days(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = tmp_path / "analysis.sqlite3"
+    monkeypatch.setenv(
+        "BROADCASTIFY_QUOTA_LEDGER", str(tmp_path / "quota.sqlite3")
+    )
+    with AnalysisStore(database) as store:
+        store.save_feed_schedule(
+            {
+                "feed_id": "91059",
+                "feed_name": "Example Public Safety",
+                "run_time_local": "00:00",
+                "lookback_days": 1,
+                "backfill_start_date": "2026-07-03",
+                "job": {"combine": True, "transcribe": True},
+            }
+        )
+
+    class FakeJobs:
+        output_dir = tmp_path / "selected-library"
+
+        def start(self, command: str, _payload: dict[str, object]) -> dict[str, object]:
+            assert command == "run-scheduled"
+            return {"id": "scheduled-job"}
+
+        def get(self, _job_id: str) -> dict[str, object]:
+            return {
+                "status": "completed",
+                "result": {
+                    "type": "scheduled_complete",
+                    "result": {
+                        "download_limited": False,
+                        "missing_days": [],
+                        "pending_processing_days": ["2026-07-04"],
+                    },
+                },
+            }
+
+    coordinator = FeedScheduleCoordinator(  # type: ignore[arg-type]
+        FakeJobs(), database, tmp_path, poll_seconds=0.05
+    )
+    coordinator.check_once()
+    coordinator.check_once()
+
+    with AnalysisStore(database) as store:
+        result = store.list_feed_schedules()[0]
+    assert result["state"] == "deferred"
+    assert result["last_run_date"] == ""
+    assert result["backfill_start_date"] == "2026-07-03"
+
+
 def test_loopback_web_app_serves_library_transcript_and_media(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

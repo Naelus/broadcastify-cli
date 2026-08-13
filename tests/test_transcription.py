@@ -656,6 +656,34 @@ def test_diarization_turn_cache_is_parameter_and_audio_specific(tmp_path: Path) 
     assert transcriber._load_diarization_cache(audio) is None
 
 
+def test_current_transcripts_requires_the_complete_model_matching_set(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    first = tmp_path / "first.mp3"
+    second = tmp_path / "second.mp3"
+    first.write_bytes(b"first")
+    second.write_bytes(b"second")
+    transcriber = object.__new__(LocalTranscriber)
+    monkeypatch.setattr(
+        transcriber,
+        "_existing_transcript_is_current",
+        lambda audio, _json, _text: audio != second,
+    )
+
+    assert transcriber.current_transcripts([first, second]) == []
+
+    monkeypatch.setattr(
+        transcriber,
+        "_existing_transcript_is_current",
+        lambda _audio, _json, _text: True,
+    )
+    assert transcriber.current_transcripts([second, first]) == [
+        tmp_path / "transcripts" / "first.json",
+        tmp_path / "transcripts" / "second.json",
+    ]
+
+
 def test_combined_source_signature_finds_hashed_append_boundary(
     tmp_path: Path,
 ) -> None:

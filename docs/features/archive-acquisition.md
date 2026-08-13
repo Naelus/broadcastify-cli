@@ -168,16 +168,26 @@ nearest/highest-priority feed.
 
 ## Trusted-LAN pool
 
-The optional LAN node shares original archive MP3 blocks, not credentials,
-transcripts, analysis, or combined audio. One renewable producer lease owns a
-feed/day upstream acquisition; followers assemble the exact completion manifest
-from any peer and verify size plus SHA-256. Inventories and completion manifests
+The optional LAN node shares retained archive MP3 blocks and complete
+model-fingerprint-matched transcript sets, never credentials or analysis
+databases. One renewable producer lease owns the single global upstream stream;
+followers assemble the exact feed/day completion manifest from any peer and
+verify size plus SHA-256. Inventories and completion manifests
 carry the one optional exact provider ID and listing prefix for each block, so
 a copied block retains its no-request cache identity on the receiving node. A
 legacy peer manifest that collapses multiple positions into one block is
 rejected and must be repaired by an updated producer. Once the exact completed manifest is
 assembled and hash-verified, the receiving node writes its own local completion
 snapshot; the snapshot itself does not need to be shared.
+
+At every LAN-enabled job start, feed-wide reconciliation discovers all dates a
+peer retained for the selected feed, not only the current job's recent window.
+Equivalent model output travels as combined audio (when present), its exact
+timeline manifest, transcript JSON, and rendered text. A per-fingerprint/day
+processing lease prevents two machines from running the same work; different
+days remain eligible for parallel model processing. Scheduled jobs defer an
+active peer-owned acquisition or model/day immediately and retry it from
+retained state on a later pass.
 
 Broadcastify source labels can drift slightly across midnight even when the
 track belongs to the prior website archive page. LAN manifests accept that
@@ -186,8 +196,11 @@ bounded next-day rollover consistently; the requested feed/day directory and a
 
 Today/yesterday successful manifests are short-lived rolling snapshots so a new
 track can be discovered. Explicit quota state follows the producer ledger's
-next known rolling-window release. LAN failure never prevents local cache use
-or the paced website fallback. See
+next known rolling-window release for the selected account profile. A different
+authorized profile may take the next sequential turn. With a configured
+authoritative coordinator, Windows and TrueNAS use the same per-account ledger;
+coordinator failure pauses new website requests. LAN failure never prevents
+local cache use. See
 [lan-archive-sync.md](../lan-archive-sync.md).
 
 ## Failure and resume rules

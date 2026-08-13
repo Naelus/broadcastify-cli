@@ -154,6 +154,11 @@ A later stage cannot make an earlier stale stage look complete.
   complete days. They survive cancellation, quota pauses, app/machine restarts,
   and upgrades, participate in the normal global Resume plan, and self-clear
   only after every day through current is locally complete.
+- A LAN-enabled job first reconciles every peer-retained date for its feed.
+  Hash-verified source blocks and exact model-fingerprint transcript sets become
+  ordinary retained local files. Active peer-owned acquisition/model days are
+  recorded as incomplete rather than waited on or duplicated; daily schedules
+  retry them, and expired or failed renewable claims become eligible again.
 - Native settings are atomically written; activity/crash logs append.
 - A managed CUDA install retains its checksum-verified download cache and
   partial environment after cancellation; an exclusive lock prevents two app

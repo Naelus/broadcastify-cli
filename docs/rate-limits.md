@@ -59,7 +59,9 @@ cache/LAN state first, selects an eligible profile, and continues retained
 missing work on the next eligible profile only after the current one becomes
 unavailable. It never runs two archive downloads concurrently: `download_jobs`
 remains forced to one and the normal inter-request spacing still applies across
-the whole coding session.
+the whole coding session. In a coordinated Windows/TrueNAS deployment, the
+acquisition coordinator extends that single active stream across machines,
+feeds, dates, and account profiles.
 
 The ledger counts attempts, not just successful files:
 
@@ -172,15 +174,20 @@ The fixes now in place are:
 ## LAN behavior
 
 Trusted-LAN peers may exchange hash-verified original archive blocks and elect
-one producer for a feed/day, reducing duplicate downloads. The transient
-quota result carries the producer's next-safe delay, preventing followers from
-repeating the request until that rolling slot arrives. Completed old-day
+one producer for the global website stream, reducing duplicate downloads. The
+transient quota result is scoped to the producer's account profile and carries
+its next-safe delay, preventing that profile from repeating the request until
+its rolling slot arrives while another authorized profile can take the next
+sequential turn. Completed old-day
 manifests may still be retained for the configured 24-hour result lifetime.
 The one exact provider-ID mapping for each inventoried or completed block
 travels with it. Legacy peer blocks that claim several timeline identities are
 rejected so a damaged cache cannot spread across the LAN.
 
-LAN coordination does **not** merge request ledgers, credentials, account
-profiles, or provider allowances. Use only one installation at a time when they
+LAN coordination never merges credentials, cookies, or provider allowances. An
+optional authoritative TrueNAS quota endpoint merges only non-secret
+request-attempt state for matching account profile IDs; each Windows client
+retains a local fail-safe mirror, and endpoint loss pauses new archive requests.
+Without that coordinator, use only one installation at a time when installations
 rely on the same provider account. See [Trusted-LAN archive
 reuse](lan-archive-sync.md).

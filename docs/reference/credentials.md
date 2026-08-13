@@ -20,7 +20,7 @@ application credentials, not official Broadcastify API credentials.
 - Password and token fields are blank on reopen. Status shows only a short,
   non-reversible prefix.
 - The complete value is supplied only to a short-lived Python child
-  environment. Each account receives a distinct cookie path and quota scope.
+  environment. Each account receives a distinct cookie path and quota identity.
   Scheduled and explicit missing-day catch-ups may rotate sequentially across
   the locally authorized pool, reusing retained work between profiles.
 
@@ -52,6 +52,12 @@ default. AES-GCM hosts also create `.credentials.enc.key`. Set
 `BROADCASTIFY_CREDENTIAL_STORE` to select a persistent private path. TrueNAS
 must place both files in its persistent app dataset. Backing up only the
 encrypted payload without its key is not recoverable.
+
+Windows and TrueNAS store and authenticate both provider accounts separately;
+credentials and cookies never synchronize over the LAN. For coordinated quota
+state, the same non-secret profile ID (for example `default` or `secondary`)
+must refer to the same provider account on both systems. Retained downloads and
+matching transcript artifacts may then reconcile without copying either login.
 
 The POSIX design protects a copied payload and avoids plaintext configuration,
 but an administrator or attacker who can read both the store and local key can

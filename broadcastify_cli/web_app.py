@@ -1014,7 +1014,9 @@ class FeedScheduleCoordinator:
                 result = event.get("result") if isinstance(event, dict) else {}
                 result = result if isinstance(result, dict) else {}
                 limited = bool(result.get("download_limited"))
-                incomplete = bool(result.get("missing_days"))
+                incomplete = bool(result.get("missing_days")) or bool(
+                    result.get("pending_processing_days")
+                )
                 if limited and automatic_pool:
                     if self._try_next_account(schedule, attempted_profile_ids):
                         return

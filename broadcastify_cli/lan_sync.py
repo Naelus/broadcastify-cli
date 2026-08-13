@@ -26,6 +26,7 @@ from urllib.parse import quote, urlparse, urlunparse
 
 import requests
 
+from .audio import combined_output_is_current
 from .archive_cache import (
     archive_identities_for_filename,
     complete_cached_archive_day,
@@ -43,7 +44,7 @@ MAX_BLOCKS_PER_DAY = 128
 MAX_ARCHIVE_BLOCK_BYTES = 256 * 1024 * 1024
 MAX_INVENTORY_BYTES = 1024 * 1024
 MAX_LAN_QUEUE_ENTRIES = 512
-MAX_TRANSCRIPT_ARTIFACTS_PER_DAY = 32
+MAX_TRANSCRIPT_ARTIFACTS_PER_DAY = 512
 MAX_TRANSCRIPT_ARTIFACT_BYTES = 64 * 1024 * 1024
 MAX_DERIVED_AUDIO_BYTES = 8 * 1024 * 1024 * 1024
 LAN_QUEUE_LEASE_SECONDS = 90.0
@@ -396,6 +397,10 @@ class TranscriptArtifact:
             "json": f"{expected_stem}.json",
             "text": f"{expected_stem}.txt",
         }
+        if self.audio_filename == (
+            f"combined_{expected_feed_id}_{expected_date:%Y%m%d}.mp3"
+        ):
+            expected_names["manifest"] = f"{expected_stem}.manifest.json"
         if self.kind not in expected_names or self.filename != expected_names[self.kind]:
             raise LanSyncError(
                 "A LAN peer advertised an invalid transcript artifact name."
@@ -608,6 +613,7 @@ class LanProcessingTurn:
     owner_node_id: str = ""
     lease_token: str = ""
     lease_seconds: float = 0.0
+    artifact_count: int = 0
     transcripts: tuple[Path, ...] = ()
     sync_result: LanTranscriptSyncResult = LanTranscriptSyncResult(enabled=False)
     warnings: tuple[str, ...] = ()
@@ -700,6 +706,15 @@ class LanAcquisitionQueue:
             self._cleanup_locked(now)
             existing = self._entries.get(key)
             if existing is not None:
+                value = self._payload_locked(key, now)
+                value["granted"] = False
+                return value
+            # Broadcastify requested one globally sequential archive stream.
+            # Completed result records may coexist, but a different active
+            # feed/day must release its renewable lease before another website
+            # producer can start, even when a different authorized account is
+            # selected.
+            if any(entry.state == "active" for entry in self._entries.values()):
                 value = self._payload_locked(key, now)
                 value["granted"] = False
                 return value
@@ -874,8 +889,20 @@ class LanAcquisitionQueue:
             "block_count": 0,
             "rolling": False,
             "blocks": [],
+            "global_busy": False,
         }
         if entry is None:
+            active = [
+                candidate
+                for candidate in self._entries.values()
+                if candidate.state == "active"
+            ]
+            if active:
+                value["global_busy"] = True
+                value["lease_seconds"] = round(
+                    max(max(0.0, candidate.expires_at - now) for candidate in active),
+                    3,
+                )
             return value
         value.update(
             {
@@ -1069,9 +1096,9 @@ class LanProcessingQueue:
             raise LanSyncError("The LAN processing outcome is not valid.")
         if not 0 <= int(artifact_count) <= MAX_TRANSCRIPT_ARTIFACTS_PER_DAY:
             raise LanSyncError("The LAN transcript artifact count is not valid.")
-        if outcome == "complete" and int(artifact_count) < 2:
+        if outcome == "complete" and int(artifact_count) < 3:
             raise LanSyncError(
-                "Completed LAN transcript work must publish a JSON/text pair."
+                "Completed LAN transcript work must publish audio, JSON, and text."
             )
         key = (fingerprint, feed_id, archive_date.isoformat())
         with self._lock:
@@ -1448,7 +1475,7 @@ class LanArchiveCatalog:
             return []
         artifacts: list[TranscriptArtifact] = []
         for json_path in sorted(transcript_dir.glob("*.json")):
-            if len(artifacts) + 3 > MAX_TRANSCRIPT_ARTIFACTS_PER_DAY:
+            if len(artifacts) + 4 > MAX_TRANSCRIPT_ARTIFACTS_PER_DAY:
                 break
             if json_path.is_symlink() or json_path.resolve().parent != transcript_dir:
                 continue
@@ -1506,46 +1533,79 @@ class LanArchiveCatalog:
                     or self.hashes.sha256(text_path) != rendered_hash
                 ):
                     continue
-                artifacts.extend(
-                    (
+                artifact_set = [
+                    TranscriptArtifact(
+                        feed_id=feed_id,
+                        archive_date=archive_date.isoformat(),
+                        audio_filename=audio_filename,
+                        audio_sha256=audio_sha256,
+                        processing_fingerprint=fingerprint,
+                        filename=audio_filename,
+                        kind="audio",
+                        size=audio_path.stat().st_size,
+                        sha256=audio_sha256,
+                        modified_ns=audio_path.stat().st_mtime_ns,
+                    ),
+                    TranscriptArtifact(
+                        feed_id=feed_id,
+                        archive_date=archive_date.isoformat(),
+                        audio_filename=audio_filename,
+                        audio_sha256=audio_sha256,
+                        processing_fingerprint=fingerprint,
+                        filename=json_path.name,
+                        kind="json",
+                        size=json_stat.st_size,
+                        sha256=self.hashes.sha256(json_path),
+                        modified_ns=json_stat.st_mtime_ns,
+                    ),
+                    TranscriptArtifact(
+                        feed_id=feed_id,
+                        archive_date=archive_date.isoformat(),
+                        audio_filename=audio_filename,
+                        audio_sha256=audio_sha256,
+                        processing_fingerprint=fingerprint,
+                        filename=text_path.name,
+                        kind="text",
+                        size=text_stat.st_size,
+                        sha256=rendered_hash,
+                        modified_ns=text_stat.st_mtime_ns,
+                    ),
+                ]
+                if audio_filename == f"combined_{feed_id}_{archive_date:%Y%m%d}.mp3":
+                    manifest_path = day_dir / f"{Path(audio_filename).stem}.manifest.json"
+                    source_files = [
+                        day_dir / block.filename
+                        for block in self.inventory(feed_id, archive_date)
+                    ]
+                    if (
+                        manifest_path.is_symlink()
+                        or not manifest_path.is_file()
+                        or manifest_path.resolve().parent != day_dir
+                        or not combined_output_is_current(
+                            audio_path,
+                            manifest_path,
+                            source_files,
+                        )
+                    ):
+                        continue
+                    manifest_stat = manifest_path.stat()
+                    if not 0 < manifest_stat.st_size <= MAX_TRANSCRIPT_ARTIFACT_BYTES:
+                        continue
+                    artifact_set.append(
                         TranscriptArtifact(
                             feed_id=feed_id,
                             archive_date=archive_date.isoformat(),
                             audio_filename=audio_filename,
                             audio_sha256=audio_sha256,
                             processing_fingerprint=fingerprint,
-                            filename=audio_filename,
-                            kind="audio",
-                            size=audio_path.stat().st_size,
-                            sha256=audio_sha256,
-                            modified_ns=audio_path.stat().st_mtime_ns,
-                        ),
-                        TranscriptArtifact(
-                            feed_id=feed_id,
-                            archive_date=archive_date.isoformat(),
-                            audio_filename=audio_filename,
-                            audio_sha256=audio_sha256,
-                            processing_fingerprint=fingerprint,
-                            filename=json_path.name,
-                            kind="json",
-                            size=json_stat.st_size,
-                            sha256=self.hashes.sha256(json_path),
-                            modified_ns=json_stat.st_mtime_ns,
-                        ),
-                        TranscriptArtifact(
-                            feed_id=feed_id,
-                            archive_date=archive_date.isoformat(),
-                            audio_filename=audio_filename,
-                            audio_sha256=audio_sha256,
-                            processing_fingerprint=fingerprint,
-                            filename=text_path.name,
-                            kind="text",
-                            size=text_stat.st_size,
-                            sha256=rendered_hash,
-                            modified_ns=text_stat.st_mtime_ns,
-                        ),
+                            filename=manifest_path.name,
+                            kind="manifest",
+                            size=manifest_stat.st_size,
+                            sha256=self.hashes.sha256(manifest_path),
+                            modified_ns=manifest_stat.st_mtime_ns,
+                        )
                     )
-                )
+                artifacts.extend(artifact_set)
             except OSError:
                 continue
         return artifacts
@@ -1569,12 +1629,14 @@ class LanArchiveCatalog:
             day_dir = self._day_directory(feed_id, archive_date)
             candidate = (
                 day_dir / filename
-                if artifact.kind == "audio"
+                if artifact.kind in {"audio", "manifest"}
                 else day_dir / "transcripts" / filename
             )
             path = candidate.resolve()
             expected_parent = (
-                day_dir if artifact.kind == "audio" else day_dir / "transcripts"
+                day_dir
+                if artifact.kind in {"audio", "manifest"}
+                else day_dir / "transcripts"
             )
             if path.parent != expected_parent or not path.is_file():
                 break
@@ -1940,6 +2002,7 @@ class LanArchiveSyncClient:
         read_timeout: float = 120.0,
         queue_enabled: bool = True,
         quota_scope: str = "default",
+        coordinator_url: str = "",
         producer_url: str = "",
         producer_port: int = 0,
         queue_poll_interval: float = 2.0,
@@ -1958,6 +2021,11 @@ class LanArchiveSyncClient:
         self.quota_scope = LanAcquisitionQueue._validate_key(
             quota_scope,
             "1",
+        )
+        self.coordinator_url = (
+            normalize_peer_url(coordinator_url)
+            if str(coordinator_url).strip()
+            else ""
         )
         self.producer_url = (
             normalize_peer_url(producer_url) if str(producer_url).strip() else ""
@@ -2003,6 +2071,26 @@ class LanArchiveSyncClient:
         except ValueError:
             producer_port = 0
 
+        base_quota_scope = str(
+            os.getenv("BROADCASTIFY_LAN_QUOTA_SCOPE") or "default"
+        ).strip()
+        account_profile_id = str(
+            os.getenv("BROADCASTIFY_ACCOUNT_PROFILE") or "default"
+        ).strip().lower()
+        if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", account_profile_id):
+            raise ValueError("The Broadcastify account profile ID is not valid.")
+        # A quota-limited result belongs to one authorized account, while the
+        # queue itself still permits only one active website stream globally.
+        # Including the non-secret profile ID lets a scheduled retry rotate to
+        # another account without mistaking the first account's rolling limit
+        # for a pool-wide provider limit.
+        quota_scope = f"{base_quota_scope}.{account_profile_id}"
+        if len(quota_scope) > 64:
+            quota_scope = (
+                f"account-{account_profile_id[:32]}-"
+                f"{hashlib.sha256(quota_scope.encode('utf-8')).hexdigest()[:16]}"
+            )
+
         return cls(
             enabled=enabled and environment_enabled,
             peer_urls=configured_peer_urls(peer_urls),
@@ -2012,7 +2100,12 @@ class LanArchiveSyncClient:
                 "BROADCASTIFY_LAN_QUEUE_ENABLED",
                 default=True,
             ),
-            quota_scope=os.getenv("BROADCASTIFY_LAN_QUOTA_SCOPE") or "default",
+            quota_scope=quota_scope,
+            coordinator_url=(
+                os.getenv("BROADCASTIFY_LAN_COORDINATOR")
+                or os.getenv("BROADCASTIFY_LAN_QUOTA_COORDINATOR")
+                or ""
+            ),
             producer_url=(
                 os.getenv("BROADCASTIFY_LAN_SELF_URL")
                 or os.getenv("BROADCASTIFY_LAN_ADVERTISE_URL")
@@ -2347,7 +2440,7 @@ class LanArchiveSyncClient:
         copied_bytes = 0
         already_local = 0
         conflicts = 0
-        order = {"audio": 0, "json": 1, "text": 2}
+        order = {"audio": 0, "manifest": 1, "json": 2, "text": 3}
         for key in sorted(candidates, key=lambda value: (order[value[0]], value[1])):
             sources = candidates[key]
             signatures = {
@@ -2368,7 +2461,7 @@ class LanArchiveSyncClient:
             expected = sources[0][1]
             target = (
                 day_dir / expected.filename
-                if expected.kind == "audio"
+                if expected.kind in {"audio", "manifest"}
                 else transcript_dir / expected.filename
             )
             if target.is_symlink():
@@ -2523,6 +2616,7 @@ class LanArchiveSyncClient:
         archive_date: date,
         *,
         progress: ProgressCallback | None = None,
+        defer_active: bool = False,
     ) -> LanDownloadTurn:
         """Wait behind a producer or claim the one upstream download lease."""
 
@@ -2538,7 +2632,7 @@ class LanArchiveSyncClient:
         producer = self._producer_identity(coordinator)
         started = time.monotonic()
         grace_deadline = started + self.queue_consumer_grace
-        observed_shared_work = False
+        observed_shared_work = bool(self.coordinator_url)
         queue_failures = 0
         sync_results: list[LanSyncResult] = []
         latest_sync: LanSyncResult | None = None
@@ -2587,6 +2681,24 @@ class LanArchiveSyncClient:
             state = str(status["state"])
             producer_url = str(status.get("producer_url") or "")
             if state == "available":
+                if bool(status.get("global_busy")):
+                    observed_shared_work = True
+                    if progress:
+                        progress(
+                            "Another LAN producer owns the one sequential "
+                            "Broadcastify request stream; continuing with other "
+                            "local work instead of opening a second stream."
+                        )
+                    if defer_active:
+                        return LanDownloadTurn(
+                            role="deferred",
+                            coordinator_url=coordinator,
+                            sync_result=merge_lan_sync_results(sync_results),
+                            warnings=tuple(dict.fromkeys(warnings)),
+                        )
+                    remaining = max(0.05, float(status["lease_seconds"]))
+                    self._sleep(min(self.queue_poll_interval, remaining))
+                    continue
                 if producer is not None:
                     producer_url, owner_node_id = producer
                     try:
@@ -2623,6 +2735,13 @@ class LanArchiveSyncClient:
                             owner_node_id=owner_node_id,
                             lease_token=str(claim["lease_token"]),
                             lease_seconds=float(claim["lease_seconds"]),
+                            sync_result=merge_lan_sync_results(sync_results),
+                            warnings=tuple(dict.fromkeys(warnings)),
+                        )
+                    if bool(claim.get("global_busy")) and defer_active:
+                        return LanDownloadTurn(
+                            role="deferred",
+                            coordinator_url=coordinator,
                             sync_result=merge_lan_sync_results(sync_results),
                             warnings=tuple(dict.fromkeys(warnings)),
                         )
@@ -2694,6 +2813,17 @@ class LanArchiveSyncClient:
                         sync_result=merge_lan_sync_results(sync_results),
                         warnings=tuple(dict.fromkeys(warnings)),
                     )
+                if defer_active:
+                    return LanDownloadTurn(
+                        role="deferred",
+                        coordinator_url=coordinator,
+                        producer_url=producer_url,
+                        owner_node_id=str(status.get("owner_node_id") or ""),
+                        block_count=block_count,
+                        blocks=completion_blocks,
+                        sync_result=merge_lan_sync_results(sync_results),
+                        warnings=tuple(dict.fromkeys(warnings)),
+                    )
                 if progress and now - last_progress_at >= 15.0:
                     progress(
                         "The shared download is complete; waiting for its "
@@ -2734,6 +2864,15 @@ class LanArchiveSyncClient:
                         "Broadcastify."
                     )
                     last_progress_at = now
+                if defer_active:
+                    return LanDownloadTurn(
+                        role="deferred",
+                        coordinator_url=coordinator,
+                        producer_url=producer_url,
+                        owner_node_id=str(status.get("owner_node_id") or ""),
+                        sync_result=merge_lan_sync_results(sync_results),
+                        warnings=tuple(dict.fromkeys(warnings)),
+                    )
                 remaining = max(0.05, float(status["lease_seconds"]))
                 self._sleep(min(self.queue_poll_interval, remaining))
                 continue
@@ -2791,7 +2930,196 @@ class LanArchiveSyncClient:
             return f"The LAN acquisition result could not be published: {exc}"
         return ""
 
-    def _select_coordinator(self) -> tuple[str, dict[str, Any]] | None:
+    def claim_processing_turn(
+        self,
+        feed_id: str,
+        archive_date: date,
+        processing_fingerprint: str,
+        *,
+        progress: ProgressCallback | None = None,
+    ) -> LanProcessingTurn:
+        """Claim one model/day without waiting behind another node's model."""
+
+        fingerprint = LanProcessingQueue._validate_key(
+            processing_fingerprint,
+            feed_id,
+        )
+        if not self.queue_enabled:
+            return LanProcessingTurn(role="uncoordinated")
+        selected = self._select_coordinator("processing_queue_available")
+        if selected is None:
+            return LanProcessingTurn(
+                role="uncoordinated",
+                warnings=("No LAN peer offered processing coordination.",),
+            )
+        coordinator, _coordinator_info = selected
+        try:
+            status = self._processing_queue_status(
+                coordinator,
+                feed_id,
+                archive_date,
+                fingerprint,
+            )
+        except (LanSyncError, requests.RequestException, ValueError) as exc:
+            return LanProcessingTurn(
+                role="deferred",
+                feed_id=feed_id,
+                archive_date=archive_date.isoformat(),
+                processing_fingerprint=fingerprint,
+                coordinator_url=coordinator,
+                warnings=(
+                    "The LAN processing coordinator could not confirm a safe "
+                    f"turn: {exc}",
+                ),
+            )
+
+        state = str(status["state"])
+        if state == "complete":
+            if progress:
+                progress(
+                    "An equivalent model run completed on another LAN node; "
+                    "its verified artifacts can be reused."
+                )
+            return LanProcessingTurn(
+                role="completed",
+                feed_id=feed_id,
+                archive_date=archive_date.isoformat(),
+                processing_fingerprint=fingerprint,
+                coordinator_url=coordinator,
+                producer_url=str(status.get("producer_url") or ""),
+                owner_node_id=str(status.get("owner_node_id") or ""),
+                artifact_count=int(status.get("artifact_count") or 0),
+            )
+        if state == "active":
+            if progress:
+                progress(
+                    "Another LAN node is processing this model/day; moving to "
+                    "the next day instead of waiting or duplicating work."
+                )
+            return LanProcessingTurn(
+                role="deferred",
+                feed_id=feed_id,
+                archive_date=archive_date.isoformat(),
+                processing_fingerprint=fingerprint,
+                coordinator_url=coordinator,
+                producer_url=str(status.get("producer_url") or ""),
+                owner_node_id=str(status.get("owner_node_id") or ""),
+            )
+        if state != "available":
+            raise LanSyncError("The LAN coordinator returned an unknown processing state.")
+
+        producer = self._producer_identity(coordinator)
+        if producer is None:
+            return LanProcessingTurn(
+                role="uncoordinated",
+                coordinator_url=coordinator,
+                warnings=(
+                    "This client is not serving retained artifacts, so it cannot "
+                    "publish a shared processing result.",
+                ),
+            )
+        producer_url, owner_node_id = producer
+        try:
+            claim = self._processing_queue_action(
+                coordinator,
+                "claim",
+                feed_id,
+                archive_date,
+                fingerprint,
+                {
+                    "producer_url": producer_url,
+                    "owner_node_id": owner_node_id,
+                },
+            )
+        except (LanSyncError, requests.RequestException, ValueError) as exc:
+            return LanProcessingTurn(
+                role="deferred",
+                feed_id=feed_id,
+                archive_date=archive_date.isoformat(),
+                processing_fingerprint=fingerprint,
+                coordinator_url=coordinator,
+                warnings=(f"The LAN processing lease could not be claimed: {exc}",),
+            )
+        if not bool(claim.get("granted")):
+            return LanProcessingTurn(
+                role=("completed" if claim["state"] == "complete" else "deferred"),
+                feed_id=feed_id,
+                archive_date=archive_date.isoformat(),
+                processing_fingerprint=fingerprint,
+                coordinator_url=coordinator,
+                producer_url=str(claim.get("producer_url") or ""),
+                owner_node_id=str(claim.get("owner_node_id") or ""),
+                artifact_count=int(claim.get("artifact_count") or 0),
+            )
+        if progress:
+            progress(
+                "This client owns the shared model/day lease; other nodes may "
+                "process different days in parallel."
+            )
+        return LanProcessingTurn(
+            role="leader",
+            feed_id=feed_id,
+            archive_date=archive_date.isoformat(),
+            processing_fingerprint=fingerprint,
+            coordinator_url=coordinator,
+            producer_url=producer_url,
+            owner_node_id=owner_node_id,
+            lease_token=str(claim["lease_token"]),
+            lease_seconds=float(claim["lease_seconds"]),
+        )
+
+    def maintain_processing_lease(
+        self,
+        turn: LanProcessingTurn,
+    ) -> AbstractContextManager["_LanProcessingLeaseHeartbeat"]:
+        if not turn.is_leader:
+            raise ValueError("Only the LAN processing leader has a renewable lease.")
+        return _LanProcessingLeaseHeartbeat(self, turn)
+
+    def finish_processing_turn(
+        self,
+        turn: LanProcessingTurn,
+        *,
+        outcome: str,
+        artifact_count: int = 0,
+    ) -> str:
+        if not turn.is_leader:
+            return ""
+        try:
+            self._processing_queue_action(
+                turn.coordinator_url,
+                "finish",
+                turn.feed_id,
+                date.fromisoformat(turn.archive_date),
+                turn.processing_fingerprint,
+                {
+                    "lease_token": turn.lease_token,
+                    "outcome": outcome,
+                    "artifact_count": int(artifact_count),
+                },
+            )
+        except (LanSyncError, requests.RequestException, ValueError) as exc:
+            return f"The LAN processing result could not be published: {exc}"
+        return ""
+
+    def _select_coordinator(
+        self,
+        capability: str = "acquisition_queue_available",
+    ) -> tuple[str, dict[str, Any]] | None:
+        if capability not in {
+            "acquisition_queue_available",
+            "processing_queue_available",
+        }:
+            raise ValueError("Unsupported LAN coordinator capability.")
+        # When an authoritative coordinator is configured, never independently
+        # elect a different peer. Both Windows and NAS workers must make the
+        # same decision even if discovery is asymmetric or temporarily down.
+        # The endpoint call that follows will fail closed if it is unavailable.
+        if self.coordinator_url:
+            return self.coordinator_url, {
+                "node_id": "configured-coordinator",
+                capability: True,
+            }
         seeds = list(dict.fromkeys((*self.peer_urls, *self._recent_peer_urls())))
         if self.discovery_enabled:
             try:
@@ -2834,7 +3162,7 @@ class LanArchiveSyncClient:
                             and len(seen) + len(pending) < MAX_LAN_PEERS
                         ):
                             pending.append(advertised)
-                    if info["acquisition_queue_available"]:
+                    if info[capability]:
                         coordinators.append((str(info["node_id"]), peer, info))
         if not coordinators:
             return None
@@ -2931,6 +3259,70 @@ class LanArchiveSyncClient:
                 payload = self._bounded_json(response, LAN_QUEUE_RESPONSE_BYTES)
         return self._validate_queue_payload(payload, feed_id, archive_date)
 
+    def _processing_queue_status(
+        self,
+        coordinator: str,
+        feed_id: str,
+        archive_date: date,
+        processing_fingerprint: str,
+    ) -> dict[str, Any]:
+        with self._lan_session() as session:
+            with session.get(
+                f"{coordinator}/api/lan/v1/processing",
+                params={
+                    "processing_fingerprint": processing_fingerprint,
+                    "feed_id": feed_id,
+                    "date": archive_date.isoformat(),
+                },
+                headers=self._headers(),
+                timeout=(self.connect_timeout, min(self.read_timeout, 10.0)),
+                allow_redirects=False,
+                stream=True,
+            ) as response:
+                response.raise_for_status()
+                payload = self._bounded_json(response, LAN_QUEUE_RESPONSE_BYTES)
+        return self._validate_processing_queue_payload(
+            payload,
+            feed_id,
+            archive_date,
+            processing_fingerprint,
+        )
+
+    def _processing_queue_action(
+        self,
+        coordinator: str,
+        action: str,
+        feed_id: str,
+        archive_date: date,
+        processing_fingerprint: str,
+        extra: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        body = {
+            "processing_fingerprint": processing_fingerprint,
+            "feed_id": feed_id,
+            "archive_date": archive_date.isoformat(),
+            **dict(extra),
+        }
+        headers = self._headers()
+        headers["Content-Type"] = "application/json"
+        with self._lan_session() as session:
+            with session.post(
+                f"{coordinator}/api/lan/v1/processing/{quote(action, safe='')}",
+                headers=headers,
+                data=json.dumps(body, separators=(",", ":")).encode("utf-8"),
+                timeout=(self.connect_timeout, min(self.read_timeout, 10.0)),
+                allow_redirects=False,
+                stream=True,
+            ) as response:
+                response.raise_for_status()
+                payload = self._bounded_json(response, LAN_QUEUE_RESPONSE_BYTES)
+        return self._validate_processing_queue_payload(
+            payload,
+            feed_id,
+            archive_date,
+            processing_fingerprint,
+        )
+
     def _peer_info(self, peer: str) -> dict[str, Any]:
         with self._lan_session() as session:
             with session.get(
@@ -2952,6 +3344,9 @@ class LanArchiveSyncClient:
             "sharing": bool(payload.get("sharing")),
             "acquisition_queue_available": bool(
                 payload.get("acquisition_queue_available")
+            ),
+            "processing_queue_available": bool(
+                payload.get("processing_queue_available")
             ),
             "peers": normalize_peer_urls(payload.get("peers") or (), strict=False),
         }
@@ -3029,11 +3424,72 @@ class LanArchiveSyncClient:
             "rolling": bool(payload.get("rolling")),
             "blocks": blocks,
             "granted": bool(payload.get("granted")),
+            "global_busy": bool(payload.get("global_busy")),
         }
         lease_token = str(payload.get("lease_token") or "")
         if value["granted"]:
             if not re.fullmatch(r"[A-Za-z0-9_-]{24,128}", lease_token):
                 raise LanSyncError("The peer returned an invalid acquisition lease.")
+            value["lease_token"] = lease_token
+        return value
+
+    def _validate_processing_queue_payload(
+        self,
+        payload: Any,
+        feed_id: str,
+        archive_date: date,
+        processing_fingerprint: str,
+    ) -> dict[str, Any]:
+        if (
+            not isinstance(payload, Mapping)
+            or payload.get("protocol") != LAN_PROTOCOL
+            or str(payload.get("processing_fingerprint") or "").lower()
+            != processing_fingerprint
+            or str(payload.get("feed_id") or "") != feed_id
+            or str(payload.get("archive_date") or "") != archive_date.isoformat()
+        ):
+            raise LanSyncError(
+                "The peer returned an incompatible processing queue response."
+            )
+        state = str(payload.get("state") or "")
+        if state not in {"available", "active", "complete"}:
+            raise LanSyncError("The peer returned an invalid processing queue state.")
+        producer_url = str(payload.get("producer_url") or "")
+        if producer_url:
+            producer_url = normalize_peer_url(producer_url)
+        owner_node_id = str(payload.get("owner_node_id") or "")
+        if owner_node_id and not LAN_QUEUE_NODE_PATTERN.fullmatch(owner_node_id):
+            raise LanSyncError("The peer returned an invalid processing queue owner.")
+        try:
+            lease_seconds = float(payload.get("lease_seconds") or 0.0)
+            artifact_count = int(payload.get("artifact_count") or 0)
+        except (TypeError, ValueError) as exc:
+            raise LanSyncError(
+                "The peer returned invalid processing queue counters."
+            ) from exc
+        if (
+            not 0.0 <= lease_seconds <= 24 * 60 * 60.0
+            or not 0 <= artifact_count <= MAX_TRANSCRIPT_ARTIFACTS_PER_DAY
+        ):
+            raise LanSyncError(
+                "The peer returned out-of-range processing queue counters."
+            )
+        value = {
+            "protocol": LAN_PROTOCOL,
+            "processing_fingerprint": processing_fingerprint,
+            "feed_id": feed_id,
+            "archive_date": archive_date.isoformat(),
+            "state": state,
+            "producer_url": producer_url,
+            "owner_node_id": owner_node_id,
+            "lease_seconds": lease_seconds,
+            "artifact_count": artifact_count,
+            "granted": bool(payload.get("granted")),
+        }
+        lease_token = str(payload.get("lease_token") or "")
+        if value["granted"]:
+            if not re.fullmatch(r"[A-Za-z0-9_-]{24,128}", lease_token):
+                raise LanSyncError("The peer returned an invalid processing lease.")
             value["lease_token"] = lease_token
         return value
 
@@ -3448,11 +3904,13 @@ class LanArchiveSyncClient:
         groups: dict[str, list[TranscriptArtifact]] = {}
         for artifact in artifacts:
             groups.setdefault(artifact.audio_filename, []).append(artifact)
-        for group in groups.values():
-            if (
-                {value.kind for value in group} != {"audio", "json", "text"}
-                or len({value.audio_sha256 for value in group}) != 1
-            ):
+        for audio_filename, group in groups.items():
+            required = {"audio", "json", "text"}
+            if audio_filename.startswith("combined_"):
+                required.add("manifest")
+            if {value.kind for value in group} != required or len(
+                {value.audio_sha256 for value in group}
+            ) != 1:
                 raise LanSyncError(
                     "The peer returned an incomplete transcript artifact set."
                 )
@@ -3709,4 +4167,93 @@ class _LanLeaseHeartbeat(AbstractContextManager["_LanLeaseHeartbeat"]):
                         self._lost_reason = (
                             "The LAN acquisition lease could not be renewed; "
                             "new upstream archive requests were stopped."
+                        )
+
+
+class _LanProcessingLeaseHeartbeat(
+    AbstractContextManager["_LanProcessingLeaseHeartbeat"]
+):
+    def __init__(
+        self,
+        client: LanArchiveSyncClient,
+        turn: LanProcessingTurn,
+    ) -> None:
+        self.client = client
+        self.turn = turn
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._warnings: list[str] = []
+        self._last_success = time.monotonic()
+        self._lost_reason = ""
+        self._state_lock = threading.Lock()
+
+    @property
+    def warnings(self) -> tuple[str, ...]:
+        return tuple(self._warnings)
+
+    def assert_active(self) -> None:
+        with self._state_lock:
+            reason = self._lost_reason
+        if reason:
+            raise LanSyncError(reason)
+
+    def __enter__(self) -> "_LanProcessingLeaseHeartbeat":
+        self._thread = threading.Thread(
+            target=self._run,
+            name="radio-archive-lan-processing-heartbeat",
+            daemon=True,
+        )
+        self._thread.start()
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=2.0)
+        self._thread = None
+
+    def _run(self) -> None:
+        interval = min(
+            30.0,
+            max(5.0, float(self.turn.lease_seconds or 30.0) / 3.0),
+        )
+        archive_date = date.fromisoformat(self.turn.archive_date)
+        while not self._stop.wait(interval):
+            try:
+                status = self.client._processing_queue_action(
+                    self.turn.coordinator_url,
+                    "renew",
+                    self.turn.feed_id,
+                    archive_date,
+                    self.turn.processing_fingerprint,
+                    {"lease_token": self.turn.lease_token},
+                )
+                if status["state"] != "active":
+                    reason = "The LAN processing lease is no longer active."
+                    with self._state_lock:
+                        self._lost_reason = reason
+                    self._warnings.append(reason)
+                    return
+                with self._state_lock:
+                    self._last_success = time.monotonic()
+            except (
+                LanSyncError,
+                requests.RequestException,
+                ValueError,
+            ) as exc:
+                warning = (
+                    "The LAN processing heartbeat could not reach its "
+                    f"coordinator: {exc}"
+                )
+                if len(self._warnings) < 20:
+                    self._warnings.append(warning)
+                with self._state_lock:
+                    elapsed = time.monotonic() - self._last_success
+                    if elapsed >= max(
+                        10.0,
+                        float(self.turn.lease_seconds) * 0.75,
+                    ):
+                        self._lost_reason = (
+                            "The LAN processing lease could not be renewed; "
+                            "model work was stopped before publishing a shared result."
                         )

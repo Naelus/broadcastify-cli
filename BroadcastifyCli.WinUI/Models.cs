@@ -697,6 +697,9 @@ internal sealed record JobRunResult
 
     [JsonPropertyName("missing_days")]
     public List<string> MissingDays { get; init; } = [];
+
+    [JsonPropertyName("pending_processing_days")]
+    public List<string> PendingProcessingDays { get; init; } = [];
 }
 
 internal sealed record FeedSchedule

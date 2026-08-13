@@ -52,6 +52,22 @@ The feed-question workflow proves that:
   times, with offsets explicitly distinguished from unavailable clock time; and
 - the answer and its evidence records are written to the local Q&A audit table.
 
+The trusted-LAN workflow proves that:
+
+- one active acquisition lease covers all feeds, dates, machines, and account
+  profiles while completed results may coexist;
+- a quota-limited primary profile does not block the next authorized profile's
+  sequential turn;
+- two nodes with a month versus a few retained days converge the complete feed,
+  including raw identity proofs, combined audio, timeline manifests, transcript
+  JSON, and rendered text;
+- the Windows client and TrueNAS Web service use the same explicit coordinator;
+- an identical model/feed/day is claimed only once, while different days may be
+  processed on different nodes concurrently;
+- scheduled jobs do not sleep behind active peer work and preserve deferred
+  acquisition/model days for the next recurring pass; and
+- failed or expired claims release safely without publishing partial work.
+
 Native UI and release contracts remain in the full suite. They cover the About
 version surface, media-player detachment before deletion, nonmodal completion,
 startup recovery, version consistency, immutable commit metadata, private-file

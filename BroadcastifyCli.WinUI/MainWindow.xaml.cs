@@ -6093,7 +6093,8 @@ public sealed partial class MainWindow : Window
                 pipeline.Token);
             var result = accountRun.Result;
             var waitingForQuota = accountRun.WaitingForQuota;
-            var incomplete = (result?.MissingDays.Count ?? 0) > 0;
+            var incomplete = (result?.MissingDays.Count ?? 0) > 0
+                || (result?.PendingProcessingDays.Count ?? 0) > 0;
             await _worker.FinishFeedScheduleAsync(
                 new FeedScheduleFinishRequest
                 {

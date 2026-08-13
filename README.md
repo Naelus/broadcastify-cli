@@ -23,6 +23,9 @@ a browser UI for Windows, Linux, macOS, and TrueNAS, plus command-line tools.
 - Downloads archive blocks conservatively with cache reuse, sequential pacing,
   resumable jobs, a durable 240-of-250 rolling-window guard per account, an
   authorization-gated sequential account pool, and optional trusted-LAN sharing.
+- Reconciles a followed feed's retained dates between Windows and TrueNAS,
+  reusing hash-verified source blocks and exact model-matched transcript sets;
+  one machine owns each model/day while different days can process in parallel.
 - Saves daily schedules for explicitly selected feeds; each run revisits a
   short recent window, can clear an older catch-up boundary after completion
   or keep it as a recurring full-range gap check, and continues at rolling

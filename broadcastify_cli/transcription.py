@@ -887,6 +887,26 @@ class LocalTranscriber:
                 progress(index, len(files), f"Transcribed {index}/{len(files)}")
         return outputs
 
+    def current_transcripts(
+        self,
+        audio_files: Iterable[str | Path],
+    ) -> list[Path]:
+        """Return the complete matching cache set without starting model work."""
+
+        outputs: list[Path] = []
+        for audio_path in sorted(Path(path) for path in audio_files):
+            transcript_dir = audio_path.parent / "transcripts"
+            json_path = transcript_dir / f"{audio_path.stem}.json"
+            text_path = transcript_dir / f"{audio_path.stem}.txt"
+            if not self._existing_transcript_is_current(
+                audio_path,
+                json_path,
+                text_path,
+            ):
+                return []
+            outputs.append(json_path)
+        return outputs
+
     def transcribe_file(
         self,
         audio_file: str | Path,

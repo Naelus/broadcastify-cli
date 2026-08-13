@@ -6,18 +6,20 @@ before login or any Broadcastify archive request, so a household or newsroom
 does not spend the same account download allowance fetching the same block on
 several machines.
 
-This is a small pull-based archive pool with a shared acquisition queue, not a
-public peer-to-peer network:
+This is a small pull-based retained-work pool with shared acquisition and
+processing queues, not a public peer-to-peer network:
 
 1. a client asks its configured and discovered LAN peers for one feed/date
    inventory;
 2. it copies only blocks missing from its own library;
-3. all reachable queue-capable peers are considered and the same deterministic
+3. an explicitly configured authoritative coordinator is preferred; otherwise
+   all reachable queue-capable peers are considered and the same deterministic
    coordinator is selected, independent of which peer supplied a block;
-4. one eligible producer receives a renewable 90-second feed/date lease and is
-   the only client allowed to start new upstream archive-media requests;
-5. followers wait, poll the pool, and copy completed blocks from any peer as
-   they appear;
+4. one eligible producer receives a renewable 90-second lease and is the only
+   client allowed to start new upstream archive-media requests. The active
+   lease is global across every feed, day, machine, and authorized account;
+5. interactive consumers may follow the active result, while scheduled jobs
+   record it as deferred and immediately continue with other retained work;
 6. every copy verifies the advertised byte length and SHA-256 while streaming to a
    unique temporary file;
 7. the leader atomically publishes each file and reports the exact completed
@@ -32,8 +34,17 @@ public peer-to-peer network:
    five minutes by default. A later job can elect one new producer to check for
    another finalized track while all followers reuse the exact snapshot;
 10. a crashed producer loses its lease and another producer can take over. A
-    shared quota-limit result suppresses follower retries until the producer's
-    installation-local ledger reaches its next known rolling-window release.
+    quota-limit result suppresses retries for that exact account profile until
+    its next known rolling-window release without blocking another authorized
+    account from taking the next sequential turn;
+11. each run also reconciles every peer-retained date for the followed feed.
+    When the processing fingerprint matches exactly, it pulls the combined
+    audio, time-mapping manifest, transcript JSON, and rendered text as one
+    hash-verified set; and
+12. one renewable processing lease owns each model-fingerprint/feed/day. A
+    second node skips that same model/day instead of waiting or duplicating it,
+    but may claim a different day and run the same model in parallel. Finished
+    artifacts reconcile again before job exit and on the next scheduled pass.
 
 Peers may introduce other explicitly configured private peers, up to a bounded
 pool of 24 nodes. A filename conflict or disagreement between peers is reported
@@ -43,7 +54,7 @@ are rejected.
 
 ## What is shared
 
-The read-only protocol exposes only retained original source blocks matching:
+The read-only protocol exposes retained original source blocks matching:
 
 ```text
 archives/<feed-id>/<YYYYMMDD>/<YYYYMMDDHHMM>-<source-token>-<feed-id>.mp3
@@ -62,21 +73,32 @@ those one-to-one identities. This completion file is local bookkeeping rather
 than a separately shared object. Neither file contains account or credential
 data.
 
+For an exactly matching processing fingerprint, it may also expose one complete
+derived set for a retained day:
+
+- `combined_<feed-id>_<YYYYMMDD>.mp3` when combination was used;
+- its `combined_*.manifest.json`, which preserves the source-block clock and
+  combined-audio offsets needed for day/time citations;
+- matching transcript JSON; and
+- matching rendered transcript text.
+
+The receiver verifies names, bounds, byte lengths, SHA-256 values, audio hash,
+processing fingerprint, rendered-text hash, and the complete artifact set
+before reuse. A partial or stale set is not advertised as completed work.
+
 It does **not** expose or synchronize:
 
 - Broadcastify cookies, usernames, passwords, or `.env` values;
-- combined recordings;
-- transcripts or speaker labels;
 - incidents, summaries, embeddings, SQLite data, or evidence clips;
 - model files or runtime caches.
 
-There is no archive upload, delete, or remote-job endpoint in the LAN protocol.
-Each enabled node seeds only original blocks it already owns. The coordinator
-stores bounded, transient lease/result metadata: quota scope, feed, date,
-producer node/URL, state, expiry, and the completed source-block manifest. The
-opaque lease token is returned only to its owner. A lease does not expose
-credentials or cause a remote machine to start work; it coordinates jobs users
-already started.
+There is no archive upload, delete, credential-copy, or remote-job endpoint in
+the LAN protocol. Each enabled node seeds only artifacts it already owns. The
+coordinator stores bounded, transient lease/result metadata: account-scoped
+quota label or model fingerprint, feed, date, producer node/URL, state, expiry,
+and completion counts/manifests. The opaque lease token is returned only to its
+owner. A lease does not expose credentials or cause a remote machine to start
+work; it coordinates jobs users already started.
 
 Normal Library processing detects copied blocks like any other retained source
 and can finish combination, transcription, diarization, and analysis locally.
@@ -116,6 +138,7 @@ BROADCASTIFY_LAN_PEERS="http://10.200.1.227:8765 http://192.168.1.44:8766"
 BROADCASTIFY_LAN_SHARING="true"
 BROADCASTIFY_LAN_QUEUE_ENABLED="true"
 BROADCASTIFY_LAN_QUOTA_SCOPE="default"
+BROADCASTIFY_LAN_COORDINATOR="http://10.200.1.227:8765"
 BROADCASTIFY_LAN_ADVERTISE_URL="http://10.200.1.227:8765"
 BROADCASTIFY_LAN_DISCOVERY_PORT="48765"
 ```
@@ -129,10 +152,23 @@ address, its discovery responder listens on UDP `48765`, and read-only sharing
 is enabled. The persistent `/data/archives` dataset remains the source;
 redeploying the App does not copy, move, or delete retained data.
 
-`BROADCASTIFY_LAN_QUOTA_SCOPE` is a non-secret coordination label. Peers in one
-cache/lease pool should use the same value. It does not merge installation
-request ledgers or create another provider allowance. Optional expert timing
-controls are:
+`BROADCASTIFY_LAN_COORDINATOR` selects one stable private coordinator for both
+acquisition and model/day claims. Set it to the TrueNAS service's own private
+URL on TrueNAS and to that same URL on Windows. This avoids split-brain election
+when discovery is asymmetric.
+
+Windows clients that use the same provider accounts on more than one machine
+also set `BROADCASTIFY_LAN_QUOTA_COORDINATOR` to the TrueNAS private URL. The
+TrueNAS service owns that persistent ledger locally and therefore does not point
+its own worker back through the remote-ledger variable. Account credentials and
+cookies remain separate on each machine; the shared ledger contains only
+non-secret profile IDs, request attempts, and rolling-limit state.
+
+`BROADCASTIFY_LAN_QUOTA_SCOPE` is a non-secret pool label. Workers append their
+non-secret account profile ID internally. That keeps one account's quota result
+from blocking another account while the coordinator still enforces one global
+active website stream. It does not create another provider allowance. Optional
+expert timing controls are:
 
 ```dotenv
 BROADCASTIFY_LAN_QUEUE_LEASE_SECONDS="90"
@@ -141,14 +177,16 @@ BROADCASTIFY_LAN_QUEUE_ROLLING_RESULT_SECONDS="300"
 BROADCASTIFY_LAN_QUEUE_MAX_WAIT_SECONDS="1800"
 ```
 
-Active leases renew in the background. If renewal can no longer be proven,
-the downloader stops admitting new archive-media requests before the lease can
-be reassigned. `BROADCASTIFY_LAN_QUEUE_RESULT_SECONDS` applies to completed old
-days. The rolling value applies only to successful today/yesterday manifests.
-An explicit quota result instead supplies the producer ledger's next-safe
-delay, bounded to the provider's 24-hour window. None of these timers causes
-another media request when the exact block is already present on a peer.
-Completed MP3s—not the transient queue—remain the durable state.
+Active acquisition and processing leases renew in the background. If renewal
+can no longer be proven, the downloader stops admitting new archive-media
+requests and a model result is not published as shared completion.
+`BROADCASTIFY_LAN_QUEUE_RESULT_SECONDS` applies to completed old days and
+processing claims. The rolling value applies only to successful today/yesterday
+archive manifests. An explicit quota result instead supplies that account
+ledger's next-safe delay, bounded to the provider's 24-hour window. None of
+these timers causes another media request when the exact block is already
+present on a peer. Retained artifacts—not the transient queues—remain the
+durable state.
 
 For an ordinary headless machine that should share blocks without exposing the
 complete browser UI:
@@ -158,8 +196,8 @@ radio-archive-lan-node --host 0.0.0.0 --port 8766 --output-dir archives
 ```
 
 The node refuses public or multicast bind addresses. It provides only
-`/health`, the versioned read-only archive protocol, and transient acquisition
-coordination.
+`/health`, the versioned read-only retained-artifact protocol, and transient
+acquisition/processing coordination.
 
 ## Optional shared key
 
@@ -199,6 +237,10 @@ standalone CLI process is a queue consumer unless a reachable seed node is
 also identified through `BROADCASTIFY_LAN_SELF_URL` or
 `BROADCASTIFY_LAN_SELF_PORT`. LAN reuse does not increase, predict, evade, or
 reset Broadcastify's account quota; it avoids duplicate requests among the
-user's own trusted-LAN clients. Each installed app/service still keeps its own
-240-request ledger, so clients using the same provider account must not run
-acquisition concurrently.
+user's own trusted-LAN clients. When no authoritative quota coordinator is
+configured, each installation keeps its own conservative 240-request ledger,
+so clients using the same provider account must not run acquisition
+concurrently. In the coordinated Windows plus TrueNAS deployment, the TrueNAS
+ledger is authoritative per account and each Windows client also keeps a local
+fail-safe mirror; coordinator loss pauses new archive requests rather than
+risking an undercount.

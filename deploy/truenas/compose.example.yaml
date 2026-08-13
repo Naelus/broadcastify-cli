@@ -61,6 +61,10 @@ services:
       BROADCASTIFY_LAN_DISCOVERY_ENABLED: "true"
       BROADCASTIFY_LAN_QUEUE_ENABLED: "true"
       BROADCASTIFY_LAN_QUOTA_SCOPE: "default"
+      # This service is the shared acquisition/model coordinator. Windows
+      # clients also point BROADCASTIFY_LAN_QUOTA_COORDINATOR here; this local
+      # service owns that ledger directly and must not remote-call itself.
+      BROADCASTIFY_LAN_COORDINATOR: "http://TRUENAS_LAN_IP:8765"
       BROADCASTIFY_LAN_QUEUE_ROLLING_RESULT_SECONDS: "300"
       BROADCASTIFY_LAN_ADVERTISE_URL: "http://TRUENAS_LAN_IP:8765"
       LLAMA_SERVER_PATH: /app/llama-server

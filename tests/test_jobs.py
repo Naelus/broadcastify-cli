@@ -8,7 +8,13 @@ from broadcastify_cli.archive_cache import (
 )
 from broadcastify_cli.broadcastify import BroadcastifyClient, DownloadLimitExceeded
 from broadcastify_cli.models import JobRequest
-from broadcastify_cli.lan_sync import LanDownloadTurn, LanSyncResult
+from broadcastify_cli.lan_sync import (
+    LanDownloadTurn,
+    LanFeedSyncResult,
+    LanProcessingTurn,
+    LanSyncResult,
+    LanTranscriptSyncResult,
+)
 from broadcastify_cli.quota import ArchiveRequestLedger
 
 
@@ -632,3 +638,265 @@ def test_lan_queue_quota_result_uses_local_next_safe_delay(
 
     assert published == [("quota_limited", 37.0)]
     assert result["download_limited"] is True
+
+
+def test_job_claims_and_publishes_model_specific_processing_turn(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    archive_date = date(2026, 7, 12)
+    calls: list[str] = []
+    fingerprint = "d" * 64
+    day = tmp_path / "91059" / "20260712"
+    day.mkdir(parents=True)
+    source = day / "202607120000-123456-91059.mp3"
+    source.write_bytes(b"source")
+    combined = day / "combined_91059_20260712.mp3"
+
+    class ProcessingTranscriber:
+        device = "cpu"
+        device_index = 0
+        compute_type = "float32"
+        processing_fingerprint = fingerprint
+
+        def __init__(self, **_kwargs: object) -> None:
+            calls.append("load")
+
+        def current_transcripts(self, _inputs: list[Path]) -> list[Path]:
+            return []
+
+        def transcribe_files(
+            self,
+            _inputs: list[Path],
+            **_kwargs: object,
+        ) -> list[Path]:
+            calls.append("transcribe")
+            transcript = day / "transcripts" / f"{combined.stem}.json"
+            transcript.parent.mkdir()
+            transcript.write_text("{}", encoding="utf-8")
+            return [transcript]
+
+    class Heartbeat:
+        warnings: tuple[str, ...] = ()
+
+        def __enter__(self) -> "Heartbeat":
+            calls.append("heartbeat:start")
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            calls.append("heartbeat:stop")
+
+        def assert_active(self) -> None:
+            calls.append("heartbeat:active")
+
+    class ProcessingLan:
+        enabled = True
+
+        def sync_feed(self, *_args: object, **_kwargs: object) -> LanFeedSyncResult:
+            return LanFeedSyncResult(enabled=True)
+
+        def sync_day(self, *_args: object, **_kwargs: object) -> LanSyncResult:
+            return LanSyncResult(enabled=True)
+
+        def wait_for_download_turn(
+            self,
+            *_args: object,
+            **_kwargs: object,
+        ) -> LanDownloadTurn:
+            return LanDownloadTurn(role="uncoordinated")
+
+        def sync_transcripts(
+            self,
+            *_args: object,
+            **_kwargs: object,
+        ) -> LanTranscriptSyncResult:
+            return LanTranscriptSyncResult(enabled=True)
+
+        def claim_processing_turn(
+            self,
+            *_args: object,
+            **_kwargs: object,
+        ) -> LanProcessingTurn:
+            calls.append("claim:processing")
+            return LanProcessingTurn(
+                role="leader",
+                feed_id="91059",
+                archive_date=archive_date.isoformat(),
+                processing_fingerprint=fingerprint,
+                coordinator_url="http://127.0.0.1:8765",
+                lease_token="processing_lease_token_long_enough",
+                lease_seconds=90.0,
+            )
+
+        def maintain_processing_lease(
+            self,
+            _turn: LanProcessingTurn,
+        ) -> Heartbeat:
+            return Heartbeat()
+
+        def finish_processing_turn(
+            self,
+            _turn: LanProcessingTurn,
+            *,
+            outcome: str,
+            artifact_count: int = 0,
+        ) -> str:
+            calls.append(f"finish:processing:{outcome}:{artifact_count}")
+            return ""
+
+    class Client:
+        def authenticate(self) -> None:
+            calls.append("authenticate")
+
+        def download_day(self, *_args: object, **_kwargs: object) -> list[Path]:
+            calls.append("download")
+            return [source]
+
+    def fake_combine(*_args: object, **_kwargs: object) -> Path:
+        combined.write_bytes(b"combined")
+        return combined
+
+    class ArtifactCatalog:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        def transcript_inventory(self, *_args: object, **_kwargs: object) -> list[int]:
+            return [1, 2, 3, 4]
+
+    monkeypatch.setattr("broadcastify_cli.jobs.LocalTranscriber", ProcessingTranscriber)
+    monkeypatch.setattr("broadcastify_cli.jobs.combine_mp3_files", fake_combine)
+    monkeypatch.setattr("broadcastify_cli.jobs.LanArchiveCatalog", ArtifactCatalog)
+    request = JobRequest(
+        feed_id="91059",
+        start_date=archive_date,
+        end_date=archive_date,
+        output_dir=tmp_path,
+        combine=True,
+        transcribe=True,
+        lan_sync_enabled=True,
+    )
+
+    result = JobRunner(
+        request,
+        client=Client(),  # type: ignore[arg-type]
+        lan_sync=ProcessingLan(),  # type: ignore[arg-type]
+    ).run()
+
+    assert calls == [
+        "load",
+        "authenticate",
+        "download",
+        "claim:processing",
+        "heartbeat:start",
+        "heartbeat:active",
+        "transcribe",
+        "heartbeat:active",
+        "finish:processing:complete:4",
+        "heartbeat:stop",
+    ]
+    assert result["pending_processing_days"] == []
+    assert result["lan_sync"]["processing_queue"]["leader"] == 1
+
+
+def test_job_defers_duplicate_model_day_and_keeps_it_resumable(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    archive_date = date(2026, 7, 13)
+    fingerprint = "e" * 64
+    calls: list[str] = []
+    day = tmp_path / "91059" / "20260713"
+    day.mkdir(parents=True)
+    source = day / "202607130000-123457-91059.mp3"
+    source.write_bytes(b"source")
+
+    class DeferredTranscriber:
+        device = "cpu"
+        device_index = 0
+        compute_type = "float32"
+        processing_fingerprint = fingerprint
+
+        def __init__(self, **_kwargs: object) -> None:
+            calls.append("load")
+
+        def current_transcripts(self, _inputs: list[Path]) -> list[Path]:
+            return []
+
+        def transcribe_files(self, *_args: object, **_kwargs: object) -> list[Path]:
+            raise AssertionError("a peer-owned model/day must not run twice")
+
+    class DeferredLan:
+        enabled = True
+
+        def sync_feed(self, *_args: object, **_kwargs: object) -> LanFeedSyncResult:
+            return LanFeedSyncResult(enabled=True)
+
+        def sync_day(self, *_args: object, **_kwargs: object) -> LanSyncResult:
+            return LanSyncResult(enabled=True)
+
+        def wait_for_download_turn(
+            self,
+            *_args: object,
+            **_kwargs: object,
+        ) -> LanDownloadTurn:
+            return LanDownloadTurn(role="uncoordinated")
+
+        def sync_transcripts(
+            self,
+            *_args: object,
+            **_kwargs: object,
+        ) -> LanTranscriptSyncResult:
+            calls.append("reconcile")
+            return LanTranscriptSyncResult(enabled=True)
+
+        def claim_processing_turn(
+            self,
+            *_args: object,
+            **_kwargs: object,
+        ) -> LanProcessingTurn:
+            calls.append("claim:deferred")
+            return LanProcessingTurn(
+                role="deferred",
+                feed_id="91059",
+                archive_date=archive_date.isoformat(),
+                processing_fingerprint=fingerprint,
+                coordinator_url="http://127.0.0.1:8765",
+                owner_node_id="peer_node",
+            )
+
+    class Client:
+        def authenticate(self) -> None:
+            calls.append("authenticate")
+
+        def download_day(self, *_args: object, **_kwargs: object) -> list[Path]:
+            calls.append("download")
+            return [source]
+
+    monkeypatch.setattr("broadcastify_cli.jobs.LocalTranscriber", DeferredTranscriber)
+    request = JobRequest(
+        feed_id="91059",
+        start_date=archive_date,
+        end_date=archive_date,
+        output_dir=tmp_path,
+        transcribe=True,
+        lan_sync_enabled=True,
+    )
+
+    result = JobRunner(
+        request,
+        client=Client(),  # type: ignore[arg-type]
+        lan_sync=DeferredLan(),  # type: ignore[arg-type]
+    ).run()
+
+    assert result["pending_processing_days"] == [archive_date.isoformat()]
+    assert result["missing_days"] == []
+    assert result["lan_sync"]["processing_queue"]["deferred"] == 1
+    assert calls == [
+        "load",
+        "authenticate",
+        "download",
+        "reconcile",
+        "claim:deferred",
+        "reconcile",
+        "reconcile",
+    ]
