@@ -1837,7 +1837,9 @@ public sealed partial class MainWindow
             && AppTitleBar.ActualHeight >= 47
             && TitleBarDragRegion.IsLoaded
             && TitleBarDragRegion.ActualWidth >= 80
-            && TitleBarDragRegion.ActualHeight >= 47
+            // WinUI can report a requested 47-DIP child as 46.67 DIPs after
+            // physical-pixel rounding on a scaled display.
+            && TitleBarDragRegion.ActualHeight >= 46.5
             && AppTitleText.Text == "Broadcastify Desktop";
     }
 
