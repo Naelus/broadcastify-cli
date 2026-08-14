@@ -1153,6 +1153,8 @@ class LocalTranscriber:
         finally:
             txt_temp.unlink(missing_ok=True)
             json_temp.unlink(missing_ok=True)
+        if isinstance(self._external_asr, WindowsMlWhisperAsr):
+            self._external_asr.finalize_checkpoint(audio_path)
         return json_path
 
     def diarize_existing_transcript(

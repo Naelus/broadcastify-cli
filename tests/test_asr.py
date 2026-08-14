@@ -128,6 +128,89 @@ def test_windows_ml_rejects_explicit_model_identity_mismatch(tmp_path: Path) -> 
         find_windows_ml_model("turbo", model)
 
 
+def test_windows_ml_resumes_completed_audio_chunks_after_interruption(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "combined_90001_20260712.mp3"
+    source.write_bytes(b"retained combined audio")
+    helper = tmp_path / "BroadcastifyCli.WindowsML.exe"
+    helper.write_bytes(b"helper")
+    model = tmp_path / "whisper-base-fp32-cpu"
+    _write_windows_ml_model(model)
+
+    engine = WindowsMlWhisperAsr.__new__(WindowsMlWhisperAsr)
+    engine.requested_model_name = "base"
+    engine.model_name = "base"
+    engine.model_source = "openai/whisper-base"
+    engine.model_provider = "cpu"
+    engine.model_precision = "fp32"
+    engine.model_path = model
+    engine.helper = str(helper)
+    engine.chunk_seconds = 5
+    engine.backend = "Windows ML test backend"
+    chunks = [
+        b"\x00\x00" * (engine.SAMPLE_RATE * 5),
+        b"\x01\x00" * (engine.SAMPLE_RATE * 5),
+    ]
+    monkeypatch.setattr(engine, "_audio_chunks", lambda _source: iter(chunks))
+
+    class FakeProcess:
+        def __init__(self, responses: list[dict[str, object]]) -> None:
+            self.stdin = io.StringIO()
+            self.stdout = io.StringIO(
+                "".join(json.dumps(value) + "\n" for value in responses)
+            )
+            self.return_code: int | None = None
+
+        def poll(self) -> int | None:
+            return self.return_code
+
+        def kill(self) -> None:
+            self.return_code = -9
+
+        def wait(self, timeout: int | None = None) -> int:
+            del timeout
+            if self.return_code is None:
+                self.return_code = 0
+            return self.return_code
+
+    processes = [
+        FakeProcess([{"text": "first dispatch", "backend": "test backend"}]),
+        FakeProcess([{"text": "second dispatch", "backend": "test backend"}]),
+    ]
+    monkeypatch.setattr(
+        "broadcastify_cli.asr.subprocess.Popen",
+        lambda *_args, **_kwargs: processes.pop(0),
+    )
+    progress: list[str] = []
+
+    with pytest.raises(RuntimeError, match="helper stopped"):
+        engine.transcribe(source, progress.append)
+
+    checkpoint = engine._checkpoint_path(source)
+    payload = json.loads(checkpoint.read_text(encoding="utf-8"))
+    assert len(payload["chunks"]) == 1
+    assert payload["chunks"][0]["text"] == "first dispatch"
+
+    result = engine.transcribe(source, progress.append)
+
+    assert result.text == "first dispatch second dispatch"
+    assert [value.text for value in result.segments] == [
+        "first dispatch",
+        "second dispatch",
+    ]
+    assert result.metadata["checkpoint_chunks_reused"] == 1
+    assert result.metadata["checkpoint_retained_until_cache"] is True
+    assert checkpoint.exists()
+    engine.finalize_checkpoint(source)
+    assert not checkpoint.exists()
+    assert any(
+        value == "Reusing Windows ML transcript checkpoint chunk 1"
+        for value in progress
+    )
+
+
 def test_windows_ml_preparation_reuses_matching_managed_model(
     monkeypatch, tmp_path: Path
 ) -> None:

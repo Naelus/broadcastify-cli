@@ -134,6 +134,9 @@ A later stage cannot make an earlier stale stage look complete.
 - Combined audio is written to a sibling partial and atomically replaces the
   prior recording only after validation.
 - Transcript JSON/TXT and manifests use atomic replacement.
+- Windows ML transcription atomically checkpoints each completed audio chunk;
+  cancellation or an app update reuses the verified prefix and cleans the
+  checkpoint only after final transcript-cache commit.
 - Portable diarization checkpoints every completed chunk and retains the
   checkpoint until final-cache commit.
 - Community-1 reports its lossless retry input and float32 mapped waveform as

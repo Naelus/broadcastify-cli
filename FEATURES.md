@@ -30,7 +30,7 @@ See [archive acquisition](docs/features/archive-acquisition.md),
 | faster-whisper CUDA/CPU | Validated | CUDA is the Windows reference; CPU is available as a slower fallback. |
 | whisper.cpp Vulkan/Metal/CPU | Validated/Implemented | Vulkan is real-machine validated; Metal is implemented but awaits a real Mac run. |
 | OpenVINO Whisper | Validated | Real decode with honest recorded CPU fallback when an accelerator rejects the model. |
-| Windows ML Whisper | Validated | Packaged helper and real CPU Base decode; GPU validation is scoped to the future packaged app in [#4](https://github.com/Naelus/broadcastify-cli/issues/4). |
+| Windows ML Whisper | Validated | Packaged helper and real CPU Base decode; each completed audio chunk is atomically checkpointed so Cancel, app updates, or interrupted coding sessions resume the same transcript instead of restarting the day. GPU validation is scoped to the future packaged app in [#4](https://github.com/Naelus/broadcastify-cli/issues/4). |
 | Qwen3-ASR CPU preview | Implemented | Fast bounded-region preview with no fabricated word timing; retained full-day quality evaluation is tracked in [#2](https://github.com/Naelus/broadcastify-cli/issues/2). |
 | Community-1 diarization | Validated | Accuracy default on CUDA/CPU; can improve an existing transcript without repeating ASR. |
 | Portable CPU speaker preview | Validated | Checksum-managed sherpa-onnx models, bounded chunks, atomic resume, and chunk-scoped anonymous labels; human scoring and supported accelerator research are tracked in [#3](https://github.com/Naelus/broadcastify-cli/issues/3). |

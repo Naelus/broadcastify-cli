@@ -858,6 +858,7 @@ class WindowsMlWhisperAsr:
     """Runs the Windows ML ONNX Runtime GenAI helper once for many short chunks."""
 
     SAMPLE_RATE = 16_000
+    CHECKPOINT_VERSION = 1
 
     def __init__(
         self,
@@ -894,6 +895,133 @@ class WindowsMlWhisperAsr:
         provider = self.model_provider.upper() if self.model_provider == "cpu" else self.model_provider
         self.backend = f"Windows ML (ONNX Runtime GenAI · {provider})"
 
+    def _checkpoint_path(self, source: Path) -> Path:
+        return (
+            source.parent
+            / "transcripts"
+            / ".cache"
+            / f"{source.stem}.windows-ml.checkpoint.json"
+        )
+
+    @staticmethod
+    def _path_identity(path: Path) -> dict[str, Any]:
+        try:
+            stat = path.stat()
+        except OSError:
+            return {"path": str(path.resolve()), "size": 0, "modified_ns": 0}
+        return {
+            "path": str(path.resolve()),
+            "size": stat.st_size,
+            "modified_ns": stat.st_mtime_ns,
+        }
+
+    def _checkpoint_identity(self, source: Path) -> dict[str, Any]:
+        model_config = self.model_path / "genai_config.json"
+        model_manifest = self.model_path / WINDOWS_ML_MODEL_MANIFEST
+        return {
+            "source": self._path_identity(source),
+            "model": self.model_name,
+            "source_model": getattr(self, "model_source", ""),
+            "provider": getattr(self, "model_provider", ""),
+            "precision": getattr(self, "model_precision", ""),
+            "chunk_seconds": self.chunk_seconds,
+            "helper": self._path_identity(Path(self.helper)),
+            "model_config": self._path_identity(model_config),
+            "model_manifest": self._path_identity(model_manifest),
+        }
+
+    def _load_checkpoint(
+        self,
+        checkpoint_path: Path,
+        *,
+        identity: dict[str, Any],
+    ) -> tuple[list[dict[str, Any]], bool]:
+        if not checkpoint_path.is_file():
+            return [], False
+        try:
+            if checkpoint_path.stat().st_size > 64 * 1024 * 1024:
+                raise ValueError("checkpoint is too large")
+            payload = json.loads(checkpoint_path.read_text(encoding="utf-8"))
+            if (
+                not isinstance(payload, dict)
+                or payload.get("version") != self.CHECKPOINT_VERSION
+                or payload.get("identity") != identity
+            ):
+                raise ValueError("checkpoint identity changed")
+            raw_chunks = payload.get("chunks")
+            if not isinstance(raw_chunks, list) or len(raw_chunks) > 20_000:
+                raise ValueError("checkpoint chunks are invalid")
+            chunks: list[dict[str, Any]] = []
+            previous_end = 0.0
+            for expected_index, raw in enumerate(raw_chunks, start=1):
+                if not isinstance(raw, dict) or int(raw.get("index") or 0) != expected_index:
+                    raise ValueError("checkpoint chunk order is invalid")
+                start = float(raw.get("start") or 0.0)
+                end = float(raw.get("end") or 0.0)
+                text = str(raw.get("text") or "")
+                backend = str(raw.get("backend") or "")[:300]
+                if (
+                    start < 0.0
+                    or end <= start
+                    or abs(start - previous_end) > 0.01
+                    or len(text) > 2_000_000
+                ):
+                    raise ValueError("checkpoint chunk content is invalid")
+                chunks.append(
+                    {
+                        "index": expected_index,
+                        "start": start,
+                        "end": end,
+                        "text": text,
+                        "backend": backend,
+                    }
+                )
+                previous_end = end
+            return chunks, False
+        except (OSError, TypeError, ValueError, json.JSONDecodeError):
+            self._remove_checkpoint(checkpoint_path)
+            return [], True
+
+    @staticmethod
+    def _remove_checkpoint(checkpoint_path: Path) -> None:
+        for candidate in (
+            checkpoint_path,
+            checkpoint_path.with_name(checkpoint_path.name + ".tmp"),
+        ):
+            try:
+                candidate.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+    def _write_checkpoint(
+        self,
+        checkpoint_path: Path,
+        *,
+        identity: dict[str, Any],
+        chunks: Sequence[dict[str, Any]],
+    ) -> None:
+        checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+        partial = checkpoint_path.with_name(checkpoint_path.name + ".tmp")
+        with partial.open("w", encoding="utf-8") as handle:
+            json.dump(
+                {
+                    "version": self.CHECKPOINT_VERSION,
+                    "identity": identity,
+                    "chunks": list(chunks),
+                },
+                handle,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+            handle.flush()
+            os.fsync(handle.fileno())
+        partial.replace(checkpoint_path)
+
+    def finalize_checkpoint(self, audio_path: str | Path) -> None:
+        """Remove a completed checkpoint after the transcript cache is durable."""
+
+        self._remove_checkpoint(self._checkpoint_path(Path(audio_path)))
+
     def transcribe(
         self,
         audio_path: str | Path,
@@ -904,9 +1032,22 @@ class WindowsMlWhisperAsr:
             raise FileNotFoundError(f"Audio does not exist: {source}")
         cache_dir = source.parent / "transcripts" / ".cache"
         cache_dir.mkdir(parents=True, exist_ok=True)
+        checkpoint_path = self._checkpoint_path(source)
+        checkpoint_identity = self._checkpoint_identity(source)
+        checkpoint_chunks, checkpoint_ignored = self._load_checkpoint(
+            checkpoint_path,
+            identity=checkpoint_identity,
+        )
+        if checkpoint_ignored and progress:
+            progress(
+                "Ignoring an incompatible Windows ML transcript checkpoint and starting its chunks again."
+            )
         segments: list[AsrSegment] = []
         text_parts: list[str] = []
         total_seconds = 0.0
+        reused_chunks = 0
+        initial_checkpoint_chunks = len(checkpoint_chunks)
+        observed_chunks = 0
         with tempfile.TemporaryFile() as error_log:
             process = subprocess.Popen(
                 [self.helper, "--model", str(self.model_path), "--stream"],
@@ -922,9 +1063,33 @@ class WindowsMlWhisperAsr:
             assert process.stdout is not None
             try:
                 for index, block in enumerate(self._audio_chunks(source), start=1):
+                    observed_chunks = index
                     start = total_seconds
                     duration = len(block) / (self.SAMPLE_RATE * 2)
                     end = start + duration
+                    if index <= len(checkpoint_chunks):
+                        checkpoint = checkpoint_chunks[index - 1]
+                        if (
+                            abs(float(checkpoint["start"]) - start) > 0.01
+                            or abs(float(checkpoint["end"]) - end) > 0.01
+                        ):
+                            raise RuntimeError(
+                                "The Windows ML transcript checkpoint no longer matches the decoded audio chunks."
+                            )
+                        text = str(checkpoint["text"] or "").strip()
+                        if text:
+                            text_parts.append(text)
+                            segments.append(AsrSegment(start, end, text))
+                        response_backend = str(checkpoint["backend"] or "").strip()
+                        if response_backend:
+                            self.backend = response_backend
+                        total_seconds = end
+                        reused_chunks += 1
+                        if progress:
+                            progress(
+                                f"Reusing Windows ML transcript checkpoint chunk {index}"
+                            )
+                        continue
                     chunk_path = cache_dir / f"winml-{os.getpid()}-{index:06d}.wav"
                     try:
                         self._write_wave(chunk_path, block)
@@ -952,16 +1117,34 @@ class WindowsMlWhisperAsr:
                         if text:
                             text_parts.append(text)
                             segments.append(AsrSegment(start, end, text))
+                        checkpoint_chunks.append(
+                            {
+                                "index": index,
+                                "start": start,
+                                "end": end,
+                                "text": text,
+                                "backend": self.backend,
+                            }
+                        )
+                        self._write_checkpoint(
+                            checkpoint_path,
+                            identity=checkpoint_identity,
+                            chunks=checkpoint_chunks,
+                        )
                     finally:
                         chunk_path.unlink(missing_ok=True)
                     total_seconds = end
                     if progress:
                         progress(f"Windows ML completed audio chunk {index}")
+                if observed_chunks < initial_checkpoint_chunks:
+                    raise RuntimeError(
+                        "The Windows ML transcript checkpoint contains more audio than the current decode."
+                    )
                 process.stdin.write('{"command":"stop"}\n')
                 process.stdin.flush()
                 process.stdin.close()
                 return_code = process.wait(timeout=30)
-            except Exception:
+            except BaseException:
                 if process.poll() is None:
                     process.kill()
                 process.wait(timeout=10)
@@ -990,6 +1173,9 @@ class WindowsMlWhisperAsr:
                 "model_path": str(self.model_path),
                 "helper_path": self.helper,
                 "chunk_seconds": self.chunk_seconds,
+                "checkpoint_enabled": True,
+                "checkpoint_chunks_reused": reused_chunks,
+                "checkpoint_retained_until_cache": True,
             },
         )
 
@@ -1023,12 +1209,21 @@ class WindowsMlWhisperAsr:
                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
             )
             assert process.stdout is not None
-            while True:
-                block = OpenVinoWhisperAsr._read_block(process.stdout, bytes_per_chunk)
-                if not block:
-                    break
-                yield block
-            return_code = process.wait()
+            try:
+                while True:
+                    block = OpenVinoWhisperAsr._read_block(
+                        process.stdout,
+                        bytes_per_chunk,
+                    )
+                    if not block:
+                        break
+                    yield block
+                return_code = process.wait()
+            except BaseException:
+                if process.poll() is None:
+                    process.kill()
+                process.wait(timeout=10)
+                raise
             if return_code != 0:
                 error_log.seek(0)
                 detail = error_log.read().decode("utf-8", errors="replace").strip()

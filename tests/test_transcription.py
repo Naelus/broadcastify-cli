@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from broadcastify_cli.asr import AsrResult, AsrSegment
+from broadcastify_cli.asr import AsrResult, AsrSegment, WindowsMlWhisperAsr
 from broadcastify_cli.portable_diarization import PortableSpeakerTurn
 from broadcastify_cli.qwen_asr import SherpaQwen3Asr
 from broadcastify_cli.transcription import (
@@ -310,6 +310,54 @@ def test_external_asr_records_actual_fallback_backend(tmp_path: Path) -> None:
         transcript_path,
         transcript_path.with_suffix(".txt"),
     )
+
+
+def test_windows_ml_checkpoint_cleans_only_after_final_transcript_commit(
+    tmp_path: Path,
+) -> None:
+    audio = tmp_path / "radio.wav"
+    audio.write_bytes(b"audio")
+    finalized: list[Path] = []
+
+    class FakeWindowsMlAsr(WindowsMlWhisperAsr):
+        @staticmethod
+        def transcribe(_path: Path, progress=None) -> AsrResult:
+            del progress
+            return AsrResult(
+                text="unit responding",
+                duration=1.0,
+                segments=[AsrSegment(0.0, 1.0, "unit responding")],
+                engine="windows-ml",
+                backend="Windows ML CPU",
+                metadata={
+                    "model": "base",
+                    "checkpoint_retained_until_cache": True,
+                },
+            )
+
+        @staticmethod
+        def finalize_checkpoint(path: str | Path) -> None:
+            source = Path(path)
+            transcript_dir = source.parent / "transcripts"
+            assert (transcript_dir / f"{source.stem}.json").is_file()
+            assert (transcript_dir / f"{source.stem}.txt").is_file()
+            finalized.append(source)
+
+    transcriber = object.__new__(LocalTranscriber)
+    transcriber._asr = None
+    transcriber._external_asr = object.__new__(FakeWindowsMlAsr)
+    transcriber.model_name = "base"
+    transcriber.asr_engine = "windows-ml"
+    transcriber.backend_description = "Windows ML CPU"
+    transcriber.device = "windows-ml"
+    transcriber.compute_type = "fp32"
+    transcriber.diarize = False
+    transcriber.diarization_device = "none"
+
+    transcript_path = transcriber.transcribe_file(audio)
+
+    assert transcript_path.is_file()
+    assert finalized == [audio]
 
 
 def test_transcript_quality_rejects_repetition_collapse() -> None:

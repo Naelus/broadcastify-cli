@@ -63,6 +63,13 @@ Portable diarization checkpoints every completed chunk atomically and keeps the
 checkpoint until the final cache is committed. Model-window incident analysis
 uses the same durable principle at a later stage.
 
+Windows ML transcription also checkpoints every completed bounded audio chunk
+under the transcript cache. The checkpoint binds the combined-audio identity,
+model, provider, helper, and chunk policy. A canceled or interrupted run reuses
+the verified prefix and removes the checkpoint only after the final ASR cache
+is committed; incompatible or corrupt checkpoints are discarded without
+replacing the last known-good transcript.
+
 ## What execution tests prove
 
 The profile verifier runs transcription, speaker labeling, and analysis on
