@@ -1,4 +1,6 @@
 import json
+import os
+import stat
 from pathlib import Path
 
 import pytest
@@ -103,6 +105,10 @@ def test_account_profile_cookie_path_comes_from_isolated_worker_environment(
 def test_authentication_accepts_cookie_from_initial_redirect(
     tmp_path: Path,
 ) -> None:
+    cookie_path = tmp_path / "cookies.json"
+    cookie_path.write_text('{"bcfyuser1":"stale-token"}', encoding="utf-8")
+    if os.name != "nt":
+        cookie_path.chmod(0o644)
     client, session = _client(
         tmp_path,
         post_response=FakeResponse(
@@ -117,9 +123,12 @@ def test_authentication_accepts_cookie_from_initial_redirect(
 
     assert session.get_calls == [BroadcastifyClient.LOGIN_URL]
     assert session.post_calls == [BroadcastifyClient.LOGIN_URL]
-    assert json.loads((tmp_path / "cookies.json").read_text()) == {
+    assert json.loads(cookie_path.read_text()) == {
         "bcfyuser1": "initial-token"
     }
+    assert list(tmp_path.glob(".cookies.json.*.tmp")) == []
+    if os.name != "nt":
+        assert stat.S_IMODE(cookie_path.stat().st_mode) == 0o600
 
 
 def test_authentication_accepts_cookie_from_safe_followup_redirect(

@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import http.client
 import json
+import os
 import socket
 import threading
 from datetime import date, timedelta
@@ -33,7 +34,11 @@ from broadcastify_cli.lan_sync import (
     normalize_peer_urls,
 )
 from broadcastify_cli.models import JobRequest
-from broadcastify_cli.lan_node import create_lan_node_server, validate_lan_host
+from broadcastify_cli.lan_node import (
+    _load_environment,
+    create_lan_node_server,
+    validate_lan_host,
+)
 from broadcastify_cli.quota import (
     ArchiveQuotaCoordinatorUnavailable,
     ArchiveRequestLedger,
@@ -1513,6 +1518,40 @@ def test_corrupt_peer_body_is_never_promoted_to_the_archive_library(
 def test_native_lan_node_rejects_public_bind_addresses() -> None:
     with pytest.raises(ValueError, match="public"):
         validate_lan_host("8.8.8.8")
+
+
+def test_native_lan_node_loads_private_account_environment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (tmp_path / ".env").write_text(
+        "BROADCASTIFY_LAN_PEERS=http://10.0.0.10:8765\n",
+        encoding="utf-8",
+    )
+    (tmp_path / ".env.accounts").write_text(
+        "BROADCASTIFY_LAN_PEERS=http://10.0.0.20:8765\n"
+        "BROADCASTIFY_LAN_QUOTA_COORDINATOR=http://10.0.0.20:8765\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("BROADCASTIFY_ENV_FILE", raising=False)
+    monkeypatch.delenv("BROADCASTIFY_LAN_PEERS", raising=False)
+    monkeypatch.delenv("BROADCASTIFY_LAN_QUOTA_COORDINATOR", raising=False)
+
+    try:
+        _load_environment()
+
+        assert os.environ["BROADCASTIFY_LAN_PEERS"] == "http://10.0.0.20:8765"
+        assert (
+            os.environ["BROADCASTIFY_LAN_QUOTA_COORDINATOR"]
+            == "http://10.0.0.20:8765"
+        )
+    finally:
+        # python-dotenv mutates os.environ directly, outside MonkeyPatch's
+        # assignment tracking. Remove those values before another offline test
+        # can mistake this fixture coordinator for real deployment state.
+        os.environ.pop("BROADCASTIFY_LAN_PEERS", None)
+        os.environ.pop("BROADCASTIFY_LAN_QUOTA_COORDINATOR", None)
 
 
 def test_one_hop_discovery_finds_a_read_only_lan_peer(tmp_path: Path) -> None:

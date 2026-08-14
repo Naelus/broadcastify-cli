@@ -125,6 +125,9 @@ In **Local Library → Downloads and LAN reuse**:
 Windows may request a firewall allowance the first time sharing or discovery
 is enabled. An explicit peer URL is recommended even when discovery works,
 especially across VLANs, Wi-Fi client isolation, or restrictive firewalls.
+The standalone desktop LAN node reads both `.env` and the ignored
+`.env.accounts` file before its packaged defaults, matching the worker's
+private configuration precedence after an app restart.
 
 ## Browser UI, Linux, and TrueNAS
 

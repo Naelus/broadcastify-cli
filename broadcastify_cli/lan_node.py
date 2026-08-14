@@ -61,6 +61,7 @@ def _date_value(value: str) -> date:
 
 def _load_environment() -> None:
     load_dotenv(Path.cwd() / ".env", override=True)
+    load_dotenv(Path.cwd() / ".env.accounts", override=True)
     configured = os.getenv("BROADCASTIFY_ENV_FILE")
     if configured:
         path = Path(configured).expanduser()

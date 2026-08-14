@@ -52,6 +52,34 @@ class DownloadLimitExceeded(BroadcastifyError):
     pass
 
 
+def _write_auth_cookie(path: Path, token: str) -> None:
+    """Atomically replace a provider session without exposing it to other users."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(
+        f".{path.name}.{os.getpid()}.{random.getrandbits(64):016x}.tmp"
+    )
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    if hasattr(os, "O_BINARY"):
+        flags |= os.O_BINARY
+    descriptor = os.open(temporary, flags, 0o600)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
+            descriptor = -1
+            handle.write(json.dumps({"bcfyuser1": token}))
+            handle.flush()
+            os.fsync(handle.fileno())
+        if os.name != "nt":
+            temporary.chmod(0o600)
+        os.replace(temporary, path)
+        if os.name != "nt":
+            path.chmod(0o600)
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        temporary.unlink(missing_ok=True)
+
+
 class _DownloadThrottle:
     """Coordinate a shared cooldown and concurrency limit for one archive job."""
 
@@ -290,10 +318,7 @@ class BroadcastifyClient:
                 )
 
             self._set_cookie(token)
-            self.cookie_path.parent.mkdir(parents=True, exist_ok=True)
-            self.cookie_path.write_text(
-                json.dumps({"bcfyuser1": token}), encoding="utf-8"
-            )
+            _write_auth_cookie(self.cookie_path, token)
             self._authenticated = True
 
     def _auth_cookie_token(self, response: requests.Response) -> str | None:

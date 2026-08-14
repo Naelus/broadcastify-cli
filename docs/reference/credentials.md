@@ -36,6 +36,10 @@ sign-in reports that Broadcastify rejected the login, verify the same username
 or email address and password directly on the website before replacing the
 saved Credential Locker entry.
 
+Provider session files are replaced atomically. On Linux/TrueNAS each new or
+refreshed session file is created owner-readable/writable only (`0600`), rather
+than inheriting a service umask that could expose the cookie to other users.
+
 ## Browser/server UI
 
 The browser never owns a saved secret. Its same-origin Credentials form sends a
