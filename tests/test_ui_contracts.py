@@ -620,6 +620,9 @@ def test_native_library_shows_feed_coverage_and_named_archive_chat() -> None:
     assert "coverage.question_ready_day_count" in web_script
     assert "The answer will report retained coverage gaps" in web_script
     assert "useEntireDownloadedFeed" in web_script
+    assert "Number(day.raw_file_count || 0) > 0" in web_script
+    assert "Boolean(day.has_combined)" in web_script
+    assert "Boolean(day.has_transcript)" in web_script
     assert "Include exact archive dates and times for representative events" in web_script
 
 

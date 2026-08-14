@@ -2431,6 +2431,7 @@ function useEntireDownloadedFeed() {
   }
   const dates = [...new Set((state.bootstrap.days || [])
     .filter((day) => String(day.feed_id) === feedId)
+    .filter((day) => Number(day.raw_file_count || 0) > 0 || Boolean(day.has_combined) || Boolean(day.has_transcript))
     .map((day) => String(day.archive_date || ""))
     .filter((value) => /^\d{4}-\d{2}-\d{2}$/.test(value)))].sort();
   if (!dates.length) {

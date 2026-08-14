@@ -6,7 +6,7 @@ ARG WHISPER_IMAGE=ghcr.io/ggml-org/whisper.cpp:main-vulkan
 FROM ${WHISPER_IMAGE} AS whisper_runtime
 FROM ${LLAMA_IMAGE}
 
-ARG SOURCE_COMMIT=unknown
+ARG SOURCE_COMMIT
 
 LABEL org.opencontainers.image.title="Radio Archive Intelligence"
 LABEL org.opencontainers.image.description="Evidence-first radio archive Web app for TrueNAS Apps"
@@ -14,6 +14,15 @@ LABEL org.opencontainers.image.source="https://github.com/Naelus/broadcastify-cl
 LABEL org.opencontainers.image.revision="${SOURCE_COMMIT}"
 
 USER root
+
+# A deployable image must identify the exact committed source that produced it.
+# Refuse an omitted, shortened, or non-Git revision before doing the expensive
+# package installation so About/runtime metadata can never silently say
+# "unknown" in a managed deployment.
+RUN set -eu; \
+    commit="${SOURCE_COMMIT}"; \
+    test "${#commit}" -eq 40; \
+    case "${commit}" in *[!0-9a-f]*) exit 1 ;; esac
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \

@@ -42,7 +42,8 @@ The feed-question workflow proves that:
 
 - entire-feed scope resolves the earliest through latest retained day;
 - calendar-month scope counts all requested dates and distinguishes
-  question-ready, local-processing, and missing-audio days;
+  question-ready, local-processing, and missing-audio days, including raw-only
+  downloaded days as retained audio awaiting local processing;
 - a question uses only current retained transcripts and incidents;
 - deterministic category, repeated-location, weekday, and time-block pattern
   records are supplied as citeable evidence;

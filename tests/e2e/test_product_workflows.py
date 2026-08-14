@@ -204,6 +204,18 @@ def _audio_only_day(
     )
 
 
+def _raw_source_only_day(
+    library_root: Path,
+    feed_id: str,
+    archive_date: date,
+) -> None:
+    day_root = library_root / feed_id / archive_date.strftime("%Y%m%d")
+    day_root.mkdir(parents=True, exist_ok=True)
+    (day_root / f"{archive_date:%Y%m%d}0000-123456-{feed_id}.mp3").write_bytes(
+        b"ID3 downloaded source audio awaiting daily combination"
+    )
+
+
 def _http_json(
     port: int,
     path: str,
@@ -454,6 +466,7 @@ def test_month_and_entire_feed_hotspot_question_is_coverage_grounded(
     second_date = date(2026, 7, 7)
     missing_date = date(2026, 7, 8)
     audio_only_date = date(2026, 7, 9)
+    raw_source_date = date(2026, 7, 10)
     for index, archive_date in enumerate((first_date, second_date), start=1):
         _retained_analyzed_day(
             library_root,
@@ -464,6 +477,7 @@ def test_month_and_entire_feed_hotspot_question_is_coverage_grounded(
             start_seconds=7_200 * index,
         )
     _audio_only_day(library_root, feed_id, audio_only_date)
+    _raw_source_only_day(library_root, feed_id, raw_source_date)
 
     entire = _run_worker(
         tmp_path,
@@ -478,13 +492,16 @@ def test_month_and_entire_feed_hotspot_question_is_coverage_grounded(
     )[-1]["coverage"]
     assert entire["scope"] == "entire_feed"
     assert entire["start_date"] == first_date.isoformat()
-    assert entire["end_date"] == audio_only_date.isoformat()
+    assert entire["end_date"] == raw_source_date.isoformat()
     assert entire["question_ready_dates"] == [
         first_date.isoformat(),
         second_date.isoformat(),
     ]
     assert entire["missing_audio_dates"] == [missing_date.isoformat()]
-    assert entire["local_processing_dates"] == [audio_only_date.isoformat()]
+    assert entire["local_processing_dates"] == [
+        audio_only_date.isoformat(),
+        raw_source_date.isoformat(),
+    ]
 
     month = _run_worker(
         tmp_path,
@@ -503,7 +520,7 @@ def test_month_and_entire_feed_hotspot_question_is_coverage_grounded(
     assert month["scope"] == "range"
     assert month["requested_day_count"] == 31
     assert month["question_ready_day_count"] == 2
-    assert month["audio_day_count"] == 3
+    assert month["audio_day_count"] == 4
     assert month["complete_coverage"] is False
     assert month["question_ready_ranges"] == [
         "2026-07-06 through 2026-07-07"

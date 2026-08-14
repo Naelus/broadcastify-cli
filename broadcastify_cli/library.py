@@ -595,6 +595,22 @@ def entire_archive_feed_range(
     for value in days:
         if str(value.get("feed_id") or "") != normalized_feed_id:
             continue
+        retention_keys = {
+            "raw_file_count",
+            "has_combined",
+            "has_transcript",
+            "has_imported_transcript",
+        }
+        if retention_keys.intersection(value) and not (
+            int(value.get("raw_file_count") or 0) > 0
+            or bool(value.get("has_combined"))
+            or bool(value.get("has_transcript"))
+            or bool(value.get("has_imported_transcript"))
+        ):
+            # Scheduled catch-up coverage deliberately includes absent dates so
+            # Resume can acquire them.  Those zero-file placeholders are gaps,
+            # not boundaries of the "entire downloaded feed" question scope.
+            continue
         try:
             retained_dates.append(date.fromisoformat(str(value.get("archive_date") or "")))
         except ValueError:
@@ -639,7 +655,20 @@ def build_archive_question_coverage(
     for requested_date in requested_dates:
         archive_value = requested_date.isoformat()
         state = states.get(archive_value)
-        has_audio = bool(state and state.get("has_combined"))
+        # A downloaded source block is retained audio even before the local
+        # combine stage has produced the continuous daily file.  Treating only
+        # combined files as audio made month/whole-feed coverage incorrectly
+        # call downloaded raw-only days "No retained audio" while those
+        # days were visibly present in the Library.  They are unavailable for
+        # questions until local processing finishes, but they are not missing
+        # downloads.
+        has_audio = bool(
+            state
+            and (
+                state.get("has_combined")
+                or int(state.get("raw_file_count") or 0) > 0
+            )
+        )
         question_ready = bool(
             state
             and state.get("has_transcript")

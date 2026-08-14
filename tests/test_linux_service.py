@@ -244,3 +244,20 @@ def test_truenas_image_normalizes_public_source_permissions() -> None:
     permission_index = dockerfile.index("RUN chmod -R a+rX /opt/radio-archive")
     install_index = dockerfile.index("RUN python3 -m venv")
     assert copy_index < permission_index < install_index
+
+
+def test_truenas_image_requires_full_source_revision() -> None:
+    dockerfile = (
+        Path(__file__).parents[1] / "deploy" / "truenas" / "Dockerfile"
+    ).read_text(encoding="utf-8")
+    deployment = (
+        Path(__file__).parents[1] / "deploy" / "truenas" / "README.md"
+    ).read_text(encoding="utf-8")
+
+    assert "ARG SOURCE_COMMIT\n" in dockerfile
+    assert "ARG SOURCE_COMMIT=unknown" not in dockerfile
+    assert 'test "${#commit}" -eq 40' in dockerfile
+    assert "*[!0-9a-f]*" in dockerfile
+    assert 'BROADCASTIFY_SOURCE_COMMIT="${SOURCE_COMMIT}"' in dockerfile
+    assert 'org.opencontainers.image.revision="${SOURCE_COMMIT}"' in dockerfile
+    assert "--build-arg SOURCE_COMMIT=COMMIT" in deployment

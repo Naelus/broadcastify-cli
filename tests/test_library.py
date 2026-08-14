@@ -72,25 +72,42 @@ def test_archive_question_coverage_distinguishes_ready_processing_and_missing_da
                 "has_imported_transcript": True,
                 "has_analysis": True,
             },
+            {
+                "feed_id": "90001",
+                "archive_date": "2026-07-04",
+                "raw_file_count": 48,
+                "has_combined": False,
+                "has_transcript": False,
+                "has_imported_transcript": False,
+                "has_analysis": False,
+            },
         ],
         "90001",
         date(2026, 7, 1),
-        date(2026, 7, 4),
+        date(2026, 7, 5),
     )
 
-    assert coverage["requested_day_count"] == 4
-    assert coverage["audio_day_count"] == 3
+    assert coverage["requested_day_count"] == 5
+    assert coverage["audio_day_count"] == 4
     assert coverage["question_ready_day_count"] == 2
     assert coverage["analyzed_day_count"] == 1
     assert coverage["question_ready_dates"] == ["2026-07-01", "2026-07-03"]
     assert coverage["analyzed_dates"] == ["2026-07-01"]
-    assert coverage["local_processing_dates"] == ["2026-07-02"]
-    assert coverage["missing_audio_dates"] == ["2026-07-04"]
-    assert coverage["unavailable_dates"] == ["2026-07-02", "2026-07-04"]
+    assert coverage["local_processing_dates"] == ["2026-07-02", "2026-07-04"]
+    assert coverage["missing_audio_dates"] == ["2026-07-05"]
+    assert coverage["unavailable_dates"] == [
+        "2026-07-02",
+        "2026-07-04",
+        "2026-07-05",
+    ]
     assert coverage["question_ready_ranges"] == ["2026-07-01", "2026-07-03"]
-    assert coverage["unavailable_ranges"] == ["2026-07-02", "2026-07-04"]
+    assert coverage["unavailable_ranges"] == [
+        "2026-07-02",
+        "2026-07-04 through 2026-07-05",
+    ]
     assert coverage["complete_coverage"] is False
-    assert "2/4 requested days are question-ready" in coverage["summary"]
+    assert "2/5 requested days are question-ready" in coverage["summary"]
+    assert "audio is retained for 4/5" in coverage["summary"]
 
 
 def test_entire_feed_range_and_compact_gap_descriptions_are_local_only() -> None:
@@ -98,6 +115,14 @@ def test_entire_feed_range_and_compact_gap_descriptions_are_local_only() -> None
         {"feed_id": "90001", "archive_date": "2026-06-30"},
         {"feed_id": "90001", "archive_date": "2026-07-01"},
         {"feed_id": "90001", "archive_date": "2026-07-03"},
+        {
+            "feed_id": "90001",
+            "archive_date": "2026-07-31",
+            "raw_file_count": 0,
+            "has_combined": False,
+            "has_transcript": False,
+            "has_imported_transcript": False,
+        },
         {"feed_id": "90002", "archive_date": "2025-01-01"},
     ]
 

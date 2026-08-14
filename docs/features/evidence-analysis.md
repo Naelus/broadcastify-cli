@@ -61,9 +61,13 @@ chat** returns to those controls instead of focusing the message box and
 scrolling the month selector out of view.
 Its month picker maps a past month to its complete calendar range and maps the
 current month through today. An entire-feed action selects the earliest through
-latest locally retained day while keeping internal gaps explicit. A local coverage check distinguishes retained
-audio, question-ready current transcripts, days still needing local processing,
-and dates with no retained audio. It never contacts Broadcastify. Questions use
+latest locally retained day while ignoring zero-file schedule placeholders and
+keeping genuine internal gaps explicit. A local
+coverage check distinguishes retained audio, question-ready current transcripts,
+days still needing local processing, and dates with no retained audio. Original
+downloaded source blocks count as retained audio before daily combination, so a
+raw-only day is reported as downloaded but awaiting local processing rather than
+incorrectly labeled missing. It never contacts Broadcastify. Questions use
 only the question-ready dates; partial coverage is injected into the model
 context and appended as a backend-owned limitation so an uncovered date cannot
 be described as a quiet day. Monthly retrieval considers a wider candidate set
