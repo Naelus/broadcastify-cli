@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import http.client
 import io
 import json
@@ -15,6 +16,8 @@ from typing import Any, Iterator
 import pytest
 
 from broadcastify_cli.analysis import PROMPT_VERSION
+from broadcastify_cli.lan_node import create_lan_node_server
+from broadcastify_cli.lan_sync import LanArchiveCatalog, LanArchiveSyncClient
 from broadcastify_cli.models import JobRequest
 from broadcastify_cli.storage import AnalysisStore
 from broadcastify_cli.web_app import create_server
@@ -215,6 +218,131 @@ def _raw_source_only_day(
     (day_root / f"{archive_date:%Y%m%d}0000-123456-{feed_id}.mp3").write_bytes(
         b"ID3 downloaded source audio awaiting daily combination"
     )
+
+
+def _shareable_model_day(
+    library_root: Path,
+    feed_id: str,
+    archive_date: date,
+    processing_fingerprint: str,
+) -> None:
+    day_root = library_root / feed_id / archive_date.strftime("%Y%m%d")
+    transcript_root = day_root / "transcripts"
+    transcript_root.mkdir(parents=True, exist_ok=True)
+    audio = day_root / f"{archive_date:%Y%m%d}0000-123456-{feed_id}.mp3"
+    audio.write_bytes(f"shared retained source {feed_id} {archive_date}".encode())
+    rendered = f"[{archive_date} 00:00:00] Retained model result.\n"
+    text_path = transcript_root / f"{audio.stem}.txt"
+    text_path.write_text(rendered, encoding="utf-8")
+    (transcript_root / f"{audio.stem}.json").write_text(
+        json.dumps(
+            {
+                "audio_file": audio.name,
+                "audio_sha256": hashlib.sha256(audio.read_bytes()).hexdigest(),
+                "processing_fingerprint": processing_fingerprint,
+                "rendered_text_sha256": hashlib.sha256(
+                    text_path.read_bytes()
+                ).hexdigest(),
+                "segments": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_followed_feed_automatically_converges_every_retained_model(
+    tmp_path: Path,
+) -> None:
+    """Exercise real LAN HTTP discovery, variant retention, and onward reuse."""
+
+    feed_id = "91059"
+    archive_date = date(2026, 7, 12)
+    fingerprint_a = "a" * 64
+    fingerprint_b = "b" * 64
+    node_a = tmp_path / "node-a"
+    node_b = tmp_path / "node-b"
+    _shareable_model_day(node_a, feed_id, archive_date, fingerprint_a)
+    _shareable_model_day(node_b, feed_id, archive_date, fingerprint_b)
+
+    server_a = create_lan_node_server(
+        node_a,
+        host="127.0.0.1",
+        port=0,
+        discovery_enabled=False,
+    )
+    server_b = create_lan_node_server(
+        node_b,
+        host="127.0.0.1",
+        port=0,
+        discovery_enabled=False,
+    )
+    server_a.quiet = True  # type: ignore[attr-defined]
+    server_b.quiet = True  # type: ignore[attr-defined]
+    thread_a = threading.Thread(target=server_a.serve_forever, daemon=True)
+    thread_b = threading.Thread(target=server_b.serve_forever, daemon=True)
+    thread_a.start()
+    thread_b.start()
+    url_a = f"http://127.0.0.1:{server_a.server_port}"
+    url_b = f"http://127.0.0.1:{server_b.server_port}"
+    try:
+        result_a = LanArchiveSyncClient(
+            enabled=True,
+            peer_urls=(url_b,),
+            discovery_enabled=False,
+        ).sync_feed(
+            node_a,
+            feed_id,
+            processing_fingerprint=fingerprint_a,
+        )
+        result_b = LanArchiveSyncClient(
+            enabled=True,
+            peer_urls=(url_a,),
+            discovery_enabled=False,
+        ).sync_feed(
+            node_b,
+            feed_id,
+            processing_fingerprint=fingerprint_b,
+        )
+
+        consumer = tmp_path / "consumer"
+        result_consumer = LanArchiveSyncClient(
+            enabled=True,
+            peer_urls=(url_a,),
+            discovery_enabled=False,
+        ).sync_feed(consumer, feed_id)
+
+        assert result_a.transcript_artifacts_copied == 3
+        assert result_b.transcript_artifacts_copied == 3
+        assert result_consumer.transcript_artifacts_copied == 5
+        assert result_consumer.days_with_transcript_changes == 1
+        assert result_a.failures == result_b.failures == result_consumer.failures == ()
+        for root in (node_a, node_b, consumer):
+            catalog = LanArchiveCatalog(root, enabled=True, queue_enabled=False)
+            assert set(catalog.transcript_fingerprints(feed_id, archive_date)) == {
+                fingerprint_a,
+                fingerprint_b,
+            }
+            assert len(
+                catalog.transcript_inventory(
+                    feed_id,
+                    archive_date,
+                    fingerprint_a,
+                )
+            ) == 3
+            assert len(
+                catalog.transcript_inventory(
+                    feed_id,
+                    archive_date,
+                    fingerprint_b,
+                )
+            ) == 3
+    finally:
+        server_a.shutdown()
+        server_b.shutdown()
+        server_a.server_close()
+        server_b.server_close()
+        thread_a.join(timeout=3)
+        thread_b.join(timeout=3)
 
 
 def _http_json(

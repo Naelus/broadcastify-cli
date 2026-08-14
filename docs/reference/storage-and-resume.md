@@ -73,6 +73,14 @@ archives/
       transcripts/
         combined_5318_20260713.json
         combined_5318_20260713.txt
+      .broadcastify-derived/
+        <processing-fingerprint>/
+          <audio-sha256>/
+            combined_5318_20260713.mp3
+            combined_5318_20260713.manifest.json
+            transcripts/
+              combined_5318_20260713.json
+              combined_5318_20260713.txt
 ```
 
 Text transcript entries look like:
@@ -164,14 +172,16 @@ A later stage cannot make an earlier stale stage look complete.
   and upgrades, participate in the normal global Resume plan, and self-clear
   only after every day through current is locally complete.
 - A LAN-enabled job first reconciles every peer-retained date for its feed.
-  Hash-verified source blocks and exact model-fingerprint transcript sets become
-  ordinary retained local files. Active peer-owned acquisition/model days are
+  It discovers a bounded list of every complete peer model fingerprint and
+  pulls every hash-verified source block and transcript set, not only the model
+  selected on the receiving machine. Active peer-owned acquisition/model days are
   recorded as incomplete rather than waited on or duplicated; daily schedules
   retry them, and expired or failed renewable claims become eligible again. If
   a different local model/audio result already owns the conventional filenames,
   the complete peer set is preserved under
   `.broadcastify-derived/<processing-fingerprint>/<audio-sha256>/` rather than
-  overwritten or rejected; it remains hash-bound, reusable, and shareable.
+  overwritten or rejected; it remains hash-bound, reusable, automatically
+  discoverable on later feed passes, and shareable onward to another node.
 - Native settings are atomically written; activity/crash logs append.
 - A managed CUDA install retains its checksum-verified download cache and
   partial environment after cancellation; an exclusive lock prevents two app

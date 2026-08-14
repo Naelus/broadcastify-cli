@@ -45,6 +45,8 @@ MAX_ARCHIVE_BLOCK_BYTES = 256 * 1024 * 1024
 MAX_INVENTORY_BYTES = 1024 * 1024
 MAX_LAN_QUEUE_ENTRIES = 512
 MAX_TRANSCRIPT_ARTIFACTS_PER_DAY = 512
+MAX_TRANSCRIPT_FINGERPRINTS_PER_DAY = 16
+MAX_TRANSCRIPT_FINGERPRINT_CANDIDATES_PER_DAY = 64
 MAX_TRANSCRIPT_ARTIFACT_BYTES = 64 * 1024 * 1024
 MAX_DERIVED_AUDIO_BYTES = 8 * 1024 * 1024 * 1024
 LAN_QUEUE_LEASE_SECONDS = 90.0
@@ -1577,6 +1579,90 @@ class LanArchiveCatalog:
                 artifacts.extend(group)
         return artifacts
 
+    def transcript_fingerprints(
+        self,
+        feed_id: str,
+        archive_date: date,
+    ) -> tuple[str, ...]:
+        """Return bounded fingerprints that have a complete retained artifact set."""
+
+        if not feed_id.isdigit():
+            raise LanSyncError("A numeric feed ID is required.")
+        day_dir = self._day_directory(feed_id, archive_date)
+        if not day_dir.is_dir():
+            return ()
+
+        candidates: dict[str, None] = {}
+
+        def remember(value: object) -> None:
+            fingerprint = str(value or "").strip().lower()
+            if (
+                len(candidates) < MAX_TRANSCRIPT_FINGERPRINT_CANDIDATES_PER_DAY
+                and PROCESSING_FINGERPRINT_PATTERN.fullmatch(fingerprint)
+            ):
+                candidates.setdefault(fingerprint, None)
+
+        transcript_dir = day_dir / "transcripts"
+        if (
+            transcript_dir.is_dir()
+            and not transcript_dir.is_symlink()
+            and transcript_dir.resolve().parent == day_dir
+        ):
+            for index, json_path in enumerate(
+                sorted(transcript_dir.iterdir(), key=lambda value: value.name),
+                start=1,
+            ):
+                if index > MAX_TRANSCRIPT_ARTIFACTS_PER_DAY:
+                    break
+                if (
+                    json_path.suffix.lower() != ".json"
+                    or json_path.is_symlink()
+                    or not json_path.is_file()
+                    or json_path.resolve().parent != transcript_dir
+                ):
+                    continue
+                try:
+                    stat = json_path.stat()
+                    if not 0 < stat.st_size <= MAX_TRANSCRIPT_ARTIFACT_BYTES:
+                        continue
+                    payload = json.loads(json_path.read_text(encoding="utf-8"))
+                except (OSError, UnicodeDecodeError, ValueError):
+                    continue
+                if isinstance(payload, Mapping):
+                    remember(payload.get("processing_fingerprint"))
+
+        variants_root = day_dir / DERIVED_VARIANTS_DIRECTORY
+        if (
+            len(candidates) < MAX_TRANSCRIPT_FINGERPRINT_CANDIDATES_PER_DAY
+            and variants_root.is_dir()
+            and not variants_root.is_symlink()
+            and variants_root.resolve().parent == day_dir
+        ):
+            scan_limit = MAX_TRANSCRIPT_FINGERPRINT_CANDIDATES_PER_DAY
+            for index, candidate in enumerate(
+                sorted(variants_root.iterdir(), key=lambda value: value.name),
+                start=1,
+            ):
+                if index > scan_limit:
+                    break
+                if (
+                    candidate.is_symlink()
+                    or not candidate.is_dir()
+                    or candidate.resolve().parent != variants_root.resolve()
+                ):
+                    continue
+                remember(candidate.name)
+
+        verified: list[str] = []
+        for fingerprint in candidates:
+            # transcript_inventory performs the hash, name, path, model, audio,
+            # rendered-text, and optional combined-manifest completeness checks.
+            if self.transcript_inventory(feed_id, archive_date, fingerprint):
+                verified.append(fingerprint)
+                if len(verified) >= MAX_TRANSCRIPT_FINGERPRINTS_PER_DAY:
+                    break
+        return tuple(verified)
+
     def _transcript_inventory_from_root(
         self,
         day_dir: Path,
@@ -2788,6 +2874,7 @@ class LanArchiveSyncClient:
         dates, peers, failures = self._feed_date_union(feed_id)
         day_results: list[LanSyncResult] = []
         transcript_results: list[LanTranscriptSyncResult] = []
+        transcript_changed_dates: set[date] = set()
         for current, archive_date in enumerate(dates, start=1):
             if progress:
                 progress(
@@ -2805,17 +2892,54 @@ class LanArchiveSyncClient:
                 failures.extend(day_result.failures)
             except (LanSyncError, requests.RequestException, OSError, ValueError) as exc:
                 failures.append(f"{archive_date.isoformat()}: {exc}")
-            if fingerprint:
+            fingerprints: list[str] = [fingerprint] if fingerprint else []
+            transcript_peers = list(peers)
+            for peer in tuple(transcript_peers):
+                try:
+                    discovered, advertised = self._transcript_fingerprints(
+                        peer,
+                        feed_id,
+                        archive_date,
+                    )
+                    for value in discovered:
+                        if (
+                            value not in fingerprints
+                            and len(fingerprints)
+                            < MAX_TRANSCRIPT_FINGERPRINTS_PER_DAY
+                        ):
+                            fingerprints.append(value)
+                    for value in advertised:
+                        if (
+                            value not in transcript_peers
+                            and len(transcript_peers) < MAX_LAN_PEERS
+                        ):
+                            transcript_peers.append(value)
+                except (
+                    LanSyncError,
+                    requests.RequestException,
+                    ValueError,
+                ) as exc:
+                    failures.append(
+                        f"{peer} / {archive_date.isoformat()} transcript models: {exc}"
+                    )
+            if progress and len(fingerprints) > 1:
+                progress(
+                    f"Reconciling {len(fingerprints)} retained model results for "
+                    f"feed {feed_id} day {archive_date.isoformat()}."
+                )
+            for current_fingerprint in fingerprints:
                 try:
                     transcript_result = self.sync_transcripts(
                         output_dir,
                         feed_id,
                         archive_date,
-                        fingerprint,
-                        additional_peer_urls=peers,
+                        current_fingerprint,
+                        additional_peer_urls=transcript_peers,
                     )
                     transcript_results.append(transcript_result)
                     failures.extend(transcript_result.failures)
+                    if transcript_result.artifacts_copied:
+                        transcript_changed_dates.add(archive_date)
                 except (
                     LanSyncError,
                     requests.RequestException,
@@ -2823,7 +2947,8 @@ class LanArchiveSyncClient:
                     ValueError,
                 ) as exc:
                     failures.append(
-                        f"{archive_date.isoformat()} transcripts: {exc}"
+                        f"{archive_date.isoformat()} transcripts "
+                        f"({current_fingerprint[:12]}): {exc}"
                     )
         block_bytes = sum(value.bytes_copied for value in day_results)
         transcript_bytes = sum(value.bytes_copied for value in transcript_results)
@@ -2834,9 +2959,7 @@ class LanArchiveSyncClient:
             days_with_download_changes=sum(
                 value.blocks_copied > 0 for value in day_results
             ),
-            days_with_transcript_changes=sum(
-                value.artifacts_copied > 0 for value in transcript_results
-            ),
+            days_with_transcript_changes=len(transcript_changed_dates),
             blocks_copied=sum(value.blocks_copied for value in day_results),
             transcript_artifacts_copied=sum(
                 value.artifacts_copied for value in transcript_results
@@ -4347,6 +4470,63 @@ class LanArchiveSyncClient:
                 )
         peers = normalize_peer_urls(payload.get("peers") or (), strict=False)
         return artifacts, peers
+
+    def _transcript_fingerprints(
+        self,
+        peer: str,
+        feed_id: str,
+        archive_date: date,
+    ) -> tuple[tuple[str, ...], tuple[str, ...]]:
+        with self._lan_session() as session:
+            with session.get(
+                f"{peer}/api/lan/v1/transcript-fingerprints",
+                params={
+                    "feed_id": feed_id,
+                    "date": archive_date.isoformat(),
+                },
+                headers=self._headers(),
+                timeout=(self.connect_timeout, min(self.read_timeout, 30.0)),
+                allow_redirects=False,
+                stream=True,
+            ) as response:
+                # A pre-discovery peer remains usable for source blocks and an
+                # explicitly requested local fingerprint during rolling upgrades.
+                if response.status_code == 404:
+                    return (), ()
+                response.raise_for_status()
+                payload = self._bounded_json(response, MAX_INVENTORY_BYTES)
+        if (
+            not isinstance(payload, Mapping)
+            or payload.get("protocol") != LAN_PROTOCOL
+            or str(payload.get("feed_id") or "") != feed_id
+            or str(payload.get("archive_date") or "") != archive_date.isoformat()
+        ):
+            raise LanSyncError(
+                "The peer returned an incompatible transcript fingerprint list."
+            )
+        raw_fingerprints = payload.get("processing_fingerprints")
+        if (
+            not isinstance(raw_fingerprints, list)
+            or len(raw_fingerprints) > MAX_TRANSCRIPT_FINGERPRINTS_PER_DAY
+        ):
+            raise LanSyncError(
+                "The peer returned too many or invalid transcript fingerprints."
+            )
+        fingerprints = tuple(
+            str(value or "").strip().lower() for value in raw_fingerprints
+        )
+        if (
+            any(
+                not PROCESSING_FINGERPRINT_PATTERN.fullmatch(value)
+                for value in fingerprints
+            )
+            or len(set(fingerprints)) != len(fingerprints)
+        ):
+            raise LanSyncError(
+                "The peer returned invalid or duplicate transcript fingerprints."
+            )
+        peers = normalize_peer_urls(payload.get("peers") or (), strict=False)
+        return fingerprints, peers
 
     def _download_transcript_artifact(
         self,

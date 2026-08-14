@@ -620,6 +620,95 @@ def test_transcript_sync_preserves_a_different_local_model_variant(
         variant_thread.join(timeout=3)
 
 
+def test_transcript_fingerprint_catalog_rejects_partial_artifacts(
+    tmp_path: Path,
+) -> None:
+    feed_id = "91059"
+    archive_date = date(2026, 7, 12)
+    fingerprint = "c" * 64
+    transcript_dir = tmp_path / feed_id / "20260712" / "transcripts"
+    transcript_dir.mkdir(parents=True)
+    (transcript_dir / f"combined_{feed_id}_20260712.json").write_text(
+        json.dumps(
+            {
+                "audio_file": f"combined_{feed_id}_20260712.mp3",
+                "audio_sha256": "d" * 64,
+                "processing_fingerprint": fingerprint,
+                "rendered_text_sha256": "e" * 64,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    catalog = LanArchiveCatalog(tmp_path, enabled=True, queue_enabled=False)
+
+    assert catalog.transcript_fingerprints(feed_id, archive_date) == ()
+
+
+def test_feed_sync_keeps_pre_fingerprint_discovery_peers_compatible(
+    tmp_path: Path,
+) -> None:
+    feed_id = "90001"
+    archive_date = date(2026, 7, 12)
+
+    class OldPeerHandler(BaseHTTPRequestHandler):
+        def log_message(self, _format: str, *_args: object) -> None:
+            return
+
+        def _json(self, status: HTTPStatus, payload: dict[str, object]) -> None:
+            body = json.dumps(payload).encode("utf-8")
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_GET(self) -> None:  # noqa: N802
+            if self.path.startswith("/api/lan/v1/feed-days?"):
+                self._json(
+                    HTTPStatus.OK,
+                    {
+                        "protocol": lan_sync.LAN_PROTOCOL,
+                        "feed_id": feed_id,
+                        "dates": [archive_date.isoformat()],
+                        "peers": [],
+                    },
+                )
+                return
+            if self.path.startswith("/api/lan/v1/blocks?"):
+                self._json(
+                    HTTPStatus.OK,
+                    {
+                        "protocol": lan_sync.LAN_PROTOCOL,
+                        "feed_id": feed_id,
+                        "archive_date": archive_date.isoformat(),
+                        "blocks": [],
+                        "complete": False,
+                        "completion_blocks": [],
+                        "peers": [],
+                    },
+                )
+                return
+            self._json(HTTPStatus.NOT_FOUND, {"error": "not available"})
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), OldPeerHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        result = LanArchiveSyncClient(
+            enabled=True,
+            peer_urls=(f"http://127.0.0.1:{server.server_port}",),
+            discovery_enabled=False,
+        ).sync_feed(tmp_path / "consumer", feed_id)
+
+        assert result.days_considered == 1
+        assert result.failures == ()
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=3)
+
+
 def test_shared_acquisition_queue_grants_one_expiring_producer_lease() -> None:
     now = [100.0]
     queue = LanAcquisitionQueue(
@@ -1516,6 +1605,50 @@ def test_disabled_web_peer_does_not_expose_an_inventory(
         payload = json.loads(response.read())
         assert response.status == 404
         assert "not enabled" in payload["error"].lower()
+    finally:
+        connection.close()
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=3)
+
+
+def test_web_peer_advertises_complete_transcript_fingerprints(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    feed_id = "91059"
+    archive_date = date(2026, 7, 12)
+    fingerprint = "a" * 64
+    _retained_transcribed_feed_day(
+        tmp_path,
+        feed_id,
+        archive_date,
+        fingerprint,
+    )
+    monkeypatch.setenv("BROADCASTIFY_LAN_SHARING", "true")
+    monkeypatch.setenv("BROADCASTIFY_LAN_DISCOVERY_ENABLED", "false")
+    server = create_server(tmp_path, port=0, working_dir=tmp_path)
+    server.quiet = True  # type: ignore[attr-defined]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    connection = http.client.HTTPConnection(
+        "127.0.0.1",
+        server.server_port,
+        timeout=5,
+    )
+    try:
+        connection.request(
+            "GET",
+            "/api/lan/v1/transcript-fingerprints"
+            f"?feed_id={feed_id}&date={archive_date.isoformat()}",
+        )
+        response = connection.getresponse()
+        payload = json.loads(response.read())
+
+        assert response.status == 200
+        assert payload["processing_fingerprints"] == [fingerprint]
+        assert "output_dir" not in payload
+        assert "sync_key" not in payload
     finally:
         connection.close()
         server.shutdown()

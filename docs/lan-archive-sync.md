@@ -39,11 +39,13 @@ processing queues, not a public peer-to-peer network:
     account from taking the next sequential turn;
 11. each run also reconciles every peer-retained date for the followed feed,
     and quota-paused schedules repeat that retained-only pass every five minutes.
-    When the processing fingerprint matches exactly, it pulls the combined
-    audio, time-mapping manifest, transcript JSON, and rendered text as one
-    hash-verified set. If another local model result already uses those names,
-    the peer set is kept in a fingerprint/audio-hash variant directory rather
-    than overwriting either result; and
+    Peers advertise a bounded list of every processing fingerprint with a
+    complete retained artifact set. The client automatically pulls each model's
+    combined audio, time-mapping manifest, transcript JSON, and rendered text as
+    one hash-verified set, even when its own selected model has a different
+    fingerprint. If another local model result already uses those names, the
+    peer set is kept in a fingerprint/audio-hash variant directory rather than
+    overwriting either result; and
 12. one renewable processing lease owns each model-fingerprint/feed/day. A
     second node skips that same model/day instead of waiting or duplicating it,
     but may claim a different day and run the same model in parallel. Finished
@@ -76,8 +78,8 @@ those one-to-one identities. This completion file is local bookkeeping rather
 than a separately shared object. Neither file contains account or credential
 data.
 
-For an exactly matching processing fingerprint, it may also expose one complete
-derived set for a retained day:
+For each verified processing fingerprint, it may also expose a complete derived
+set for a retained day:
 
 - `combined_<feed-id>_<YYYYMMDD>.mp3` when combination was used;
 - its `combined_*.manifest.json`, which preserves the source-block clock and
@@ -85,9 +87,13 @@ derived set for a retained day:
 - matching transcript JSON; and
 - matching rendered transcript text.
 
-The receiver verifies names, bounds, byte lengths, SHA-256 values, audio hash,
+The receiver first asks each peer for its bounded complete-fingerprint list,
+then verifies names, bounds, byte lengths, SHA-256 values, audio hash,
 processing fingerprint, rendered-text hash, and the complete artifact set
-before reuse. A partial or stale set is not advertised as completed work.
+before reuse. A partial or stale set is not advertised as completed work. A
+peer from before fingerprint discovery simply returns `404`; source-block reuse
+and an explicitly requested matching-model transcript remain compatible during
+a rolling upgrade.
 
 It does **not** expose or synchronize:
 

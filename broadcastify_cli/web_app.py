@@ -1737,6 +1737,32 @@ def create_server(
                     {"protocol": LAN_PROTOCOL, **status},
                 )
                 return
+            if parsed.path == "/api/lan/v1/transcript-fingerprints":
+                self._require_lan_access()
+                query = parse_qs(parsed.query)
+                feed_id, archive_date = self._feed_date(query)
+                try:
+                    fingerprints = state.lan_catalog.transcript_fingerprints(
+                        feed_id,
+                        archive_date,
+                    )
+                except LanSyncError as exc:
+                    raise WebRequestError(
+                        HTTPStatus.BAD_REQUEST,
+                        str(exc),
+                    ) from exc
+                self._json(
+                    HTTPStatus.OK,
+                    {
+                        "protocol": LAN_PROTOCOL,
+                        "node_id": state.lan_catalog.node_id,
+                        "feed_id": feed_id,
+                        "archive_date": archive_date.isoformat(),
+                        "processing_fingerprints": list(fingerprints),
+                        "peers": list(state.lan_catalog.peer_urls),
+                    },
+                )
+                return
             if parsed.path == "/api/lan/v1/transcripts":
                 self._require_lan_access()
                 query = parse_qs(parsed.query)

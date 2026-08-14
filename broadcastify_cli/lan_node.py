@@ -294,6 +294,28 @@ def create_lan_node_server(
                     },
                 )
                 return
+            if parsed.path == "/api/lan/v1/transcript-fingerprints":
+                query = parse_qs(parsed.query)
+                feed_id = str((query.get("feed_id") or [""])[0]).strip()
+                archive_date = _date_value(
+                    str((query.get("date") or [""])[0]).strip()
+                )
+                fingerprints = catalog.transcript_fingerprints(
+                    feed_id,
+                    archive_date,
+                )
+                self._json(
+                    HTTPStatus.OK,
+                    {
+                        "protocol": LAN_PROTOCOL,
+                        "node_id": catalog.node_id,
+                        "feed_id": feed_id,
+                        "archive_date": archive_date.isoformat(),
+                        "processing_fingerprints": list(fingerprints),
+                        "peers": list(catalog.peer_urls),
+                    },
+                )
+                return
             if parsed.path == "/api/lan/v1/transcripts":
                 query = parse_qs(parsed.query)
                 feed_id = str((query.get("feed_id") or [""])[0]).strip()
