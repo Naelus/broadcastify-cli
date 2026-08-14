@@ -458,6 +458,168 @@ def test_followed_feed_reconciliation_converges_month_and_few_day_nodes(
         thread_b.join(timeout=3)
 
 
+def test_transcript_sync_preserves_a_different_local_model_variant(
+    tmp_path: Path,
+) -> None:
+    feed_id = "91059"
+    archive_date = date(2026, 7, 12)
+    local_fingerprint = "a" * 64
+    peer_fingerprint = "b" * 64
+    local_root = tmp_path / "local"
+    peer_root = tmp_path / "peer"
+    _retained_transcribed_feed_day(
+        local_root,
+        feed_id,
+        archive_date,
+        local_fingerprint,
+    )
+    _retained_transcribed_feed_day(
+        peer_root,
+        feed_id,
+        archive_date,
+        peer_fingerprint,
+    )
+
+    peer_day = peer_root / feed_id / archive_date.strftime("%Y%m%d")
+    stem = f"combined_{feed_id}_{archive_date:%Y%m%d}"
+    peer_audio = peer_day / f"{stem}.mp3"
+    peer_text = peer_day / "transcripts" / f"{stem}.txt"
+    peer_json = peer_day / "transcripts" / f"{stem}.json"
+    peer_audio.write_bytes(b"a separately encoded peer audio result")
+    peer_text.write_text("[2026-07-12 00:00:00] Peer model result.\n", encoding="utf-8")
+    payload = json.loads(peer_json.read_text(encoding="utf-8"))
+    payload["audio_sha256"] = hashlib.sha256(peer_audio.read_bytes()).hexdigest()
+    payload["rendered_text_sha256"] = hashlib.sha256(
+        peer_text.read_bytes()
+    ).hexdigest()
+    peer_json.write_text(json.dumps(payload), encoding="utf-8")
+
+    local_day = local_root / feed_id / archive_date.strftime("%Y%m%d")
+    conventional = {
+        path.relative_to(local_day): path.read_bytes()
+        for path in (
+            local_day / f"{stem}.mp3",
+            local_day / f"{stem}.manifest.json",
+            local_day / "transcripts" / f"{stem}.json",
+            local_day / "transcripts" / f"{stem}.txt",
+        )
+    }
+    server = create_lan_node_server(
+        peer_root,
+        host="127.0.0.1",
+        port=0,
+        discovery_enabled=False,
+    )
+    server.quiet = True  # type: ignore[attr-defined]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    peer_url = f"http://127.0.0.1:{server.server_port}"
+    try:
+        client = LanArchiveSyncClient(
+            enabled=True,
+            peer_urls=(peer_url,),
+            discovery_enabled=False,
+        )
+        first = client.sync_transcripts(
+            local_root,
+            feed_id,
+            archive_date,
+            peer_fingerprint,
+        )
+        audio_hash = hashlib.sha256(peer_audio.read_bytes()).hexdigest()
+        variant = (
+            local_day
+            / lan_sync.DERIVED_VARIANTS_DIRECTORY
+            / peer_fingerprint
+            / audio_hash
+        )
+        variant_json = variant / "transcripts" / f"{stem}.json"
+
+        assert first.artifacts_copied == 4
+        assert first.conflicts == 0
+        assert first.failures == ()
+        assert first.transcripts == (variant_json,)
+        assert variant_json.read_bytes() == peer_json.read_bytes()
+        assert (variant / f"{stem}.mp3").read_bytes() == peer_audio.read_bytes()
+        for relative, content in conventional.items():
+            assert (local_day / relative).read_bytes() == content
+
+        catalog = LanArchiveCatalog(
+            local_root,
+            enabled=True,
+            queue_enabled=False,
+        )
+        inventory = catalog.transcript_inventory(
+            feed_id,
+            archive_date,
+            peer_fingerprint,
+        )
+        assert len(inventory) == 4
+        resolved, artifact = catalog.resolve_transcript_artifact(
+            feed_id,
+            archive_date,
+            peer_fingerprint,
+            f"{stem}.json",
+        )
+        assert resolved == variant_json
+        assert artifact.audio_sha256 == audio_hash
+
+        second = client.sync_transcripts(
+            local_root,
+            feed_id,
+            archive_date,
+            peer_fingerprint,
+        )
+        assert second.artifacts_copied == 0
+        assert second.artifacts_already_local == 4
+        assert second.conflicts == 0
+        assert second.transcripts == (variant_json,)
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=3)
+
+    # A node that retained the variant can serve it onward without promoting
+    # or overwriting the different conventional model result.
+    variant_server = create_lan_node_server(
+        local_root,
+        host="127.0.0.1",
+        port=0,
+        discovery_enabled=False,
+    )
+    variant_server.quiet = True  # type: ignore[attr-defined]
+    variant_thread = threading.Thread(
+        target=variant_server.serve_forever,
+        daemon=True,
+    )
+    variant_thread.start()
+    try:
+        consumer = tmp_path / "consumer"
+        forwarded = LanArchiveSyncClient(
+            enabled=True,
+            peer_urls=(f"http://127.0.0.1:{variant_server.server_port}",),
+            discovery_enabled=False,
+        ).sync_transcripts(
+            consumer,
+            feed_id,
+            archive_date,
+            peer_fingerprint,
+        )
+        assert forwarded.artifacts_copied == 4
+        assert forwarded.conflicts == 0
+        assert (
+            consumer
+            / feed_id
+            / archive_date.strftime("%Y%m%d")
+            / "transcripts"
+            / f"{stem}.json"
+        ).read_bytes() == peer_json.read_bytes()
+    finally:
+        variant_server.shutdown()
+        variant_server.server_close()
+        variant_thread.join(timeout=3)
+
+
 def test_shared_acquisition_queue_grants_one_expiring_producer_lease() -> None:
     now = [100.0]
     queue = LanAcquisitionQueue(

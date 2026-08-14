@@ -901,3 +901,99 @@ def test_job_defers_duplicate_model_day_and_keeps_it_resumable(
         "reconcile",
         "reconcile",
     ]
+
+
+def test_job_reuses_a_reconciled_variant_transcript_without_running_model(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    archive_date = date(2026, 7, 14)
+    fingerprint = "f" * 64
+    calls: list[str] = []
+    day = tmp_path / "91059" / "20260714"
+    day.mkdir(parents=True)
+    source = day / "202607140000-123458-91059.mp3"
+    source.write_bytes(b"source")
+    variant = (
+        day
+        / ".broadcastify-derived"
+        / fingerprint
+        / ("1" * 64)
+        / "transcripts"
+        / "202607140000-123458-91059.json"
+    )
+    variant.parent.mkdir(parents=True)
+    variant.write_text("{}", encoding="utf-8")
+
+    class VariantTranscriber:
+        device = "cpu"
+        device_index = 0
+        compute_type = "float32"
+        processing_fingerprint = fingerprint
+
+        def __init__(self, **_kwargs: object) -> None:
+            calls.append("load")
+
+        def current_transcripts(self, _inputs: list[Path]) -> list[Path]:
+            return []
+
+        def transcribe_files(self, *_args: object, **_kwargs: object) -> list[Path]:
+            raise AssertionError("a reconciled model result must be reused")
+
+    class VariantLan:
+        enabled = True
+
+        def sync_feed(self, *_args: object, **_kwargs: object) -> LanFeedSyncResult:
+            return LanFeedSyncResult(enabled=True)
+
+        def sync_day(self, *_args: object, **_kwargs: object) -> LanSyncResult:
+            return LanSyncResult(enabled=True)
+
+        def wait_for_download_turn(
+            self,
+            *_args: object,
+            **_kwargs: object,
+        ) -> LanDownloadTurn:
+            return LanDownloadTurn(role="uncoordinated")
+
+        def sync_transcripts(
+            self,
+            *_args: object,
+            **_kwargs: object,
+        ) -> LanTranscriptSyncResult:
+            calls.append("reconcile")
+            return LanTranscriptSyncResult(
+                enabled=True,
+                artifacts_already_local=4,
+                transcripts=(variant,),
+            )
+
+        def claim_processing_turn(self, *_args: object, **_kwargs: object) -> None:
+            raise AssertionError("reconciled work must not request a processing lease")
+
+    class Client:
+        def authenticate(self) -> None:
+            calls.append("authenticate")
+
+        def download_day(self, *_args: object, **_kwargs: object) -> list[Path]:
+            calls.append("download")
+            return [source]
+
+    monkeypatch.setattr("broadcastify_cli.jobs.LocalTranscriber", VariantTranscriber)
+    result = JobRunner(
+        JobRequest(
+            feed_id="91059",
+            start_date=archive_date,
+            end_date=archive_date,
+            output_dir=tmp_path,
+            transcribe=True,
+            lan_sync_enabled=True,
+        ),
+        client=Client(),  # type: ignore[arg-type]
+        lan_sync=VariantLan(),  # type: ignore[arg-type]
+    ).run()
+
+    assert result["days"][0]["transcripts"] == [str(variant)]
+    assert result["pending_processing_days"] == []
+    assert result["lan_sync"]["processing_queue"]["local_cache"] == 1
+    assert calls == ["load", "authenticate", "download", "reconcile"]

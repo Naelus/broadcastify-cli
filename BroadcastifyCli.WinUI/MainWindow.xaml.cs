@@ -6233,7 +6233,7 @@ public sealed partial class MainWindow : Window
                 : $"{active.Count} daily feed schedule{(active.Count == 1 ? "" : "s")} active";
             FeedScheduleInfoBar.Message = active.Count == 0
                 ? "Select a search result and schedule that specific feed. Settings → Setup can keep the app available after Windows sign-in."
-                : $"Next check: {(next?.ToLocalTime().ToString("g") ?? "when due")}. Jobs reuse cached work, wait for rolling quota slots, and can run after sign-in when Start with Windows is on.";
+                : $"Next check: {(next?.ToLocalTime().ToString("g") ?? "when due")}. Jobs reuse cached work and recheck trusted-LAN/local progress every five minutes while provider quota is paused; Start with Windows keeps that work available after sign-in.";
         }
         catch (Exception exception)
         {

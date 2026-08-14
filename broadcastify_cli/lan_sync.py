@@ -56,6 +56,7 @@ LAN_QUEUE_RESPONSE_BYTES = 256 * 1024
 LAN_QUEUE_NODE_PATTERN = re.compile(r"^[A-Za-z0-9_-]{8,80}$")
 LAN_QUEUE_SCOPE_PATTERN = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
 PROCESSING_FINGERPRINT_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+DERIVED_VARIANTS_DIRECTORY = ".broadcastify-derived"
 RAW_ARCHIVE_PATTERN = re.compile(
     r"^(?P<stamp>\d{12})-(?P<archive_id>\d+)-(?P<feed_id>\d+)\.mp3$",
     re.IGNORECASE,
@@ -1523,11 +1524,76 @@ class LanArchiveCatalog:
             feed_id,
         )
         day_dir = self._day_directory(feed_id, archive_date)
-        transcript_dir = day_dir / "transcripts"
+        roots: list[tuple[Path, Path, str]] = [
+            (day_dir, day_dir / "transcripts", ""),
+        ]
+        variants_root = day_dir / DERIVED_VARIANTS_DIRECTORY
+        fingerprint_root = variants_root / fingerprint
         if (
-            not transcript_dir.is_dir()
+            variants_root.is_dir()
+            and not variants_root.is_symlink()
+            and variants_root.resolve().parent == day_dir
+            and fingerprint_root.is_dir()
+            and not fingerprint_root.is_symlink()
+            and fingerprint_root.resolve().parent == variants_root.resolve()
+        ):
+            for candidate in sorted(
+                fingerprint_root.iterdir(),
+                key=lambda value: value.name,
+            ):
+                if (
+                    not PROCESSING_FINGERPRINT_PATTERN.fullmatch(candidate.name)
+                    or candidate.is_symlink()
+                    or not candidate.is_dir()
+                    or candidate.resolve().parent != fingerprint_root.resolve()
+                ):
+                    continue
+                roots.append((candidate.resolve(), candidate / "transcripts", candidate.name))
+
+        artifacts: list[TranscriptArtifact] = []
+        selected_audio: set[str] = set()
+        for artifact_root, transcript_dir, expected_audio_hash in roots:
+            values = self._transcript_inventory_from_root(
+                day_dir,
+                artifact_root,
+                transcript_dir,
+                feed_id,
+                archive_date,
+                fingerprint,
+                expected_audio_hash=expected_audio_hash,
+            )
+            grouped: dict[str, list[TranscriptArtifact]] = {}
+            for value in values:
+                grouped.setdefault(value.audio_filename, []).append(value)
+            for audio_filename, group in grouped.items():
+                # The conventional day paths remain the preferred result. A
+                # model/audio variant is retained and served only when that
+                # filename was not already represented by an earlier safe root.
+                if audio_filename in selected_audio:
+                    continue
+                if len(artifacts) + len(group) > MAX_TRANSCRIPT_ARTIFACTS_PER_DAY:
+                    return artifacts
+                selected_audio.add(audio_filename)
+                artifacts.extend(group)
+        return artifacts
+
+    def _transcript_inventory_from_root(
+        self,
+        day_dir: Path,
+        artifact_root: Path,
+        transcript_dir: Path,
+        feed_id: str,
+        archive_date: date,
+        fingerprint: str,
+        *,
+        expected_audio_hash: str = "",
+    ) -> list[TranscriptArtifact]:
+        if (
+            not artifact_root.is_dir()
+            or artifact_root.is_symlink()
+            or not transcript_dir.is_dir()
             or transcript_dir.is_symlink()
-            or transcript_dir.resolve().parent != day_dir
+            or transcript_dir.resolve().parent != artifact_root.resolve()
         ):
             return []
         artifacts: list[TranscriptArtifact] = []
@@ -1556,14 +1622,15 @@ class LanArchiveCatalog:
                     archive_date,
                 )
                 or not re.fullmatch(r"[0-9a-f]{64}", audio_sha256)
+                or (expected_audio_hash and audio_sha256 != expected_audio_hash)
                 or json_path.name != f"{Path(audio_filename).stem}.json"
             ):
                 continue
-            audio_path = day_dir / audio_filename
+            audio_path = artifact_root / audio_filename
             if (
                 audio_path.is_symlink()
                 or not audio_path.is_file()
-                or audio_path.resolve().parent != day_dir
+                or audio_path.resolve().parent != artifact_root.resolve()
             ):
                 continue
             try:
@@ -1629,7 +1696,9 @@ class LanArchiveCatalog:
                     ),
                 ]
                 if audio_filename == f"combined_{feed_id}_{archive_date:%Y%m%d}.mp3":
-                    manifest_path = day_dir / f"{Path(audio_filename).stem}.manifest.json"
+                    manifest_path = (
+                        artifact_root / f"{Path(audio_filename).stem}.manifest.json"
+                    )
                     source_files = [
                         day_dir / block.filename
                         for block in self.inventory(feed_id, archive_date)
@@ -1637,7 +1706,7 @@ class LanArchiveCatalog:
                     if (
                         manifest_path.is_symlink()
                         or not manifest_path.is_file()
-                        or manifest_path.resolve().parent != day_dir
+                        or manifest_path.resolve().parent != artifact_root.resolve()
                         or not combined_output_is_current(
                             audio_path,
                             manifest_path,
@@ -1684,20 +1753,37 @@ class LanArchiveCatalog:
             if artifact.filename != filename:
                 continue
             day_dir = self._day_directory(feed_id, archive_date)
-            candidate = (
-                day_dir / filename
-                if artifact.kind in {"audio", "manifest"}
-                else day_dir / "transcripts" / filename
-            )
-            path = candidate.resolve()
-            expected_parent = (
+            roots = [
+                day_dir,
                 day_dir
-                if artifact.kind in {"audio", "manifest"}
-                else day_dir / "transcripts"
-            )
-            if path.parent != expected_parent or not path.is_file():
-                break
-            return path, artifact
+                / DERIVED_VARIANTS_DIRECTORY
+                / artifact.processing_fingerprint
+                / artifact.audio_sha256,
+            ]
+            for root in roots:
+                candidate = (
+                    root / filename
+                    if artifact.kind in {"audio", "manifest"}
+                    else root / "transcripts" / filename
+                )
+                if candidate.is_symlink():
+                    continue
+                path = candidate.resolve()
+                expected_parent = (
+                    root.resolve()
+                    if artifact.kind in {"audio", "manifest"}
+                    else (root / "transcripts").resolve()
+                )
+                if path.parent != expected_parent or not path.is_file():
+                    continue
+                try:
+                    if (
+                        path.stat().st_size == artifact.size
+                        and self.hashes.sha256(path) == artifact.sha256
+                    ):
+                        return path, artifact
+                except OSError:
+                    continue
         raise FileNotFoundError(filename)
 
     def _day_directory(self, feed_id: str, archive_date: date) -> Path:
@@ -2498,8 +2584,10 @@ class LanArchiveSyncClient:
         already_local = 0
         conflicts = 0
         order = {"audio": 0, "manifest": 1, "json": 2, "text": 3}
-        for key in sorted(candidates, key=lambda value: (order[value[0]], value[1])):
-            sources = candidates[key]
+        usable: dict[
+            tuple[str, str], list[tuple[str, TranscriptArtifact]]
+        ] = {}
+        for key, sources in candidates.items():
             signatures = {
                 (
                     artifact.size,
@@ -2515,11 +2603,96 @@ class LanArchiveSyncClient:
                     f"{key[1]}: peers disagree on the transcript artifact."
                 )
                 continue
+            usable[key] = sources
+
+        def target_for(root: Path, artifact: TranscriptArtifact) -> Path:
+            return (
+                root / artifact.filename
+                if artifact.kind in {"audio", "manifest"}
+                else root / "transcripts" / artifact.filename
+            )
+
+        def matches(path: Path, artifact: TranscriptArtifact) -> bool:
+            return bool(
+                not path.is_symlink()
+                and path.is_file()
+                and path.stat().st_size == artifact.size
+                and self.hashes.sha256(path) == artifact.sha256
+            )
+
+        grouped: dict[tuple[str, str], list[TranscriptArtifact]] = {}
+        for sources in usable.values():
+            artifact = sources[0][1]
+            grouped.setdefault(
+                (artifact.audio_filename, artifact.audio_sha256),
+                [],
+            ).append(artifact)
+
+        target_roots: dict[tuple[str, str], Path] = {}
+        for group, artifacts in grouped.items():
+            canonical_conflict = False
+            for artifact in artifacts:
+                target = target_for(day_dir, artifact)
+                if target.exists() or target.is_symlink():
+                    try:
+                        if not matches(target, artifact):
+                            canonical_conflict = True
+                            break
+                    except OSError:
+                        canonical_conflict = True
+                        break
+            if not canonical_conflict:
+                target_roots[group] = day_dir
+                continue
+
+            # Different model/audio output must not overwrite the conventional
+            # day result. Keep a complete, hash-bound variant under its model
+            # fingerprint and audio hash so both nodes' retained evidence stays
+            # available and can be served to another peer later.
+            variant_parts = (
+                day_dir / DERIVED_VARIANTS_DIRECTORY,
+                day_dir / DERIVED_VARIANTS_DIRECTORY / fingerprint,
+                day_dir
+                / DERIVED_VARIANTS_DIRECTORY
+                / fingerprint
+                / group[1],
+            )
+            parent = day_dir
+            for candidate in variant_parts:
+                if candidate.exists() and (
+                    candidate.is_symlink() or not candidate.is_dir()
+                ):
+                    raise LanSyncError(
+                        "The local derived-variant directory is not safe to use."
+                    )
+                candidate.mkdir(exist_ok=True)
+                if candidate.resolve().parent != parent.resolve():
+                    raise LanSyncError(
+                        "The local derived-variant directory escaped the archive day."
+                    )
+                parent = candidate
+            variant_root = variant_parts[-1].resolve()
+            variant_transcripts = variant_root / "transcripts"
+            if variant_transcripts.exists() and (
+                variant_transcripts.is_symlink()
+                or not variant_transcripts.is_dir()
+            ):
+                raise LanSyncError(
+                    "The local derived transcript directory is not safe to use."
+                )
+            variant_transcripts.mkdir(exist_ok=True)
+            if variant_transcripts.resolve().parent != variant_root:
+                raise LanSyncError(
+                    "The local derived transcript directory escaped its variant."
+                )
+            target_roots[group] = variant_root
+
+        for key in sorted(usable, key=lambda value: (order[value[0]], value[1])):
+            sources = usable[key]
             expected = sources[0][1]
-            target = (
-                day_dir / expected.filename
-                if expected.kind in {"audio", "manifest"}
-                else transcript_dir / expected.filename
+            target = target_for(
+                target_roots[(expected.audio_filename, expected.audio_sha256)],
+                expected,
             )
             if target.is_symlink():
                 conflicts += 1
@@ -2529,11 +2702,7 @@ class LanArchiveSyncClient:
                 continue
             if target.exists():
                 try:
-                    if (
-                        target.is_file()
-                        and target.stat().st_size == expected.size
-                        and self.hashes.sha256(target) == expected.sha256
-                    ):
+                    if matches(target, expected):
                         already_local += 1
                     else:
                         conflicts += 1
@@ -2571,11 +2740,21 @@ class LanArchiveSyncClient:
             archive_date,
             fingerprint,
         )
-        transcripts = tuple(
-            transcript_dir / value.filename
-            for value in verified
-            if value.kind == "json"
-        )
+        resolved_transcripts: list[Path] = []
+        for value in verified:
+            if value.kind != "json":
+                continue
+            try:
+                path, _artifact = local_catalog.resolve_transcript_artifact(
+                    feed_id,
+                    archive_date,
+                    fingerprint,
+                    value.filename,
+                )
+                resolved_transcripts.append(path)
+            except (FileNotFoundError, LanSyncError, OSError) as exc:
+                failures.append(f"{value.filename}: {exc}")
+        transcripts = tuple(resolved_transcripts)
         return LanTranscriptSyncResult(
             enabled=True,
             peers_considered=len(considered),

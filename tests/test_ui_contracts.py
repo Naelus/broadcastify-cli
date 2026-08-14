@@ -735,6 +735,7 @@ def test_windows_startup_is_visible_configurable_and_recovery_aware() -> None:
     assert "presenter.Minimize();" in window
     assert "Requeued {recovered} scheduled feed" in window
     assert "quota-paused local processing will resume" in window
+    assert "recheck trusted-LAN/local progress every five minutes" in window
     assert 'Header = "Catch up from (optional)"' in window
     assert "BackfillStartDate = backfillPicker.Date" in window
     assert "RecurringCatchUp = recurringCatchUpBox.IsChecked" in window

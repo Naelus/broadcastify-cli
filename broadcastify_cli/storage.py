@@ -13,6 +13,7 @@ from .quota import normalize_account_profile_id
 
 
 SCHEMA_VERSION = 1
+FEED_SCHEDULE_RETAINED_RECHECK = timedelta(minutes=5)
 
 
 def utc_now() -> str:
@@ -791,11 +792,18 @@ class AnalysisStore:
         not_before = ""
         if status == "waiting_quota":
             parsed = self._utc_value(next_request_at)
-            not_before = (
-                parsed.isoformat(timespec="seconds")
+            retained_recheck = current + FEED_SCHEDULE_RETAINED_RECHECK
+            # Provider requests remain guarded by the persistent quota ledger,
+            # but a distant rolling-window release must not strand work another
+            # node has already downloaded or transcribed. Reclaim the schedule
+            # periodically so its normal LAN-first/local-cache stages continue;
+            # use an earlier provider release immediately when one is known.
+            next_check = (
+                min(parsed, retained_recheck)
                 if parsed is not None and parsed > current
-                else (current + timedelta(minutes=5)).isoformat(timespec="seconds")
+                else retained_recheck
             )
+            not_before = next_check.isoformat(timespec="seconds")
         elif status == "deferred":
             not_before = (current + timedelta(minutes=5)).isoformat(timespec="seconds")
         with self.transaction() as connection:

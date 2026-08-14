@@ -589,6 +589,8 @@ class JobRunner:
                             "message": warning,
                         }
                     )
+                if value.transcripts:
+                    return list(value.transcripts)
             return matching_transcripts(inputs)
 
         for archive_date, audio_files in downloaded_days:

@@ -152,7 +152,10 @@ A later stage cannot make an earlier stale stage look complete.
   profile can hand off before combination or transcription and either node can
   resume both phases from retained artifacts. A startup recovery defers any schedule left running for one collision-
   avoidance minute and resumes from retained work. Windows login startup runs
-  this recovery before claiming scheduled work.
+  this recovery before claiming scheduled work. While every authorized profile
+  is quota-paused, the schedule remains eligible for a five-minute retained-work
+  pass; the ledger blocks provider traffic while LAN copies and local model work
+  continue.
 - Explicit Library catch-ups are stored independently of the recent-day schedule
   lookback. New catch-ups retain one start date and recompute their effective end
   as today on every Library/Resume load while work remains. They synthesize
@@ -164,7 +167,11 @@ A later stage cannot make an earlier stale stage look complete.
   Hash-verified source blocks and exact model-fingerprint transcript sets become
   ordinary retained local files. Active peer-owned acquisition/model days are
   recorded as incomplete rather than waited on or duplicated; daily schedules
-  retry them, and expired or failed renewable claims become eligible again.
+  retry them, and expired or failed renewable claims become eligible again. If
+  a different local model/audio result already owns the conventional filenames,
+  the complete peer set is preserved under
+  `.broadcastify-derived/<processing-fingerprint>/<audio-sha256>/` rather than
+  overwritten or rejected; it remains hash-bound, reusable, and shareable.
 - Native settings are atomically written; activity/crash logs append.
 - A managed CUDA install retains its checksum-verified download cache and
   partial environment after cancellation; an exclusive lock prevents two app

@@ -1130,7 +1130,8 @@ class FeedScheduleCoordinator:
                     else "complete"
                 )
                 message = (
-                    "Waiting for the next rolling archive-request slot."
+                    "Waiting for the next rolling archive-request slot; retained "
+                    "trusted-LAN/local work will be rechecked within five minutes."
                     if limited
                     else "Some archive days were deferred; retrying retained work shortly."
                     if incomplete

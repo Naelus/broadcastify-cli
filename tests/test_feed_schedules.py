@@ -123,7 +123,7 @@ def test_schedule_persists_one_explicit_account_profile_without_credentials(
     assert "password" not in claimed["job"]
 
 
-def test_claim_is_atomic_and_quota_wait_reopens_at_next_rolling_slot(
+def test_claim_is_atomic_and_quota_wait_rechecks_retained_work_before_rolling_slot(
     tmp_path: Path,
 ) -> None:
     database = tmp_path / "analysis.sqlite3"
@@ -149,8 +149,8 @@ def test_claim_is_atomic_and_quota_wait_reopens_at_next_rolling_slot(
             now=now,
         )
         assert waiting["state"] == "waiting_quota"
-        assert second.claim_due_feed_schedule(now=now + timedelta(minutes=19)) is None
-        retried = second.claim_due_feed_schedule(now=now + timedelta(minutes=21))
+        assert second.claim_due_feed_schedule(now=now + timedelta(minutes=4)) is None
+        retried = second.claim_due_feed_schedule(now=now + timedelta(minutes=6))
         assert retried is not None
         completed = second.finish_feed_schedule(
             int(saved["id"]),
@@ -189,7 +189,8 @@ def test_historical_catch_up_survives_quota_wait_and_clears_only_when_complete(
         )
         assert waiting["backfill_start_date"] == "2026-07-03"
 
-        retried = store.claim_due_feed_schedule(now=now + timedelta(minutes=21))
+        assert store.claim_due_feed_schedule(now=now + timedelta(minutes=4)) is None
+        retried = store.claim_due_feed_schedule(now=now + timedelta(minutes=6))
         assert retried is not None
         assert retried["job"]["start_date"] == "2026-07-03"
         completed = store.finish_feed_schedule(

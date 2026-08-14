@@ -37,10 +37,13 @@ processing queues, not a public peer-to-peer network:
     quota-limit result suppresses retries for that exact account profile until
     its next known rolling-window release without blocking another authorized
     account from taking the next sequential turn;
-11. each run also reconciles every peer-retained date for the followed feed.
+11. each run also reconciles every peer-retained date for the followed feed,
+    and quota-paused schedules repeat that retained-only pass every five minutes.
     When the processing fingerprint matches exactly, it pulls the combined
     audio, time-mapping manifest, transcript JSON, and rendered text as one
-    hash-verified set; and
+    hash-verified set. If another local model result already uses those names,
+    the peer set is kept in a fingerprint/audio-hash variant directory rather
+    than overwriting either result; and
 12. one renewable processing lease owns each model-fingerprint/feed/day. A
     second node skips that same model/day instead of waiting or duplicating it,
     but may claim a different day and run the same model in parallel. Finished
