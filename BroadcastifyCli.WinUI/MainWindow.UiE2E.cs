@@ -168,6 +168,9 @@ public sealed partial class MainWindow
         const string repeatedStatus =
             "Retained local work is safe. Download, combine, transcription, "
             + "speaker labeling, and analysis checkpoints remain independently resumable. ";
+        // Keep the isolated fixture deterministic instead of allowing the
+        // navigation refresh to replace it with this machine's live LAN state.
+        _refreshingSystemActivity = true;
         _visibleLibraryDays.Clear();
         foreach (var index in Enumerable.Range(1, 48))
         {
@@ -389,6 +392,27 @@ public sealed partial class MainWindow
             Enumerable.Repeat(
                 "Missing and unfinished days remain sequential, resumable, and explicitly bounded through current. ",
                 16));
+        SystemActivityInfoBar.Title = "Synthetic coordinated activity";
+        SystemActivityInfoBar.Message =
+            "Isolated multi-node state verifies the pinned and floating activity surface.";
+        SystemAcquisitionText.Text =
+            "Synthetic NAS node is acquiring feed 999991 for 2026-08-01 with the secondary account profile.";
+        SystemAcquisitionDetailText.Text = string.Concat(
+            Enumerable.Repeat(
+                "The global lease remains sequential and retained blocks are reusable. ",
+                10));
+        SystemProcessingText.Text = string.Join(
+            Environment.NewLine,
+            Enumerable.Range(1, 24).Select(index =>
+                $"• synthetic-node-{index:00} · feed 999991 · 2026-07-{index:00}"));
+        SystemQuotaText.Text = string.Join(
+            Environment.NewLine,
+            Enumerable.Range(1, 12).Select(index =>
+                $"• synthetic-profile-{index:00}: {index}/240 used · {240 - index} remaining"));
+        SystemSchedulesText.Text = string.Join(
+            Environment.NewLine,
+            Enumerable.Range(1, 32).Select(index =>
+                $"• Coordinator · synthetic recurring feed {index:00} · retained catch-up active"));
         SetupStorageDetailText.Text = string.Join(
             Environment.NewLine,
             Enumerable.Range(1, 56).Select(index =>
