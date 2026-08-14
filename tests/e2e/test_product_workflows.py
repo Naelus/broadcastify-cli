@@ -357,6 +357,40 @@ def test_saved_resume_recurring_restart_and_live_session_delete(
     assert recovered_schedule["state"] == "deferred"
     assert "resuming from retained work" in recovered_schedule["message"]
 
+    waiting = _run_worker(
+        tmp_path,
+        library_root,
+        database,
+        "finish-schedule",
+        payload={
+            "schedule_id": claimed["id"],
+            "due_date": claimed["due_date"],
+            "status": "waiting_quota",
+            "message": "Waiting for the next rolling archive-request slot.",
+            "next_request_at": (
+                f"{(today + timedelta(days=1)).isoformat()}T23:59:00+00:00"
+            ),
+        },
+    )[-1]["schedule"]
+    assert waiting["state"] == "waiting_quota"
+    assert waiting["due"] is False
+
+    quota_recovery = _run_worker(
+        tmp_path,
+        library_root,
+        database,
+        "recover-schedules",
+    )[-1]
+    assert quota_recovery["recovered"] == 1
+    quota_recheck = _run_worker(
+        tmp_path,
+        library_root,
+        database,
+        "schedules",
+    )[-1]["schedules"][0]
+    assert quota_recheck["state"] == "deferred"
+    assert "retained local work" in quota_recheck["message"]
+
     completed = _run_worker(
         tmp_path,
         library_root,

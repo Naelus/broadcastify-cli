@@ -124,8 +124,12 @@ continuously under its normal service supervisor.
 Schedules live in the evidence database and survive restart. An interrupted
 running schedule is returned to a deferred state on startup, waits one minute
 to avoid colliding with an orphaned worker, and resumes from retained
-files/checkpoints. The Windows activity log reports that recovery. Only one
-local worker job runs at a time. Stored schedule JSON removes direct Hugging
+files/checkpoints. A quota-paused schedule is also rechecked once after startup
+so a far-future website retry cannot strand combination, transcription,
+speaker labeling, analysis, or LAN reconciliation that needs no provider
+request. If only network work remains, the guard restores the same next-safe
+time. The Windows activity log reports that recovery. Only one local worker
+job runs at a time. Stored schedule JSON removes direct Hugging
 Face and analysis API-key values; those secrets must remain in the platform
 credential store, active session, or private environment.
 

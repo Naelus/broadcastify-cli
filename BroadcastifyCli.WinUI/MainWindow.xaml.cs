@@ -333,9 +333,9 @@ public sealed partial class MainWindow : Window
             if (recovered > 0)
             {
                 AppendLog(
-                    $"Recovered {recovered} interrupted scheduled feed "
-                    + $"run{(recovered == 1 ? "" : "s")}; retained downloads "
-                    + "and processing checkpoints will resume after the safety delay.");
+                    $"Requeued {recovered} scheduled feed "
+                    + $"run{(recovered == 1 ? "" : "s")}; interrupted work and "
+                    + "quota-paused local processing will resume after the safety delay.");
             }
         }
         await RefreshFeedScheduleStatusAsync();

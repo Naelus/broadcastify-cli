@@ -733,7 +733,8 @@ def test_windows_startup_is_visible_configurable_and_recovery_aware() -> None:
     assert "MissingUnattendedSetup" in window
     assert "_pauseScheduledJobsForSetup" in window
     assert "presenter.Minimize();" in window
-    assert "Recovered {recovered} interrupted scheduled feed" in window
+    assert "Requeued {recovered} scheduled feed" in window
+    assert "quota-paused local processing will resume" in window
     assert 'Header = "Catch up from (optional)"' in window
     assert "BackfillStartDate = backfillPicker.Date" in window
     assert "RecurringCatchUp = recurringCatchUpBox.IsChecked" in window

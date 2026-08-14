@@ -675,9 +675,14 @@ class AnalysisStore:
                 """
                 UPDATE feed_schedules
                 SET state='deferred',
-                    message='The previous app session ended during this scheduled run; resuming from retained work.',
+                    message=CASE
+                        WHEN state='running' THEN
+                            'The previous app session ended during this scheduled run; resuming from retained work.'
+                        ELSE
+                            'Archive requests are still waiting, but retained local work will be rechecked after startup.'
+                    END,
                     not_before=?, lease_until='', updated_at=?
-                WHERE state='running'
+                WHERE state IN ('running', 'waiting_quota')
                 """,
                 (not_before, timestamp),
             )

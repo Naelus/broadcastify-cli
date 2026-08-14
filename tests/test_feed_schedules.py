@@ -348,3 +348,29 @@ def test_startup_recovery_releases_interrupted_schedule(tmp_path: Path) -> None:
         assert recovered["last_run_date"] == ""
         assert store.claim_due_feed_schedule(now=now + timedelta(minutes=2)) is None
         assert store.claim_due_feed_schedule(now=now + timedelta(minutes=4)) is not None
+
+
+def test_startup_recovery_rechecks_quota_paused_local_work(tmp_path: Path) -> None:
+    database = tmp_path / "analysis.sqlite3"
+    now = datetime(2026, 7, 23, 3, 0, tzinfo=timezone.utc)
+    with AnalysisStore(database) as store:
+        store.save_feed_schedule(_payload())
+        claimed = store.claim_due_feed_schedule(now=now)
+        assert claimed is not None
+        waiting = store.finish_feed_schedule(
+            int(claimed["id"]),
+            due_date=str(claimed["due_date"]),
+            status="waiting_quota",
+            message="Waiting for the next rolling archive-request slot.",
+            next_request_at=(now + timedelta(hours=20)).isoformat(),
+            now=now + timedelta(minutes=1),
+        )
+        assert waiting["state"] == "waiting_quota"
+        assert waiting["due"] is False
+
+        assert store.recover_feed_schedules(now=now + timedelta(minutes=2)) == 1
+        recovered = store.list_feed_schedules(now=now + timedelta(minutes=2))[0]
+        assert recovered["state"] == "deferred"
+        assert "retained local work" in recovered["message"]
+        assert store.claim_due_feed_schedule(now=now + timedelta(minutes=2)) is None
+        assert store.claim_due_feed_schedule(now=now + timedelta(minutes=4)) is not None
