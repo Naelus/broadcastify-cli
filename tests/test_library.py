@@ -215,8 +215,8 @@ def test_library_coverage_and_resume_plan_include_missing_scheduled_days() -> No
     assert feeds[0]["missing_dates"] == ["2026-08-04", "2026-08-06"]
     assert feeds[0]["backlog_count"] == 2
     assert [value["archive_date"] for value in plan["days"]] == [
-        "2026-08-04",
         "2026-08-06",
+        "2026-08-04",
     ]
     assert plan["network_count"] == 2
     assert all(value["scheduled_missing"] for value in plan["days"])
@@ -275,9 +275,9 @@ def test_library_resume_plan_catches_up_only_missing_or_incomplete_through_curre
     ]
     assert [value["archive_date"] for value in plan["days"]] == [
         "2026-08-03",
-        "2026-08-02",
-        "2026-08-04",
         "2026-08-05",
+        "2026-08-04",
+        "2026-08-02",
     ]
     assert plan["local_count"] == 1
     assert plan["network_count"] == 3
@@ -361,11 +361,11 @@ def test_saved_library_catchup_survives_restart_and_expands_global_resume(
     assert plan["feeds"][0]["target_day_count"] == 6
     assert plan["feeds"][0]["source_check_due_count"] == 0
     assert [value["archive_date"] for value in plan["days"]] == [
-        "2026-08-02",
-        "2026-08-03",
-        "2026-08-04",
-        "2026-08-05",
         "2026-08-06",
+        "2026-08-05",
+        "2026-08-04",
+        "2026-08-03",
+        "2026-08-02",
     ]
 
 
@@ -423,14 +423,14 @@ def test_saved_through_current_catchup_preserves_scheduled_source_refresh() -> N
 
     planned_dates = [value["archive_date"] for value in plan["days"]]
     assert planned_dates == [
-        "2026-08-01",
-        "2026-08-02",
-        "2026-08-03",
-        "2026-08-04",
-        "2026-08-05",
         current.isoformat(),
+        "2026-08-05",
+        "2026-08-04",
+        "2026-08-03",
+        "2026-08-02",
+        "2026-08-01",
     ]
-    assert plan["days"][-1]["status"] == "Source refresh due"
+    assert plan["days"][0]["status"] == "Source refresh due"
     assert plan["feeds"][0]["source_check_due_count"] == 1
 
 

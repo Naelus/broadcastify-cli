@@ -507,7 +507,7 @@ def build_library_resume_plan(
         key=lambda value: (
             not bool(value.get("needs_local_processing")),
             bool(value.get("needs_network")),
-            str(value.get("archive_date") or ""),
+            -date.fromisoformat(str(value.get("archive_date") or "")).toordinal(),
             str(value.get("feed_id") or ""),
         ),
     )

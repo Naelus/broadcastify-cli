@@ -395,6 +395,7 @@ def test_followed_feed_reconciliation_converges_month_and_few_day_nodes(
     url_a = f"http://127.0.0.1:{server_a.server_port}"
     url_b = f"http://127.0.0.1:{server_b.server_port}"
     try:
+        progress_a: list[str] = []
         result_a = LanArchiveSyncClient(
             enabled=True,
             peer_urls=[url_b],
@@ -404,6 +405,7 @@ def test_followed_feed_reconciliation_converges_month_and_few_day_nodes(
             node_a,
             feed_id,
             processing_fingerprint=fingerprint,
+            progress=progress_a.append,
         )
         result_b = LanArchiveSyncClient(
             enabled=True,
@@ -417,13 +419,14 @@ def test_followed_feed_reconciliation_converges_month_and_few_day_nodes(
         )
 
         assert result_a.dates_discovered == tuple(
-            value.isoformat() for value in month[28:]
+            value.isoformat() for value in reversed(month[28:])
         )
         assert result_a.blocks_copied == 3
         assert result_a.transcript_artifacts_copied == 12
         assert result_b.dates_discovered == tuple(
-            value.isoformat() for value in month
+            value.isoformat() for value in reversed(month)
         )
+        assert month[-1].isoformat() in progress_a[0]
         assert result_b.blocks_copied == 28
         assert result_b.transcript_artifacts_copied == 112
         assert result_a.failures == ()

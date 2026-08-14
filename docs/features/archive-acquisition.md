@@ -109,7 +109,10 @@ range start across rolling-quota retries and day changes. One-time mode clears
 the date only after the complete requested range has no missing days. Recurring
 mode retains it after success and checks that start through the new current day
 at the next daily run. A LAN-deferred or otherwise incomplete result retries
-shortly rather than being recorded as complete. If the rolling archive guard is closed, cached days can still finish
+shortly rather than being recorded as complete. Range acquisition, matching
+LAN reconciliation, and scheduled processing all start with the newest day and
+work backward toward the saved boundary; already-valid days are reused rather
+than repeated. If the rolling archive guard is closed, cached days can still finish
 locally and the missing acquisition is deferred until the ledger's next-safe
 time. The acquisition runner reads that local ledger before authentication; a
 closed guard permits trusted-LAN reuse, local processing, and cache reuse only

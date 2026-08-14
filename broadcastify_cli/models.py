@@ -53,6 +53,7 @@ class JobRequest:
     lan_sync_enabled: bool = False
     lan_discovery_enabled: bool = True
     lan_peer_urls: tuple[str, ...] = ()
+    newest_first: bool = True
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "JobRequest":
@@ -105,6 +106,7 @@ class JobRequest:
                 value.get("lan_discovery_enabled", True)
             ),
             lan_peer_urls=normalize_peer_urls(value.get("lan_peer_urls")),
+            newest_first=bool(value.get("newest_first", True)),
         )
         request.validate()
         return request
@@ -175,6 +177,12 @@ class JobRequest:
         normalize_peer_urls(self.lan_peer_urls)
 
     def dates(self) -> Iterator[date]:
+        if self.newest_first:
+            current = self.end_date
+            while current >= self.start_date:
+                yield current
+                current -= timedelta(days=1)
+            return
         current = self.start_date
         while current <= self.end_date:
             yield current

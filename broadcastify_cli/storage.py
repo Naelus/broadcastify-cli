@@ -519,6 +519,10 @@ class AnalysisStore:
             job.pop(key, None)
         job["download_jobs"] = 1
         job["keep_originals"] = True
+        # A catch-up is most useful when the current coverage becomes available
+        # first. Persist the order so every scheduler surface, including older
+        # saved jobs after an upgrade, has the same newest-to-oldest behavior.
+        job["newest_first"] = True
         now = utc_now()
         with self.transaction() as connection:
             connection.execute(
@@ -744,6 +748,7 @@ class AnalysisStore:
             "end_date": due_date.isoformat(),
             "download_jobs": 1,
             "keep_originals": True,
+            "newest_first": True,
         }
         if output_dir is not None:
             # The process hosting the scheduler owns the active Library

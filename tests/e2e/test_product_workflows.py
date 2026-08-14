@@ -15,6 +15,7 @@ from typing import Any, Iterator
 import pytest
 
 from broadcastify_cli.analysis import PROMPT_VERSION
+from broadcastify_cli.models import JobRequest
 from broadcastify_cli.storage import AnalysisStore
 from broadcastify_cli.web_app import create_server
 
@@ -319,6 +320,9 @@ def test_saved_resume_recurring_restart_and_live_session_delete(
     assert claimed is not None
     assert claimed["job"]["start_date"] == start_date.isoformat()
     assert claimed["job"]["end_date"] == today.isoformat()
+    assert claimed["job"]["newest_first"] is True
+    claimed_dates = list(JobRequest.from_dict(claimed["job"]).dates())
+    assert claimed_dates == [today, missing_date, start_date]
     assert claimed["account_profile_id"] == "automatic"
     assert Path(claimed["job"]["output_dir"]) == library_root.resolve()
 

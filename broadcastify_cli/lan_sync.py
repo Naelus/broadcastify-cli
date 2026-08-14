@@ -4061,7 +4061,10 @@ class LanArchiveSyncClient:
             except (LanSyncError, requests.RequestException, ValueError) as exc:
                 failures.append(f"{peer}: {exc}")
         self._remember_peers(reachable)
-        return tuple(sorted(dates)), tuple(reachable), failures
+        # Reconcile the most recent retained coverage first. This makes a
+        # month-scale follower useful immediately while the older tail keeps
+        # converging, and matches archive catch-up acquisition order.
+        return tuple(sorted(dates, reverse=True)), tuple(reachable), failures
 
     def _peer_feed_dates(
         self,

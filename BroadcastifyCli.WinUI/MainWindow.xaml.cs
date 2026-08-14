@@ -3642,7 +3642,7 @@ public sealed partial class MainWindow : Window
         content.Children.Add(new TextBlock
         {
             Text =
-                "When started, retained local stages run first and missing downloads stay sequential behind the persistent rolling request guard. The resumable one-time boundary automatically extends through the then-current day and clears after every day through current is complete. A recurring catch-up keeps the boundary and rechecks it at the saved daily schedule time; the next dialog confirms processing and timing. Uncheck resumable intent and evaluate to clear an existing one-time catch-up.",
+                "When started, retained local stages run first and missing downloads run newest-to-oldest, sequentially behind the persistent rolling request guard. The resumable one-time boundary automatically extends through the then-current day and clears after every day through current is complete. A recurring catch-up keeps the boundary and rechecks it at the saved daily schedule time; the next dialog confirms processing and timing. Uncheck resumable intent and evaluate to clear an existing one-time catch-up.",
             TextWrapping = TextWrapping.Wrap,
             Foreground = (Brush)Application.Current.Resources[
                 "TextFillColorSecondaryBrush"],

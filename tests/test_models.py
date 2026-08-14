@@ -5,11 +5,25 @@ import pytest
 from broadcastify_cli.models import JobRequest
 
 
-def test_date_range_is_inclusive() -> None:
+def test_date_range_is_inclusive_and_newest_first_by_default() -> None:
     request = JobRequest(
         feed_id="5318",
         start_date=date(2026, 7, 10),
         end_date=date(2026, 7, 12),
+    )
+    assert list(request.dates()) == [
+        date(2026, 7, 12),
+        date(2026, 7, 11),
+        date(2026, 7, 10),
+    ]
+
+
+def test_date_range_can_explicitly_use_chronological_order() -> None:
+    request = JobRequest(
+        feed_id="5318",
+        start_date=date(2026, 7, 10),
+        end_date=date(2026, 7, 12),
+        newest_first=False,
     )
     assert list(request.dates()) == [
         date(2026, 7, 10),

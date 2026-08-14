@@ -155,6 +155,7 @@ def test_quota_stops_new_requests_but_keeps_complete_cached_days(tmp_path: Path)
         start_date=first_day,
         end_date=third_day,
         output_dir=tmp_path,
+        newest_first=False,
     )
 
     result = JobRunner(request, emit=events.append, client=QuotaClient()).run()  # type: ignore[arg-type]
@@ -213,7 +214,7 @@ def test_full_rolling_guard_never_authenticates_and_still_uses_cache(
         client=GuardedClient(),  # type: ignore[arg-type]
     ).run()
 
-    assert calls == ["quota", f"cache:{first_day}", f"cache:{second_day}"]
+    assert calls == ["quota", f"cache:{second_day}", f"cache:{first_day}"]
     assert result["completed_days"] == 1
     assert result["missing_days"] == [second_day.isoformat()]
     assert result["download_limited"] is True
