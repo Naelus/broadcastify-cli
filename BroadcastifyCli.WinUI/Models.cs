@@ -1867,3 +1867,129 @@ public sealed record ArchiveQuotaStatus
     [JsonPropertyName("next_request_at")]
     public string NextRequestAt { get; init; } = "";
 }
+
+internal sealed record CoordinatedActivityStatus
+{
+    [JsonPropertyName("connected")]
+    public bool Connected { get; init; }
+
+    [JsonPropertyName("coordinator_url")]
+    public string CoordinatorUrl { get; init; } = "";
+
+    [JsonPropertyName("node_id")]
+    public string NodeId { get; init; } = "";
+
+    [JsonPropertyName("peer_count")]
+    public int PeerCount { get; init; }
+
+    [JsonPropertyName("activity")]
+    public CoordinatedWorkActivity Activity { get; init; } = new();
+
+    [JsonPropertyName("scheduler")]
+    public CoordinatedSchedulerStatus Scheduler { get; init; } = new();
+
+    [JsonPropertyName("error")]
+    public string Error { get; init; } = "";
+}
+
+internal sealed record CoordinatedWorkActivity
+{
+    [JsonPropertyName("acquisition")]
+    public CoordinatedWorkLease? Acquisition { get; init; }
+
+    [JsonPropertyName("processing")]
+    public List<CoordinatedWorkLease> Processing { get; init; } = [];
+}
+
+internal sealed record CoordinatedWorkLease
+{
+    [JsonPropertyName("quota_scope")]
+    public string QuotaScope { get; init; } = "";
+
+    [JsonPropertyName("feed_id")]
+    public string FeedId { get; init; } = "";
+
+    [JsonPropertyName("archive_date")]
+    public string ArchiveDate { get; init; } = "";
+
+    [JsonPropertyName("owner_node_id")]
+    public string OwnerNodeId { get; init; } = "";
+
+    [JsonPropertyName("producer_url")]
+    public string ProducerUrl { get; init; } = "";
+
+    [JsonPropertyName("lease_seconds")]
+    public double LeaseSeconds { get; init; }
+}
+
+internal sealed record CoordinatedSchedulerStatus
+{
+    [JsonPropertyName("active")]
+    public CoordinatedActiveSchedule? Active { get; init; }
+
+    [JsonPropertyName("schedules")]
+    public List<CoordinatedScheduleStatus> Schedules { get; init; } = [];
+}
+
+internal sealed record CoordinatedActiveSchedule
+{
+    [JsonPropertyName("feed_id")]
+    public string FeedId { get; init; } = "";
+
+    [JsonPropertyName("feed_name")]
+    public string FeedName { get; init; } = "";
+
+    [JsonPropertyName("phase")]
+    public string Phase { get; init; } = "";
+
+    [JsonPropertyName("status")]
+    public string Status { get; init; } = "";
+
+    [JsonPropertyName("account_profile_id")]
+    public string AccountProfileId { get; init; } = "default";
+
+    [JsonPropertyName("stage")]
+    public string Stage { get; init; } = "";
+
+    [JsonPropertyName("archive_date")]
+    public string ArchiveDate { get; init; } = "";
+
+    [JsonPropertyName("current")]
+    public int Current { get; init; }
+
+    [JsonPropertyName("total")]
+    public int Total { get; init; }
+
+    [JsonPropertyName("updated_at")]
+    public string UpdatedAt { get; init; } = "";
+}
+
+internal sealed record CoordinatedScheduleStatus
+{
+    [JsonPropertyName("id")]
+    public long Id { get; init; }
+
+    [JsonPropertyName("feed_id")]
+    public string FeedId { get; init; } = "";
+
+    [JsonPropertyName("feed_name")]
+    public string FeedName { get; init; } = "";
+
+    [JsonPropertyName("state")]
+    public string State { get; init; } = "";
+
+    [JsonPropertyName("enabled")]
+    public bool Enabled { get; init; }
+
+    [JsonPropertyName("account_profile_id")]
+    public string AccountProfileId { get; init; } = "automatic";
+
+    [JsonPropertyName("next_run_at")]
+    public string NextRunAt { get; init; } = "";
+
+    [JsonPropertyName("last_started_at")]
+    public string LastStartedAt { get; init; } = "";
+
+    [JsonPropertyName("message")]
+    public string Message { get; init; } = "";
+}

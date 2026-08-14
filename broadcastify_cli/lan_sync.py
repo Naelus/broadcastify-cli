@@ -681,6 +681,28 @@ class LanAcquisitionQueue:
             self._cleanup_locked(now)
             return self._payload_locked(key, now)
 
+    def active_activity(self) -> dict[str, Any] | None:
+        """Return the one non-secret live upstream lease, if any."""
+
+        with self._lock:
+            now = self._clock()
+            self._cleanup_locked(now)
+            for (scope, feed_id, archive_date), entry in self._entries.items():
+                if entry.state != "active":
+                    continue
+                return {
+                    "quota_scope": scope,
+                    "feed_id": feed_id,
+                    "archive_date": archive_date,
+                    "owner_node_id": entry.owner_node_id,
+                    "producer_url": entry.producer_url,
+                    "lease_seconds": round(
+                        max(0.0, entry.expires_at - now),
+                        3,
+                    ),
+                }
+        return None
+
     def claim(
         self,
         quota_scope: str,
@@ -1020,6 +1042,37 @@ class LanProcessingQueue:
             self._cleanup_locked(now)
             return self._payload_locked(key, now)
 
+    def active_activities(self, *, limit: int = 32) -> list[dict[str, Any]]:
+        """Return bounded non-secret model/day leases for status surfaces."""
+
+        bounded = min(32, max(1, int(limit)))
+        with self._lock:
+            now = self._clock()
+            self._cleanup_locked(now)
+            values = [
+                {
+                    "feed_id": feed_id,
+                    "archive_date": archive_date,
+                    "owner_node_id": entry.owner_node_id,
+                    "producer_url": entry.producer_url,
+                    "lease_seconds": round(
+                        max(0.0, entry.expires_at - now),
+                        3,
+                    ),
+                }
+                for (_fingerprint, feed_id, archive_date), entry
+                in self._entries.items()
+                if entry.state == "active"
+            ]
+        return sorted(
+            values,
+            key=lambda value: (
+                str(value["feed_id"]),
+                str(value["archive_date"]),
+                str(value["owner_node_id"]),
+            ),
+        )[:bounded]
+
     def claim(
         self,
         processing_fingerprint: str,
@@ -1295,6 +1348,10 @@ class LanArchiveCatalog:
             "processing_queue_available": bool(
                 self.enabled and self.processing_queue.enabled
             ),
+            "activity": {
+                "acquisition": self.acquisition_queue.active_activity(),
+                "processing": self.processing_queue.active_activities(),
+            },
         }
 
     def feed_dates(self, feed_id: str) -> list[date]:
@@ -3172,6 +3229,50 @@ class LanArchiveSyncClient:
         )
         return peer, info
 
+    def coordinated_status(self) -> dict[str, Any]:
+        """Read the trusted coordinator's non-secret work/status surface."""
+
+        if not self.enabled:
+            return {
+                "connected": False,
+                "coordinator_url": "",
+                "node_id": "",
+                "peer_count": 0,
+                "activity": {"acquisition": None, "processing": []},
+                "scheduler": {"active": None, "schedules": []},
+                "error": "Trusted-LAN coordination is disabled.",
+            }
+        try:
+            if self.coordinator_url:
+                coordinator = self.coordinator_url
+                info = self._peer_info(coordinator)
+            else:
+                selected = self._select_coordinator()
+                if selected is None:
+                    raise LanSyncError(
+                        "No trusted-LAN acquisition coordinator answered."
+                    )
+                coordinator, info = selected
+        except (LanSyncError, requests.RequestException, ValueError) as exc:
+            return {
+                "connected": False,
+                "coordinator_url": self.coordinator_url,
+                "node_id": "",
+                "peer_count": 0,
+                "activity": {"acquisition": None, "processing": []},
+                "scheduler": {"active": None, "schedules": []},
+                "error": str(exc)[:300],
+            }
+        return {
+            "connected": True,
+            "coordinator_url": coordinator,
+            "node_id": str(info["node_id"]),
+            "peer_count": len(info["peers"]),
+            "activity": info["activity"],
+            "scheduler": info["scheduler"],
+            "error": "",
+        }
+
     def _producer_identity(self, coordinator: str) -> tuple[str, str] | None:
         cached = self._producer_cache.get(coordinator)
         now = time.monotonic()
@@ -3349,7 +3450,155 @@ class LanArchiveSyncClient:
                 payload.get("processing_queue_available")
             ),
             "peers": normalize_peer_urls(payload.get("peers") or (), strict=False),
+            "activity": self._validate_activity_surface(
+                payload.get("activity")
+            ),
+            "scheduler": self._validate_scheduler_surface(
+                payload.get("scheduler")
+            ),
         }
+
+    @staticmethod
+    def _validate_activity_surface(payload: Any) -> dict[str, Any]:
+        value = payload if isinstance(payload, Mapping) else {}
+
+        def activity_item(
+            candidate: Any,
+            *,
+            quota: bool,
+        ) -> dict[str, Any] | None:
+            if not isinstance(candidate, Mapping):
+                return None
+            feed_id = str(candidate.get("feed_id") or "")
+            archive_date = str(candidate.get("archive_date") or "")
+            owner = str(candidate.get("owner_node_id") or "")
+            producer_url = str(candidate.get("producer_url") or "")
+            scope = str(candidate.get("quota_scope") or "") if quota else ""
+            try:
+                date.fromisoformat(archive_date)
+                lease_seconds = float(candidate.get("lease_seconds") or 0.0)
+            except (TypeError, ValueError):
+                return None
+            if (
+                not feed_id.isdigit()
+                or not LAN_QUEUE_NODE_PATTERN.fullmatch(owner)
+                or not 0.0 <= lease_seconds <= 24 * 60 * 60.0
+                or (quota and not LAN_QUEUE_SCOPE_PATTERN.fullmatch(scope))
+            ):
+                return None
+            try:
+                producer_url = normalize_peer_url(producer_url)
+            except ValueError:
+                return None
+            result = {
+                "feed_id": feed_id,
+                "archive_date": archive_date,
+                "owner_node_id": owner,
+                "producer_url": producer_url,
+                "lease_seconds": lease_seconds,
+            }
+            if quota:
+                result["quota_scope"] = scope
+            return result
+
+        raw_processing = value.get("processing")
+        processing = [
+            result
+            for candidate in (
+                raw_processing[:32]
+                if isinstance(raw_processing, list)
+                else []
+            )
+            if (result := activity_item(candidate, quota=False)) is not None
+        ]
+        return {
+            "acquisition": activity_item(
+                value.get("acquisition"),
+                quota=True,
+            ),
+            "processing": processing,
+        }
+
+    @staticmethod
+    def _validate_scheduler_surface(payload: Any) -> dict[str, Any]:
+        value = payload if isinstance(payload, Mapping) else {}
+
+        def clean_text(candidate: Any, maximum: int) -> str:
+            return " ".join(str(candidate or "").split())[:maximum]
+
+        def clean_non_negative_int(candidate: Any) -> int:
+            try:
+                return max(0, int(candidate or 0))
+            except (TypeError, ValueError, OverflowError):
+                return 0
+
+        def clean_schedule(candidate: Any) -> dict[str, Any] | None:
+            if not isinstance(candidate, Mapping):
+                return None
+            feed_id = clean_text(candidate.get("feed_id"), 40)
+            if not feed_id.isdigit():
+                return None
+            return {
+                "id": clean_non_negative_int(candidate.get("id")),
+                "feed_id": feed_id,
+                "feed_name": clean_text(candidate.get("feed_name"), 200),
+                "state": clean_text(candidate.get("state"), 40),
+                "enabled": bool(candidate.get("enabled")),
+                "account_profile_id": clean_text(
+                    candidate.get("account_profile_id"),
+                    64,
+                ),
+                "next_run_at": clean_text(candidate.get("next_run_at"), 40),
+                "last_started_at": clean_text(
+                    candidate.get("last_started_at"),
+                    40,
+                ),
+                "message": clean_text(candidate.get("message"), 240),
+            }
+
+        active: dict[str, Any] | None = None
+        raw_active = value.get("active")
+        if isinstance(raw_active, Mapping):
+            feed_id = clean_text(raw_active.get("feed_id"), 40)
+            owner_profile = clean_text(
+                raw_active.get("account_profile_id"),
+                64,
+            )
+            if feed_id.isdigit() and re.fullmatch(
+                r"[a-z0-9][a-z0-9_-]{0,63}",
+                owner_profile,
+            ):
+                active = {
+                    "feed_id": feed_id,
+                    "feed_name": clean_text(raw_active.get("feed_name"), 200),
+                    "phase": clean_text(raw_active.get("phase"), 40),
+                    "status": clean_text(raw_active.get("status"), 40),
+                    "account_profile_id": owner_profile,
+                    "stage": clean_text(raw_active.get("stage"), 40),
+                    "archive_date": clean_text(
+                        raw_active.get("archive_date"),
+                        10,
+                    ),
+                    "current": clean_non_negative_int(
+                        raw_active.get("current")
+                    ),
+                    "total": clean_non_negative_int(raw_active.get("total")),
+                    "updated_at": clean_text(
+                        raw_active.get("updated_at"),
+                        40,
+                    ),
+                }
+        raw_schedules = value.get("schedules")
+        schedules = [
+            result
+            for candidate in (
+                raw_schedules[:100]
+                if isinstance(raw_schedules, list)
+                else []
+            )
+            if (result := clean_schedule(candidate)) is not None
+        ]
+        return {"active": active, "schedules": schedules}
 
     def _validate_queue_payload(
         self,

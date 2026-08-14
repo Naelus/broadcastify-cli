@@ -233,3 +233,14 @@ def test_web_entry_point_accepts_explicit_working_directory(tmp_path: Path) -> N
     assert arguments.working_dir == str(tmp_path)
     assert arguments.host == "0.0.0.0"
     assert arguments.port == 18765
+
+
+def test_truenas_image_normalizes_public_source_permissions() -> None:
+    dockerfile = (
+        Path(__file__).parents[1] / "deploy" / "truenas" / "Dockerfile"
+    ).read_text(encoding="utf-8")
+
+    copy_index = dockerfile.index("COPY broadcastify_cli ./broadcastify_cli")
+    permission_index = dockerfile.index("RUN chmod -R a+rX /opt/radio-archive")
+    install_index = dockerfile.index("RUN python3 -m venv")
+    assert copy_index < permission_index < install_index

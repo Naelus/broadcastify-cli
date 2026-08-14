@@ -175,6 +175,111 @@ def test_web_schedule_coordinator_claims_and_finishes_due_feed(
     assert result["last_run_date"] == date.today().isoformat()
 
 
+def test_web_schedule_pool_hands_off_acquisition_before_model_work(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = tmp_path / "analysis.sqlite3"
+    with AnalysisStore(database) as store:
+        store.save_feed_schedule(
+            {
+                "feed_id": "90001",
+                "feed_name": "Example Public Safety",
+                "run_time_local": "00:00",
+                "lookback_days": 1,
+                "account_profile_id": "automatic",
+                "job": {
+                    "combine": True,
+                    "transcribe": True,
+                    "diarize": True,
+                },
+                "analyze": True,
+            }
+        )
+
+    monkeypatch.setattr(
+        "broadcastify_cli.web_app._account_pool_profiles",
+        lambda _working_dir, _credential_store: {
+            "authorized": True,
+            "configured_profile_ids": ["default", "secondary"],
+            "quota": {"next_request_at": ""},
+        },
+    )
+
+    class FakeJobs:
+        output_dir = tmp_path / "selected-library"
+        credential_store = object()
+        started: list[dict[str, object]] = []
+
+        def start(self, command: str, payload: dict[str, object]) -> dict[str, object]:
+            assert command == "run-scheduled"
+            self.started.append(json.loads(json.dumps(payload)))
+            return {"id": f"scheduled-job-{len(self.started)}"}
+
+        def get(self, job_id: str) -> dict[str, object]:
+            snapshots = {
+                "scheduled-job-1": {
+                    "status": "completed",
+                    "account_profile_id": "default",
+                    "result": {
+                        "type": "scheduled_complete",
+                        "result": {"download_limited": True},
+                    },
+                },
+                "scheduled-job-2": {
+                    "status": "completed",
+                    "account_profile_id": "secondary",
+                    "result": {
+                        "type": "scheduled_complete",
+                        "result": {"download_limited": False},
+                    },
+                },
+                "scheduled-job-3": {
+                    "status": "completed",
+                    "account_profile_id": "secondary",
+                    "result": {
+                        "type": "scheduled_complete",
+                        "result": {
+                            "download_limited": False,
+                            "missing_days": [],
+                            "pending_processing_days": [],
+                        },
+                    },
+                },
+            }
+            return snapshots[job_id]
+
+    jobs = FakeJobs()
+    coordinator = FeedScheduleCoordinator(  # type: ignore[arg-type]
+        jobs, database, tmp_path, poll_seconds=0.05
+    )
+    coordinator.check_once()
+    coordinator.check_once()
+    coordinator.check_once()
+    coordinator.check_once()
+
+    assert len(jobs.started) == 3
+    primary, secondary, processing = jobs.started
+    assert primary["account_profile_id"] == "automatic"
+    assert primary["exclude_account_profile_ids"] == []
+    assert primary["analyze"] is False
+    assert primary["job"]["combine"] is False  # type: ignore[index]
+    assert primary["job"]["transcribe"] is False  # type: ignore[index]
+    assert primary["job"]["diarize"] is False  # type: ignore[index]
+    assert secondary["account_profile_id"] == "automatic"
+    assert secondary["exclude_account_profile_ids"] == ["default"]
+    assert secondary["analyze"] is False
+    assert processing["account_profile_id"] == "secondary"
+    assert processing["exclude_account_profile_ids"] == []
+    assert processing["analyze"] is True
+    assert processing["job"]["combine"] is True  # type: ignore[index]
+    assert processing["job"]["transcribe"] is True  # type: ignore[index]
+    assert processing["job"]["diarize"] is True  # type: ignore[index]
+    with AnalysisStore(database) as store:
+        result = store.list_feed_schedules()[0]
+    assert result["state"] == "complete"
+
+
 def test_web_schedule_coordinator_retries_deferred_missing_days(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

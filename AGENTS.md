@@ -20,6 +20,28 @@ identity unchanged.
 - Keep worker output off the WinUI thread and coalesce bursty UI updates.
 - Maintain the native Windows reference experience and shared Python backend;
   do not rename the Windows executable or installer product.
+- For a minor change, start with the observed failure and make the smallest
+  direct correction that fits the existing design. Do not add a harness,
+  service, abstraction, or replacement subsystem unless the current path
+  cannot implement or verify the requirement; record that evidence when a
+  broader change is necessary.
+
+## Productive catch-up checks
+
+- During long coding, test, build, packaging, deployment, transcription, or
+  analysis stages, keep resumable catch-up making useful progress whenever a
+  backlog and an authorized archive allowance remain. Do not equate a saved
+  or enabled schedule with an active catch-up.
+- Check the actual worker/job state, next schedule time, global acquisition
+  lease, retained-work progress, and remaining allowance for every authorized
+  account profile. If local-only processing is holding the workflow while the
+  website stream is idle, checkpoint it and let another node/profile continue
+  the next sequential acquisition turn; model work may proceed on different
+  feed-days in parallel under the processing-claim rules.
+- Use every authorized account's allowance over sequential acquisition turns;
+  never issue concurrent archive requests merely to consume it. A blocked or
+  exhausted profile must hand off promptly to the next eligible profile, while
+  LAN reuse and retained local processing continue independently.
 
 ## Efficient verification
 

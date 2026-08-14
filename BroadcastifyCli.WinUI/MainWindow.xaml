@@ -182,6 +182,9 @@
                 <NavigationViewItem x:Name="LibraryNavigationItem" Content="Local library" Tag="library" IsSelected="True">
                     <NavigationViewItem.Icon><FontIcon Glyph="&#xE8F1;" /></NavigationViewItem.Icon>
                 </NavigationViewItem>
+                <NavigationViewItem x:Name="SystemNavigationItem" Content="System activity" Tag="system">
+                    <NavigationViewItem.Icon><FontIcon Glyph="&#xE9D9;" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
                 <NavigationViewItem x:Name="ArchiveNavigationItem" Content="New archive" Tag="archive">
                     <NavigationViewItem.Icon><FontIcon Glyph="&#xE896;" /></NavigationViewItem.Icon>
                 </NavigationViewItem>
@@ -491,6 +494,61 @@
                                 </Border>
                             </Grid>
                         </Border>
+                    </Grid>
+
+                    <!-- Coordinated system activity -->
+                    <Grid x:Name="SystemPage" Visibility="Collapsed" Padding="26,20,26,18" RowSpacing="16">
+                        <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+                        <Grid ColumnSpacing="12">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                            <StackPanel Spacing="4">
+                                <TextBlock Text="System activity" Style="{StaticResource TitleTextBlockStyle}" />
+                                <TextBlock Text="See Windows and TrueNAS acquisition, model work, account allowance, and saved schedules from one place."
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+                            </StackPanel>
+                            <Button x:Name="RefreshSystemActivityButton" Grid.Column="1" Content="Refresh"
+                                    VerticalAlignment="Center" Click="RefreshSystemActivity_Click" />
+                        </Grid>
+                        <ScrollViewer x:Name="SystemActivityScroll" Grid.Row="1" HorizontalScrollBarVisibility="Disabled">
+                            <StackPanel Spacing="14" MaxWidth="980" HorizontalAlignment="Left" Padding="0,2,12,18">
+                                <InfoBar x:Name="SystemActivityInfoBar" IsOpen="True" IsClosable="False"
+                                         Severity="Informational" Title="Checking coordinated work"
+                                         Message="The app is reading non-secret state from the trusted-LAN coordinator." />
+                                <Border Style="{StaticResource CardBorderStyle}" Padding="18">
+                                    <StackPanel Spacing="6">
+                                        <TextBlock Text="Archive acquisition" Style="{StaticResource SubtitleTextBlockStyle}" />
+                                        <TextBlock x:Name="SystemAcquisitionText" Text="Checking the one global website stream…"
+                                                   TextWrapping="Wrap" IsTextSelectionEnabled="True" />
+                                        <TextBlock x:Name="SystemAcquisitionDetailText"
+                                                   Text="Cached and LAN-reused blocks do not consume an account allowance."
+                                                   TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                    </StackPanel>
+                                </Border>
+                                <Border Style="{StaticResource CardBorderStyle}" Padding="18">
+                                    <StackPanel Spacing="6">
+                                        <TextBlock Text="Local model work" Style="{StaticResource SubtitleTextBlockStyle}" />
+                                        <TextBlock x:Name="SystemProcessingText" Text="Checking active model/day claims…"
+                                                   TextWrapping="Wrap" IsTextSelectionEnabled="True" />
+                                        <TextBlock Text="Different retained feed-days may run on different machines; an identical model/day remains single-owner."
+                                                   TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                    </StackPanel>
+                                </Border>
+                                <Border Style="{StaticResource CardBorderStyle}" Padding="18">
+                                    <StackPanel Spacing="6">
+                                        <TextBlock Text="Authorized account allowance" Style="{StaticResource SubtitleTextBlockStyle}" />
+                                        <TextBlock x:Name="SystemQuotaText" Text="Checking each account's independent rolling window…"
+                                                   TextWrapping="Wrap" IsTextSelectionEnabled="True" />
+                                    </StackPanel>
+                                </Border>
+                                <Border Style="{StaticResource CardBorderStyle}" Padding="18">
+                                    <StackPanel Spacing="6">
+                                        <TextBlock Text="Saved schedules" Style="{StaticResource SubtitleTextBlockStyle}" />
+                                        <TextBlock x:Name="SystemSchedulesText" Text="Checking Windows and coordinator schedule state…"
+                                                   TextWrapping="Wrap" IsTextSelectionEnabled="True" />
+                                    </StackPanel>
+                                </Border>
+                            </StackPanel>
+                        </ScrollViewer>
                     </Grid>
 
                     <!-- New archive -->

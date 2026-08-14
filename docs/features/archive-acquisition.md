@@ -132,10 +132,15 @@ credential store, active session, or private environment.
 Automatic account mode is still one worker and one spaced archive request at a
 time. Credentials, cookies, request attempts, 429 blocks, and next-safe times
 are isolated per profile. When one account becomes unavailable, the same saved
-job is replayed with the next eligible profile; exact cache identities and
-completion snapshots prevent already retained blocks from being requested
-again. If every profile is closed, the schedule persists the earliest next-safe
-time and resumes there.
+job's acquisition-only pass is replayed immediately with the next eligible
+profile; exact cache identities and completion snapshots prevent already
+retained blocks from being requested again. Combination, transcription,
+speaker labeling, and analysis begin only after the available acquisition turns
+are checkpointed, so loading or running a local model cannot strand unused
+allowance between account profiles. A coordinated peer may take the next global
+website turn while this node processes a different claimed feed/day. If every
+profile is closed, cached days still process locally, the schedule persists the
+earliest next-safe time, and missing acquisition resumes there.
 
 The Windows and Web/TrueNAS account surfaces use the same profile IDs and
 automatic policy. The Web service may load named profiles from its encrypted

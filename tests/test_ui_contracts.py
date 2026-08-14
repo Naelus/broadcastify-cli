@@ -739,6 +739,11 @@ def test_windows_startup_is_visible_configurable_and_recovery_aware() -> None:
     assert "result?.PendingProcessingDays.Count" in window
     assert "AccountProfileId" in window
     assert "RunScheduledJobAcrossAccountsAsync" in window
+    assert "var pooledAcquisition" in window
+    assert "Combine = false" in window
+    assert "Available archive acquisition turns are checkpointed" in window
+    assert "Coordinator active" in window
+    assert "activeSchedule.AccountProfileId" in window
     assert "Automatic authorized pool" in window
     assert 'Status = waitingForQuota' in window
     assert "Task<int> RecoverFeedSchedulesAsync" in worker

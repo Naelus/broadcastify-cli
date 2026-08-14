@@ -494,6 +494,20 @@ public sealed partial class MainWindow
         LibraryCoverageExpander.IsExpanded = false;
         await WaitForUiLayoutAsync(40);
 
+        NavigateTo(SystemNavigationItem);
+        await WaitForUiLayoutAsync();
+        RequireOnlyPageVisible("system");
+        RequireHorizontalBounds(
+            size.Name,
+            SystemPage,
+            RefreshSystemActivityButton,
+            SystemActivityScroll,
+            SystemActivityInfoBar,
+            PersistentStatusGrid);
+        scrollResults["system_activity"] = await ExerciseScrollAsync(
+            SystemActivityScroll,
+            $"{size.Name}/system-activity");
+
         NavigateTo(ArchiveNavigationItem);
         await WaitForUiLayoutAsync();
         RequireOnlyPageVisible("archive");
@@ -1359,6 +1373,20 @@ public sealed partial class MainWindow
         LibraryCoverageExpander.IsExpanded = false;
         await WaitForUiLayoutAsync(40);
 
+        NavigateTo(SystemNavigationItem);
+        await WaitForUiLayoutAsync();
+        RequireOnlyPageVisible("system");
+        RequireHorizontalBounds(
+            $"docked-{label}",
+            SystemPage,
+            RefreshSystemActivityButton,
+            SystemActivityScroll,
+            SystemActivityInfoBar,
+            PersistentStatusGrid);
+        results["system_activity"] = await ExerciseScrollAsync(
+            SystemActivityScroll,
+            $"docked-{label}/system-activity");
+
         NavigateTo(ArchiveNavigationItem);
         await WaitForUiLayoutAsync();
         RequireOnlyPageVisible("archive");
@@ -1807,6 +1835,7 @@ public sealed partial class MainWindow
         var pages = new Dictionary<string, FrameworkElement>
         {
             ["library"] = LibraryPage,
+            ["system"] = SystemPage,
             ["archive"] = ArchivePage,
             ["review"] = ReviewPage,
             ["area"] = AreaPage,

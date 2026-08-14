@@ -975,6 +975,26 @@ internal sealed class WorkerClient
         return status;
     }
 
+    public async Task<CoordinatedActivityStatus?> GetCoordinatedActivityStatusAsync(
+        CancellationToken cancellationToken)
+    {
+        CoordinatedActivityStatus? status = null;
+        await RunWorkerAsync(
+            ["-m", "broadcastify_cli.worker", "coordinated-status"],
+            null,
+            message =>
+            {
+                if (message.TryGetProperty("type", out var type)
+                    && type.GetString() == "coordinated_activity_status"
+                    && message.TryGetProperty("status", out var value))
+                {
+                    status = value.Deserialize<CoordinatedActivityStatus>(JsonOptions);
+                }
+            },
+            cancellationToken);
+        return status;
+    }
+
     public IReadOnlyList<string> AvailableAccountProfileIds()
     {
         var ids = CredentialStore.ListBroadcastifyProfiles()

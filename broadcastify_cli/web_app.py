@@ -977,7 +977,7 @@ class FeedScheduleCoordinator:
         self.poll_seconds = max(0.05, float(poll_seconds))
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
-        self._active: tuple[str, dict[str, Any], set[str]] | None = None
+        self._active: tuple[str, dict[str, Any], set[str], str] | None = None
 
     def start(self) -> None:
         if self._thread is not None:
@@ -996,9 +996,73 @@ class FeedScheduleCoordinator:
         if self._thread is not None:
             self._thread.join(timeout=2)
 
+    def status(self) -> dict[str, Any]:
+        """Return a bounded, non-secret view for trusted coordinated clients."""
+
+        with AnalysisStore(self.database_path) as store:
+            schedules = store.list_feed_schedules()
+        active = self._active
+        active_status: dict[str, Any] | None = None
+        if active is not None:
+            job_id, schedule, _attempted_profile_ids, phase = active
+            try:
+                snapshot = self.jobs.get(job_id)
+            except WebRequestError:
+                snapshot = {}
+            latest_stage: dict[str, Any] = {}
+            for event in reversed(list(snapshot.get("events") or [])):
+                if not isinstance(event, dict):
+                    continue
+                stage = str(event.get("stage") or "").strip().lower()
+                if not re.fullmatch(r"[a-z0-9_-]{1,40}", stage):
+                    continue
+                message = str(event.get("message") or "")
+                archive_match = re.search(r"\b\d{4}-\d{2}-\d{2}\b", message)
+                latest_stage = {
+                    "stage": stage,
+                    "archive_date": archive_match.group(0) if archive_match else "",
+                    "current": max(0, int(event.get("current") or 0)),
+                    "total": max(0, int(event.get("total") or 0)),
+                    "updated_at": str(event.get("received_at") or "")[:40],
+                }
+                break
+            active_status = {
+                "feed_id": str(schedule.get("feed_id") or "")[:40],
+                "feed_name": str(schedule.get("feed_name") or "")[:200],
+                "phase": phase,
+                "status": str(snapshot.get("status") or "")[:40],
+                "account_profile_id": normalize_account_profile_id(
+                    str(snapshot.get("account_profile_id") or "default")
+                ),
+                **latest_stage,
+            }
+        return {
+            "active": active_status,
+            "schedules": [
+                {
+                    "id": int(schedule.get("id") or 0),
+                    "feed_id": str(schedule.get("feed_id") or "")[:40],
+                    "feed_name": str(schedule.get("feed_name") or "")[:200],
+                    "state": str(schedule.get("state") or "")[:40],
+                    "enabled": bool(schedule.get("enabled")),
+                    "account_profile_id": str(
+                        schedule.get("account_profile_id") or "automatic"
+                    )[:64],
+                    "next_run_at": str(schedule.get("next_run_at") or "")[:40],
+                    "last_started_at": str(
+                        schedule.get("last_started_at") or ""
+                    )[:40],
+                    "message": " ".join(
+                        str(schedule.get("message") or "").split()
+                    )[:240],
+                }
+                for schedule in schedules[:100]
+            ],
+        }
+
     def check_once(self) -> None:
         if self._active is not None:
-            job_id, schedule, attempted_profile_ids = self._active
+            job_id, schedule, attempted_profile_ids, phase = self._active
             snapshot = self.jobs.get(job_id)
             if snapshot["status"] in {"queued", "running", "canceling"}:
                 return
@@ -1018,8 +1082,45 @@ class FeedScheduleCoordinator:
                     result.get("pending_processing_days")
                 )
                 if limited and automatic_pool:
-                    if self._try_next_account(schedule, attempted_profile_ids):
+                    next_phase = (
+                        "acquisition"
+                        if self._uses_multi_account_acquisition(schedule)
+                        else "full"
+                    )
+                    if self._try_next_account(
+                        schedule,
+                        attempted_profile_ids,
+                        phase=next_phase,
+                    ):
                         return
+                if phase == "acquisition":
+                    try:
+                        job = self._start_schedule_job(
+                            schedule,
+                            set(),
+                            account_profile_id=selected_profile_id,
+                        )
+                    except WebRequestError as exc:
+                        with AnalysisStore(self.database_path) as store:
+                            store.finish_feed_schedule(
+                                int(schedule["id"]),
+                                due_date=str(schedule["due_date"]),
+                                status="deferred",
+                                message=(
+                                    "Archive acquisition was checkpointed, but local "
+                                    f"processing could not start: {exc}"
+                                ),
+                                next_request_at="",
+                            )
+                        self._active = None
+                        return
+                    self._active = (
+                        str(job["id"]),
+                        schedule,
+                        set(attempted_profile_ids),
+                        "processing",
+                    )
+                    return
                 quota = self._quota_status()
                 status = (
                     "waiting_quota"
@@ -1046,7 +1147,15 @@ class FeedScheduleCoordinator:
                         message,
                         flags=re.IGNORECASE,
                     )
-                    and self._try_next_account(schedule, attempted_profile_ids)
+                    and self._try_next_account(
+                        schedule,
+                        attempted_profile_ids,
+                        phase=(
+                            "acquisition"
+                            if self._uses_multi_account_acquisition(schedule)
+                            else "full"
+                        ),
+                    )
                 ):
                     return
                 status = "canceled" if snapshot["status"] == "canceled" else "failed"
@@ -1068,8 +1177,13 @@ class FeedScheduleCoordinator:
             )
         if schedule is None:
             return
+        split_acquisition = self._uses_multi_account_acquisition(schedule)
         try:
-            job = self._start_schedule_job(schedule, set())
+            job = self._start_schedule_job(
+                schedule,
+                set(),
+                acquisition_only=split_acquisition,
+            )
         except WebRequestError as exc:
             with AnalysisStore(self.database_path) as store:
                 store.finish_feed_schedule(
@@ -1086,22 +1200,42 @@ class FeedScheduleCoordinator:
                     ),
                 )
             return
-        self._active = (str(job["id"]), schedule, set())
+        self._active = (
+            str(job["id"]),
+            schedule,
+            set(),
+            "acquisition" if split_acquisition else "full",
+        )
 
     def _start_schedule_job(
         self,
         schedule: dict[str, Any],
         attempted_profile_ids: set[str],
+        *,
+        acquisition_only: bool = False,
+        account_profile_id: str = "",
     ) -> dict[str, Any]:
+        job_payload = dict(schedule["job"])
+        analyze = bool(schedule["analyze"])
+        if acquisition_only:
+            job_payload.update(
+                {
+                    "combine": False,
+                    "transcribe": False,
+                    "diarize": False,
+                }
+            )
+            analyze = False
         return self.jobs.start(
             "run-scheduled",
             {
-                "job": schedule["job"],
-                "analyze": schedule["analyze"],
-                "account_profile_id": str(
-                    schedule.get("account_profile_id") or "automatic"
+                "job": job_payload,
+                "analyze": analyze,
+                "account_profile_id": account_profile_id
+                or str(schedule.get("account_profile_id") or "automatic"),
+                "exclude_account_profile_ids": (
+                    [] if account_profile_id else sorted(attempted_profile_ids)
                 ),
-                "exclude_account_profile_ids": sorted(attempted_profile_ids),
             },
         )
 
@@ -1109,17 +1243,39 @@ class FeedScheduleCoordinator:
         self,
         schedule: dict[str, Any],
         attempted_profile_ids: set[str],
+        *,
+        phase: str,
     ) -> bool:
         try:
-            job = self._start_schedule_job(schedule, attempted_profile_ids)
+            job = self._start_schedule_job(
+                schedule,
+                attempted_profile_ids,
+                acquisition_only=phase == "acquisition",
+            )
         except WebRequestError:
             return False
         self._active = (
             str(job["id"]),
             schedule,
             set(attempted_profile_ids),
+            phase,
         )
         return True
+
+    def _uses_multi_account_acquisition(
+        self,
+        schedule: dict[str, Any],
+    ) -> bool:
+        if str(schedule.get("account_profile_id") or "automatic") != "automatic":
+            return False
+        credential_store = getattr(self.jobs, "credential_store", None)
+        if credential_store is None:
+            return False
+        pool = _account_pool_profiles(
+            self.working_dir,
+            credential_store,
+        )
+        return bool(pool["authorized"]) and len(pool["configured_profile_ids"]) > 1
 
     def _quota_status(self) -> dict[str, Any]:
         credential_store = getattr(self.jobs, "credential_store", None)
@@ -1479,7 +1635,9 @@ def create_server(
                 return
             if parsed.path == "/api/lan/v1/info":
                 self._require_lan_access()
-                self._json(HTTPStatus.OK, state.lan_catalog.info())
+                info = state.lan_catalog.info()
+                info["scheduler"] = state.scheduler.status()
+                self._json(HTTPStatus.OK, info)
                 return
             if parsed.path == "/api/lan/v1/feed-days":
                 self._require_lan_access()

@@ -88,6 +88,7 @@ from .library import (
     require_current_range_evidence,
     scan_local_library,
 )
+from .lan_sync import LanArchiveSyncClient
 from .managed_runtime import (
     ManagedRuntimeError,
     install_managed_runtime,
@@ -383,6 +384,21 @@ def authenticate() -> int:
 
 def archive_quota_status() -> int:
     emit({"type": "archive_quota_status", "status": archive_request_ledger().status()})
+    return 0
+
+
+def coordinated_activity_status() -> int:
+    client = LanArchiveSyncClient.from_settings(
+        enabled=True,
+        peer_urls=os.getenv("BROADCASTIFY_LAN_PEERS"),
+        discovery_enabled=True,
+    )
+    emit(
+        {
+            "type": "coordinated_activity_status",
+            "status": client.coordinated_status(),
+        }
+    )
     return 0
 
 
@@ -2018,6 +2034,7 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("run-scheduled")
     subparsers.add_parser("authenticate")
     subparsers.add_parser("quota-status")
+    subparsers.add_parser("coordinated-status")
     managed_status = subparsers.add_parser("managed-runtime-status")
     managed_status.add_argument("--profile", required=True)
     subparsers.add_parser("install-managed-runtime")
@@ -2164,6 +2181,8 @@ def main() -> int:
             return authenticate()
         if arguments.command == "quota-status":
             return archive_quota_status()
+        if arguments.command == "coordinated-status":
+            return coordinated_activity_status()
         if arguments.command == "managed-runtime-status":
             return managed_runtime_status_command(arguments.profile)
         if arguments.command == "install-managed-runtime":

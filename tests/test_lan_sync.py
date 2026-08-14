@@ -485,6 +485,14 @@ def test_shared_acquisition_queue_grants_one_expiring_producer_lease() -> None:
     assert first["state"] == "active"
     assert second["granted"] is False
     assert second["owner_node_id"] == "producer_one"
+    assert queue.active_activity() == {
+        "quota_scope": "default",
+        "feed_id": "90001",
+        "archive_date": "2026-07-12",
+        "owner_node_id": "producer_one",
+        "producer_url": "http://10.20.30.40:8766",
+        "lease_seconds": 15.0,
+    }
 
     now[0] += 16.0
     takeover = queue.claim(
@@ -649,6 +657,15 @@ def test_processing_queue_releases_failure_and_expired_leases() -> None:
         requester_address="10.20.30.41",
     )
     assert second["granted"] is True
+    assert queue.active_activities() == [
+        {
+            "feed_id": "91059",
+            "archive_date": "2026-07-12",
+            "owner_node_id": "producer_two",
+            "producer_url": "http://10.20.30.41:8766",
+            "lease_seconds": 30.0,
+        }
+    ]
 
     now[0] += 31.0
     third = queue.claim(
@@ -661,6 +678,53 @@ def test_processing_queue_releases_failure_and_expired_leases() -> None:
     )
     assert third["granted"] is True
     assert third["owner_node_id"] == "producer_three"
+
+
+def test_coordinated_status_validation_rejects_unsafe_peer_values() -> None:
+    scheduler = LanArchiveSyncClient._validate_scheduler_surface(
+        {
+            "active": {
+                "feed_id": "91059",
+                "feed_name": "  Example   Feed  ",
+                "phase": "processing",
+                "status": "running",
+                "account_profile_id": "secondary",
+                "stage": "transcribe",
+                "archive_date": "2026-07-12",
+                "current": "not-an-integer",
+                "total": object(),
+            },
+            "schedules": [
+                {
+                    "id": "also-invalid",
+                    "feed_id": "91059",
+                    "feed_name": "  Example   Feed  ",
+                    "state": "running",
+                    "enabled": True,
+                    "account_profile_id": "automatic",
+                    "message": "  retained   work  ",
+                },
+                {"id": 2, "feed_id": "../../secrets"},
+            ],
+        }
+    )
+
+    assert scheduler["active"]["current"] == 0
+    assert scheduler["active"]["total"] == 0
+    assert scheduler["active"]["feed_name"] == "Example Feed"
+    assert scheduler["schedules"] == [
+        {
+            "id": 0,
+            "feed_id": "91059",
+            "feed_name": "Example Feed",
+            "state": "running",
+            "enabled": True,
+            "account_profile_id": "automatic",
+            "next_run_at": "",
+            "last_started_at": "",
+            "message": "retained work",
+        }
+    ]
 
 
 def test_lan_clients_claim_different_model_days_without_duplicate_work(

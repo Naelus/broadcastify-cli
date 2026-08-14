@@ -32,6 +32,11 @@ WORKDIR /opt/radio-archive
 COPY pyproject.toml README.md LICENSE ./
 COPY broadcastify_cli ./broadcastify_cli
 
+# Build hosts may use a restrictive umask for private deployment workspaces.
+# Normalize only the public application tree so the unprivileged runtime user
+# can import it without weakening persistent /data permissions.
+RUN chmod -R a+rX /opt/radio-archive
+
 RUN python3 -m venv /opt/radio-archive-venv \
     && /opt/radio-archive-venv/bin/python -m pip install --no-cache-dir --upgrade pip \
     && /opt/radio-archive-venv/bin/python -m pip install --no-cache-dir \

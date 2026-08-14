@@ -84,7 +84,9 @@ public sealed partial class MainWindow : Window
     private bool _loadingSettings = true;
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _settingsSaveTimer;
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _feedScheduleTimer;
+    private Microsoft.UI.Dispatching.DispatcherQueueTimer? _systemActivityTimer;
     private bool _checkingFeedSchedule;
+    private bool _refreshingSystemActivity;
     private string _lastAreaProfileName = "";
     private string _lastReviewFeedId = "";
     private string _lastReviewDate = "";
@@ -339,6 +341,7 @@ public sealed partial class MainWindow : Window
         await RefreshFeedScheduleStatusAsync();
         await ApplyLaunchBehaviorAsync();
         ConfigureFeedScheduleTimer();
+        ConfigureSystemActivityTimer();
     }
 
     private void RefreshWindowsStartupUi()
@@ -521,6 +524,7 @@ public sealed partial class MainWindow : Window
     private void ShowPage(string page)
     {
         LibraryPage.Visibility = page == "library" ? Visibility.Visible : Visibility.Collapsed;
+        SystemPage.Visibility = page == "system" ? Visibility.Visible : Visibility.Collapsed;
         ArchivePage.Visibility = page == "archive" ? Visibility.Visible : Visibility.Collapsed;
         ReviewPage.Visibility = page == "review" ? Visibility.Visible : Visibility.Collapsed;
         AreaPage.Visibility = page == "area" ? Visibility.Visible : Visibility.Collapsed;
@@ -530,6 +534,10 @@ public sealed partial class MainWindow : Window
         {
             _ = RefreshArchiveQuotaStatusAsync();
             _ = RefreshFeedScheduleStatusAsync();
+        }
+        if (page == "system")
+        {
+            _ = RefreshSystemActivityAsync();
         }
         if (page == "settings")
         {
@@ -733,6 +741,202 @@ public sealed partial class MainWindow : Window
             ArchiveQuotaInfoBar.Title = "Archive budget status unavailable";
             ArchiveQuotaInfoBar.Message = exception.Message;
         }
+    }
+
+    private void ConfigureSystemActivityTimer()
+    {
+        if (_systemActivityTimer is not null)
+        {
+            return;
+        }
+        _systemActivityTimer = DispatcherQueue.CreateTimer();
+        _systemActivityTimer.Interval = TimeSpan.FromSeconds(10);
+        _systemActivityTimer.IsRepeating = true;
+        _systemActivityTimer.Tick += async (_, _) =>
+        {
+            if (SystemPage.Visibility == Visibility.Visible)
+            {
+                await RefreshSystemActivityAsync();
+            }
+        };
+        _systemActivityTimer.Start();
+    }
+
+    private async void RefreshSystemActivity_Click(object sender, RoutedEventArgs e) =>
+        await RefreshSystemActivityAsync();
+
+    private async Task RefreshSystemActivityAsync()
+    {
+        if (_worker is null
+            || SystemActivityInfoBar is null
+            || _refreshingSystemActivity)
+        {
+            return;
+        }
+        _refreshingSystemActivity = true;
+        RefreshSystemActivityButton.IsEnabled = false;
+        try
+        {
+            using var cancellation = new CancellationTokenSource(
+                TimeSpan.FromSeconds(8));
+            var status = await _worker.GetCoordinatedActivityStatusAsync(
+                cancellation.Token);
+            if (status is null)
+            {
+                throw new InvalidOperationException(
+                    "The coordinated status worker returned no result.");
+            }
+
+            var quotaStatuses = new List<ArchiveQuotaStatus>();
+            IReadOnlyList<string> profileIds = _worker.AuthorizedAccountPoolEnabled
+                ? _worker.AvailableAccountProfileIds()
+                : new[] { "default" };
+            foreach (var profileId in profileIds)
+            {
+                var quota = await _worker.GetArchiveQuotaStatusAsync(
+                    cancellation.Token,
+                    profileId);
+                if (quota is not null)
+                {
+                    quotaStatuses.Add(quota);
+                }
+            }
+            var localSchedules = await _worker.ListFeedSchedulesAsync(
+                cancellation.Token);
+
+            var acquisition = status.Activity.Acquisition;
+            if (acquisition is not null)
+            {
+                var node = CoordinatedNodeLabel(acquisition);
+                var profile = AccountProfileFromQuotaScope(
+                    acquisition.QuotaScope);
+                SystemAcquisitionText.Text =
+                    $"{node} is downloading feed {acquisition.FeedId} for {acquisition.ArchiveDate} using account profile {profile}.";
+                var matchingQuota = quotaStatuses.FirstOrDefault(value =>
+                    value.AccountProfileId.Equals(
+                        profile,
+                        StringComparison.OrdinalIgnoreCase));
+                SystemAcquisitionDetailText.Text = matchingQuota is null
+                    ? "The renewable global lease is active. Other nodes defer the same website stream and reuse its retained blocks."
+                    : $"{matchingQuota.Used}/{matchingQuota.AutomatedLimit} automated requests used in this account's rolling window; {matchingQuota.Remaining} remain. Other nodes defer the same website stream and reuse its retained blocks.";
+            }
+            else
+            {
+                SystemAcquisitionText.Text =
+                    "No coordinated website download is active at this moment.";
+                SystemAcquisitionDetailText.Text =
+                    "Saved schedules and retained missing days remain listed below. Cached and LAN-reused blocks do not consume an account allowance.";
+            }
+
+            var processing = status.Activity.Processing;
+            SystemProcessingText.Text = processing.Count == 0
+                ? "No coordinated model/day lease is active."
+                : string.Join(
+                    Environment.NewLine,
+                    processing.Select(value =>
+                        $"• {CoordinatedNodeLabel(value)} · feed {value.FeedId} · {value.ArchiveDate}"));
+
+            SystemQuotaText.Text = quotaStatuses.Count == 0
+                ? "No account allowance status was returned."
+                : string.Join(
+                    Environment.NewLine,
+                    quotaStatuses.Select(value =>
+                        $"• {value.AccountProfileId}: {value.Used}/{value.AutomatedLimit} used · {value.Remaining} remaining"
+                        + (value.Blocked ? " · waiting for rolling release" : " · available")));
+
+            var coordinatorSchedules = status.Scheduler.Schedules;
+            var scheduleLines = new List<string>();
+            var activeSchedule = status.Scheduler.Active;
+            if (activeSchedule is not null)
+            {
+                var stage = string.IsNullOrWhiteSpace(activeSchedule.Stage)
+                    ? activeSchedule.Phase
+                    : activeSchedule.Stage;
+                var archiveDate = string.IsNullOrWhiteSpace(activeSchedule.ArchiveDate)
+                    ? ""
+                    : $" · {activeSchedule.ArchiveDate}";
+                var progress = activeSchedule.Total > 0
+                    ? $" · {activeSchedule.Current}/{activeSchedule.Total}"
+                    : "";
+                scheduleLines.Add(
+                    $"• Coordinator active · {activeSchedule.FeedName} ({activeSchedule.FeedId})"
+                    + $" · {stage}{archiveDate}{progress}"
+                    + $" · account {activeSchedule.AccountProfileId}");
+            }
+            scheduleLines.AddRange(localSchedules
+                .Where(value => value.Enabled)
+                .Select(value =>
+                    $"• Windows · {value.FeedName} ({value.FeedId}) · {value.State}"));
+            scheduleLines.AddRange(coordinatorSchedules
+                .Where(value => value.Enabled)
+                .Select(value =>
+                    $"• Coordinator · {value.FeedName} ({value.FeedId}) · {value.State}"
+                    + (string.IsNullOrWhiteSpace(value.Message)
+                        ? ""
+                        : $" · {value.Message}")));
+            SystemSchedulesText.Text = scheduleLines.Count == 0
+                ? "No enabled Windows or coordinator schedules were reported."
+                : string.Join(Environment.NewLine, scheduleLines);
+
+            var activeLabel = acquisition is not null
+                ? $"Feed {acquisition.FeedId} acquisition is active"
+                : processing.Count > 0
+                    ? $"{processing.Count} model/day claim{(processing.Count == 1 ? " is" : "s are")} active"
+                    : activeSchedule is not null
+                        ? $"Feed {activeSchedule.FeedId} {activeSchedule.Phase} is active"
+                    : "Coordinated workers are between active leases";
+            SystemActivityInfoBar.Severity = status.Connected
+                ? acquisition is not null
+                    ? InfoBarSeverity.Success
+                    : InfoBarSeverity.Informational
+                : InfoBarSeverity.Warning;
+            SystemActivityInfoBar.Title = status.Connected
+                ? activeLabel
+                : "The coordinated activity surface is unavailable";
+            SystemActivityInfoBar.Message = status.Connected
+                ? $"Connected to {status.CoordinatorUrl}. This view refreshes every 10 seconds while open."
+                : status.Error;
+        }
+        catch (OperationCanceledException)
+        {
+            SystemActivityInfoBar.Severity = InfoBarSeverity.Warning;
+            SystemActivityInfoBar.Title = "Coordinated activity check timed out";
+            SystemActivityInfoBar.Message =
+                "The existing workers were not stopped; use Refresh to check again.";
+        }
+        catch (Exception exception)
+        {
+            SystemActivityInfoBar.Severity = InfoBarSeverity.Warning;
+            SystemActivityInfoBar.Title = "Coordinated activity status unavailable";
+            SystemActivityInfoBar.Message = exception.Message;
+        }
+        finally
+        {
+            _refreshingSystemActivity = false;
+            RefreshSystemActivityButton.IsEnabled = true;
+        }
+    }
+
+    private static string AccountProfileFromQuotaScope(string quotaScope)
+    {
+        var separator = quotaScope.LastIndexOf('.');
+        return separator >= 0 && separator + 1 < quotaScope.Length
+            ? quotaScope[(separator + 1)..]
+            : string.IsNullOrWhiteSpace(quotaScope)
+                ? "default"
+                : quotaScope;
+    }
+
+    private static string CoordinatedNodeLabel(CoordinatedWorkLease activity)
+    {
+        if (Uri.TryCreate(activity.ProducerUrl, UriKind.Absolute, out var uri)
+            && !string.IsNullOrWhiteSpace(uri.Host))
+        {
+            return uri.Host;
+        }
+        return activity.OwnerNodeId.Length > 10
+            ? $"node {activity.OwnerNodeId[..10]}"
+            : $"node {activity.OwnerNodeId}";
     }
 
     private void NavigateTo(NavigationViewItem item)
@@ -1441,6 +1645,7 @@ public sealed partial class MainWindow : Window
         foreach (var page in new FrameworkElement[]
                  {
                      LibraryPage,
+                     SystemPage,
                      ArchivePage,
                      ReviewPage,
                      AreaPage,
@@ -1673,6 +1878,7 @@ public sealed partial class MainWindow : Window
     {
         _settingsSaveTimer?.Stop();
         _feedScheduleTimer?.Stop();
+        _systemActivityTimer?.Stop();
         _pipelineCancellation?.Cancel();
         _operationCancellation?.Cancel();
         _questionCancellation?.Cancel();
@@ -6186,6 +6392,17 @@ public sealed partial class MainWindow : Window
             {
                 automatic ? "default" : schedule.AccountProfileId,
             };
+        var pooledAcquisition = automatic
+            && _worker.AuthorizedAccountPoolEnabled
+            && profileIds.Count > 1;
+        var acquisitionJob = pooledAcquisition
+            ? schedule.Job with
+            {
+                Combine = false,
+                Transcribe = false,
+                Diarize = false,
+            }
+            : schedule.Job;
         var statuses = new List<ArchiveQuotaStatus>();
         foreach (var profileId in profileIds)
         {
@@ -6204,26 +6421,32 @@ public sealed partial class MainWindow : Window
             .ToList();
         JobRunResult? lastResult = null;
         Exception? lastFailure = null;
+        string? processingProfileId = null;
         foreach (var status in eligible)
         {
             try
             {
                 AppendLog(
-                    $"Scheduled catch-up is using account profile {status.AccountProfileId} "
+                    $"Scheduled catch-up acquisition is using account profile {status.AccountProfileId} "
                     + $"({status.Remaining}/{status.AutomatedLimit} automated requests available)."
                 );
                 lastResult = await RunAndAnalyzeJobAsync(
-                    schedule.Job,
+                    acquisitionJob,
                     cancellationToken,
-                    schedule.Analyze,
+                    pooledAcquisition ? false : schedule.Analyze,
                     status.AccountProfileId);
+                processingProfileId = status.AccountProfileId;
                 if (lastResult?.DownloadLimited != true)
                 {
-                    return (
-                        lastResult,
-                        false,
-                        "",
-                        $"Scheduled feed run completed with account profile {status.AccountProfileId}.");
+                    if (!pooledAcquisition)
+                    {
+                        return (
+                            lastResult,
+                            false,
+                            "",
+                            $"Scheduled feed run completed with account profile {status.AccountProfileId}.");
+                    }
+                    break;
                 }
                 var refreshed = await _worker.GetArchiveQuotaStatusAsync(
                     CancellationToken.None,
@@ -6252,6 +6475,37 @@ public sealed partial class MainWindow : Window
                 AppendLog(
                     $"Account profile {status.AccountProfileId} could not authenticate; "
                     + "trying the next authorized profile without discarding retained work.");
+            }
+        }
+        if (pooledAcquisition && (lastResult is not null || eligible.Count == 0))
+        {
+            processingProfileId ??= profileIds[0];
+            AppendLog(
+                "Available archive acquisition turns are checkpointed; "
+                + "continuing combination, transcription, speaker labels, and analysis locally "
+                + "while another coordinated machine may take the next website turn.");
+            lastResult = await RunAndAnalyzeJobAsync(
+                schedule.Job,
+                cancellationToken,
+                schedule.Analyze,
+                processingProfileId);
+            if (lastResult?.DownloadLimited != true)
+            {
+                return (
+                    lastResult,
+                    false,
+                    "",
+                    $"Scheduled feed run completed after pooled acquisition with account profile {processingProfileId}.");
+            }
+            var refreshed = await _worker.GetArchiveQuotaStatusAsync(
+                CancellationToken.None,
+                processingProfileId);
+            if (refreshed is not null)
+            {
+                statuses.RemoveAll(value => value.AccountProfileId.Equals(
+                    refreshed.AccountProfileId,
+                    StringComparison.OrdinalIgnoreCase));
+                statuses.Add(refreshed);
             }
         }
         if (lastResult is null && lastFailure is not null && eligible.Count > 0)

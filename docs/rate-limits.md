@@ -56,12 +56,16 @@ Credentials, premium cookies, 429 blocks, request attempts, and next-safe times
 are isolated by the same non-secret account profile ID. The runner never uses a
 default account cookie for a named profile. An automatic catch-up checks local
 cache/LAN state first, selects an eligible profile, and continues retained
-missing work on the next eligible profile only after the current one becomes
-unavailable. It never runs two archive downloads concurrently: `download_jobs`
-remains forced to one and the normal inter-request spacing still applies across
-the whole coding session. In a coordinated Windows/TrueNAS deployment, the
-acquisition coordinator extends that single active stream across machines,
-feeds, dates, and account profiles.
+missing work on the next eligible profile immediately after the current one
+becomes unavailable. Scheduled authorized-pool runs perform these as
+acquisition-only turns before loading or running long local model stages, then
+resume combination, transcription, speaker labeling, and analysis from the
+retained checkpoints. It never runs two archive downloads concurrently:
+`download_jobs` remains forced to one and the normal inter-request spacing still
+applies across the whole coding session. In a coordinated Windows/TrueNAS
+deployment, the acquisition coordinator extends that single active stream
+across machines, feeds, dates, and account profiles while processing claims let
+different machines model different retained feed-days in parallel.
 
 The ledger counts attempts, not just successful files:
 
