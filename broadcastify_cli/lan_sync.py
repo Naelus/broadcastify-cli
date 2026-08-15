@@ -2516,28 +2516,41 @@ class LanArchiveSyncClient:
             if not copied_from_peer:
                 continue
         if completion_manifests:
-            signatures = {
-                tuple(
-                    (
-                        block.filename,
-                        block.size,
-                        block.sha256,
-                        tuple(
-                            (identity.archive_id, identity.listing_prefix)
-                            for identity in block.identities()
-                        ),
-                    )
-                    for block in manifest
+            signed_manifests = [
+                (
+                    manifest,
+                    {
+                        (
+                            block.filename,
+                            block.size,
+                            block.sha256,
+                            tuple(
+                                (
+                                    identity.archive_id,
+                                    identity.listing_prefix,
+                                )
+                                for identity in block.identities()
+                            ),
+                        )
+                        for block in manifest
+                    },
                 )
                 for _peer, manifest in completion_manifests
-            }
-            if len(signatures) != 1:
+            ]
+            completion_blocks, completion_signature = max(
+                signed_manifests,
+                key=lambda value: len(value[1]),
+            )
+            compatible = all(
+                signature.issubset(completion_signature)
+                for _manifest, signature in signed_manifests
+            )
+            if not compatible:
                 conflicts += 1
                 failures.append(
                     "LAN peers disagree on the exact completion proof for this day."
                 )
             else:
-                completion_blocks = completion_manifests[0][1]
                 verified = self.verified_local_blocks(
                     output_root,
                     feed_id,

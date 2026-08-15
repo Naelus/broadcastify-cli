@@ -26,7 +26,10 @@ processing queues, not a public peer-to-peer network:
    filename/size/SHA-256 manifest plus its optional provider archive identities;
    followers assemble and verify that manifest from any combination of peers,
    retain the same identity mapping, then process the day without contacting
-   Broadcastify;
+   Broadcastify. When one peer has a stale completion proof that is an exact
+   subset of another peer's proof, the verified superset safely promotes it;
+   proofs with any divergent filename, hash, size, or provider identity remain
+   a hard conflict;
 8. the producer acquires the newest completed track and the immediately
    previous track before older backlog, then refreshes a feed-local current-day
    listing once before publishing its manifest;

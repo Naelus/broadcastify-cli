@@ -360,6 +360,148 @@ def test_hash_verified_peer_sync_copies_missing_blocks_without_a_session(
         thread.join(timeout=3)
 
 
+def test_peer_sync_promotes_a_compatible_completion_proof_superset(
+    tmp_path: Path,
+) -> None:
+    feed_id = "90001"
+    archive_date = date(2026, 7, 12)
+    smaller = tmp_path / "smaller-peer"
+    larger = tmp_path / "larger-peer"
+    smaller_day = smaller / feed_id / "20260712"
+    larger_day, larger_blocks = _raw_day(larger)
+    smaller_day.mkdir(parents=True)
+    smaller_block = smaller_day / larger_blocks[0].name
+    smaller_block.write_bytes(larger_blocks[0].read_bytes())
+    archive_ids = ["90001-1783140752", "90001-1783142552"]
+    for day, blocks, ids in (
+        (smaller_day, [smaller_block], archive_ids[:1]),
+        (larger_day, larger_blocks, archive_ids),
+    ):
+        for block, archive_id in zip(blocks, ids, strict=True):
+            remember_archive_identity(
+                day,
+                feed_id,
+                archive_date,
+                archive_id,
+                block,
+                listing_prefix=block.name[:12],
+            )
+        assert remember_complete_archive_day(
+            day,
+            feed_id,
+            archive_date,
+            ids,
+        )
+
+    servers = [
+        create_lan_node_server(
+            root,
+            host="127.0.0.1",
+            port=0,
+            discovery_enabled=False,
+        )
+        for root in (smaller, larger)
+    ]
+    threads = [
+        threading.Thread(target=server.serve_forever, daemon=True)
+        for server in servers
+    ]
+    for server, thread in zip(servers, threads, strict=True):
+        server.quiet = True  # type: ignore[attr-defined]
+        thread.start()
+    target = tmp_path / "target"
+    try:
+        result = LanArchiveSyncClient(
+            enabled=True,
+            peer_urls=[
+                f"http://127.0.0.1:{server.server_port}"
+                for server in servers
+            ],
+            discovery_enabled=False,
+        ).sync_day(target, feed_id, archive_date)
+
+        completion = complete_cached_archive_day(
+            target / feed_id / "20260712",
+            feed_id,
+            archive_date,
+        )
+        assert result.failures == ()
+        assert result.conflicts == 0
+        assert result.completion_proven is True
+        assert completion is not None
+        assert completion[1] == 2
+        assert [path.name for path in completion[0]] == [
+            path.name for path in larger_blocks
+        ]
+    finally:
+        for server in servers:
+            server.shutdown()
+            server.server_close()
+        for thread in threads:
+            thread.join(timeout=3)
+
+
+def test_peer_sync_rejects_divergent_completion_proofs(
+    tmp_path: Path,
+) -> None:
+    feed_id = "90001"
+    archive_date = date(2026, 7, 12)
+    roots = [tmp_path / "peer-a", tmp_path / "peer-b"]
+    archive_ids = ["90001-provider-a", "90001-provider-b"]
+    for root, archive_id in zip(roots, archive_ids, strict=True):
+        day, blocks = _raw_day(root)
+        remember_archive_identity(
+            day,
+            feed_id,
+            archive_date,
+            archive_id,
+            blocks[0],
+            listing_prefix=blocks[0].name[:12],
+        )
+        assert remember_complete_archive_day(
+            day,
+            feed_id,
+            archive_date,
+            [archive_id],
+        )
+
+    servers = [
+        create_lan_node_server(
+            root,
+            host="127.0.0.1",
+            port=0,
+            discovery_enabled=False,
+        )
+        for root in roots
+    ]
+    threads = [
+        threading.Thread(target=server.serve_forever, daemon=True)
+        for server in servers
+    ]
+    for server, thread in zip(servers, threads, strict=True):
+        server.quiet = True  # type: ignore[attr-defined]
+        thread.start()
+    try:
+        result = LanArchiveSyncClient(
+            enabled=True,
+            peer_urls=[
+                f"http://127.0.0.1:{server.server_port}"
+                for server in servers
+            ],
+            discovery_enabled=False,
+        ).sync_day(tmp_path / "target", feed_id, archive_date)
+
+        assert result.completion_proven is False
+        assert result.conflicts == 1
+        assert any("completion proof" in value for value in result.failures)
+    finally:
+        for server in servers:
+            server.shutdown()
+            server.server_close()
+        for thread in threads:
+            thread.join(timeout=3)
+
+
 def test_followed_feed_reconciliation_converges_month_and_few_day_nodes(
     tmp_path: Path,
 ) -> None:
