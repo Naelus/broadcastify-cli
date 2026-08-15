@@ -79,8 +79,9 @@ The trusted-LAN workflow proves that:
 
 Native UI and release contracts remain in the full suite. They cover the About
 version surface, media-player detachment before deletion, nonmodal completion,
-startup recovery, version consistency, immutable commit metadata, private-file
-exclusion, and installer data preservation.
+startup recovery, maintenance-close versus explicit-cancel schedule semantics,
+version consistency, immutable commit metadata, private-file exclusion, and
+installer data preservation.
 
 After the offline suite passes and the native executable is compiled, every
 desktop build launches that just-built executable in an isolated test-data

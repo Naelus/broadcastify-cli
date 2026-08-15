@@ -82,6 +82,8 @@ public sealed partial class MainWindow : Window
     private int _librarySelectionVersion;
     private bool _broadcastifyRateLimitObserved;
     private bool _loadingSettings = true;
+    private bool _windowClosed;
+    private bool _scheduledCancellationRequestedByUser;
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _settingsSaveTimer;
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _feedScheduleTimer;
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _systemActivityTimer;
@@ -1931,6 +1933,7 @@ public sealed partial class MainWindow : Window
 
     private void MainWindow_Closed(object sender, WindowEventArgs args)
     {
+        _windowClosed = true;
         _settingsSaveTimer?.Stop();
         _feedScheduleTimer?.Stop();
         _systemActivityTimer?.Stop();
@@ -6343,6 +6346,7 @@ public sealed partial class MainWindow : Window
                 return;
             }
             var pipeline = new CancellationTokenSource();
+            _scheduledCancellationRequestedByUser = false;
             _pipelineCancellation = pipeline;
             _activePipelineFeedIds.Add(schedule.FeedId);
             ownsOperation = true;
@@ -6381,13 +6385,17 @@ public sealed partial class MainWindow : Window
         {
             if (schedule is not null)
             {
+                var resumeAfterRestart = _windowClosed
+                    && !_scheduledCancellationRequestedByUser;
                 await _worker.FinishFeedScheduleAsync(
                     new FeedScheduleFinishRequest
                     {
                         ScheduleId = schedule.Id,
                         DueDate = schedule.DueDate,
-                        Status = "canceled",
-                        Message = "Scheduled run canceled.",
+                        Status = resumeAfterRestart ? "deferred" : "canceled",
+                        Message = resumeAfterRestart
+                            ? "The app closed after checkpointing this scheduled run; resuming from retained work after restart."
+                            : "Scheduled run canceled.",
                     },
                     CancellationToken.None);
             }
@@ -6421,6 +6429,7 @@ public sealed partial class MainWindow : Window
                 await RefreshArchiveQuotaStatusAsync();
             }
             _checkingFeedSchedule = false;
+            _scheduledCancellationRequestedByUser = false;
             await RefreshFeedScheduleStatusAsync();
         }
     }
@@ -6817,6 +6826,10 @@ public sealed partial class MainWindow : Window
 
     private void Cancel_Click(object sender, RoutedEventArgs e)
     {
+        if (_checkingFeedSchedule && _pipelineCancellation is not null)
+        {
+            _scheduledCancellationRequestedByUser = true;
+        }
         _pipelineCancellation?.Cancel();
         _operationCancellation?.Cancel();
         _questionCancellation?.Cancel();

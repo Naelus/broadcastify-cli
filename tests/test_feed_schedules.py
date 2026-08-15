@@ -229,6 +229,39 @@ def test_failed_schedule_retries_same_day_after_bounded_backoff(tmp_path: Path) 
         assert retried["due_date"] == "2026-07-23"
 
 
+def test_maintenance_defer_retries_but_explicit_cancel_is_final(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "analysis.sqlite3"
+    now = datetime(2026, 7, 23, 3, 0, tzinfo=timezone(timedelta(hours=-5)))
+
+    with AnalysisStore(database) as store:
+        saved = store.save_feed_schedule(_payload())
+        assert store.claim_due_feed_schedule(now=now) is not None
+
+        deferred = store.finish_feed_schedule(
+            int(saved["id"]),
+            due_date="2026-07-23",
+            status="deferred",
+            message="The app closed after checkpointing this scheduled run.",
+            now=now,
+        )
+        assert deferred["last_run_date"] == ""
+        assert store.claim_due_feed_schedule(now=now + timedelta(minutes=4)) is None
+
+        retried = store.claim_due_feed_schedule(now=now + timedelta(minutes=6))
+        assert retried is not None
+        canceled = store.finish_feed_schedule(
+            int(saved["id"]),
+            due_date="2026-07-23",
+            status="canceled",
+            message="Scheduled run canceled.",
+            now=now + timedelta(minutes=6),
+        )
+        assert canceled["last_run_date"] == "2026-07-23"
+        assert store.claim_due_feed_schedule(now=now + timedelta(hours=1)) is None
+
+
 def test_recurring_catch_up_keeps_boundary_after_success_and_rechecks_next_day(
     tmp_path: Path,
 ) -> None:

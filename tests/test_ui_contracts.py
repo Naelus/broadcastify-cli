@@ -762,6 +762,10 @@ def test_windows_startup_is_visible_configurable_and_recovery_aware() -> None:
     assert "Combine = false" in window
     assert "MaxProcessingDays = 1" in window
     assert "MaxProcessingDays = null" in window
+    assert "_windowClosed = true;" in window
+    assert "_scheduledCancellationRequestedByUser = true;" in window
+    assert 'Status = resumeAfterRestart ? "deferred" : "canceled"' in window
+    assert "The app closed after checkpointing this scheduled run" in window
     assert "Available archive acquisition turns are checkpointed" in window
     assert "Coordinator active" in window
     assert "activeSchedule.AccountProfileId" in window
