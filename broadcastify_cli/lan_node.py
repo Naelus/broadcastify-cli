@@ -20,9 +20,12 @@ from .lan_sync import (
     LAN_PROTOCOL,
     LAN_QUEUE_REQUEST_BYTES,
     LanArchiveCatalog,
+    LanArchiveReconciler,
+    LanArchiveSyncClient,
     LanDiscoveryResponder,
     LanSyncError,
     environment_flag,
+    environment_float,
     normalize_peer_url,
     normalize_peer_urls,
 )
@@ -133,6 +136,7 @@ def create_lan_node_server(
     peer_urls: str | tuple[str, ...] | list[str] | None = None,
     discovery_enabled: bool = True,
     advertise_url: str = "",
+    background_sync_enabled: bool = False,
 ) -> ThreadingHTTPServer:
     host = validate_lan_host(host)
     catalog = LanArchiveCatalog(
@@ -213,7 +217,11 @@ def create_lan_node_server(
                 return
             self._authorize()
             if parsed.path == "/api/lan/v1/info":
-                self._json(HTTPStatus.OK, catalog.info())
+                info = catalog.info()
+                reconciler = getattr(self.server, "lan_reconciler", None)
+                if reconciler is not None:
+                    info["reconciliation"] = reconciler.status()
+                self._json(HTTPStatus.OK, info)
                 return
             if parsed.path == "/api/lan/v1/feed-days":
                 query = parse_qs(parsed.query)
@@ -640,6 +648,9 @@ def create_lan_node_server(
         daemon_threads = True
 
         def server_close(self) -> None:
+            reconciler = getattr(self, "lan_reconciler", None)
+            if reconciler is not None:
+                reconciler.close()
             responder = getattr(self, "lan_discovery", None)
             if responder is not None:
                 responder.close()
@@ -649,6 +660,7 @@ def create_lan_node_server(
     server.catalog = catalog  # type: ignore[attr-defined]
     server.quiet = False  # type: ignore[attr-defined]
     server.lan_discovery = None  # type: ignore[attr-defined]
+    server.lan_reconciler = None  # type: ignore[attr-defined]
     configured_advertisement = str(
         advertise_url or os.getenv("BROADCASTIFY_LAN_ADVERTISE_URL") or ""
     ).strip()
@@ -671,6 +683,25 @@ def create_lan_node_server(
         responder = LanDiscoveryResponder(catalog, url_for_remote)
         responder.start()
         server.lan_discovery = responder  # type: ignore[attr-defined]
+    if background_sync_enabled and catalog.enabled:
+        reconciler = LanArchiveReconciler(
+            catalog.output_dir,
+            LanArchiveSyncClient(
+                enabled=True,
+                peer_urls=catalog.peer_urls,
+                discovery_enabled=discovery_enabled,
+                sync_key=catalog.sync_key,
+                queue_enabled=False,
+            ),
+            poll_seconds=environment_float(
+                "BROADCASTIFY_LAN_RECONCILE_SECONDS",
+                5 * 60.0,
+                minimum=30.0,
+                maximum=60 * 60.0,
+            ),
+        )
+        server.lan_reconciler = reconciler  # type: ignore[attr-defined]
+        reconciler.start()
     return server
 
 
@@ -713,6 +744,10 @@ def main() -> int:
             )
         ),
         advertise_url=arguments.advertise_url,
+        background_sync_enabled=environment_flag(
+            "BROADCASTIFY_LAN_BACKGROUND_SYNC",
+            default=True,
+        ),
     )
     _start_parent_watchdog(server, arguments.parent_pid)
     print(

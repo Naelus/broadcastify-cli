@@ -1888,8 +1888,53 @@ internal sealed record CoordinatedActivityStatus
     [JsonPropertyName("scheduler")]
     public CoordinatedSchedulerStatus Scheduler { get; init; } = new();
 
+    [JsonPropertyName("reconciliation")]
+    public CoordinatedReconciliationStatus Reconciliation { get; init; } = new();
+
+    [JsonPropertyName("local_node_url")]
+    public string LocalNodeUrl { get; init; } = "";
+
+    [JsonPropertyName("local_reconciliation")]
+    public CoordinatedReconciliationStatus LocalReconciliation { get; init; } = new();
+
     [JsonPropertyName("error")]
     public string Error { get; init; } = "";
+}
+
+internal sealed record CoordinatedReconciliationStatus
+{
+    [JsonPropertyName("enabled")]
+    public bool Enabled { get; init; }
+
+    [JsonPropertyName("running")]
+    public bool Running { get; init; }
+
+    [JsonPropertyName("active_feed_id")]
+    public string ActiveFeedId { get; init; } = "";
+
+    [JsonPropertyName("last_started_at")]
+    public string LastStartedAt { get; init; } = "";
+
+    [JsonPropertyName("last_finished_at")]
+    public string LastFinishedAt { get; init; } = "";
+
+    [JsonPropertyName("feeds_considered")]
+    public int FeedsConsidered { get; init; }
+
+    [JsonPropertyName("days_considered")]
+    public int DaysConsidered { get; init; }
+
+    [JsonPropertyName("blocks_copied")]
+    public int BlocksCopied { get; init; }
+
+    [JsonPropertyName("transcript_artifacts_copied")]
+    public int TranscriptArtifactsCopied { get; init; }
+
+    [JsonPropertyName("bytes_copied")]
+    public long BytesCopied { get; init; }
+
+    [JsonPropertyName("failures")]
+    public List<string> Failures { get; init; } = [];
 }
 
 internal sealed record CoordinatedWorkActivity

@@ -503,7 +503,7 @@
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                             <StackPanel Spacing="4">
                                 <TextBlock Text="System activity" Style="{StaticResource TitleTextBlockStyle}" />
-                                <TextBlock Text="See Windows and TrueNAS acquisition, model work, account allowance, and saved schedules from one place."
+                                <TextBlock Text="See Windows and TrueNAS acquisition, model work, LAN artifact convergence, account allowance, and saved schedules from one place."
                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
                             </StackPanel>
                             <Button x:Name="RefreshSystemActivityButton" Grid.Column="1" Content="Refresh"
@@ -530,6 +530,16 @@
                                         <TextBlock x:Name="SystemProcessingText" Text="Checking active model/day claims…"
                                                    TextWrapping="Wrap" IsTextSelectionEnabled="True" />
                                         <TextBlock Text="Different retained feed-days may run on different machines; an identical model/day remains single-owner."
+                                                   TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                    </StackPanel>
+                                </Border>
+                                <Border Style="{StaticResource CardBorderStyle}" Padding="18">
+                                    <StackPanel Spacing="6">
+                                        <TextBlock Text="LAN artifact convergence" Style="{StaticResource SubtitleTextBlockStyle}" />
+                                        <TextBlock x:Name="SystemReconciliationText"
+                                                   Text="Checking Windows and coordinator reconciliation…"
+                                                   TextWrapping="Wrap" IsTextSelectionEnabled="True" />
+                                        <TextBlock Text="This provider-free pass moves retained raw blocks and every complete model variant between hosts while other work continues."
                                                    TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                     </StackPanel>
                                 </Border>

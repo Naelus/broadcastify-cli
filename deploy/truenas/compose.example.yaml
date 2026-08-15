@@ -60,6 +60,8 @@ services:
       BROADCASTIFY_LAN_SHARING: "true"
       BROADCASTIFY_LAN_DISCOVERY_ENABLED: "true"
       BROADCASTIFY_LAN_QUEUE_ENABLED: "true"
+      BROADCASTIFY_LAN_BACKGROUND_SYNC: "true"
+      BROADCASTIFY_LAN_RECONCILE_SECONDS: "300"
       BROADCASTIFY_LAN_QUOTA_SCOPE: "default"
       # This service is the shared acquisition/model coordinator. Windows
       # clients also point BROADCASTIFY_LAN_QUOTA_COORDINATOR here; this local

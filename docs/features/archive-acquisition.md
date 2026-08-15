@@ -198,12 +198,16 @@ snapshot; the snapshot itself does not need to be shared.
 
 At every LAN-enabled job start, feed-wide reconciliation discovers all dates a
 peer retained for the selected feed, not only the current job's recent window.
-Equivalent model output travels as combined audio (when present), its exact
-timeline manifest, transcript JSON, and rendered text. A per-fingerprint/day
-processing lease prevents two machines from running the same work; different
-days remain eligible for parallel model processing. Scheduled jobs defer an
-active peer-owned acquisition or model/day immediately and retry it from
-retained state on a later pass.
+The long-running Windows node and browser/TrueNAS host also repeat this
+LAN-only convergence independently of archive/model jobs, every five minutes
+by default. Thus a transcript completed by one host appears on the other while
+a long, unrelated model stage is still active; the pass cannot contact the
+provider or consume quota. Equivalent model output travels as combined audio
+(when present), its exact timeline manifest, transcript JSON, and rendered
+text. A per-fingerprint/day processing lease prevents two machines from running
+the same work; different days remain eligible for parallel model processing.
+Scheduled jobs defer an active peer-owned acquisition or model/day immediately
+and retry it from retained state on a later pass.
 
 Broadcastify source labels can drift slightly across midnight even when the
 track belongs to the prior website archive page. LAN manifests accept that

@@ -44,6 +44,8 @@ from .credential_store import CredentialStoreError, EncryptedCredentialStore
 from .lan_sync import (
     LAN_PROTOCOL,
     LanArchiveCatalog,
+    LanArchiveReconciler,
+    LanArchiveSyncClient,
     LanDiscoveryResponder,
     LanSyncError,
     normalize_peer_url,
@@ -1312,6 +1314,7 @@ class WebAppState:
     access_scope: str
     loopback_only: bool
     lan_catalog: LanArchiveCatalog
+    lan_reconciler: LanArchiveReconciler
     credential_store: EncryptedCredentialStore
 
 
@@ -1525,6 +1528,7 @@ def create_server(
     port: int = 8765,
     working_dir: str | Path | None = None,
     credential_store_path: str | Path | None = None,
+    background_sync_enabled: bool = False,
 ) -> ThreadingHTTPServer:
     host = validate_bind_host(host)
     access_scope = bind_scope(host)
@@ -1563,6 +1567,37 @@ def create_server(
             default=True,
         ),
     )
+    lan_discovery_enabled = _environment_flag(
+        readiness_values,
+        "BROADCASTIFY_LAN_DISCOVERY_ENABLED",
+        default=True,
+    )
+    try:
+        lan_reconcile_seconds = float(
+            readiness_values.get("BROADCASTIFY_LAN_RECONCILE_SECONDS")
+            or 5 * 60.0
+        )
+    except ValueError:
+        lan_reconcile_seconds = 5 * 60.0
+    lan_reconciler = LanArchiveReconciler(
+        root,
+        LanArchiveSyncClient(
+            enabled=lan_catalog.enabled,
+            peer_urls=lan_catalog.peer_urls,
+            discovery_enabled=lan_discovery_enabled,
+            sync_key=lan_catalog.sync_key,
+            queue_enabled=False,
+        ),
+        enabled=(
+            background_sync_enabled
+            and _environment_flag(
+                readiness_values,
+                "BROADCASTIFY_LAN_BACKGROUND_SYNC",
+                default=True,
+            )
+        ),
+        poll_seconds=min(60 * 60.0, max(30.0, lan_reconcile_seconds)),
+    )
     credential_store = (
         EncryptedCredentialStore(credential_store_path)
         if credential_store_path is not None
@@ -1582,6 +1617,7 @@ def create_server(
         access_scope=access_scope,
         loopback_only=loopback_only,
         lan_catalog=lan_catalog,
+        lan_reconciler=lan_reconciler,
         credential_store=credential_store,
     )
 
@@ -1639,6 +1675,7 @@ def create_server(
                 self._require_lan_access()
                 info = state.lan_catalog.info()
                 info["scheduler"] = state.scheduler.status()
+                info["reconciliation"] = state.lan_reconciler.status()
                 self._json(HTTPStatus.OK, info)
                 return
             if parsed.path == "/api/lan/v1/feed-days":
@@ -2661,6 +2698,7 @@ def create_server(
 
         def server_close(self) -> None:
             state.scheduler.close()
+            state.lan_reconciler.close()
             responder = getattr(self, "lan_discovery", None)
             if responder is not None:
                 responder.close()
@@ -2671,11 +2709,7 @@ def create_server(
     server.quiet = False  # type: ignore[attr-defined]
     server.lan_discovery = None  # type: ignore[attr-defined]
     state.scheduler.start()
-    if state.lan_catalog.enabled and _environment_flag(
-        readiness_values,
-        "BROADCASTIFY_LAN_DISCOVERY_ENABLED",
-        default=True,
-    ):
+    if state.lan_catalog.enabled and lan_discovery_enabled:
         def advertised_url(remote_address: str) -> str:
             if configured_advertisement:
                 return configured_advertisement
@@ -2697,6 +2731,7 @@ def create_server(
         )
         responder.start()
         server.lan_discovery = responder  # type: ignore[attr-defined]
+    state.lan_reconciler.start()
     return server
 
 
@@ -2745,6 +2780,7 @@ def run_web_app(
         working_dir=working_dir,
         host=host,
         port=port,
+        background_sync_enabled=True,
     )
     bound_host, bound_port = server.server_address[:2]
     display_host = (

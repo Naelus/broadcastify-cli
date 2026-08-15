@@ -6,6 +6,7 @@ import json
 import os
 import socket
 import threading
+import time
 from datetime import date, timedelta
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -140,6 +141,16 @@ def _force_unusable_system_proxy(monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv(name, "http://127.0.0.1:1")
     monkeypatch.setenv("NO_PROXY", "")
     monkeypatch.setenv("no_proxy", "")
+
+
+def _lan_info(port: int) -> tuple[int, dict[str, object]]:
+    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+    connection.request("GET", "/api/lan/v1/info")
+    response = connection.getresponse()
+    status = response.status
+    payload = json.loads(response.read())
+    connection.close()
+    return status, payload
 
 
 def test_remote_quota_ledger_counts_once_at_the_lan_coordinator_and_fails_closed(
@@ -979,6 +990,34 @@ def test_coordinated_status_validation_rejects_unsafe_peer_values() -> None:
             "message": "retained work",
         }
     ]
+
+    reconciliation = LanArchiveSyncClient._validate_reconciliation_surface(
+        {
+            "enabled": True,
+            "running": True,
+            "active_feed_id": "../../secrets",
+            "last_started_at": " 2026-08-15T04:00:00-05:00 ",
+            "feeds_considered": -3,
+            "days_considered": "89",
+            "blocks_copied": object(),
+            "transcript_artifacts_copied": "8",
+            "bytes_copied": "190000000",
+            "failures": ["  peer   unavailable  ", object()],
+        }
+    )
+    assert reconciliation == {
+        "enabled": True,
+        "running": True,
+        "active_feed_id": "",
+        "last_started_at": "2026-08-15T04:00:00-05:00",
+        "last_finished_at": "",
+        "feeds_considered": 0,
+        "days_considered": 89,
+        "blocks_copied": 0,
+        "transcript_artifacts_copied": 8,
+        "bytes_copied": 190000000,
+        "failures": ["peer unavailable"],
+    }
 
 
 def test_lan_clients_claim_different_model_days_without_duplicate_work(
@@ -1981,3 +2020,157 @@ def test_lan_result_remains_serializable_for_worker_events() -> None:
     )
 
     assert json.loads(json.dumps(result.to_dict()))["blocks_copied"] == 3
+
+
+def test_native_lan_node_continuously_reconciles_peer_artifacts(
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "source"
+    target_root = tmp_path / "target"
+    feed_id = "90001"
+    archive_date = date(2026, 7, 12)
+    fingerprint = "a" * 64
+    _retained_transcribed_feed_day(
+        source_root,
+        feed_id,
+        archive_date,
+        fingerprint,
+    )
+    (target_root / feed_id).mkdir(parents=True)
+    source = create_lan_node_server(
+        source_root,
+        host="127.0.0.1",
+        port=0,
+        discovery_enabled=False,
+    )
+    source.quiet = True  # type: ignore[attr-defined]
+    source_thread = threading.Thread(target=source.serve_forever, daemon=True)
+    source_thread.start()
+    target = create_lan_node_server(
+        target_root,
+        host="127.0.0.1",
+        port=0,
+        peer_urls=[f"http://127.0.0.1:{source.server_port}"],
+        discovery_enabled=False,
+        background_sync_enabled=True,
+    )
+    target.quiet = True  # type: ignore[attr-defined]
+    target_thread = threading.Thread(target=target.serve_forever, daemon=True)
+    target_thread.start()
+    copied_transcript = (
+        target_root
+        / feed_id
+        / archive_date.strftime("%Y%m%d")
+        / "transcripts"
+        / f"combined_{feed_id}_{archive_date:%Y%m%d}.json"
+    )
+    try:
+        deadline = time.monotonic() + 10
+        while not copied_transcript.is_file() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert copied_transcript.is_file()
+
+        deadline = time.monotonic() + 10
+        status = 0
+        payload: dict[str, object] = {}
+        while time.monotonic() < deadline:
+            status, payload = _lan_info(target.server_port)
+            if payload["reconciliation"]["last_finished_at"]:  # type: ignore[index]
+                break
+            time.sleep(0.05)
+        assert status == HTTPStatus.OK
+        assert payload["reconciliation"]["enabled"] is True
+        assert payload["reconciliation"]["last_finished_at"]
+        assert payload["reconciliation"]["blocks_copied"] == 1
+        assert (
+            payload["reconciliation"]["transcript_artifacts_copied"]
+            == 4
+        )
+        assert payload["reconciliation"]["failures"] == []
+    finally:
+        target.shutdown()
+        target.server_close()
+        target_thread.join(timeout=3)
+        source.shutdown()
+        source.server_close()
+        source_thread.join(timeout=3)
+
+
+def test_web_host_continuously_reconciles_peer_artifacts(
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "source"
+    target_root = tmp_path / "target"
+    working_dir = tmp_path / "work"
+    working_dir.mkdir()
+    feed_id = "90001"
+    archive_date = date(2026, 7, 13)
+    _retained_transcribed_feed_day(
+        source_root,
+        feed_id,
+        archive_date,
+        "b" * 64,
+    )
+    (target_root / feed_id).mkdir(parents=True)
+    source = create_lan_node_server(
+        source_root,
+        host="127.0.0.1",
+        port=0,
+        discovery_enabled=False,
+    )
+    source.quiet = True  # type: ignore[attr-defined]
+    source_thread = threading.Thread(target=source.serve_forever, daemon=True)
+    source_thread.start()
+    (working_dir / ".env").write_text(
+        "BROADCASTIFY_LAN_SHARING=true\n"
+        f"BROADCASTIFY_LAN_PEERS=http://127.0.0.1:{source.server_port}\n"
+        "BROADCASTIFY_LAN_DISCOVERY_ENABLED=false\n",
+        encoding="utf-8",
+    )
+    target = create_server(
+        target_root,
+        host="127.0.0.1",
+        port=0,
+        working_dir=working_dir,
+        background_sync_enabled=True,
+    )
+    target.quiet = True  # type: ignore[attr-defined]
+    target_thread = threading.Thread(target=target.serve_forever, daemon=True)
+    target_thread.start()
+    copied_transcript = (
+        target_root
+        / feed_id
+        / archive_date.strftime("%Y%m%d")
+        / "transcripts"
+        / f"combined_{feed_id}_{archive_date:%Y%m%d}.json"
+    )
+    try:
+        deadline = time.monotonic() + 10
+        while not copied_transcript.is_file() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert copied_transcript.is_file()
+
+        deadline = time.monotonic() + 10
+        status = 0
+        payload: dict[str, object] = {}
+        while time.monotonic() < deadline:
+            status, payload = _lan_info(target.server_port)
+            if payload["reconciliation"]["last_finished_at"]:  # type: ignore[index]
+                break
+            time.sleep(0.05)
+        assert status == HTTPStatus.OK
+        assert payload["reconciliation"]["enabled"] is True
+        assert payload["reconciliation"]["last_finished_at"]
+        assert payload["reconciliation"]["blocks_copied"] == 1
+        assert (
+            payload["reconciliation"]["transcript_artifacts_copied"]
+            == 4
+        )
+        assert payload["reconciliation"]["failures"] == []
+    finally:
+        target.shutdown()
+        target.server_close()
+        target_thread.join(timeout=3)
+        source.shutdown()
+        source.server_close()
+        source_thread.join(timeout=3)

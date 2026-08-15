@@ -37,8 +37,11 @@ processing queues, not a public peer-to-peer network:
     quota-limit result suppresses retries for that exact account profile until
     its next known rolling-window release without blocking another authorized
     account from taking the next sequential turn;
-11. each run also reconciles every peer-retained date for the followed feed,
-    and quota-paused schedules repeat that retained-only pass every five minutes.
+11. each run also reconciles every peer-retained date for the followed feed.
+    In addition, the long-running Windows node and browser/TrueNAS host perform
+    the same LAN-only followed-feed convergence at startup and every five
+    minutes, including while an unrelated model job is active. This background
+    pass cannot contact Broadcastify or spend archive quota.
     Peers advertise a bounded list of every processing fingerprint with a
     complete retained artifact set. The client automatically pulls each model's
     combined audio, time-mapping manifest, transcript JSON, and rendered text as
@@ -149,6 +152,8 @@ BROADCASTIFY_LAN_DISCOVERY_ENABLED="true"
 BROADCASTIFY_LAN_PEERS="http://10.200.1.227:8765 http://192.168.1.44:8766"
 BROADCASTIFY_LAN_SHARING="true"
 BROADCASTIFY_LAN_QUEUE_ENABLED="true"
+BROADCASTIFY_LAN_BACKGROUND_SYNC="true"
+BROADCASTIFY_LAN_RECONCILE_SECONDS="300"
 BROADCASTIFY_LAN_QUOTA_SCOPE="default"
 BROADCASTIFY_LAN_COORDINATOR="http://10.200.1.227:8765"
 BROADCASTIFY_LAN_ADVERTISE_URL="http://10.200.1.227:8765"
@@ -175,6 +180,12 @@ TrueNAS service owns that persistent ledger locally and therefore does not point
 its own worker back through the remote-ledger variable. Account credentials and
 cookies remain separate on each machine; the shared ledger contains only
 non-secret profile IDs, request attempts, and rolling-limit state.
+
+`BROADCASTIFY_LAN_BACKGROUND_SYNC` keeps retained feed artifacts converged even
+while a long model job occupies the normal scheduler. The bounded interval is
+controlled by `BROADCASTIFY_LAN_RECONCILE_SECONDS` (30 to 3600 seconds, 300 by
+default). The status surface reports only feed IDs, counts, timestamps, bytes,
+and sanitized failures; it exposes no paths, content, credentials, or tokens.
 
 `BROADCASTIFY_LAN_QUOTA_SCOPE` is a non-secret pool label. Workers append their
 non-secret account profile ID internally. That keeps one account's quota result

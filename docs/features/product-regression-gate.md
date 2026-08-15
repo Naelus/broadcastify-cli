@@ -62,6 +62,8 @@ The trusted-LAN workflow proves that:
 - two nodes with a month versus a few retained days converge the complete feed,
   including raw identity proofs, combined audio, timeline manifests, transcript
   JSON, and rendered text;
+- the Windows node and browser/TrueNAS host pull newly completed peer artifacts
+  in the background without starting a job or spending a provider request;
 - the Windows client and TrueNAS Web service use the same explicit coordinator;
 - an identical model/feed/day is claimed only once, while different days may be
   processed on different nodes concurrently;

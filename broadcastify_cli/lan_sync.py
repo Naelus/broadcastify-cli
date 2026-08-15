@@ -1240,7 +1240,7 @@ class LanProcessingQueue:
 class ArchiveHashCache:
     """Bounded, thread-safe hash cache keyed by immutable file metadata."""
 
-    def __init__(self, maximum_entries: int = 4_096) -> None:
+    def __init__(self, maximum_entries: int = 32_768) -> None:
         self.maximum_entries = max(32, maximum_entries)
         self._values: OrderedDict[tuple[str, int, int], str] = OrderedDict()
         self._lock = threading.Lock()
@@ -3534,6 +3534,7 @@ class LanArchiveSyncClient:
     def coordinated_status(self) -> dict[str, Any]:
         """Read the trusted coordinator's non-secret work/status surface."""
 
+        empty_reconciliation = self._validate_reconciliation_surface(None)
         if not self.enabled:
             return {
                 "connected": False,
@@ -3542,6 +3543,9 @@ class LanArchiveSyncClient:
                 "peer_count": 0,
                 "activity": {"acquisition": None, "processing": []},
                 "scheduler": {"active": None, "schedules": []},
+                "reconciliation": empty_reconciliation,
+                "local_node_url": "",
+                "local_reconciliation": empty_reconciliation,
                 "error": "Trusted-LAN coordination is disabled.",
             }
         try:
@@ -3563,8 +3567,26 @@ class LanArchiveSyncClient:
                 "peer_count": 0,
                 "activity": {"acquisition": None, "processing": []},
                 "scheduler": {"active": None, "schedules": []},
+                "reconciliation": empty_reconciliation,
+                "local_node_url": "",
+                "local_reconciliation": empty_reconciliation,
                 "error": str(exc)[:300],
             }
+        local_node_url = ""
+        local_reconciliation = empty_reconciliation
+        producer = self._producer_identity(coordinator)
+        if producer is not None:
+            local_node_url = producer[0]
+            try:
+                local_info = (
+                    info
+                    if local_node_url == coordinator
+                    else self._peer_info(local_node_url)
+                )
+            except (LanSyncError, requests.RequestException, ValueError):
+                pass
+            else:
+                local_reconciliation = local_info["reconciliation"]
         return {
             "connected": True,
             "coordinator_url": coordinator,
@@ -3572,6 +3594,9 @@ class LanArchiveSyncClient:
             "peer_count": len(info["peers"]),
             "activity": info["activity"],
             "scheduler": info["scheduler"],
+            "reconciliation": info["reconciliation"],
+            "local_node_url": local_node_url,
+            "local_reconciliation": local_reconciliation,
             "error": "",
         }
 
@@ -3758,6 +3783,9 @@ class LanArchiveSyncClient:
             "scheduler": self._validate_scheduler_surface(
                 payload.get("scheduler")
             ),
+            "reconciliation": self._validate_reconciliation_surface(
+                payload.get("reconciliation")
+            ),
         }
 
     @staticmethod
@@ -3901,6 +3929,59 @@ class LanArchiveSyncClient:
             if (result := clean_schedule(candidate)) is not None
         ]
         return {"active": active, "schedules": schedules}
+
+    @staticmethod
+    def _validate_reconciliation_surface(payload: Any) -> dict[str, Any]:
+        value = payload if isinstance(payload, Mapping) else {}
+
+        def non_negative_int(candidate: Any) -> int:
+            try:
+                return max(0, int(candidate or 0))
+            except (TypeError, ValueError, OverflowError):
+                return 0
+
+        def clean_text(candidate: Any, maximum: int) -> str:
+            return " ".join(str(candidate or "").split())[:maximum]
+
+        active_feed_id = clean_text(value.get("active_feed_id"), 40)
+        if active_feed_id and not active_feed_id.isdigit():
+            active_feed_id = ""
+        raw_failures = value.get("failures")
+        failures = [
+            cleaned
+            for candidate in (
+                raw_failures[:20]
+                if isinstance(raw_failures, list)
+                else []
+            )
+            if isinstance(candidate, str)
+            if (cleaned := clean_text(candidate, 300))
+        ]
+        return {
+            "enabled": bool(value.get("enabled")),
+            "running": bool(value.get("running")),
+            "active_feed_id": active_feed_id,
+            "last_started_at": clean_text(
+                value.get("last_started_at"),
+                40,
+            ),
+            "last_finished_at": clean_text(
+                value.get("last_finished_at"),
+                40,
+            ),
+            "feeds_considered": non_negative_int(
+                value.get("feeds_considered")
+            ),
+            "days_considered": non_negative_int(
+                value.get("days_considered")
+            ),
+            "blocks_copied": non_negative_int(value.get("blocks_copied")),
+            "transcript_artifacts_copied": non_negative_int(
+                value.get("transcript_artifacts_copied")
+            ),
+            "bytes_copied": non_negative_int(value.get("bytes_copied")),
+            "failures": failures,
+        }
 
     def _validate_queue_payload(
         self,
@@ -4868,3 +4949,186 @@ class _LanProcessingLeaseHeartbeat(
                             "The LAN processing lease could not be renewed; "
                             "model work was stopped before publishing a shared result."
                         )
+
+
+class LanArchiveReconciler:
+    """Continuously converge followed feed artifacts without provider access.
+
+    Archive/model jobs already reconcile at their boundaries.  This small
+    host-level loop closes the gap while a long model run is still active: it
+    only calls the trusted-LAN sync client and therefore cannot consume a
+    Broadcastify archive request.
+    """
+
+    def __init__(
+        self,
+        output_dir: str | Path,
+        client: LanArchiveSyncClient,
+        *,
+        enabled: bool = True,
+        poll_seconds: float = 5 * 60.0,
+    ) -> None:
+        self.output_dir = Path(output_dir).expanduser().resolve()
+        self.client = client
+        self.enabled = bool(enabled and client.enabled)
+        self.poll_seconds = max(0.05, float(poll_seconds))
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._lock = threading.Lock()
+        self._status: dict[str, Any] = {
+            "enabled": self.enabled,
+            "running": False,
+            "active_feed_id": "",
+            "last_started_at": "",
+            "last_finished_at": "",
+            "feeds_considered": 0,
+            "days_considered": 0,
+            "blocks_copied": 0,
+            "transcript_artifacts_copied": 0,
+            "bytes_copied": 0,
+            "failures": [],
+        }
+
+    def start(self) -> None:
+        if not self.enabled or self._thread is not None:
+            return
+        self._thread = threading.Thread(
+            target=self._run,
+            name="radio-archive-lan-reconcile",
+            daemon=True,
+        )
+        self._thread.start()
+
+    def close(self) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=2.0)
+        self._thread = None
+
+    def status(self) -> dict[str, Any]:
+        with self._lock:
+            return {
+                **self._status,
+                "failures": list(self._status["failures"]),
+            }
+
+    def run_once(self) -> dict[str, Any]:
+        """Perform one LAN-only convergence pass for local followed feeds."""
+
+        started_at = datetime.now().astimezone().isoformat(timespec="seconds")
+        feed_ids = self._feed_ids()
+        with self._lock:
+            self._status.update(
+                {
+                    "running": True,
+                    "active_feed_id": "",
+                    "last_started_at": started_at,
+                    "feeds_considered": len(feed_ids),
+                    "days_considered": 0,
+                    "blocks_copied": 0,
+                    "transcript_artifacts_copied": 0,
+                    "bytes_copied": 0,
+                    "failures": [],
+                }
+            )
+
+        days_considered = 0
+        blocks_copied = 0
+        transcript_artifacts_copied = 0
+        bytes_copied = 0
+        failures: list[str] = []
+        try:
+            for feed_id in feed_ids:
+                if self._stop.is_set():
+                    break
+                with self._lock:
+                    self._status["active_feed_id"] = feed_id
+                try:
+                    result = self.client.sync_feed(
+                        self.output_dir,
+                        feed_id,
+                    )
+                except (
+                    LanSyncError,
+                    OSError,
+                    requests.RequestException,
+                    ValueError,
+                ) as exc:
+                    failures.append(f"Feed {feed_id}: {exc}")
+                    continue
+                days_considered += result.days_considered
+                blocks_copied += result.blocks_copied
+                transcript_artifacts_copied += (
+                    result.transcript_artifacts_copied
+                )
+                bytes_copied += result.bytes_copied
+                failures.extend(
+                    f"Feed {feed_id}: {failure}"
+                    for failure in result.failures
+                )
+        finally:
+            with self._lock:
+                self._status.update(
+                    {
+                        "running": False,
+                        "active_feed_id": "",
+                        "last_finished_at": datetime.now()
+                        .astimezone()
+                        .isoformat(timespec="seconds"),
+                        "days_considered": days_considered,
+                        "blocks_copied": blocks_copied,
+                        "transcript_artifacts_copied": (
+                            transcript_artifacts_copied
+                        ),
+                        "bytes_copied": bytes_copied,
+                        "failures": list(dict.fromkeys(failures))[:50],
+                    }
+                )
+        return self.status()
+
+    def _feed_ids(self) -> list[str]:
+        if not self.output_dir.is_dir():
+            return []
+        values: list[str] = []
+        try:
+            candidates = sorted(
+                self.output_dir.iterdir(),
+                key=lambda value: value.name,
+            )
+        except OSError:
+            return []
+        for candidate in candidates:
+            if (
+                not candidate.name.isdigit()
+                or candidate.is_symlink()
+                or not candidate.is_dir()
+            ):
+                continue
+            try:
+                if candidate.resolve().parent != self.output_dir:
+                    continue
+            except OSError:
+                continue
+            values.append(candidate.name)
+        return values
+
+    def _run(self) -> None:
+        while not self._stop.is_set():
+            try:
+                self.run_once()
+            except Exception as exc:  # keep the serving host alive
+                with self._lock:
+                    self._status.update(
+                        {
+                            "running": False,
+                            "active_feed_id": "",
+                            "last_finished_at": datetime.now()
+                            .astimezone()
+                            .isoformat(timespec="seconds"),
+                            "failures": [
+                                f"LAN reconciliation failed: {exc}"
+                            ],
+                        }
+                    )
+            if self._stop.wait(self.poll_seconds):
+                return

@@ -836,6 +836,17 @@ public sealed partial class MainWindow : Window
                     processing.Select(value =>
                         $"• {CoordinatedNodeLabel(value)} · feed {value.FeedId} · {value.ArchiveDate}"));
 
+            SystemReconciliationText.Text = string.Join(
+                Environment.NewLine,
+                ReconciliationSummary(
+                    "Coordinator",
+                    status.Reconciliation),
+                ReconciliationSummary(
+                    string.IsNullOrWhiteSpace(status.LocalNodeUrl)
+                        ? "Windows node"
+                        : $"Windows node ({status.LocalNodeUrl})",
+                    status.LocalReconciliation));
+
             SystemQuotaText.Text = quotaStatuses.Count == 0
                 ? "No account allowance status was returned."
                 : string.Join(
@@ -938,6 +949,50 @@ public sealed partial class MainWindow : Window
             ? $"node {activity.OwnerNodeId[..10]}"
             : $"node {activity.OwnerNodeId}";
     }
+
+    private static string ReconciliationSummary(
+        string label,
+        CoordinatedReconciliationStatus status)
+    {
+        if (!status.Enabled)
+        {
+            return $"• {label}: background convergence is not available.";
+        }
+        if (status.Running)
+        {
+            var feed = string.IsNullOrWhiteSpace(status.ActiveFeedId)
+                ? "followed feeds"
+                : $"feed {status.ActiveFeedId}";
+            return $"• {label}: reconciling {feed} now (LAN only; no provider request).";
+        }
+
+        var finished = DateTimeOffset.TryParse(
+            status.LastFinishedAt,
+            out var finishedAt)
+            ? finishedAt.ToLocalTime().ToString("g")
+            : "not completed yet";
+        var copied = status.BlocksCopied == 0
+            && status.TranscriptArtifactsCopied == 0
+            ? "no differences"
+            : $"copied {status.BlocksCopied} source block(s) and "
+                + $"{status.TranscriptArtifactsCopied} transcript artifact(s) "
+                + $"({FormatLanBytes(status.BytesCopied)})";
+        var failures = status.Failures.Count == 0
+            ? ""
+            : $" · {status.Failures.Count} warning(s)";
+        return $"• {label}: last pass {finished} · "
+            + $"{status.FeedsConsidered} feed(s), {status.DaysConsidered} day(s) · "
+            + copied
+            + failures;
+    }
+
+    private static string FormatLanBytes(long bytes) => bytes switch
+    {
+        >= 1024L * 1024 * 1024 => $"{bytes / (1024d * 1024 * 1024):0.0} GiB",
+        >= 1024L * 1024 => $"{bytes / (1024d * 1024):0.0} MiB",
+        >= 1024L => $"{bytes / 1024d:0.0} KiB",
+        _ => $"{Math.Max(0, bytes)} B",
+    };
 
     private void NavigateTo(NavigationViewItem item)
     {

@@ -838,3 +838,32 @@ def test_native_exposes_explicit_resumable_packaged_cuda_runtime() -> None:
     assert "No Broadcastify request is made" in window
     assert "process.Kill(entireProcessTree: true)" in worker
     assert '"BROADCASTIFY_MANAGED_RUNTIME_ROOT"' in worker
+
+
+def test_native_system_page_exposes_both_lan_reconciliation_surfaces() -> None:
+    root = ElementTree.parse(
+        ROOT / "BroadcastifyCli.WinUI" / "MainWindow.xaml"
+    ).getroot()
+    names = {
+        element.attrib.get(XAML_NAME): element
+        for element in root.iter()
+        if element.attrib.get(XAML_NAME)
+    }
+    assert names["SystemReconciliationText"].attrib["Text"] == (
+        "Checking Windows and coordinator reconciliation…"
+    )
+
+    models = (
+        ROOT / "BroadcastifyCli.WinUI" / "Models.cs"
+    ).read_text(encoding="utf-8")
+    window = (
+        ROOT / "BroadcastifyCli.WinUI" / "MainWindow.xaml.cs"
+    ).read_text(encoding="utf-8")
+    backend = (
+        ROOT / "broadcastify_cli" / "lan_sync.py"
+    ).read_text(encoding="utf-8")
+    assert 'JsonPropertyName("local_reconciliation")' in models
+    assert 'JsonPropertyName("reconciliation")' in models
+    assert "ReconciliationSummary(" in window
+    assert "LAN only; no provider request" in window
+    assert '"local_reconciliation": local_reconciliation' in backend
