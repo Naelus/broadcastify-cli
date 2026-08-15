@@ -76,6 +76,9 @@ const state = {
   analysisSelfTest: null,
   profileSelfTest: null,
   accountVerified: false,
+  systemActivity: null,
+  systemActivityTimer: null,
+  systemActivityRefreshing: false,
 };
 
 let applyingHardwareProfile = false;
@@ -461,6 +464,10 @@ function setSettingsSection(name, { focusTab = false, updateHistory = true } = {
 }
 
 function setView(name) {
+  if (name !== "system" && state.systemActivityTimer) {
+    clearTimeout(state.systemActivityTimer);
+    state.systemActivityTimer = null;
+  }
   document.querySelectorAll(".view").forEach((value) => value.classList.toggle("active", value.id === `view-${name}`));
   document.querySelectorAll(".nav-item[data-view]").forEach((value) => {
     const active = value.dataset.view === name;
@@ -472,6 +479,7 @@ function setView(name) {
     archive: ["New archive", "Quota-safe website archive acquisition"],
     review: ["Review & ask", "Evidence-grounded summaries and questions"],
     area: ["Area watch", "Regional profiles and local story leads"],
+    system: ["System activity", "Live work across the shared archive pool"],
     settings: ["Settings", "Local processing and analysis defaults"],
     about: ["About", "Installed version and shared runtime identity"],
   };
@@ -485,6 +493,7 @@ function setView(name) {
   } else {
     history.replaceState(null, "", `#${name}`);
   }
+  if (name === "system") refreshSystemActivity();
 }
 
 function credentialStatus() {
@@ -551,6 +560,105 @@ function renderAbout() {
   const accounts = runtime.account_pool?.quota?.account_count || 0;
   byId("aboutLan").className = `notice${lan.sharing_enabled && lan.acquisition_queue_available ? " success" : " warning"}`;
   byId("aboutLan").querySelector("span").textContent = `${lan.sharing_enabled ? "Original-block sharing enabled" : "Original-block sharing disabled"} · ${lan.acquisition_queue_available ? "shared acquisition queue ready" : "shared queue unavailable"} · ${accounts} configured account profile${accounts === 1 ? "" : "s"}.`;
+}
+
+function systemTime(value) {
+  if (!value) return "not scheduled";
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? String(value) : parsed.toLocaleString();
+}
+
+function renderSystemActivity() {
+  const payload = state.systemActivity || {};
+  const activity = payload.activity || {};
+  const scheduler = payload.scheduler || {};
+  const active = scheduler.active || null;
+  const acquisition = activity.acquisition || null;
+  const profiles = payload.account_pool?.profiles || [];
+  const schedules = scheduler.schedules || [];
+  const reconciliation = payload.reconciliation || {};
+
+  const status = byId("systemActivityNotice");
+  status.className = `notice${payload.node_id ? " success" : " warning"}`;
+  status.querySelector("strong").textContent = payload.node_id
+    ? "Coordinator connected"
+    : "Coordinator status unavailable";
+  status.querySelector("span").textContent = payload.node_id
+    ? `Node ${String(payload.node_id).slice(0, 12)} · ${Number((payload.peers || []).length)} configured peer${Number((payload.peers || []).length) === 1 ? "" : "s"} · refreshes every 10 seconds while this page is open.`
+    : "The next refresh will retry without changing any schedule or retained file.";
+
+  const acquisitionNotice = byId("systemAcquisitionNotice");
+  if (acquisition || active) {
+    const feedId = acquisition?.feed_id || active?.feed_id || "unknown";
+    const archiveDate = acquisition?.archive_date || active?.archive_date || "current range";
+    const profile = active?.account_profile_id || String(acquisition?.quota_scope || "default").split(".").pop();
+    const progress = Number(active?.total) > 0
+      ? ` · ${Number(active.current)}/${Number(active.total)}`
+      : "";
+    acquisitionNotice.className = "notice success";
+    acquisitionNotice.querySelector("strong").textContent = `Feed ${feedId} is active`;
+    acquisitionNotice.querySelector("span").textContent = `${active?.stage || active?.phase || "acquisition"} · ${archiveDate} · account ${profile}${progress}${acquisition?.producer_url ? ` · producer ${acquisition.producer_url}` : ""}.`;
+  } else {
+    acquisitionNotice.className = "notice";
+    acquisitionNotice.querySelector("strong").textContent = "No provider acquisition is active";
+    acquisitionNotice.querySelector("span").textContent = "Scheduled and manual runs will still reuse retained and LAN blocks before a provider request.";
+  }
+
+  const processing = Array.isArray(activity.processing) ? activity.processing : [];
+  const processingNotice = byId("systemProcessingNotice");
+  processingNotice.className = `notice${processing.length ? " success" : ""}`;
+  processingNotice.querySelector("strong").textContent = processing.length
+    ? `${processing.length} model/day claim${processing.length === 1 ? "" : "s"} active`
+    : "No distributed model claim is active";
+  processingNotice.querySelector("span").textContent = processing.length
+    ? processing.slice(0, 6).map((value) => `feed ${value.feed_id || "?"} · ${value.archive_date || "?"} · ${value.owner_node_id ? String(value.owner_node_id).slice(0, 12) : "node"}`).join("; ")
+    : "Each host may claim a different retained day when compatible local model work is queued.";
+
+  const reconciliationNotice = byId("systemReconciliationNotice");
+  const copied = Number(reconciliation.blocks_copied || 0) + Number(reconciliation.transcript_artifacts_copied || 0);
+  const failures = Array.isArray(reconciliation.failures) ? reconciliation.failures : [];
+  reconciliationNotice.className = `notice${failures.length ? " warning" : reconciliation.running || reconciliation.last_finished_at ? " success" : ""}`;
+  reconciliationNotice.querySelector("strong").textContent = reconciliation.running
+    ? `Reconciling feed ${reconciliation.active_feed_id || "library"}`
+    : failures.length
+      ? `${failures.length} reconciliation warning${failures.length === 1 ? "" : "s"}`
+      : "Last reconciliation completed cleanly";
+  reconciliationNotice.querySelector("span").textContent = `${Number(reconciliation.days_considered || 0)} days checked · ${copied} artifacts copied · ${bytes(reconciliation.bytes_copied || 0)} transferred${reconciliation.last_finished_at ? ` · finished ${systemTime(reconciliation.last_finished_at)}` : ""}${failures.length ? ` · ${failures[0]}` : ""}.`;
+
+  const quotaTarget = byId("systemQuotaList");
+  quotaTarget.innerHTML = profiles.length
+    ? profiles.map((profile) => {
+        const quota = profile.quota || {};
+        const remaining = Number(quota.remaining || 0);
+        const limit = Number(quota.automated_limit || 240);
+        const next = remaining > 0 ? "available now" : quota.next_request_at ? `next ${systemTime(quota.next_request_at)}` : "waiting";
+        return `<div class="result-row"><div><strong>${html(profile.label || profile.id)}</strong><small>${html(profile.id)} · ${remaining}/${limit} automated requests available</small><small>${html(next)} · ten-request manual reserve retained</small></div><span class="status-chip${remaining > 0 ? " ready" : ""}">${remaining > 0 ? "Ready" : "Waiting"}</span></div>`;
+      }).join("")
+    : '<div class="empty-compact">No configured account profiles were reported.</div>';
+
+  const scheduleTarget = byId("systemScheduleList");
+  scheduleTarget.innerHTML = schedules.length
+    ? schedules.map((schedule) => `<div class="result-row"><div><strong>${html(schedule.feed_name || `Feed ${schedule.feed_id}`)}</strong><small>Feed ${html(schedule.feed_id)} · ${schedule.enabled ? "enabled" : "disabled"} · ${html(words(schedule.state || "unknown"))}</small><small>Account ${html(schedule.account_profile_id || "automatic")} · next ${html(systemTime(schedule.next_run_at))}${schedule.message ? ` · ${html(schedule.message)}` : ""}</small></div><span class="status-chip${schedule.enabled && schedule.state === "running" ? " ready" : ""}">${schedule.enabled ? html(words(schedule.state || "saved")) : "Disabled"}</span></div>`).join("")
+    : '<div class="empty-compact">No recurring feed schedules are saved.</div>';
+}
+
+async function refreshSystemActivity() {
+  if (!byId("view-system")?.classList.contains("active") || state.systemActivityRefreshing) return;
+  state.systemActivityRefreshing = true;
+  if (state.systemActivityTimer) clearTimeout(state.systemActivityTimer);
+  try {
+    state.systemActivity = await api("/api/system-activity");
+    renderSystemActivity();
+  } catch (error) {
+    state.systemActivity = null;
+    renderSystemActivity();
+    byId("systemActivityNotice").querySelector("span").textContent = error.message;
+  } finally {
+    state.systemActivityRefreshing = false;
+    if (byId("view-system")?.classList.contains("active")) {
+      state.systemActivityTimer = setTimeout(refreshSystemActivity, 10000);
+    }
+  }
 }
 
 function catchUpFeed() {
@@ -676,7 +784,7 @@ function setViewFromLocation() {
   if (Object.hasOwn(SETTINGS_SECTIONS, requestedSettingsSection)) {
     state.settingsSection = requestedSettingsSection;
   }
-  const view = requestedView in { library: 1, archive: 1, review: 1, area: 1, settings: 1, about: 1 }
+  const view = requestedView in { library: 1, archive: 1, review: 1, area: 1, system: 1, settings: 1, about: 1 }
     ? requestedView
     : "library";
   setView(view);
@@ -1683,6 +1791,7 @@ byId("menuButton").addEventListener("click", () => {
 });
 byId("sidebarScrim").addEventListener("click", closeNavigation);
 byId("refreshLibraryButton").addEventListener("click", () => refreshBootstrap());
+byId("refreshSystemActivityButton").addEventListener("click", refreshSystemActivity);
 byId("librarySearch").addEventListener("input", renderLibrary);
 byId("libraryFilter").addEventListener("change", renderLibrary);
 byId("saveSettingsButton").addEventListener("click", saveSettings);

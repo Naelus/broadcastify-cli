@@ -1949,6 +1949,22 @@ def create_server(
 
             self._require_session(write=False)
             query = parse_qs(parsed.query)
+            if parsed.path == "/api/system-activity":
+                account_pool = _account_pool_profiles(
+                    state.working_dir,
+                    state.credential_store,
+                )
+                info = state.lan_catalog.info()
+                self._json(
+                    HTTPStatus.OK,
+                    {
+                        **info,
+                        "scheduler": state.scheduler.status(),
+                        "reconciliation": state.lan_reconciler.status(),
+                        "account_pool": account_pool,
+                    },
+                )
+                return
             if parsed.path == "/api/bootstrap":
                 library = _library_payload(state)
                 readiness_values, _environment_file = _readiness_environment(

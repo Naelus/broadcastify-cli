@@ -412,7 +412,10 @@ def test_loopback_web_app_serves_library_transcript_and_media(
         assert cookie.startswith("radio_archive_session=")
         assert token_match is not None
         assert b'id="areaPublicSafetyOnly"' in body
-        assert b'/static/app.js?v=36' in body
+        assert b'/static/app.js?v=37' in body
+        assert b'data-view="system"' in body
+        assert b'id="view-system"' in body
+        assert b'id="systemQuotaList"' in body
         assert b'data-view="about"' in body
         assert b'id="catchUpMissingDaysButton"' in body
         assert b'id="accountProfileList"' in body
@@ -441,12 +444,16 @@ def test_loopback_web_app_serves_library_transcript_and_media(
         assert b'/static/favicon.svg' in body
         token = token_match.group(1).decode()
 
+        response, body = _request(connection, "GET", "/api/system-activity")
+        assert response.status == 403
+        assert b"session" in body.lower()
+
         response, body = _request(connection, "GET", "/static/favicon.svg")
         assert response.status == 200
         assert response.getheader("Content-Type") == "image/svg+xml"
         assert b"<svg" in body
 
-        response, body = _request(connection, "GET", "/static/app.js?v=36")
+        response, body = _request(connection, "GET", "/static/app.js?v=37")
         assert response.status == 200
         assert b"areaSelectedStoryIndex" in body
         assert b"data-area-story-index" in body
@@ -492,6 +499,9 @@ def test_loopback_web_app_serves_library_transcript_and_media(
         assert b"function renderCredentials" in body
         assert b'api("/api/credentials"' in body
         assert b"function renderAbout" in body
+        assert b"function renderSystemActivity" in body
+        assert b'api("/api/system-activity")' in body
+        assert b"setTimeout(refreshSystemActivity, 10000)" in body
         assert b"function updateCatchUpStatus" in body
         assert b"exclude_account_profile_ids" in body
 
@@ -519,6 +529,23 @@ def test_loopback_web_app_serves_library_transcript_and_media(
         assert bootstrap["runtime"]["archive_quota"]["user_reserve"] == 10
         assert bootstrap["runtime"]["archive_quota"]["remaining"] == 240
         assert bootstrap["schedules"] == []
+
+        response, body = _request(
+            connection,
+            "GET",
+            "/api/system-activity",
+            cookie=cookie,
+        )
+        activity = json.loads(body)
+        assert response.status == 200
+        assert response.getheader("Cache-Control") == "no-store"
+        assert activity["protocol"] == "radio-archive-lan/1"
+        assert activity["scheduler"]["active"] is None
+        assert activity["scheduler"]["schedules"] == []
+        assert activity["activity"]["acquisition"] is None
+        assert activity["activity"]["processing"] == []
+        assert activity["reconciliation"]["enabled"] is False
+        assert activity["account_pool"]["quota"]["remaining"] == 240
 
         response, body = _request(
             connection,

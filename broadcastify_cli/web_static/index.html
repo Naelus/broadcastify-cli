@@ -26,6 +26,7 @@
         <button class="nav-item" data-view="area"><span aria-hidden="true">⌖</span>Area watch</button>
       </nav>
       <div class="sidebar-spacer"></div>
+      <button class="nav-item" data-view="system"><span aria-hidden="true">≋</span>System activity</button>
       <button class="nav-item" data-view="settings" data-settings-section-target="account"><span aria-hidden="true">⚿</span>Credentials &amp; settings</button>
       <button class="nav-item" data-view="about"><span aria-hidden="true">ⓘ</span>About</button>
       <div class="local-only" id="accessScopeStatus"><span class="status-dot"></span>Checking access…</div>
@@ -353,6 +354,33 @@
         </div>
       </section>
 
+      <section class="view" id="view-system" aria-labelledby="systemTitle">
+        <div class="page-heading">
+          <div><p class="eyebrow">Coordinated hosts</p><h1 id="systemTitle">System activity</h1><p>Live provider acquisition, model claims, synchronization, account allowances, and schedules across this shared archive pool.</p></div>
+          <button class="button secondary" id="refreshSystemActivityButton" type="button">Refresh activity</button>
+        </div>
+        <div class="settings-grid settings-grid-focused">
+          <div class="card padded">
+            <div class="section-heading"><div><h2>Shared acquisition stream</h2><p>Only one globally paced provider stream runs at a time. Peers reuse its completed blocks.</p></div></div>
+            <div class="notice" id="systemActivityNotice"><strong>Checking the coordinator…</strong><span>Loading current LAN work.</span></div>
+            <div class="notice" id="systemAcquisitionNotice"><strong>Checking provider acquisition…</strong><span>Loading the active feed, date, and account profile.</span></div>
+          </div>
+          <div class="card padded">
+            <div class="section-heading"><div><h2>Local and distributed work</h2><p>Model/day claims and hash-verified reconciliation remain separate from provider quota.</p></div></div>
+            <div class="notice" id="systemProcessingNotice"><strong>Checking model claims…</strong><span>Loading active processing work.</span></div>
+            <div class="notice" id="systemReconciliationNotice"><strong>Checking reconciliation…</strong><span>Loading the latest retained-data pass.</span></div>
+          </div>
+          <div class="card padded">
+            <div class="section-heading"><div><h2>Authorized account allowances</h2><p>Each profile keeps its own 240-request rolling allowance and ten-request manual reserve.</p></div></div>
+            <div id="systemQuotaList" class="result-list"><div class="empty-compact">Loading account allowances…</div></div>
+          </div>
+          <div class="card padded">
+            <div class="section-heading"><div><h2>Recurring schedules</h2><p>See what is running, waiting, disabled, or due next without opening the host that owns it.</p></div></div>
+            <div id="systemScheduleList" class="result-list"><div class="empty-compact">Loading schedule state…</div></div>
+          </div>
+        </div>
+      </section>
+
       <section class="view" id="view-about" aria-labelledby="aboutTitle">
         <div class="page-heading">
           <div><p class="eyebrow">Installed product</p><h1 id="aboutTitle">About</h1><p>Version, build identity, storage, and service scope for this installation.</p></div>
@@ -383,6 +411,6 @@
   </aside>
 
   <div class="toast-region" id="toastRegion" aria-live="polite"></div>
-  <script src="/static/app.js?v=36" defer></script>
+  <script src="/static/app.js?v=37" defer></script>
 </body>
 </html>

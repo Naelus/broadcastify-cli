@@ -65,6 +65,9 @@ The trusted-LAN workflow proves that:
 - the Windows node and browser/TrueNAS host pull newly completed peer artifacts
   in the background without starting a job or spending a provider request;
 - the Windows client and TrueNAS Web service use the same explicit coordinator;
+- the protected Web System activity surface refreshes coordinated acquisition,
+  model claims, reconciliation, account allowances, and schedule state without
+  starting a job or exposing credentials;
 - an identical model/feed/day is claimed only once, while different days may be
   processed on different nodes concurrently;
 - scheduled jobs do not sleep behind active peer work and preserve deferred
