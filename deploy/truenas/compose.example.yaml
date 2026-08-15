@@ -3,7 +3,8 @@ name: radio-archive-intelligence
 services:
   web:
     image: radio-archive-intelligence:SOURCE_COMMIT
-    pull_policy: never
+    # Pull a newly pinned immutable tag once; reuse the local image thereafter.
+    pull_policy: missing
     restart: unless-stopped
     init: true
     user: "APP_UID:APP_GID"

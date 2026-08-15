@@ -17,6 +17,13 @@ app's image only; retain its compose settings and the `/data` host mount so
 archives, transcripts, account sessions, quotas, schedules, and checkpoints
 survive the deployment.
 
+Keep `pull_policy: missing` with that immutable tag. TrueNAS will fetch the
+newly selected release when it is not already local, then reuse the exact local
+image on ordinary restarts. `pull_policy: never` is appropriate only when an
+operator has already loaded a locally built image; it otherwise leaves the App
+stopped when a new registry tag is selected. Do not use a moving tag with this
+policy.
+
 Use the supported **Apps → Discover Apps → Install via YAML** path for a
 permanent NAS-hosted browser UI. TrueNAS 25.04 uses a Docker-backed Apps
 service; this is separate from its experimental LXC **Containers** feature.
