@@ -802,6 +802,60 @@ def test_web_authorized_account_pool_exposes_two_isolated_profiles_and_rotates(
         thread.join(timeout=3)
 
 
+def test_web_quota_coordinator_accepts_current_provider_archive_ids(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(
+        "BROADCASTIFY_QUOTA_LEDGER",
+        str(tmp_path / "archive-quota.sqlite3"),
+    )
+    monkeypatch.setenv("BROADCASTIFY_LAN_SHARING", "true")
+    output = tmp_path / "archives"
+    output.mkdir()
+    server = create_server(output, port=0, working_dir=tmp_path)
+    server.quiet = True  # type: ignore[attr-defined]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    connection = http.client.HTTPConnection(
+        "127.0.0.1",
+        server.server_port,
+        timeout=5,
+    )
+    try:
+        response, body = _request(
+            connection,
+            "POST",
+            "/api/lan/v1/quota/reserve",
+            body={
+                "account_profile_id": "default",
+                "feed_id": "45090",
+                "archive_date": "2026-08-15",
+                "archive_id": "45090-1786766400",
+            },
+        )
+        assert response.status == 200
+        request_id = int(json.loads(body)["request_id"])
+
+        response, _body = _request(
+            connection,
+            "POST",
+            "/api/lan/v1/quota/finish",
+            body={
+                "account_profile_id": "default",
+                "request_id": request_id,
+                "outcome": "http_200",
+                "http_status": 200,
+            },
+        )
+        assert response.status == 200
+    finally:
+        connection.close()
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=3)
+
+
 def test_loopback_web_app_hides_stale_daily_claims(tmp_path: Path) -> None:
     output = tmp_path / "archives"
     database = output / "broadcastify-analysis.sqlite3"

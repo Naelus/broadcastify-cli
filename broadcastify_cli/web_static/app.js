@@ -405,6 +405,18 @@ async function api(path, options = {}) {
   }
   const response = await fetch(path, request);
   const payload = await response.json().catch(() => ({ error: `HTTP ${response.status}` }));
+  if (
+    response.status === 403
+    && payload.error === "This request is not from the active local app session."
+  ) {
+    const reloadKey = "radioArchiveSessionReloadAt";
+    const previousReload = Number(sessionStorage.getItem(reloadKey) || 0);
+    if (Date.now() - previousReload > 10000) {
+      sessionStorage.setItem(reloadKey, String(Date.now()));
+      window.location.reload();
+      return await new Promise(() => {});
+    }
+  }
   if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
   return payload;
 }

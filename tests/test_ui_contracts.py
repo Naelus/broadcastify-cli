@@ -139,6 +139,20 @@ def test_native_releases_media_handles_before_archive_mutation() -> None:
     assert "await Task.Delay(500);" in native
 
 
+def test_web_ui_recovers_once_from_a_stale_server_session() -> None:
+    web_js = (
+        ROOT / "broadcastify_cli" / "web_static" / "app.js"
+    ).read_text(encoding="utf-8")
+
+    assert "response.status === 403" in web_js
+    assert 'payload.error === "This request is not from the active local app session."' in web_js
+    assert 'const reloadKey = "radioArchiveSessionReloadAt";' in web_js
+    assert "sessionStorage.getItem(reloadKey)" in web_js
+    assert "sessionStorage.setItem(reloadKey" in web_js
+    assert "window.location.reload();" in web_js
+    assert "return await new Promise(() => {});" in web_js
+
+
 def test_native_visible_activity_log_is_bounded_without_truncating_disk_history() -> None:
     native = (
         ROOT / "BroadcastifyCli.WinUI" / "MainWindow.xaml.cs"

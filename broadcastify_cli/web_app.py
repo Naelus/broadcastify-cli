@@ -61,6 +61,7 @@ from .quota import (
     ArchiveRequestBudgetExceeded,
     archive_request_ledger,
     normalize_account_profile_id,
+    normalize_archive_request_id,
 )
 from .storage import AnalysisStore
 
@@ -2340,12 +2341,12 @@ def create_server(
                 if action == "reserve":
                     feed_id = str(body.get("feed_id") or "").strip()
                     archive_date = str(body.get("archive_date") or "").strip()
-                    archive_id = str(body.get("archive_id") or "").strip()
+                    archive_id = normalize_archive_request_id(
+                        body.get("archive_id")
+                    )
                     if not FEED_ID_PATTERN.fullmatch(feed_id):
                         raise ValueError("A numeric feed ID is required.")
                     _ = date.fromisoformat(archive_date)
-                    if not archive_id.isdigit() or len(archive_id) > 40:
-                        raise ValueError("A numeric archive ID is required.")
                     request_id = ledger.reserve(
                         feed_id=feed_id,
                         archive_date=archive_date,

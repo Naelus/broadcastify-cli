@@ -25,6 +25,7 @@ RATE_LIMIT_RELEASE_GRACE_SECONDS = 5.0
 DEFAULT_ARCHIVE_QUOTA_FILENAME = ".broadcastify-archive-quota.sqlite3"
 DEFAULT_ACCOUNT_PROFILE_ID = "default"
 _ACCOUNT_PROFILE_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+_ARCHIVE_REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9_.-]{1,200}$")
 
 
 class ArchiveRequestBudgetExceeded(RuntimeError):
@@ -59,6 +60,18 @@ def normalize_account_profile_id(value: str | None = None) -> str:
             "only letters, numbers, underscores, or hyphens."
         )
     return profile_id
+
+
+def normalize_archive_request_id(value: object) -> str:
+    """Validate one exact provider archive ID used by the download URL."""
+
+    archive_id = str(value or "").strip()
+    if not _ARCHIVE_REQUEST_ID_PATTERN.fullmatch(archive_id):
+        raise ValueError(
+            "A valid provider archive ID containing only letters, numbers, dots, "
+            "underscores, or hyphens is required."
+        )
+    return archive_id
 
 
 class ArchiveRequestLedger:
@@ -362,6 +375,7 @@ class ArchiveRequestLedger:
         archive_date: str,
         archive_id: str,
     ) -> int:
+        archive_id = normalize_archive_request_id(archive_id)
         while True:
             now = float(self.clock())
             connection = self._connect()

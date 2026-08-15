@@ -30,6 +30,7 @@ from .quota import (
     ArchiveRequestBudgetExceeded,
     ArchiveRequestLedger,
     normalize_account_profile_id,
+    normalize_archive_request_id,
 )
 
 
@@ -515,12 +516,10 @@ def create_lan_node_server(
             if action == "reserve":
                 feed_id = str(body.get("feed_id") or "").strip()
                 archive_date = str(body.get("archive_date") or "").strip()
-                archive_id = str(body.get("archive_id") or "").strip()
+                archive_id = normalize_archive_request_id(body.get("archive_id"))
                 if not feed_id.isdigit():
                     raise ValueError("A numeric feed ID is required.")
                 _date_value(archive_date)
-                if not archive_id.isdigit() or len(archive_id) > 40:
-                    raise ValueError("A numeric archive ID is required.")
                 value: dict[str, object] = {
                     "request_id": ledger.reserve(
                         feed_id=feed_id,

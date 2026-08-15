@@ -8,7 +8,17 @@ from broadcastify_cli.quota import (
     ArchiveRequestBudgetExceeded,
     ArchiveRequestLedger,
     RATE_LIMIT_RELEASE_GRACE_SECONDS,
+    normalize_archive_request_id,
 )
+
+
+def test_provider_archive_id_accepts_current_ids_without_allowing_paths() -> None:
+    assert normalize_archive_request_id("45090-1786766400") == (
+        "45090-1786766400"
+    )
+    for value in ("", "../archive", "archive/id", "x" * 201):
+        with pytest.raises(ValueError):
+            normalize_archive_request_id(value)
 
 
 def test_instance_ledger_mints_stable_identity_and_reserves_user_capacity(

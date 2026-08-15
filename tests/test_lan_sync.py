@@ -169,7 +169,7 @@ def test_remote_quota_ledger_counts_once_at_the_lan_coordinator_and_fails_closed
         request_id = remote.reserve(
             feed_id="90001",
             archive_date="2026-07-12",
-            archive_id="123456",
+            archive_id="90001-1783140752",
         )
         remote.finish(request_id, outcome="http_200", http_status=200)
 
