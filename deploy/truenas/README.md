@@ -1,5 +1,22 @@
 # TrueNAS Apps deployment
 
+## Release image
+
+The `TrueNAS container release` GitHub Actions workflow packages a selected
+committed source ref for `linux/amd64`. The workflow runs the full offline
+Python regression suite before building, embeds the exact 40-character source
+commit in the OCI metadata and runtime environment, and publishes both an
+immutable `VERSION-SHORTCOMMIT` tag and the corresponding version tag to:
+
+```text
+ghcr.io/naelus/radio-archive-intelligence
+```
+
+Use the immutable tag in the managed TrueNAS custom app. Update the existing
+app's image only; retain its compose settings and the `/data` host mount so
+archives, transcripts, account sessions, quotas, schedules, and checkpoints
+survive the deployment.
+
 Use the supported **Apps → Discover Apps → Install via YAML** path for a
 permanent NAS-hosted browser UI. TrueNAS 25.04 uses a Docker-backed Apps
 service; this is separate from its experimental LXC **Containers** feature.
