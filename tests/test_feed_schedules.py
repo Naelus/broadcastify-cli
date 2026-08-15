@@ -202,6 +202,31 @@ def test_historical_catch_up_survives_quota_wait_and_clears_only_when_complete(
         assert completed["backfill_start_date"] == ""
 
 
+def test_failed_schedule_retries_same_day_after_bounded_backoff(tmp_path: Path) -> None:
+    database = tmp_path / "analysis.sqlite3"
+    now = datetime(2026, 7, 23, 3, 0, tzinfo=timezone(timedelta(hours=-5)))
+
+    with AnalysisStore(database) as store:
+        saved = store.save_feed_schedule(_payload())
+        claimed = store.claim_due_feed_schedule(now=now)
+        assert claimed is not None
+
+        failed = store.finish_feed_schedule(
+            int(saved["id"]),
+            due_date="2026-07-23",
+            status="failed",
+            message="A transient worker failure occurred.",
+            now=now,
+        )
+
+        assert failed["state"] == "failed"
+        assert failed["last_run_date"] == ""
+        assert store.claim_due_feed_schedule(now=now + timedelta(minutes=14)) is None
+        retried = store.claim_due_feed_schedule(now=now + timedelta(minutes=16))
+        assert retried is not None
+        assert retried["due_date"] == "2026-07-23"
+
+
 def test_recurring_catch_up_keeps_boundary_after_success_and_rechecks_next_day(
     tmp_path: Path,
 ) -> None:

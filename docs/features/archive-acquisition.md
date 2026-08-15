@@ -130,7 +130,9 @@ continuously under its normal service supervisor.
 Schedules live in the evidence database and survive restart. An interrupted
 running schedule is returned to a deferred state on startup, waits one minute
 to avoid colliding with an orphaned worker, and resumes from retained
-files/checkpoints. A quota-paused schedule is rechecked after startup and then
+files/checkpoints. A failed worker attempt remains incomplete and retries the
+same due date after a fifteen-minute backoff instead of being treated as that
+day's successful run. A quota-paused schedule is rechecked after startup and then
 at five-minute intervals, so a far-future website retry cannot strand
 combination, transcription, speaker labeling, analysis, or LAN reconciliation
 that needs no provider request. The persistent guard still prevents

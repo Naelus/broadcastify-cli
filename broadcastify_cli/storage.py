@@ -14,6 +14,7 @@ from .quota import normalize_account_profile_id
 
 SCHEMA_VERSION = 1
 FEED_SCHEDULE_RETAINED_RECHECK = timedelta(minutes=5)
+FEED_SCHEDULE_FAILURE_RECHECK = timedelta(minutes=15)
 
 
 def utc_now() -> str:
@@ -788,7 +789,12 @@ class AnalysisStore:
             raise ValueError("Unsupported schedule completion status.")
         current = self._aware_local(now).astimezone(timezone.utc)
         finished = current.isoformat(timespec="seconds")
-        last_run_date = due_date if status in {"complete", "failed", "canceled"} else ""
+        # A failed worker attempt is not a completed daily run. Keep the due date
+        # eligible after a bounded backoff so a repaired credential, provider-ID
+        # compatibility fix, or transient dependency failure resumes the same
+        # retained range without waiting until tomorrow. Explicit cancellation is
+        # still final for the day so the scheduler respects the user's stop.
+        last_run_date = due_date if status in {"complete", "canceled"} else ""
         not_before = ""
         if status == "waiting_quota":
             parsed = self._utc_value(next_request_at)
@@ -806,6 +812,10 @@ class AnalysisStore:
             not_before = next_check.isoformat(timespec="seconds")
         elif status == "deferred":
             not_before = (current + timedelta(minutes=5)).isoformat(timespec="seconds")
+        elif status == "failed":
+            not_before = (current + FEED_SCHEDULE_FAILURE_RECHECK).isoformat(
+                timespec="seconds"
+            )
         with self.transaction() as connection:
             connection.execute(
                 """
