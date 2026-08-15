@@ -664,8 +664,10 @@ def test_month_and_entire_feed_hotspot_question_is_coverage_grounded(
         second_date.isoformat(),
     ]
     assert entire["missing_audio_dates"] == [missing_date.isoformat()]
-    assert entire["local_processing_dates"] == [
-        audio_only_date.isoformat(),
+    assert entire["local_processing_dates"] == [audio_only_date.isoformat()]
+    assert entire["partial_audio_dates"] == [raw_source_date.isoformat()]
+    assert entire["acquisition_needed_dates"] == [
+        missing_date.isoformat(),
         raw_source_date.isoformat(),
     ]
 

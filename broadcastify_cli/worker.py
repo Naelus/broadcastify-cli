@@ -294,6 +294,32 @@ def run_job() -> int:
     return 0
 
 
+def _scheduled_analysis_dates(
+    result_days: list[dict[str, Any]],
+    library_days: list[dict[str, Any]],
+    feed_id: str,
+) -> list[str]:
+    """Return transcript days whose imported evidence is not already current."""
+
+    states = {
+        str(value.get("archive_date") or ""): value
+        for value in library_days
+        if str(value.get("feed_id") or "") == feed_id
+    }
+    required: list[str] = []
+    for day in result_days:
+        archive_date = str(day.get("date") or "")
+        if not archive_date or not list(day.get("transcripts") or []):
+            continue
+        state = states.get(archive_date)
+        if state and bool(state.get("has_imported_transcript")) and bool(
+            state.get("has_analysis")
+        ):
+            continue
+        required.append(archive_date)
+    return required
+
+
 def run_scheduled_job() -> int:
     payload = json.load(sys.stdin)
     job_payload = dict(payload.get("job") or {})
@@ -307,6 +333,43 @@ def run_scheduled_job() -> int:
         result = JobRunner(request, emit=emit, client=client).run()
     analyzed_dates: list[str] = []
     if bool(payload.get("analyze", True)):
+        result_days = [
+            dict(value)
+            for value in result.get("days", [])
+            if isinstance(value, dict)
+        ]
+        transcript_dates = [
+            str(value.get("date") or "")
+            for value in result_days
+            if list(value.get("transcripts") or [])
+        ]
+        try:
+            required_analysis_dates = set(
+                _scheduled_analysis_dates(
+                    result_days,
+                    scan_local_library(request.output_dir, DEFAULT_DATABASE),
+                    request.feed_id,
+                )
+            )
+        except (OSError, RuntimeError, ValueError):
+            # Preserve the older safe behavior if retained-state inspection is
+            # unavailable: analyze every returned transcript rather than risk
+            # leaving new evidence unimported.
+            required_analysis_dates = set(transcript_dates)
+        current_dates = [
+            value for value in transcript_dates if value not in required_analysis_dates
+        ]
+        if current_dates:
+            emit(
+                {
+                    "type": "log",
+                    "stage": "analysis",
+                    "message": (
+                        f"Skipped {len(current_dates)} already-current analysis "
+                        "day(s); their transcript and analysis fingerprints match."
+                    ),
+                }
+            )
         provider_fields = {
             key: job_payload[key]
             for key in (
@@ -320,11 +383,13 @@ def run_scheduled_job() -> int:
             )
             if key in job_payload
         }
-        for day in result.get("days", []):
+        for day in result_days:
             transcripts = list(day.get("transcripts") or [])
             if not transcripts:
                 continue
             archive_date = str(day.get("date") or "")
+            if archive_date not in required_analysis_dates:
+                continue
             _analyze_day_payload(
                 {
                     "feed_id": request.feed_id,

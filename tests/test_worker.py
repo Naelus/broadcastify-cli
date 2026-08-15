@@ -20,6 +20,7 @@ from broadcastify_cli.storage import AnalysisStore
 from broadcastify_cli.worker import (
     _day_report,
     _incident_clip,
+    _scheduled_analysis_dates,
     analysis_days,
     analysis_self_test,
     archive_quota_status,
@@ -32,7 +33,122 @@ from broadcastify_cli.worker import (
     prepare_asr_model_command,
     profile_self_test,
     question_coverage,
+    run_scheduled_job,
 )
+
+
+def test_scheduled_analysis_skips_current_retained_days() -> None:
+    result_days = [
+        {"date": "2026-08-01", "transcripts": ["current.json"]},
+        {"date": "2026-08-02", "transcripts": ["stale.json"]},
+        {"date": "2026-08-03", "transcripts": ["new.json"]},
+        {"date": "2026-08-04", "transcripts": []},
+    ]
+    library_days = [
+        {
+            "feed_id": "45090",
+            "archive_date": "2026-08-01",
+            "has_imported_transcript": True,
+            "has_analysis": True,
+        },
+        {
+            "feed_id": "45090",
+            "archive_date": "2026-08-02",
+            "has_imported_transcript": True,
+            "has_analysis": False,
+        },
+        {
+            "feed_id": "99999",
+            "archive_date": "2026-08-03",
+            "has_imported_transcript": True,
+            "has_analysis": True,
+        },
+    ]
+
+    assert _scheduled_analysis_dates(result_days, library_days, "45090") == [
+        "2026-08-02",
+        "2026-08-03",
+    ]
+
+
+def test_run_scheduled_job_analyzes_only_changed_transcripts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    result_days = [
+        {"date": "2026-08-01", "transcripts": ["current.json"]},
+        {"date": "2026-08-02", "transcripts": ["new.json"]},
+    ]
+    events: list[dict[str, object]] = []
+    analyzed: list[str] = []
+
+    class Client:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    class Runner:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def run(self):
+            return {
+                "days": result_days,
+                "completed_days": 2,
+                "requested_days": 2,
+            }
+
+    monkeypatch.setattr("broadcastify_cli.worker.BroadcastifyClient", Client)
+    monkeypatch.setattr("broadcastify_cli.worker.JobRunner", Runner)
+    monkeypatch.setattr(
+        "broadcastify_cli.worker.scan_local_library",
+        lambda *_args: [
+            {
+                "feed_id": "45090",
+                "archive_date": "2026-08-01",
+                "has_imported_transcript": True,
+                "has_analysis": True,
+            },
+            {
+                "feed_id": "45090",
+                "archive_date": "2026-08-02",
+                "has_imported_transcript": False,
+                "has_analysis": False,
+            },
+        ],
+    )
+    monkeypatch.setattr(
+        "broadcastify_cli.worker._analyze_day_payload",
+        lambda value: analyzed.append(str(value["archive_date"])),
+    )
+    monkeypatch.setattr("broadcastify_cli.worker.emit", events.append)
+    monkeypatch.setattr(
+        sys,
+        "stdin",
+        io.StringIO(
+            json.dumps(
+                {
+                    "job": {
+                        "feed_id": "45090",
+                        "start_date": "2026-08-01",
+                        "end_date": "2026-08-02",
+                        "output_dir": str(tmp_path),
+                    },
+                    "analyze": True,
+                }
+            )
+        ),
+    )
+
+    assert run_scheduled_job() == 0
+    assert analyzed == ["2026-08-02"]
+    assert any(
+        "Skipped 1 already-current analysis day" in str(value)
+        for value in events
+    )
+    assert events[-1]["analyzed_dates"] == ["2026-08-02"]
 
 
 def test_emit_is_safe_on_a_legacy_windows_console(

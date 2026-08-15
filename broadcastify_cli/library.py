@@ -651,6 +651,7 @@ def build_archive_question_coverage(
     question_ready_dates: list[str] = []
     analyzed_dates: list[str] = []
     local_processing_dates: list[str] = []
+    partial_audio_dates: list[str] = []
     missing_audio_dates: list[str] = []
     for requested_date in requested_dates:
         archive_value = requested_date.isoformat()
@@ -680,11 +681,24 @@ def build_archive_question_coverage(
             question_ready_dates.append(archive_value)
             if bool(state and state.get("has_analysis")):
                 analyzed_dates.append(archive_value)
-        elif has_audio:
+        elif has_audio and not bool(state and state.get("needs_network")):
             local_processing_dates.append(archive_value)
+        elif has_audio:
+            partial_audio_dates.append(archive_value)
         else:
             missing_audio_dates.append(archive_value)
-    unavailable_dates = local_processing_dates + missing_audio_dates
+    acquisition_values = set(partial_audio_dates) | set(missing_audio_dates)
+    unavailable_values = set(local_processing_dates) | acquisition_values
+    acquisition_needed_dates = [
+        value.isoformat()
+        for value in requested_dates
+        if value.isoformat() in acquisition_values
+    ]
+    unavailable_dates = [
+        value.isoformat()
+        for value in requested_dates
+        if value.isoformat() in unavailable_values
+    ]
     requested_count = len(requested_dates)
     summary = (
         f"{len(question_ready_dates)}/{requested_count} requested days are "
@@ -694,6 +708,13 @@ def build_archive_question_coverage(
         summary += (
             f" Local processing needed for {len(local_processing_dates)} day(s): "
             + describe_archive_date_ranges(local_processing_dates)
+            + "."
+        )
+    if partial_audio_dates:
+        summary += (
+            f" Additional archive acquisition needed for {len(partial_audio_dates)} "
+            "partial day(s): "
+            + describe_archive_date_ranges(partial_audio_dates)
             + "."
         )
     if missing_audio_dates:
@@ -721,8 +742,14 @@ def build_archive_question_coverage(
         "local_processing_ranges": compact_archive_date_ranges(
             local_processing_dates
         ),
+        "partial_audio_dates": partial_audio_dates,
+        "partial_audio_ranges": compact_archive_date_ranges(partial_audio_dates),
         "missing_audio_dates": missing_audio_dates,
         "missing_audio_ranges": compact_archive_date_ranges(missing_audio_dates),
+        "acquisition_needed_dates": acquisition_needed_dates,
+        "acquisition_needed_ranges": compact_archive_date_ranges(
+            acquisition_needed_dates
+        ),
         "unavailable_dates": unavailable_dates,
         "unavailable_ranges": compact_archive_date_ranges(unavailable_dates),
         "complete_coverage": not unavailable_dates,

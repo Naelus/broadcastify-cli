@@ -76,6 +76,7 @@ def test_archive_question_coverage_distinguishes_ready_processing_and_missing_da
                 "feed_id": "90001",
                 "archive_date": "2026-07-04",
                 "raw_file_count": 48,
+                "needs_network": True,
                 "has_combined": False,
                 "has_transcript": False,
                 "has_imported_transcript": False,
@@ -93,8 +94,10 @@ def test_archive_question_coverage_distinguishes_ready_processing_and_missing_da
     assert coverage["analyzed_day_count"] == 1
     assert coverage["question_ready_dates"] == ["2026-07-01", "2026-07-03"]
     assert coverage["analyzed_dates"] == ["2026-07-01"]
-    assert coverage["local_processing_dates"] == ["2026-07-02", "2026-07-04"]
+    assert coverage["local_processing_dates"] == ["2026-07-02"]
+    assert coverage["partial_audio_dates"] == ["2026-07-04"]
     assert coverage["missing_audio_dates"] == ["2026-07-05"]
+    assert coverage["acquisition_needed_dates"] == ["2026-07-04", "2026-07-05"]
     assert coverage["unavailable_dates"] == [
         "2026-07-02",
         "2026-07-04",
@@ -108,6 +111,10 @@ def test_archive_question_coverage_distinguishes_ready_processing_and_missing_da
     assert coverage["complete_coverage"] is False
     assert "2/5 requested days are question-ready" in coverage["summary"]
     assert "audio is retained for 4/5" in coverage["summary"]
+    assert (
+        "Additional archive acquisition needed for 1 partial day"
+        in coverage["summary"]
+    )
 
 
 def test_entire_feed_range_and_compact_gap_descriptions_are_local_only() -> None:

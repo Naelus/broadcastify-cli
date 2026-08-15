@@ -1761,11 +1761,23 @@ public sealed record ArchiveQuestionCoverage
     [JsonPropertyName("local_processing_ranges")]
     public List<string> LocalProcessingRanges { get; init; } = [];
 
+    [JsonPropertyName("partial_audio_dates")]
+    public List<string> PartialAudioDates { get; init; } = [];
+
+    [JsonPropertyName("partial_audio_ranges")]
+    public List<string> PartialAudioRanges { get; init; } = [];
+
     [JsonPropertyName("missing_audio_dates")]
     public List<string> MissingAudioDates { get; init; } = [];
 
     [JsonPropertyName("missing_audio_ranges")]
     public List<string> MissingAudioRanges { get; init; } = [];
+
+    [JsonPropertyName("acquisition_needed_dates")]
+    public List<string> AcquisitionNeededDates { get; init; } = [];
+
+    [JsonPropertyName("acquisition_needed_ranges")]
+    public List<string> AcquisitionNeededRanges { get; init; } = [];
 
     [JsonPropertyName("unavailable_dates")]
     public List<string> UnavailableDates { get; init; } = [];
