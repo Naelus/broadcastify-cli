@@ -71,7 +71,10 @@ The trusted-LAN workflow proves that:
 - an identical model/feed/day is claimed only once, while different days may be
   processed on different nodes concurrently;
 - scheduled jobs do not sleep behind active peer work and preserve deferred
-  acquisition/model days for the next recurring pass; and
+  acquisition/model days for the next recurring pass;
+- scheduled model work is bounded to one retained day per pass while manual jobs
+  remain unbounded, returning both hosts to account/quota acquisition checks
+  between long inference runs; and
 - failed or expired claims release safely without publishing partial work.
 
 Native UI and release contracts remain in the full suite. They cover the About

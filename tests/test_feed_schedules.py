@@ -24,6 +24,7 @@ def _payload(*, enabled: bool = True) -> dict[str, object]:
             "transcribe": True,
             "diarize": True,
             "download_jobs": 8,
+            "max_processing_days": 99,
         },
     }
 
@@ -41,6 +42,7 @@ def test_feed_schedule_is_specific_persistent_and_forces_safe_acquisition(
     assert schedules[0]["due"] is True
     assert schedules[0]["job"]["download_jobs"] == 1
     assert schedules[0]["job"]["keep_originals"] is True
+    assert "max_processing_days" not in schedules[0]["job"]
     assert schedules[0]["account_profile_id"] == "automatic"
 
     with AnalysisStore(database) as store:

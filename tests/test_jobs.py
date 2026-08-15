@@ -84,6 +84,87 @@ def test_combined_audio_is_created_before_one_transcription_pass(
     assert combined_feed_names == ["Example Public Safety"]
 
 
+def test_scheduled_processing_limit_queues_remaining_local_days(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    calls: list[str] = []
+    first_day = date(2026, 7, 10)
+    last_day = date(2026, 7, 12)
+
+    def source_for(archive_date: date) -> Path:
+        day_dir = tmp_path / "5318" / archive_date.strftime("%Y%m%d")
+        day_dir.mkdir(parents=True, exist_ok=True)
+        source = day_dir / f"{archive_date:%Y%m%d}0000-source-5318.mp3"
+        source.write_bytes(b"audio")
+        return source
+
+    class ProcessingClient:
+        def authenticate(self) -> None:
+            calls.append("authenticate")
+
+        def download_day(
+            self,
+            _feed_id: str,
+            archive_date: date,
+            *_args: object,
+            **_kwargs: object,
+        ) -> list[Path]:
+            calls.append(f"download:{archive_date}")
+            return [source_for(archive_date)]
+
+    class ProcessingTranscriber:
+        device = "cpu"
+        device_index = 0
+        compute_type = "float32"
+
+        def __init__(self, **_kwargs: object) -> None:
+            calls.append("load")
+
+        def current_transcripts(self, _inputs: list[Path]) -> list[Path]:
+            return []
+
+        def transcribe_files(
+            self,
+            inputs: list[Path],
+            **_kwargs: object,
+        ) -> list[Path]:
+            calls.append(f"transcribe:{inputs[0].parent.name}")
+            transcript = inputs[0].with_suffix(".json")
+            transcript.write_text("{}", encoding="utf-8")
+            return [transcript]
+
+    monkeypatch.setattr("broadcastify_cli.jobs.LocalTranscriber", ProcessingTranscriber)
+    events: list[dict[str, object]] = []
+    request = JobRequest(
+        feed_id="5318",
+        start_date=first_day,
+        end_date=last_day,
+        output_dir=tmp_path,
+        transcribe=True,
+        max_processing_days=1,
+    )
+
+    result = JobRunner(
+        request,
+        emit=events.append,
+        client=ProcessingClient(),  # type: ignore[arg-type]
+    ).run()
+
+    assert [value for value in calls if value.startswith("transcribe:")] == [
+        "transcribe:20260712"
+    ]
+    assert result["pending_processing_days"] == [
+        "2026-07-11",
+        "2026-07-10",
+    ]
+    assert result["missing_days"] == []
+    assert any(
+        "return to archive acquisition" in str(event.get("message") or "")
+        for event in events
+    )
+
+
 def test_local_audio_failure_happens_before_archive_requests(
     tmp_path: Path,
     monkeypatch,

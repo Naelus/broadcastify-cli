@@ -760,6 +760,8 @@ def test_windows_startup_is_visible_configurable_and_recovery_aware() -> None:
     assert "RunScheduledJobAcrossAccountsAsync" in window
     assert "var pooledAcquisition" in window
     assert "Combine = false" in window
+    assert "MaxProcessingDays = 1" in window
+    assert "MaxProcessingDays = null" in window
     assert "Available archive acquisition turns are checkpointed" in window
     assert "Coordinator active" in window
     assert "activeSchedule.AccountProfileId" in window

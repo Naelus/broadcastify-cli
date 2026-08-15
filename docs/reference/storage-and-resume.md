@@ -158,12 +158,15 @@ A later stage cannot make an earlier stale stage look complete.
   start for the next daily through-current check. An authorized automatic pool
   checkpoints acquisition separately from local model stages, so an exhausted
   profile can hand off before combination or transcription and either node can
-  resume both phases from retained artifacts. A startup recovery defers any schedule left running for one collision-
-  avoidance minute and resumes from retained work. Windows login startup runs
-  this recovery before claiming scheduled work. While every authorized profile
-  is quota-paused, the schedule remains eligible for a five-minute retained-work
-  pass; the ledger blocks provider traffic while LAN copies and local model work
-  continue.
+  resume both phases from retained artifacts. Scheduled local processing is
+  limited to one model/day per pass; later retained days remain pending and the
+  next pass rechecks all account ledgers before resuming inference. Manual jobs
+  remain unbounded. A startup recovery defers any schedule left running for one
+  collision-avoidance minute and resumes from retained work. Windows login
+  startup runs this recovery before claiming scheduled work. While every
+  authorized profile is quota-paused, the schedule remains eligible for a
+  five-minute retained-work pass; the ledger blocks provider traffic while LAN
+  copies and local model work continue.
 - Explicit Library catch-ups are stored independently of the recent-day schedule
   lookback. New catch-ups retain one start date and recompute their effective end
   as today on every Library/Resume load while work remains. They synthesize

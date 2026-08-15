@@ -1222,6 +1222,7 @@ class FeedScheduleCoordinator:
         job_payload = dict(schedule["job"])
         analyze = bool(schedule["analyze"])
         if acquisition_only:
+            job_payload.pop("max_processing_days", None)
             job_payload.update(
                 {
                     "combine": False,
@@ -1230,6 +1231,11 @@ class FeedScheduleCoordinator:
                 }
             )
             analyze = False
+        else:
+            # A scheduled model pass yields after one retained day so every
+            # account's rolling allowance is checked again between long local
+            # inference runs. Explicit user-started jobs remain unbounded.
+            job_payload["max_processing_days"] = 1
         return self.jobs.start(
             "run-scheduled",
             {

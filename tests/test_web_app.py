@@ -150,6 +150,7 @@ def test_web_schedule_coordinator_claims_and_finishes_due_feed(
             assert command == "run-scheduled"
             assert payload["job"]["feed_id"] == "90001"  # type: ignore[index]
             assert payload["job"]["output_dir"] == str(self.output_dir.resolve())  # type: ignore[index]
+            assert payload["job"]["max_processing_days"] == 1  # type: ignore[index]
             return {"id": "scheduled-job"}
 
         def get(self, job_id: str) -> dict[str, object]:
@@ -266,6 +267,7 @@ def test_web_schedule_pool_hands_off_acquisition_before_model_work(
     assert primary["job"]["combine"] is False  # type: ignore[index]
     assert primary["job"]["transcribe"] is False  # type: ignore[index]
     assert primary["job"]["diarize"] is False  # type: ignore[index]
+    assert "max_processing_days" not in primary["job"]  # type: ignore[operator]
     assert secondary["account_profile_id"] == "automatic"
     assert secondary["exclude_account_profile_ids"] == ["default"]
     assert secondary["analyze"] is False
@@ -275,6 +277,7 @@ def test_web_schedule_pool_hands_off_acquisition_before_model_work(
     assert processing["job"]["combine"] is True  # type: ignore[index]
     assert processing["job"]["transcribe"] is True  # type: ignore[index]
     assert processing["job"]["diarize"] is True  # type: ignore[index]
+    assert processing["job"]["max_processing_days"] == 1  # type: ignore[index]
     with AnalysisStore(database) as store:
         result = store.list_feed_schedules()[0]
     assert result["state"] == "complete"

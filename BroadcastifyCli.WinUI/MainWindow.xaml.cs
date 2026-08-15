@@ -6450,14 +6450,19 @@ public sealed partial class MainWindow : Window
         var pooledAcquisition = automatic
             && _worker.AuthorizedAccountPoolEnabled
             && profileIds.Count > 1;
+        var processingJob = schedule.Job with
+        {
+            MaxProcessingDays = 1,
+        };
         var acquisitionJob = pooledAcquisition
             ? schedule.Job with
             {
                 Combine = false,
                 Transcribe = false,
                 Diarize = false,
+                MaxProcessingDays = null,
             }
-            : schedule.Job;
+            : processingJob;
         var statuses = new List<ArchiveQuotaStatus>();
         foreach (var profileId in profileIds)
         {
@@ -6540,7 +6545,7 @@ public sealed partial class MainWindow : Window
                 + "continuing combination, transcription, speaker labels, and analysis locally "
                 + "while another coordinated machine may take the next website turn.");
             lastResult = await RunAndAnalyzeJobAsync(
-                schedule.Job,
+                processingJob,
                 cancellationToken,
                 schedule.Analyze,
                 processingProfileId);

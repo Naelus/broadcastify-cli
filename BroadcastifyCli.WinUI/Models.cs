@@ -478,6 +478,9 @@ internal sealed record JobRequest : AnalysisProviderRequest
 
     [JsonPropertyName("lan_peer_urls")]
     public List<string> LanPeerUrls { get; init; } = [];
+
+    [JsonPropertyName("max_processing_days")]
+    public int? MaxProcessingDays { get; init; }
 }
 
 internal sealed record AsrSelfTestRequest

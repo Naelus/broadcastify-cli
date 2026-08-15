@@ -517,6 +517,7 @@ class AnalysisStore:
             "end_date",
             "huggingface_token",
             "analysis_api_key",
+            "max_processing_days",
         ):
             job.pop(key, None)
         job["download_jobs"] = 1

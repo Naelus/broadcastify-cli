@@ -45,6 +45,31 @@ def test_job_request_preserves_bounded_feed_name() -> None:
     assert request.feed_name == "A" * 200
 
 
+def test_job_request_parses_optional_processing_day_limit() -> None:
+    request = JobRequest.from_dict(
+        {
+            "feed_id": "5318",
+            "start_date": "2026-07-10",
+            "end_date": "2026-07-10",
+            "max_processing_days": "1",
+        }
+    )
+
+    assert request.max_processing_days == 1
+
+
+def test_processing_day_limit_must_be_positive() -> None:
+    request = JobRequest(
+        feed_id="5318",
+        start_date=date(2026, 7, 10),
+        end_date=date(2026, 7, 10),
+        max_processing_days=0,
+    )
+
+    with pytest.raises(ValueError, match="processing days"):
+        request.validate()
+
+
 def test_diarization_requires_transcription() -> None:
     request = JobRequest(
         feed_id="5318",

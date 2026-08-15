@@ -112,12 +112,16 @@ at the next daily run. A LAN-deferred or otherwise incomplete result retries
 shortly rather than being recorded as complete. Range acquisition, matching
 LAN reconciliation, and scheduled processing all start with the newest day and
 work backward toward the saved boundary; already-valid days are reused rather
-than repeated. If the rolling archive guard is closed, cached days can still finish
-locally and missing acquisition remains deferred until the ledger's next-safe
-time. The schedule itself becomes eligible every five minutes so newly retained
-LAN blocks or transcript results continue moving between nodes instead of
-waiting for that distant provider release. The acquisition runner reads that
-local ledger before authentication; a
+than repeated. A scheduled processing pass runs at most one model/day before it
+yields the worker back to acquisition. Remaining retained model days stay
+explicitly queued, so newly released allowance on any authorized profile is
+checked before another long inference pass. Explicit user-started jobs are not
+subject to this scheduler fairness bound. If the rolling archive guard is
+closed, cached days can still finish locally and missing acquisition remains
+deferred until the ledger's next-safe time. The schedule itself becomes eligible
+every five minutes so newly retained LAN blocks or transcript results continue
+moving between nodes instead of waiting for that distant provider release. The
+acquisition runner reads that local ledger before authentication; a
 closed guard permits trusted-LAN reuse, local processing, and cache reuse only
 for days with a valid local completion snapshot. It does not authenticate,
 load archive listings, or request archive media. A locally proven range
@@ -230,7 +234,8 @@ local cache use. See
 - Failed futures do not count as completed progress.
 - A quota response cancels queued media requests.
 - Existing blocks are never deleted during an interrupted range.
-- Archive acquisition precedes GPU processing so a long model pass cannot delay
-  the next guarded download.
+- Archive acquisition precedes GPU processing, and scheduled processing yields
+  after one model/day so the next released guarded download is checked before
+  another long model pass.
 - Re-running the same request starts from the exact first missing block or later
   invalid processing stage.

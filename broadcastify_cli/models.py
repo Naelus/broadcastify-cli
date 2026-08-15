@@ -54,6 +54,7 @@ class JobRequest:
     lan_discovery_enabled: bool = True
     lan_peer_urls: tuple[str, ...] = ()
     newest_first: bool = True
+    max_processing_days: int | None = None
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "JobRequest":
@@ -107,6 +108,11 @@ class JobRequest:
             ),
             lan_peer_urls=normalize_peer_urls(value.get("lan_peer_urls")),
             newest_first=bool(value.get("newest_first", True)),
+            max_processing_days=(
+                int(value["max_processing_days"])
+                if value.get("max_processing_days") not in {None, ""}
+                else None
+            ),
         )
         request.validate()
         return request
@@ -168,6 +174,8 @@ class JobRequest:
             raise ValueError("Minimum speakers must be at least 1.")
         if self.max_speakers is not None and self.max_speakers < 1:
             raise ValueError("Maximum speakers must be at least 1.")
+        if self.max_processing_days is not None and self.max_processing_days < 1:
+            raise ValueError("Maximum processing days must be at least 1.")
         if (
             self.min_speakers is not None
             and self.max_speakers is not None

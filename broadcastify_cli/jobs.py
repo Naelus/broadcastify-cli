@@ -549,6 +549,7 @@ class JobRunner:
             "uncoordinated": 0,
             "local_cache": 0,
         }
+        processing_days_started = 0
 
         def matching_transcripts(inputs: list[Path]) -> list[Path]:
             current = getattr(transcriber, "current_transcripts", None)
@@ -642,6 +643,33 @@ class JobRunner:
                         }
                     )
 
+                if (
+                    not transcripts
+                    and self.request.max_processing_days is not None
+                    and processing_days_started >= self.request.max_processing_days
+                ):
+                    pending_processing_days.append(day_label)
+                    self.emit(
+                        {
+                            "type": "log",
+                            "stage": "lan_processing",
+                            "message": (
+                                f"Queued local model work for {day_label}; this scheduled "
+                                "pass reached its processing-day limit and will return "
+                                "to archive acquisition before continuing."
+                            ),
+                        }
+                    )
+                    day_results.append(
+                        {
+                            "date": day_label,
+                            "audio_files": [str(path) for path in audio_files],
+                            "transcripts": [],
+                            "combined_file": str(combined) if combined else None,
+                        }
+                    )
+                    continue
+
                 claim_processing = getattr(
                     self.lan_sync,
                     "claim_processing_turn",
@@ -703,6 +731,7 @@ class JobRunner:
                             }
                         )
                 elif not transcripts:
+                    processing_days_started += 1
                     self.emit(
                         {
                             "type": "stage",
