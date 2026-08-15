@@ -6777,7 +6777,39 @@ public sealed partial class MainWindow : Window
         var transcriptDays = jobResult?.Days
             .Where(day => day.Transcripts.Count > 0)
             .ToList() ?? [];
-        foreach (var day in transcriptDays)
+        var requiredTranscriptDays = transcriptDays;
+        if (transcriptDays.Count > 0)
+        {
+            try
+            {
+                var savedAnalysisDays = await _worker.ListAnalysisDaysAsync(
+                    request.FeedId,
+                    cancellationToken);
+                var currentAnalysisDates = savedAnalysisDays
+                    .Where(day => day.AnalysisCurrent
+                        && !day.AnalysisUpdateRequired
+                        && !day.TranscriptImportRequired)
+                    .Select(day => day.ArchiveDate)
+                    .ToHashSet(StringComparer.Ordinal);
+                requiredTranscriptDays = transcriptDays
+                    .Where(day => !currentAnalysisDates.Contains(day.ArchiveDate))
+                    .ToList();
+                var skippedDayCount = transcriptDays.Count - requiredTranscriptDays.Count;
+                if (skippedDayCount > 0)
+                {
+                    AppendLog(
+                        $"Skipped {skippedDayCount} already-current analysis day(s); "
+                        + "their transcript and analysis fingerprints match.");
+                }
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                AppendLog(
+                    "Current analysis state could not be checked; safely analyzing "
+                    + $"all returned transcript days instead. {exception.Message}");
+            }
+        }
+        foreach (var day in requiredTranscriptDays)
         {
             cancellationToken.ThrowIfCancellationRequested();
             AppendLog($"Waiting for the shared analysis slot for feed {request.FeedId} on {day.ArchiveDate}…");

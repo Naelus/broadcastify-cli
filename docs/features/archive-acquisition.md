@@ -149,6 +149,14 @@ job runs at a time. Stored schedule JSON removes direct Hugging
 Face and analysis API-key values; those secrets must remain in the platform
 credential store, active session, or private environment.
 
+Before any scheduled per-day analysis pass, both the native Windows scheduler
+and the Web/TrueNAS worker compare the retained transcript and analysis
+fingerprints. Days that are already current are logged and skipped, so a
+five-minute quota recheck cannot spend most of its interval re-importing the
+same transcripts or rebuilding an unchanged semantic index. If that retained
+state check itself fails, the safe fallback analyzes the returned transcript
+days instead of risking an unprocessed changed day.
+
 Automatic account mode is still one worker and one spaced archive request at a
 time. Credentials, cookies, request attempts, 429 blocks, and next-safe times
 are isolated per profile. When one account becomes unavailable, the same saved

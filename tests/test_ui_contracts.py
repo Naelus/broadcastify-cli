@@ -767,6 +767,14 @@ def test_windows_startup_is_visible_configurable_and_recovery_aware() -> None:
     assert 'Status = resumeAfterRestart ? "deferred" : "canceled"' in window
     assert "The app closed after checkpointing this scheduled run" in window
     assert "Available archive acquisition turns are checkpointed" in window
+    assert "savedAnalysisDays = await _worker.ListAnalysisDaysAsync" in window
+    assert "day.AnalysisCurrent" in window
+    assert "!day.AnalysisUpdateRequired" in window
+    assert "!day.TranscriptImportRequired" in window
+    assert "foreach (var day in requiredTranscriptDays)" in window
+    assert "already-current analysis day(s)" in window
+    assert "Current analysis state could not be checked; safely analyzing" in window
+    assert "all returned transcript days instead" in window
     assert "Coordinator active" in window
     assert "activeSchedule.AccountProfileId" in window
     assert "Automatic authorized pool" in window
