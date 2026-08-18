@@ -3146,13 +3146,19 @@ class LanArchiveSyncClient:
                                 fingerprint,
                                 source_peer_urls=(peer,),
                             )
-                            if result.failures or not result.artifacts_available:
+                            if result.failures:
                                 raise LanSyncError(
                                     "The changed master result was not completely verified."
                                 )
-                            result_events += 1
-                            transcript_artifacts_copied += result.artifacts_copied
-                            bytes_copied += result.bytes_copied
+                            # An older result event can legitimately have no
+                            # complete inventory after a rolling day is
+                            # replaced. Advance past that superseded event;
+                            # record_result republishes the completed
+                            # replacement at a newer sequence.
+                            if result.artifacts_available:
+                                result_events += 1
+                                transcript_artifacts_copied += result.artifacts_copied
+                                bytes_copied += result.bytes_copied
                         elif kind != "result":
                             raise LanSyncError("The peer advertised an invalid change kind.")
                     except (

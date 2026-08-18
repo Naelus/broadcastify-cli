@@ -173,6 +173,67 @@ def test_follower_pulls_completed_source_and_master_authored_result_delta(
         thread.join(timeout=3)
 
 
+def test_follower_skips_superseded_empty_result_and_receives_republication(
+    tmp_path: Path,
+) -> None:
+    master_root = tmp_path / "master"
+    follower_root = tmp_path / "follower"
+    feed_id = "90001"
+    archive_date = date(2026, 7, 13)
+    fingerprint = "b" * 64
+    with PipelineSyncStore(master_root) as journal:
+        first_sequence = journal.record_result(
+            feed_id,
+            archive_date,
+            fingerprint,
+        )
+    master = create_lan_node_server(
+        master_root,
+        host="127.0.0.1",
+        port=0,
+        discovery_enabled=False,
+        role="master",
+    )
+    master.quiet = True  # type: ignore[attr-defined]
+    thread = threading.Thread(target=master.serve_forever, daemon=True)
+    thread.start()
+    master_url = f"http://127.0.0.1:{master.server_port}"
+    client = LanArchiveSyncClient(
+        enabled=True,
+        peer_urls=(),
+        discovery_enabled=False,
+        role="follower",
+        master_url=master_url,
+    )
+    try:
+        first = client.sync_changes(follower_root)
+        assert first.failures == ()
+        assert first.result_events == 0
+
+        _retained_transcribed_feed_day(
+            master_root,
+            feed_id,
+            archive_date,
+            fingerprint,
+        )
+        with PipelineSyncStore(master_root) as journal:
+            second_sequence = journal.record_result(
+                feed_id,
+                archive_date,
+                fingerprint,
+            )
+        assert second_sequence > first_sequence
+
+        second = client.sync_changes(follower_root)
+        assert second.failures == ()
+        assert second.result_events == 1
+        assert second.transcript_artifacts_copied == 4
+    finally:
+        master.shutdown()
+        master.server_close()
+        thread.join(timeout=3)
+
+
 def test_follower_request_is_persisted_only_on_the_master(tmp_path: Path) -> None:
     master_root = tmp_path / "master"
     master = create_lan_node_server(
