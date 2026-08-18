@@ -60,12 +60,12 @@ The trusted-LAN workflow proves that:
   profiles while completed results may coexist;
 - a quota-limited primary profile does not block the next authorized profile's
   sequential turn;
-- two nodes with a month versus a few retained days converge the complete feed,
-  including raw identity proofs, combined audio, timeline manifests, transcript
-  JSON, and rendered text;
-- the Windows node and browser/TrueNAS host pull newly completed peer artifacts
-  in the background without starting a job or spending a provider request;
-- the Windows client and TrueNAS Web service use the same explicit coordinator;
+- the Windows master consumes a follower's completed source delta once and
+  never imports that follower's model output;
+- followers submit ranges to Windows and consume completed Windows-authored
+  source/result deltas once across cursor persistence and restart;
+- every acquisition node uses the Windows coordinator while local retained
+  browsing remains available during coordinator failure;
 - the protected Web System activity surface refreshes coordinated acquisition,
   model claims, reconciliation, account allowances, and schedule state without
   starting a job or exposing credentials;

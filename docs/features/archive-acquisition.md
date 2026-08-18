@@ -199,32 +199,22 @@ hand-curated profiles that contain neither retain their saved feed order, so a
 name sort cannot redirect scarce archive requests away from the intended
 nearest/highest-priority feed.
 
-## Trusted-LAN pool
+## Trusted-LAN master and followers
 
-The optional LAN node shares retained archive MP3 blocks and complete
-model-fingerprint-matched transcript sets, never credentials or analysis
-databases. One renewable producer lease owns the single global upstream stream;
-followers assemble the exact feed/day completion manifest from any peer and
-verify size plus SHA-256. Inventories and completion manifests
-carry the one optional exact provider ID and listing prefix for each block, so
-a copied block retains its no-request cache identity on the receiving node. A
-legacy peer manifest that collapses multiple positions into one block is
-rejected and must be repaired by an updated producer. Once the exact completed manifest is
-assembled and hash-verified, the receiving node writes its own local completion
-snapshot; the snapshot itself does not need to be shared.
+One renewable producer lease still owns the single global upstream stream, so
+an authorized follower may acquire a requested source day without opening a
+second provider stream. Windows is the post-download master. It clones every
+newly completed follower day, verifies the exact filename/size/SHA-256/provider
+identity manifest, and alone owns combination, transcription, diarization,
+analysis, and indexing. Followers submit ranges to Windows and later pull only
+Windows-authored completed transcript sets.
 
-At every LAN-enabled job start, feed-wide reconciliation discovers all dates a
-peer retained for the selected feed, not only the current job's recent window.
-The long-running Windows node and browser/TrueNAS host also repeat this
-LAN-only convergence independently of archive/model jobs, every five minutes
-by default. Thus a transcript completed by one host appears on the other while
-a long, unrelated model stage is still active; the pass cannot contact the
-provider or consume quota. Equivalent model output travels as combined audio
-(when present), its exact timeline manifest, transcript JSON, and rendered
-text. A per-fingerprint/day processing lease prevents two machines from running
-the same work; different days remain eligible for parallel model processing.
-Scheduled jobs defer an active peer-owned acquisition or model/day immediately
-and retry it from retained state on a later pass.
+Synchronization is driven by a persistent append-only event journal and a
+per-peer cursor. Jobs check only requested dates; the background worker applies
+one bounded delta page. Neither path enumerates a complete feed or all model
+fingerprints. Windows interactive and local processing paths never wait for a
+follower. A missing master pauses follower requests and new coordinated
+provider access but cannot block retained local use. Promotion is explicit.
 
 Broadcastify source labels can drift slightly across midnight even when the
 track belongs to the prior website archive page. LAN manifests accept that
@@ -234,8 +224,8 @@ bounded next-day rollover consistently; the requested feed/day directory and a
 Today/yesterday successful manifests are short-lived rolling snapshots so a new
 track can be discovered. Explicit quota state follows the producer ledger's
 next known rolling-window release for the selected account profile. A different
-authorized profile may take the next sequential turn. With a configured
-authoritative coordinator, Windows and TrueNAS use the same per-account ledger;
+authorized profile may take the next sequential turn. With Windows configured
+as the authoritative coordinator, every acquisition node uses the same per-account ledger;
 coordinator failure pauses new website requests. LAN failure never prevents
 local cache use. See
 [lan-archive-sync.md](../lan-archive-sync.md).

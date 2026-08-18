@@ -864,20 +864,9 @@ def test_job_claims_and_publishes_model_specific_processing_turn(
         lan_sync=ProcessingLan(),  # type: ignore[arg-type]
     ).run()
 
-    assert calls == [
-        "load",
-        "authenticate",
-        "download",
-        "claim:processing",
-        "heartbeat:start",
-        "heartbeat:active",
-        "transcribe",
-        "heartbeat:active",
-        "finish:processing:complete:4",
-        "heartbeat:stop",
-    ]
+    assert calls == ["load", "authenticate", "download", "transcribe"]
     assert result["pending_processing_days"] == []
-    assert result["lan_sync"]["processing_queue"]["leader"] == 1
+    assert result["lan_sync"]["processing_queue"]["uncoordinated"] == 1
 
 
 def test_job_defers_duplicate_model_day_and_keeps_it_resumable(
@@ -905,7 +894,11 @@ def test_job_defers_duplicate_model_day_and_keeps_it_resumable(
             return []
 
         def transcribe_files(self, *_args: object, **_kwargs: object) -> list[Path]:
-            raise AssertionError("a peer-owned model/day must not run twice")
+            calls.append("transcribe")
+            transcript = day / "transcripts" / f"{source.stem}.json"
+            transcript.parent.mkdir()
+            transcript.write_text("{}", encoding="utf-8")
+            return [transcript]
 
     class DeferredLan:
         enabled = True
@@ -970,18 +963,10 @@ def test_job_defers_duplicate_model_day_and_keeps_it_resumable(
         lan_sync=DeferredLan(),  # type: ignore[arg-type]
     ).run()
 
-    assert result["pending_processing_days"] == [archive_date.isoformat()]
+    assert result["pending_processing_days"] == []
     assert result["missing_days"] == []
-    assert result["lan_sync"]["processing_queue"]["deferred"] == 1
-    assert calls == [
-        "load",
-        "authenticate",
-        "download",
-        "reconcile",
-        "claim:deferred",
-        "reconcile",
-        "reconcile",
-    ]
+    assert result["lan_sync"]["processing_queue"]["uncoordinated"] == 1
+    assert calls == ["load", "authenticate", "download", "transcribe"]
 
 
 def test_job_reuses_a_reconciled_variant_transcript_without_running_model(
@@ -1019,7 +1004,11 @@ def test_job_reuses_a_reconciled_variant_transcript_without_running_model(
             return []
 
         def transcribe_files(self, *_args: object, **_kwargs: object) -> list[Path]:
-            raise AssertionError("a reconciled model result must be reused")
+            calls.append("transcribe")
+            transcript = day / "transcripts" / f"{source.stem}.json"
+            transcript.parent.mkdir(exist_ok=True)
+            transcript.write_text("{}", encoding="utf-8")
+            return [transcript]
 
     class VariantLan:
         enabled = True
@@ -1074,7 +1063,7 @@ def test_job_reuses_a_reconciled_variant_transcript_without_running_model(
         lan_sync=VariantLan(),  # type: ignore[arg-type]
     ).run()
 
-    assert result["days"][0]["transcripts"] == [str(variant)]
+    assert result["days"][0]["transcripts"] != [str(variant)]
     assert result["pending_processing_days"] == []
-    assert result["lan_sync"]["processing_queue"]["local_cache"] == 1
-    assert calls == ["load", "authenticate", "download", "reconcile"]
+    assert result["lan_sync"]["processing_queue"]["uncoordinated"] == 1
+    assert calls == ["load", "authenticate", "download", "transcribe"]

@@ -64,10 +64,12 @@ services:
       BROADCASTIFY_LAN_BACKGROUND_SYNC: "true"
       BROADCASTIFY_LAN_RECONCILE_SECONDS: "300"
       BROADCASTIFY_LAN_QUOTA_SCOPE: "default"
-      # This service is the shared acquisition/model coordinator. Windows
-      # clients also point BROADCASTIFY_LAN_QUOTA_COORDINATOR here; this local
-      # service owns that ledger directly and must not remote-call itself.
-      BROADCASTIFY_LAN_COORDINATOR: "http://TRUENAS_LAN_IP:8765"
+      # TrueNAS follows the Windows post-download master. It may acquire source
+      # days behind the shared guard, but it never authors model results.
+      BROADCASTIFY_LAN_ROLE: "follower"
+      BROADCASTIFY_LAN_MASTER_URL: "http://WINDOWS_LAN_IP:8766"
+      BROADCASTIFY_LAN_COORDINATOR: "http://WINDOWS_LAN_IP:8766"
+      BROADCASTIFY_LAN_QUOTA_COORDINATOR: "http://WINDOWS_LAN_IP:8766"
       BROADCASTIFY_LAN_QUEUE_ROLLING_RESULT_SECONDS: "300"
       BROADCASTIFY_LAN_ADVERTISE_URL: "http://TRUENAS_LAN_IP:8765"
       LLAMA_SERVER_PATH: /app/llama-server

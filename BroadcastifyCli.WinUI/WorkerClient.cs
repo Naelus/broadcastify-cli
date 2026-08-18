@@ -129,6 +129,7 @@ internal sealed class WorkerClient
                     "--port", boundedPort.ToString(
                         System.Globalization.CultureInfo.InvariantCulture),
                     "--output-dir", output,
+                    "--role", "master",
                     "--parent-pid", Environment.ProcessId.ToString(
                         System.Globalization.CultureInfo.InvariantCulture),
                 ],
@@ -1427,6 +1428,7 @@ internal sealed class WorkerClient
         }
         startInfo.Environment["PYTHONIOENCODING"] = "utf-8";
         startInfo.Environment["PYTHONUTF8"] = "1";
+        startInfo.Environment["BROADCASTIFY_DESKTOP_MASTER"] = "true";
         if (IsBundledRuntime)
         {
             startInfo.Environment["PYTHONNOUSERSITE"] = "1";

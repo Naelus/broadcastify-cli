@@ -94,6 +94,7 @@ from .managed_runtime import (
     install_managed_runtime,
     managed_runtime_status,
 )
+from .pipeline_sync import PipelineSyncStore, normalize_pipeline_role
 from .models import JobRequest
 from .storage import AnalysisStore, sha256_file
 from .transcription import LocalTranscriber, decoded_diarization_audio
@@ -517,6 +518,19 @@ def save_feed_schedule() -> int:
 def claim_due_feed_schedule() -> int:
     library_root = str(os.getenv("BROADCASTIFY_LIBRARY_ROOT") or "").strip()
     with AnalysisStore(DEFAULT_DATABASE) as store:
+        role = (
+            "master"
+            if str(os.getenv("BROADCASTIFY_DESKTOP_MASTER") or "").lower()
+            in {"1", "true", "yes", "on"}
+            else normalize_pipeline_role(
+                os.getenv("BROADCASTIFY_LAN_ROLE") or "master"
+            )
+        )
+        if library_root and role == "master":
+            with PipelineSyncStore(library_root) as pipeline:
+                for request in pipeline.pending_requests():
+                    store.merge_pipeline_request(request)
+                    pipeline.mark_scheduled(int(request["id"]))
         schedule = store.claim_due_feed_schedule(
             output_dir=library_root or None,
         )

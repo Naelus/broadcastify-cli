@@ -33,6 +33,7 @@ from .archive_cache import (
     remember_archive_identity,
     remember_complete_archive_day,
 )
+from .pipeline_sync import PipelineSyncStore, normalize_pipeline_role
 
 LAN_PROTOCOL = "radio-archive-lan/1"
 LAN_DISCOVERY_MAGIC = b"RADIO-ARCHIVE-LAN-DISCOVER/1 "
@@ -531,6 +532,24 @@ class LanFeedSyncResult:
     days_considered: int = 0
     days_with_download_changes: int = 0
     days_with_transcript_changes: int = 0
+    blocks_copied: int = 0
+    transcript_artifacts_copied: int = 0
+    bytes_copied: int = 0
+    failures: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class LanDeltaSyncResult:
+    enabled: bool
+    role: str = "master"
+    peers_considered: int = 0
+    peers_reached: int = 0
+    events_considered: int = 0
+    source_events: int = 0
+    result_events: int = 0
     blocks_copied: int = 0
     transcript_artifacts_copied: int = 0
     bytes_copied: int = 0
@@ -1286,12 +1305,14 @@ class LanArchiveCatalog:
         acquisition_queue: LanAcquisitionQueue | None = None,
         processing_queue: LanProcessingQueue | None = None,
         queue_enabled: bool = True,
+        role: str = "master",
     ) -> None:
         self.output_dir = Path(output_dir).expanduser().resolve()
         self.enabled = bool(enabled)
         self.sync_key = str(sync_key or "")
         self.peer_urls = normalize_peer_urls(peer_urls)
         self.node_id = node_id or secrets.token_hex(12)
+        self.role = normalize_pipeline_role(role)
         self.hashes = ArchiveHashCache()
         self.discovery_available = False
         self.discovery_error = ""
@@ -1317,7 +1338,9 @@ class LanArchiveCatalog:
             ),
         )
         self.processing_queue = processing_queue or LanProcessingQueue(
-            enabled=self.enabled and queue_enabled,
+            # Model output has one authority: the Windows master. Followers do
+            # not coordinate or publish competing derived results.
+            enabled=False,
             lease_seconds=environment_float(
                 "BROADCASTIFY_LAN_PROCESSING_LEASE_SECONDS",
                 LAN_PROCESSING_LEASE_SECONDS,
@@ -1341,6 +1364,7 @@ class LanArchiveCatalog:
         return {
             "protocol": LAN_PROTOCOL,
             "node_id": self.node_id,
+            "role": self.role,
             "sharing": self.enabled,
             "key_required": bool(self.sync_key),
             "peers": list(self.peer_urls),
@@ -1348,9 +1372,7 @@ class LanArchiveCatalog:
             "acquisition_queue_available": bool(
                 self.enabled and self.acquisition_queue.enabled
             ),
-            "processing_queue_available": bool(
-                self.enabled and self.processing_queue.enabled
-            ),
+            "processing_queue_available": False,
             "activity": {
                 "acquisition": self.acquisition_queue.active_activity(),
                 "processing": self.processing_queue.active_activities(),
@@ -2237,12 +2259,23 @@ class LanArchiveSyncClient:
         queue_poll_interval: float = 2.0,
         queue_max_wait: float = 30 * 60.0,
         queue_consumer_grace: float = 3.0,
+        role: str = "master",
+        master_url: str = "",
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         self.enabled = bool(enabled)
         self.peer_urls = normalize_peer_urls(peer_urls)
         self.discovery_enabled = bool(discovery_enabled)
         self.sync_key = str(sync_key or "")
+        self.role = normalize_pipeline_role(role)
+        self.master_url = (
+            normalize_peer_url(master_url) if str(master_url).strip() else ""
+        )
+        if self.role == "follower" and not self.master_url:
+            configured_master = str(coordinator_url or "").strip()
+            self.master_url = (
+                normalize_peer_url(configured_master) if configured_master else ""
+            )
         self.connect_timeout = max(0.1, float(connect_timeout))
         self.read_timeout = max(1.0, float(read_timeout))
         self.hashes = ArchiveHashCache()
@@ -2359,6 +2392,18 @@ class LanArchiveSyncClient:
                 minimum=0.0,
                 maximum=30.0,
             ),
+            role=(
+                "master"
+                if environment_flag("BROADCASTIFY_DESKTOP_MASTER", default=False)
+                else normalize_pipeline_role(
+                    os.getenv("BROADCASTIFY_LAN_ROLE") or "master"
+                )
+            ),
+            master_url=(
+                os.getenv("BROADCASTIFY_LAN_MASTER_URL")
+                or os.getenv("BROADCASTIFY_LAN_COORDINATOR")
+                or ""
+            ),
         )
 
     def sync_day(
@@ -2369,22 +2414,27 @@ class LanArchiveSyncClient:
         *,
         progress: ProgressCallback | None = None,
         additional_peer_urls: Sequence[str] = (),
+        source_peer_urls: Sequence[str] | None = None,
     ) -> LanSyncResult:
         if not self.enabled:
             return LanSyncResult(enabled=False)
         if not feed_id.isdigit():
             raise ValueError("A numeric feed ID is required for LAN archive sync.")
-        seeds = list(
-            dict.fromkeys(
-                (
-                    *self.peer_urls,
-                    *normalize_peer_urls(additional_peer_urls, strict=False),
-                    *self._recent_peer_urls(),
+        seeds = (
+            list(normalize_peer_urls(source_peer_urls, strict=False))
+            if source_peer_urls is not None
+            else list(
+                dict.fromkeys(
+                    (
+                        *((self.master_url,) if self.role == "follower" and self.master_url else self.peer_urls),
+                        *normalize_peer_urls(additional_peer_urls, strict=False),
+                        *(() if self.role == "follower" else self._recent_peer_urls()),
+                    )
                 )
             )
         )
         failures: list[str] = []
-        if self.discovery_enabled:
+        if source_peer_urls is None and self.discovery_enabled and self.role == "master":
             try:
                 seeds.extend(discover_lan_peers())
             except OSError as exc:
@@ -2599,6 +2649,7 @@ class LanArchiveSyncClient:
         *,
         progress: ProgressCallback | None = None,
         additional_peer_urls: Sequence[str] = (),
+        source_peer_urls: Sequence[str] | None = None,
     ) -> LanTranscriptSyncResult:
         """Pull hash-verified audio/JSON/text produced by an equivalent model."""
 
@@ -2608,17 +2659,21 @@ class LanArchiveSyncClient:
             processing_fingerprint,
             feed_id,
         )
-        seeds = list(
-            dict.fromkeys(
-                (
-                    *self.peer_urls,
-                    *normalize_peer_urls(additional_peer_urls, strict=False),
-                    *self._recent_peer_urls(),
+        seeds = (
+            list(normalize_peer_urls(source_peer_urls, strict=False))
+            if source_peer_urls is not None
+            else list(
+                dict.fromkeys(
+                    (
+                        *((self.master_url,) if self.role == "follower" and self.master_url else self.peer_urls),
+                        *normalize_peer_urls(additional_peer_urls, strict=False),
+                        *(() if self.role == "follower" else self._recent_peer_urls()),
+                    )
                 )
             )
         )
         failures: list[str] = []
-        if self.discovery_enabled:
+        if source_peer_urls is None and self.discovery_enabled and self.role == "master":
             try:
                 seeds.extend(discover_lan_peers())
             except OSError as exc:
@@ -2875,19 +2930,19 @@ class LanArchiveSyncClient:
         processing_fingerprint: str = "",
         progress: ProgressCallback | None = None,
     ) -> LanFeedSyncResult:
-        """Converge every retained peer date for one followed feed."""
+        """Legacy explicit source-only feed pull.
+
+        Runtime jobs and background synchronization use requested dates or the
+        incremental journal. This compatibility method never enumerates or
+        copies derived artifacts.
+        """
 
         if not self.enabled:
             return LanFeedSyncResult(enabled=False)
         if not feed_id.isdigit():
             raise ValueError("A numeric feed ID is required for LAN feed sync.")
-        fingerprint = str(processing_fingerprint or "").strip().lower()
-        if fingerprint:
-            fingerprint = LanProcessingQueue._validate_key(fingerprint, feed_id)
         dates, peers, failures = self._feed_date_union(feed_id)
         day_results: list[LanSyncResult] = []
-        transcript_results: list[LanTranscriptSyncResult] = []
-        transcript_changed_dates: set[date] = set()
         for current, archive_date in enumerate(dates, start=1):
             if progress:
                 progress(
@@ -2905,66 +2960,7 @@ class LanArchiveSyncClient:
                 failures.extend(day_result.failures)
             except (LanSyncError, requests.RequestException, OSError, ValueError) as exc:
                 failures.append(f"{archive_date.isoformat()}: {exc}")
-            fingerprints: list[str] = [fingerprint] if fingerprint else []
-            transcript_peers = list(peers)
-            for peer in tuple(transcript_peers):
-                try:
-                    discovered, advertised = self._transcript_fingerprints(
-                        peer,
-                        feed_id,
-                        archive_date,
-                    )
-                    for value in discovered:
-                        if (
-                            value not in fingerprints
-                            and len(fingerprints)
-                            < MAX_TRANSCRIPT_FINGERPRINTS_PER_DAY
-                        ):
-                            fingerprints.append(value)
-                    for value in advertised:
-                        if (
-                            value not in transcript_peers
-                            and len(transcript_peers) < MAX_LAN_PEERS
-                        ):
-                            transcript_peers.append(value)
-                except (
-                    LanSyncError,
-                    requests.RequestException,
-                    ValueError,
-                ) as exc:
-                    failures.append(
-                        f"{peer} / {archive_date.isoformat()} transcript models: {exc}"
-                    )
-            if progress and len(fingerprints) > 1:
-                progress(
-                    f"Reconciling {len(fingerprints)} retained model results for "
-                    f"feed {feed_id} day {archive_date.isoformat()}."
-                )
-            for current_fingerprint in fingerprints:
-                try:
-                    transcript_result = self.sync_transcripts(
-                        output_dir,
-                        feed_id,
-                        archive_date,
-                        current_fingerprint,
-                        additional_peer_urls=transcript_peers,
-                    )
-                    transcript_results.append(transcript_result)
-                    failures.extend(transcript_result.failures)
-                    if transcript_result.artifacts_copied:
-                        transcript_changed_dates.add(archive_date)
-                except (
-                    LanSyncError,
-                    requests.RequestException,
-                    OSError,
-                    ValueError,
-                ) as exc:
-                    failures.append(
-                        f"{archive_date.isoformat()} transcripts "
-                        f"({current_fingerprint[:12]}): {exc}"
-                    )
         block_bytes = sum(value.bytes_copied for value in day_results)
-        transcript_bytes = sum(value.bytes_copied for value in transcript_results)
         return LanFeedSyncResult(
             enabled=True,
             dates_discovered=tuple(value.isoformat() for value in dates),
@@ -2972,14 +2968,272 @@ class LanArchiveSyncClient:
             days_with_download_changes=sum(
                 value.blocks_copied > 0 for value in day_results
             ),
-            days_with_transcript_changes=len(transcript_changed_dates),
+            days_with_transcript_changes=0,
             blocks_copied=sum(value.blocks_copied for value in day_results),
-            transcript_artifacts_copied=sum(
-                value.artifacts_copied for value in transcript_results
-            ),
-            bytes_copied=block_bytes + transcript_bytes,
+            transcript_artifacts_copied=0,
+            bytes_copied=block_bytes,
             failures=tuple(dict.fromkeys(failures))[:50],
         )
+
+    def request_master_pipeline(
+        self,
+        output_dir: str | Path,
+        feed_id: str,
+        start_date: date,
+        end_date: date,
+        *,
+        feed_name: str = "",
+    ) -> dict[str, Any]:
+        """Ask the authoritative master to own a follower's requested range."""
+
+        if self.role != "follower":
+            return {"accepted": False, "reason": "local node is the master"}
+        if not self.master_url:
+            raise LanSyncError("A follower requires a configured Windows master URL.")
+        requester = "node-" + hashlib.sha256(
+            (
+                str(Path(output_dir).expanduser().resolve())
+                + "|"
+                + self.producer_url
+            ).encode("utf-8")
+        ).hexdigest()[:24]
+        with self._lan_session() as session:
+            with session.post(
+                f"{self.master_url}/api/lan/v1/pipeline-request",
+                headers={**self._headers(), "Content-Type": "application/json"},
+                json={
+                    "feed_id": feed_id,
+                    "feed_name": str(feed_name or "")[:200],
+                    "start_date": start_date.isoformat(),
+                    "end_date": end_date.isoformat(),
+                    "requester_node_id": requester,
+                },
+                timeout=(self.connect_timeout, min(self.read_timeout, 30.0)),
+                allow_redirects=False,
+                stream=True,
+            ) as response:
+                response.raise_for_status()
+                payload = self._bounded_json(response, LAN_QUEUE_RESPONSE_BYTES)
+        if not isinstance(payload, Mapping) or payload.get("protocol") != LAN_PROTOCOL:
+            raise LanSyncError("The master returned an invalid pipeline response.")
+        return dict(payload)
+
+    def sync_master_results(
+        self,
+        output_dir: str | Path,
+        feed_id: str,
+        archive_date: date,
+    ) -> LanTranscriptSyncResult:
+        """Followers pull only transcript artifacts authored by the master."""
+
+        if self.role != "follower" or not self.master_url:
+            return LanTranscriptSyncResult(enabled=False)
+        try:
+            fingerprints, _peers = self._transcript_fingerprints(
+                self.master_url,
+                feed_id,
+                archive_date,
+            )
+        except (LanSyncError, requests.RequestException, ValueError) as exc:
+            return LanTranscriptSyncResult(enabled=True, failures=(str(exc),))
+        results = [
+            self.sync_transcripts(
+                output_dir,
+                feed_id,
+                archive_date,
+                fingerprint,
+                source_peer_urls=(self.master_url,),
+            )
+            for fingerprint in fingerprints
+        ]
+        return LanTranscriptSyncResult(
+            enabled=True,
+            peers_considered=1,
+            peers_reached=int(bool(fingerprints)),
+            artifacts_available=sum(value.artifacts_available for value in results),
+            artifacts_already_local=sum(
+                value.artifacts_already_local for value in results
+            ),
+            artifacts_copied=sum(value.artifacts_copied for value in results),
+            bytes_copied=sum(value.bytes_copied for value in results),
+            conflicts=sum(value.conflicts for value in results),
+            transcripts=tuple(
+                dict.fromkeys(
+                    transcript
+                    for value in results
+                    for transcript in value.transcripts
+                )
+            ),
+            failures=tuple(
+                dict.fromkeys(
+                    failure for value in results for failure in value.failures
+                )
+            )[:50],
+        )
+
+    def sync_changes(
+        self,
+        output_dir: str | Path,
+        *,
+        maximum_events: int = 128,
+    ) -> LanDeltaSyncResult:
+        """Apply a bounded incremental journal page without an archive scan."""
+
+        if not self.enabled:
+            return LanDeltaSyncResult(enabled=False, role=self.role)
+        if self.role == "follower":
+            peers = [self.master_url] if self.master_url else []
+        else:
+            peers = list(dict.fromkeys((*self.peer_urls, *self._recent_peer_urls())))
+            if self.discovery_enabled:
+                try:
+                    peers.extend(discover_lan_peers())
+                except OSError:
+                    pass
+        peers = list(dict.fromkeys(value for value in peers if value))[:MAX_LAN_PEERS]
+        reached = 0
+        considered = 0
+        source_events = 0
+        result_events = 0
+        blocks_copied = 0
+        transcript_artifacts_copied = 0
+        bytes_copied = 0
+        failures: list[str] = []
+        root = Path(output_dir).expanduser().resolve()
+        with PipelineSyncStore(root) as store:
+            remaining = min(512, max(1, int(maximum_events)))
+            for peer in peers:
+                if remaining <= 0:
+                    break
+                considered += 1
+                try:
+                    info = self._peer_info(peer)
+                    node_id = str(info["node_id"])
+                    after = store.cursor(peer, node_id)
+                    payload = self._pipeline_changes(peer, after, remaining)
+                    reached += 1
+                except (LanSyncError, requests.RequestException, ValueError) as exc:
+                    failures.append(f"{peer}: {exc}")
+                    continue
+                for raw_event in payload["events"]:
+                    sequence = int(raw_event["sequence"])
+                    kind = str(raw_event["kind"])
+                    feed_id = str(raw_event["feed_id"])
+                    archive_date = date.fromisoformat(str(raw_event["archive_date"]))
+                    try:
+                        if kind == "source":
+                            result = self.sync_day(
+                                root,
+                                feed_id,
+                                archive_date,
+                                source_peer_urls=(peer,),
+                            )
+                            if result.failures or not result.completion_proven:
+                                raise LanSyncError(
+                                    "The changed source day was not completely verified."
+                                )
+                            source_events += 1
+                            blocks_copied += result.blocks_copied
+                            bytes_copied += result.bytes_copied
+                        elif kind == "result" and self.role == "follower":
+                            fingerprint = str(
+                                raw_event.get("processing_fingerprint") or ""
+                            )
+                            result = self.sync_transcripts(
+                                root,
+                                feed_id,
+                                archive_date,
+                                fingerprint,
+                                source_peer_urls=(peer,),
+                            )
+                            if result.failures or not result.artifacts_available:
+                                raise LanSyncError(
+                                    "The changed master result was not completely verified."
+                                )
+                            result_events += 1
+                            transcript_artifacts_copied += result.artifacts_copied
+                            bytes_copied += result.bytes_copied
+                        elif kind != "result":
+                            raise LanSyncError("The peer advertised an invalid change kind.")
+                    except (
+                        LanSyncError,
+                        OSError,
+                        requests.RequestException,
+                        ValueError,
+                    ) as exc:
+                        failures.append(f"{peer} / event {sequence}: {exc}")
+                        break
+                    store.save_cursor(peer, node_id, sequence)
+                    remaining -= 1
+                    if remaining <= 0:
+                        break
+        return LanDeltaSyncResult(
+            enabled=True,
+            role=self.role,
+            peers_considered=considered,
+            peers_reached=reached,
+            events_considered=source_events + result_events,
+            source_events=source_events,
+            result_events=result_events,
+            blocks_copied=blocks_copied,
+            transcript_artifacts_copied=transcript_artifacts_copied,
+            bytes_copied=bytes_copied,
+            failures=tuple(dict.fromkeys(failures))[:50],
+        )
+
+    def _pipeline_changes(
+        self,
+        peer: str,
+        after: int,
+        limit: int,
+    ) -> dict[str, Any]:
+        with self._lan_session() as session:
+            with session.get(
+                f"{peer}/api/lan/v1/changes",
+                params={"after": max(0, int(after)), "limit": min(512, max(1, int(limit)))},
+                headers=self._headers(),
+                timeout=(self.connect_timeout, min(self.read_timeout, 30.0)),
+                allow_redirects=False,
+                stream=True,
+            ) as response:
+                response.raise_for_status()
+                payload = self._bounded_json(response, MAX_INVENTORY_BYTES)
+        if (
+            not isinstance(payload, Mapping)
+            or payload.get("protocol") != LAN_PROTOCOL
+            or not isinstance(payload.get("events"), list)
+        ):
+            raise LanSyncError("The peer returned an invalid change journal.")
+        events: list[dict[str, Any]] = []
+        previous = max(0, int(after))
+        for raw in payload["events"]:
+            if not isinstance(raw, Mapping):
+                raise LanSyncError("The peer returned an invalid change event.")
+            sequence = int(raw.get("sequence") or 0)
+            feed_id = str(raw.get("feed_id") or "")
+            archive_date = date.fromisoformat(str(raw.get("archive_date") or ""))
+            kind = str(raw.get("kind") or "")
+            fingerprint = str(raw.get("processing_fingerprint") or "")
+            if (
+                sequence <= previous
+                or not feed_id.isdigit()
+                or archive_date > date.today()
+                or kind not in {"source", "result"}
+                or (kind == "result" and not PROCESSING_FINGERPRINT_PATTERN.fullmatch(fingerprint))
+                or (kind == "source" and fingerprint)
+            ):
+                raise LanSyncError("The peer returned an invalid change event.")
+            previous = sequence
+            events.append(
+                {
+                    "sequence": sequence,
+                    "kind": kind,
+                    "feed_id": feed_id,
+                    "archive_date": archive_date.isoformat(),
+                    "processing_fingerprint": fingerprint,
+                }
+            )
+        return {"events": events, "cursor": previous, "has_more": bool(payload.get("has_more"))}
 
     def wait_for_download_turn(
         self,
@@ -4965,13 +5219,7 @@ class _LanProcessingLeaseHeartbeat(
 
 
 class LanArchiveReconciler:
-    """Continuously converge followed feed artifacts without provider access.
-
-    Archive/model jobs already reconcile at their boundaries.  This small
-    host-level loop closes the gap while a long model run is still active: it
-    only calls the trusted-LAN sync client and therefore cannot consume a
-    Broadcastify archive request.
-    """
+    """Apply bounded master/follower journal deltas without archive scans."""
 
     def __init__(
         self,
@@ -4990,11 +5238,15 @@ class LanArchiveReconciler:
         self._lock = threading.Lock()
         self._status: dict[str, Any] = {
             "enabled": self.enabled,
+            "role": self.client.role,
             "running": False,
             "active_feed_id": "",
             "last_started_at": "",
             "last_finished_at": "",
             "feeds_considered": 0,
+            "events_considered": 0,
+            "source_events": 0,
+            "result_events": 0,
             "days_considered": 0,
             "blocks_copied": 0,
             "transcript_artifacts_copied": 0,
@@ -5026,18 +5278,20 @@ class LanArchiveReconciler:
             }
 
     def run_once(self) -> dict[str, Any]:
-        """Perform one LAN-only convergence pass for local followed feeds."""
+        """Perform one bounded LAN-only delta pass."""
 
         started_at = datetime.now().astimezone().isoformat(timespec="seconds")
-        feed_ids = self._feed_ids()
         with self._lock:
             self._status.update(
                 {
                     "running": True,
                     "active_feed_id": "",
                     "last_started_at": started_at,
-                    "feeds_considered": len(feed_ids),
+                    "feeds_considered": 0,
                     "days_considered": 0,
+                    "events_considered": 0,
+                    "source_events": 0,
+                    "result_events": 0,
                     "blocks_copied": 0,
                     "transcript_artifacts_copied": 0,
                     "bytes_copied": 0,
@@ -5046,39 +5300,23 @@ class LanArchiveReconciler:
             )
 
         days_considered = 0
+        events_considered = 0
+        source_events = 0
+        result_events = 0
         blocks_copied = 0
         transcript_artifacts_copied = 0
         bytes_copied = 0
         failures: list[str] = []
         try:
-            for feed_id in feed_ids:
-                if self._stop.is_set():
-                    break
-                with self._lock:
-                    self._status["active_feed_id"] = feed_id
-                try:
-                    result = self.client.sync_feed(
-                        self.output_dir,
-                        feed_id,
-                    )
-                except (
-                    LanSyncError,
-                    OSError,
-                    requests.RequestException,
-                    ValueError,
-                ) as exc:
-                    failures.append(f"Feed {feed_id}: {exc}")
-                    continue
-                days_considered += result.days_considered
-                blocks_copied += result.blocks_copied
-                transcript_artifacts_copied += (
-                    result.transcript_artifacts_copied
-                )
-                bytes_copied += result.bytes_copied
-                failures.extend(
-                    f"Feed {feed_id}: {failure}"
-                    for failure in result.failures
-                )
+            result = self.client.sync_changes(self.output_dir)
+            events_considered = result.events_considered
+            source_events = result.source_events
+            result_events = result.result_events
+            days_considered = result.source_events
+            blocks_copied = result.blocks_copied
+            transcript_artifacts_copied = result.transcript_artifacts_copied
+            bytes_copied = result.bytes_copied
+            failures.extend(result.failures)
         finally:
             with self._lock:
                 self._status.update(
@@ -5089,6 +5327,9 @@ class LanArchiveReconciler:
                         .astimezone()
                         .isoformat(timespec="seconds"),
                         "days_considered": days_considered,
+                        "events_considered": events_considered,
+                        "source_events": source_events,
+                        "result_events": result_events,
                         "blocks_copied": blocks_copied,
                         "transcript_artifacts_copied": (
                             transcript_artifacts_copied

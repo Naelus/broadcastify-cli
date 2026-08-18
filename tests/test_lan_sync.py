@@ -45,7 +45,137 @@ from broadcastify_cli.quota import (
     ArchiveRequestLedger,
     RemoteArchiveRequestLedger,
 )
+from broadcastify_cli.pipeline_sync import PipelineSyncStore
 from broadcastify_cli.web_app import create_server
+
+
+def test_master_uses_persistent_source_deltas_without_copying_follower_results(
+    tmp_path: Path,
+) -> None:
+    follower_root = tmp_path / "follower"
+    master_root = tmp_path / "master"
+    feed_id = "90001"
+    archive_date = date(2026, 7, 12)
+    _retained_transcribed_feed_day(
+        follower_root,
+        feed_id,
+        archive_date,
+        "a" * 64,
+    )
+    follower = create_lan_node_server(
+        follower_root,
+        host="127.0.0.1",
+        port=0,
+        discovery_enabled=False,
+        role="follower",
+    )
+    follower.quiet = True  # type: ignore[attr-defined]
+    thread = threading.Thread(target=follower.serve_forever, daemon=True)
+    thread.start()
+    peer = f"http://127.0.0.1:{follower.server_port}"
+    client = LanArchiveSyncClient(
+        enabled=True,
+        peer_urls=(peer,),
+        discovery_enabled=False,
+        role="master",
+    )
+    try:
+        first = client.sync_changes(master_root)
+        second = client.sync_changes(master_root)
+        assert first.source_events == 1
+        assert first.blocks_copied == 1
+        assert first.transcript_artifacts_copied == 0
+        assert second.events_considered == 0
+        assert not list((master_root / feed_id).glob("*/transcripts/*.json"))
+    finally:
+        follower.shutdown()
+        follower.server_close()
+        thread.join(timeout=3)
+
+
+def test_follower_pulls_completed_source_and_master_authored_result_delta(
+    tmp_path: Path,
+) -> None:
+    master_root = tmp_path / "master"
+    follower_root = tmp_path / "follower"
+    feed_id = "90001"
+    archive_date = date(2026, 7, 13)
+    fingerprint = "b" * 64
+    _retained_transcribed_feed_day(
+        master_root,
+        feed_id,
+        archive_date,
+        fingerprint,
+    )
+    with PipelineSyncStore(master_root) as journal:
+        journal.record_result(feed_id, archive_date, fingerprint)
+    master = create_lan_node_server(
+        master_root,
+        host="127.0.0.1",
+        port=0,
+        discovery_enabled=False,
+        role="master",
+    )
+    master.quiet = True  # type: ignore[attr-defined]
+    thread = threading.Thread(target=master.serve_forever, daemon=True)
+    thread.start()
+    master_url = f"http://127.0.0.1:{master.server_port}"
+    client = LanArchiveSyncClient(
+        enabled=True,
+        peer_urls=(),
+        discovery_enabled=False,
+        role="follower",
+        master_url=master_url,
+    )
+    try:
+        result = client.sync_changes(follower_root)
+        assert result.source_events == 1
+        assert result.result_events == 1
+        assert result.blocks_copied == 1
+        assert result.transcript_artifacts_copied == 4
+        assert len(list((follower_root / feed_id).glob("*/transcripts/*.json"))) == 1
+    finally:
+        master.shutdown()
+        master.server_close()
+        thread.join(timeout=3)
+
+
+def test_follower_request_is_persisted_only_on_the_master(tmp_path: Path) -> None:
+    master_root = tmp_path / "master"
+    master = create_lan_node_server(
+        master_root,
+        host="127.0.0.1",
+        port=0,
+        discovery_enabled=False,
+        role="master",
+    )
+    master.quiet = True  # type: ignore[attr-defined]
+    thread = threading.Thread(target=master.serve_forever, daemon=True)
+    thread.start()
+    master_url = f"http://127.0.0.1:{master.server_port}"
+    client = LanArchiveSyncClient(
+        enabled=True,
+        discovery_enabled=False,
+        role="follower",
+        master_url=master_url,
+    )
+    try:
+        response = client.request_master_pipeline(
+            tmp_path / "follower",
+            "90001",
+            date(2026, 7, 1),
+            date(2026, 7, 3),
+        )
+        assert response["accepted"] is True
+        with PipelineSyncStore(master_root) as journal:
+            pending = journal.pending_requests()
+        assert [(value["feed_id"], value["start_date"], value["end_date"]) for value in pending] == [
+            ("90001", "2026-07-01", "2026-07-03")
+        ]
+    finally:
+        master.shutdown()
+        master.server_close()
+        thread.join(timeout=3)
 
 
 def _raw_day(root: Path) -> tuple[Path, list[Path]]:
@@ -575,18 +705,19 @@ def test_followed_feed_reconciliation_converges_month_and_few_day_nodes(
             value.isoformat() for value in reversed(month[28:])
         )
         assert result_a.blocks_copied == 3
-        assert result_a.transcript_artifacts_copied == 12
+        assert result_a.transcript_artifacts_copied == 0
         assert result_b.dates_discovered == tuple(
             value.isoformat() for value in reversed(month)
         )
         assert month[-1].isoformat() in progress_a[0]
         assert result_b.blocks_copied == 28
-        assert result_b.transcript_artifacts_copied == 112
+        assert result_b.transcript_artifacts_copied == 0
         assert result_a.failures == ()
         assert result_b.failures == ()
 
+        assert len(list((node_a / feed_id).glob("*/transcripts/*.json"))) == 28
+        assert len(list((node_b / feed_id).glob("*/transcripts/*.json"))) == 3
         for root in (node_a, node_b):
-            assert len(list((root / feed_id).glob("*/transcripts/*.json"))) == 31
             for archive_date in month:
                 day = root / feed_id / archive_date.strftime("%Y%m%d")
                 complete = complete_cached_archive_day(
@@ -596,12 +727,6 @@ def test_followed_feed_reconciliation_converges_month_and_few_day_nodes(
                 )
                 assert complete is not None
                 assert len(complete[0]) == 1
-                assert (
-                    day / "transcripts" / f"combined_{feed_id}_{archive_date:%Y%m%d}.json"
-                ).is_file()
-                assert (
-                    day / f"combined_{feed_id}_{archive_date:%Y%m%d}.manifest.json"
-                ).is_file()
     finally:
         server_a.shutdown()
         server_b.shutdown()
@@ -1209,9 +1334,9 @@ def test_lan_clients_claim_different_model_days_without_duplicate_work(
             fingerprint,
         )
 
-        assert first_turn.role == "leader"
-        assert duplicate_turn.role == "deferred"
-        assert parallel_turn.role == "leader"
+        assert first_turn.role == "uncoordinated"
+        assert duplicate_turn.role == "uncoordinated"
+        assert parallel_turn.role == "uncoordinated"
 
         assert first.finish_processing_turn(
             first_turn,
@@ -1223,8 +1348,8 @@ def test_lan_clients_claim_different_model_days_without_duplicate_work(
             first_day,
             fingerprint,
         )
-        assert completed_turn.role == "completed"
-        assert completed_turn.artifact_count == 4
+        assert completed_turn.role == "uncoordinated"
+        assert completed_turn.artifact_count == 0
     finally:
         server.shutdown()
         server.server_close()
@@ -1273,7 +1398,7 @@ def test_truenas_web_node_coordinates_model_work_for_windows_client(
             fingerprint,
         )
 
-        assert leader.role == "leader"
+        assert leader.role == "deferred"
         assert duplicate.role == "deferred"
         assert windows.finish_processing_turn(
             leader,
@@ -1285,8 +1410,8 @@ def test_truenas_web_node_coordinates_model_work_for_windows_client(
             archive_date,
             fingerprint,
         )
-        assert completed.role == "completed"
-        assert completed.artifact_count == 4
+        assert completed.role == "deferred"
+        assert completed.artifact_count == 0
     finally:
         server.shutdown()
         server.server_close()
@@ -2199,18 +2324,14 @@ def test_native_lan_node_continuously_reconciles_peer_artifacts(
     target.quiet = True  # type: ignore[attr-defined]
     target_thread = threading.Thread(target=target.serve_forever, daemon=True)
     target_thread.start()
-    copied_transcript = (
-        target_root
-        / feed_id
-        / archive_date.strftime("%Y%m%d")
-        / "transcripts"
-        / f"combined_{feed_id}_{archive_date:%Y%m%d}.json"
+    copied_source = target_root / feed_id / archive_date.strftime("%Y%m%d") / (
+        f"{archive_date:%Y%m%d}0000-{archive_date:%Y%m%d}0000-{feed_id}.mp3"
     )
     try:
         deadline = time.monotonic() + 10
-        while not copied_transcript.is_file() and time.monotonic() < deadline:
+        while not copied_source.is_file() and time.monotonic() < deadline:
             time.sleep(0.05)
-        assert copied_transcript.is_file()
+        assert copied_source.is_file()
 
         deadline = time.monotonic() + 10
         status = 0
@@ -2226,7 +2347,7 @@ def test_native_lan_node_continuously_reconciles_peer_artifacts(
         assert payload["reconciliation"]["blocks_copied"] == 1
         assert (
             payload["reconciliation"]["transcript_artifacts_copied"]
-            == 4
+            == 0
         )
         assert payload["reconciliation"]["failures"] == []
     finally:
@@ -2265,6 +2386,7 @@ def test_web_host_continuously_reconciles_peer_artifacts(
     source_thread.start()
     (working_dir / ".env").write_text(
         "BROADCASTIFY_LAN_SHARING=true\n"
+        "BROADCASTIFY_LAN_ROLE=master\n"
         f"BROADCASTIFY_LAN_PEERS=http://127.0.0.1:{source.server_port}\n"
         "BROADCASTIFY_LAN_DISCOVERY_ENABLED=false\n",
         encoding="utf-8",
@@ -2279,18 +2401,14 @@ def test_web_host_continuously_reconciles_peer_artifacts(
     target.quiet = True  # type: ignore[attr-defined]
     target_thread = threading.Thread(target=target.serve_forever, daemon=True)
     target_thread.start()
-    copied_transcript = (
-        target_root
-        / feed_id
-        / archive_date.strftime("%Y%m%d")
-        / "transcripts"
-        / f"combined_{feed_id}_{archive_date:%Y%m%d}.json"
+    copied_source = target_root / feed_id / archive_date.strftime("%Y%m%d") / (
+        f"{archive_date:%Y%m%d}0000-{archive_date:%Y%m%d}0000-{feed_id}.mp3"
     )
     try:
         deadline = time.monotonic() + 10
-        while not copied_transcript.is_file() and time.monotonic() < deadline:
+        while not copied_source.is_file() and time.monotonic() < deadline:
             time.sleep(0.05)
-        assert copied_transcript.is_file()
+        assert copied_source.is_file()
 
         deadline = time.monotonic() + 10
         status = 0
@@ -2306,7 +2424,7 @@ def test_web_host_continuously_reconciles_peer_artifacts(
         assert payload["reconciliation"]["blocks_copied"] == 1
         assert (
             payload["reconciliation"]["transcript_artifacts_copied"]
-            == 4
+            == 0
         )
         assert payload["reconciliation"]["failures"] == []
     finally:

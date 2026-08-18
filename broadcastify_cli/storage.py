@@ -585,6 +585,72 @@ class AnalysisStore:
         ).fetchall()
         return [self._feed_schedule(row, now=now) for row in rows]
 
+    def merge_pipeline_request(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Expand or create master-owned work requested by a follower node."""
+
+        feed_id = str(payload.get("feed_id") or "").strip()
+        if not feed_id.isdigit():
+            raise ValueError("A numeric feed ID is required for a pipeline request.")
+        requested_start = date.fromisoformat(str(payload.get("start_date") or ""))
+        if requested_start > date.today():
+            raise ValueError("A pipeline request cannot begin in the future.")
+        row = self.connection.execute(
+            "SELECT * FROM feed_schedules WHERE feed_id=?",
+            (feed_id,),
+        ).fetchone()
+        if row is None:
+            immediate = (datetime.now().astimezone() - timedelta(minutes=1)).strftime(
+                "%H:%M"
+            )
+            return self.save_feed_schedule(
+                {
+                    "feed_id": feed_id,
+                    "feed_name": str(payload.get("feed_name") or f"Feed {feed_id}"),
+                    "run_time_local": immediate,
+                    "lookback_days": 2,
+                    "backfill_start_date": requested_start.isoformat(),
+                    "recurring_catch_up": False,
+                    "account_profile_id": "automatic",
+                    "analyze": True,
+                    "enabled": True,
+                    "job": {
+                        "combine": True,
+                        "transcribe": True,
+                        "diarize": False,
+                        "model": "turbo",
+                        "asr_engine": "auto",
+                        "device": "auto",
+                        "compute_type": "auto",
+                        "lan_sync_enabled": True,
+                        "lan_discovery_enabled": True,
+                    },
+                }
+            )
+        existing_start = str(row["backfill_start_date"] or "")
+        merged_start = min(
+            requested_start,
+            date.fromisoformat(existing_start) if existing_start else requested_start,
+        )
+        now = utc_now()
+        with self.transaction() as connection:
+            connection.execute(
+                """
+                UPDATE feed_schedules
+                SET backfill_start_date=?, enabled=1,
+                    state=CASE WHEN state='running' THEN state ELSE 'scheduled' END,
+                    message='A follower requested this range through the master.',
+                    not_before='', updated_at=?
+                WHERE feed_id=?
+                """,
+                (merged_start.isoformat(), now, feed_id),
+            )
+        updated = self.connection.execute(
+            "SELECT * FROM feed_schedules WHERE feed_id=?",
+            (feed_id,),
+        ).fetchone()
+        assert updated is not None
+        return self._feed_schedule(updated)
+
     def delete_feed_schedule(self, schedule_id: int) -> bool:
         with self.transaction() as connection:
             cursor = connection.execute(

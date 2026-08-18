@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import sqlite3
 import threading
 import time
 from collections.abc import Mapping, Sequence
@@ -308,6 +309,18 @@ def remember_complete_archive_day(
                 "completed_at_unix": round(time.time(), 6),
             },
         )
+        # Completion is the immutable synchronization boundary. Recording this
+        # tiny event lets the master/follower data plane exchange only new days
+        # instead of repeatedly enumerating and hashing an entire archive.
+        try:
+            from .pipeline_sync import PipelineSyncStore
+
+            with PipelineSyncStore(day.resolve().parent.parent) as journal:
+                journal.record_source(feed_id, archive_date)
+        except (OSError, ValueError, sqlite3.Error):
+            # The completion proof remains authoritative. A server can rebuild
+            # missing journal entries once from these markers without media IO.
+            pass
     return True
 
 

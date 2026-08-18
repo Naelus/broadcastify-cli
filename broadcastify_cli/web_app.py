@@ -65,6 +65,7 @@ from .quota import (
     normalize_account_profile_id,
     normalize_archive_request_id,
 )
+from .pipeline_sync import PipelineSyncStore, normalize_pipeline_role
 from .storage import AnalysisStore
 
 
@@ -1556,6 +1557,8 @@ def create_server(
         configured_advertisement = normalize_peer_url(
             configured_advertisement
         )
+    with PipelineSyncStore(root) as pipeline_store:
+        pipeline_node_id = pipeline_store.node_id()
     lan_catalog = LanArchiveCatalog(
         root,
         enabled=_environment_flag(
@@ -1572,6 +1575,10 @@ def create_server(
             "BROADCASTIFY_LAN_QUEUE_ENABLED",
             default=True,
         ),
+        role=normalize_pipeline_role(
+            readiness_values.get("BROADCASTIFY_LAN_ROLE") or "follower"
+        ),
+        node_id=pipeline_node_id,
     )
     lan_discovery_enabled = _environment_flag(
         readiness_values,
@@ -1593,6 +1600,10 @@ def create_server(
             discovery_enabled=lan_discovery_enabled,
             sync_key=lan_catalog.sync_key,
             queue_enabled=False,
+            role=lan_catalog.role,
+            master_url=str(
+                readiness_values.get("BROADCASTIFY_LAN_MASTER_URL") or ""
+            ),
         ),
         enabled=(
             background_sync_enabled
@@ -1660,6 +1671,10 @@ def create_server(
                     self._require_lan_access()
                     self._post_lan_processing(parsed.path)
                     return
+                if parsed.path == "/api/lan/v1/pipeline-request":
+                    self._require_lan_access()
+                    self._post_lan_pipeline_request()
+                    return
                 self._require_session(write=True)
                 self._post()
             except WebRequestError as exc:
@@ -1683,6 +1698,30 @@ def create_server(
                 info["scheduler"] = state.scheduler.status()
                 info["reconciliation"] = state.lan_reconciler.status()
                 self._json(HTTPStatus.OK, info)
+                return
+            if parsed.path == "/api/lan/v1/changes":
+                self._require_lan_access()
+                query = parse_qs(parsed.query)
+                try:
+                    after = max(0, int((query.get("after") or ["0"])[0]))
+                    limit = min(512, max(1, int((query.get("limit") or ["128"])[0])))
+                except ValueError as exc:
+                    raise WebRequestError(
+                        HTTPStatus.BAD_REQUEST,
+                        "The change cursor is not valid.",
+                    ) from exc
+                with PipelineSyncStore(state.output_dir) as journal:
+                    journal.seed_sources()
+                    changes = journal.changes(after, limit=limit)
+                self._json(
+                    HTTPStatus.OK,
+                    {
+                        "protocol": LAN_PROTOCOL,
+                        "node_id": state.lan_catalog.node_id,
+                        "role": state.lan_catalog.role,
+                        **changes,
+                    },
+                )
                 return
             if parsed.path == "/api/lan/v1/feed-days":
                 self._require_lan_access()
@@ -2009,6 +2048,7 @@ def create_server(
                                 readiness_values
                             ),
                             "lan_sync": {
+                                "role": state.lan_catalog.role,
                                 "sharing_enabled": state.lan_catalog.enabled,
                                 "key_required": bool(state.lan_catalog.sync_key),
                                 "configured_peer_count": len(
@@ -2314,6 +2354,34 @@ def create_server(
                 self._json(HTTPStatus.OK, state.jobs.cancel(job_id))
                 return
             raise WebRequestError(HTTPStatus.NOT_FOUND, "Page not found.")
+
+        def _post_lan_pipeline_request(self) -> None:
+            if state.lan_catalog.role != "master":
+                raise WebRequestError(
+                    HTTPStatus.BAD_REQUEST,
+                    "Pipeline requests must be sent to the Windows master.",
+                )
+            body = self._body()
+            try:
+                with PipelineSyncStore(state.output_dir) as journal:
+                    request = journal.request(
+                        body.get("feed_id"),
+                        body.get("start_date"),
+                        body.get("end_date"),
+                        requester_node_id=str(body.get("requester_node_id") or ""),
+                        feed_name=str(body.get("feed_name") or ""),
+                    )
+            except (ValueError, OSError) as exc:
+                raise WebRequestError(HTTPStatus.BAD_REQUEST, str(exc)) from exc
+            self._json(
+                HTTPStatus.ACCEPTED,
+                {
+                    "protocol": LAN_PROTOCOL,
+                    "accepted": True,
+                    "request_id": int(request["id"]),
+                    "state": str(request["state"]),
+                },
+            )
 
         def _post_lan_acquisition(self, path: str) -> None:
             if not state.lan_catalog.acquisition_queue.enabled:

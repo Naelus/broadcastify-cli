@@ -20,6 +20,7 @@ from .lan_sync import (
     merge_lan_sync_results,
 )
 from .models import JobRequest
+from .pipeline_sync import PipelineSyncStore
 from .transcription import LocalTranscriber
 
 
@@ -46,8 +47,37 @@ class JobRunner:
 
     def run(self) -> dict[str, Any]:
         dates = list(self.request.dates())
+        follower = getattr(self.lan_sync, "role", "master") == "follower"
+        if follower:
+            try:
+                self.lan_sync.request_master_pipeline(
+                    self.request.output_dir,
+                    self.request.feed_id,
+                    min(dates),
+                    max(dates),
+                    feed_name=self.request.feed_name,
+                )
+                self.emit(
+                    {
+                        "type": "log",
+                        "stage": "master_request",
+                        "message": (
+                            "The requested range was queued on the Windows master; "
+                            "this follower may acquire source blocks but will not "
+                            "author model results."
+                        ),
+                    }
+                )
+            except Exception as exc:
+                self.emit(
+                    {
+                        "type": "log",
+                        "stage": "master_request",
+                        "message": f"The Windows master request is pending: {exc}",
+                    }
+                )
         transcriber = None
-        if self.request.transcribe:
+        if self.request.transcribe and not follower:
             self.emit(
                 {
                     "type": "log",
@@ -105,28 +135,6 @@ class JobRunner:
                     ),
                 }
             )
-            reconcile_feed = getattr(self.lan_sync, "sync_feed", None)
-            if callable(reconcile_feed):
-                try:
-                    feed_reconciliation = reconcile_feed(
-                        self.request.output_dir,
-                        self.request.feed_id,
-                        processing_fingerprint=processing_fingerprint,
-                        progress=lambda message: self.emit(
-                            {
-                                "type": "progress",
-                                "stage": "lan_reconcile",
-                                "current": 0,
-                                "total": 0,
-                                "message": message,
-                            }
-                        ),
-                    )
-                except Exception as exc:
-                    feed_reconciliation = LanFeedSyncResult(
-                        enabled=True,
-                        failures=(str(exc),),
-                    )
             for day_number, archive_date in enumerate(dates, start=1):
                 day_label = archive_date.isoformat()
 
@@ -561,37 +569,6 @@ class JobRunner:
             archive_date: Any,
             inputs: list[Path],
         ) -> list[Path]:
-            if (
-                not self.lan_sync.enabled
-                or not processing_fingerprint
-                or not inputs
-            ):
-                return matching_transcripts(inputs)
-            sync_transcripts = getattr(self.lan_sync, "sync_transcripts", None)
-            if callable(sync_transcripts):
-                try:
-                    value = sync_transcripts(
-                        self.request.output_dir,
-                        self.request.feed_id,
-                        archive_date,
-                        processing_fingerprint,
-                    )
-                except Exception as exc:
-                    value = LanTranscriptSyncResult(
-                        enabled=True,
-                        failures=(str(exc),),
-                    )
-                lan_transcript_results[archive_date.isoformat()] = value
-                for warning in value.failures:
-                    self.emit(
-                        {
-                            "type": "log",
-                            "stage": "lan_processing",
-                            "message": warning,
-                        }
-                    )
-                if value.transcripts:
-                    return list(value.transcripts)
             return matching_transcripts(inputs)
 
         for archive_date, audio_files in downloaded_days:
@@ -601,6 +578,26 @@ class JobRunner:
                 / self.request.feed_id
                 / archive_date.strftime("%Y%m%d")
             )
+
+            if follower:
+                master_result = self.lan_sync.sync_master_results(
+                    self.request.output_dir,
+                    self.request.feed_id,
+                    archive_date,
+                )
+                lan_transcript_results[day_label] = master_result
+                transcripts = list(master_result.transcripts)
+                if not transcripts:
+                    pending_processing_days.append(day_label)
+                day_results.append(
+                    {
+                        "date": day_label,
+                        "audio_files": [str(path) for path in audio_files],
+                        "transcripts": [str(path) for path in transcripts],
+                        "combined_file": None,
+                    }
+                )
+                continue
 
             combined = None
             if self.request.combine and audio_files:
@@ -670,32 +667,7 @@ class JobRunner:
                     )
                     continue
 
-                claim_processing = getattr(
-                    self.lan_sync,
-                    "claim_processing_turn",
-                    None,
-                )
-                processing_turn = (
-                    claim_processing(
-                        self.request.feed_id,
-                        archive_date,
-                        processing_fingerprint,
-                        progress=lambda message: self.emit(
-                            {
-                                "type": "progress",
-                                "stage": "lan_processing",
-                                "current": 0,
-                                "total": 0,
-                                "message": message,
-                            }
-                        ),
-                    )
-                    if not transcripts
-                    and self.lan_sync.enabled
-                    and processing_fingerprint
-                    and callable(claim_processing)
-                    else LanProcessingTurn(role="uncoordinated")
-                )
+                processing_turn = LanProcessingTurn(role="uncoordinated")
                 if not transcripts:
                     processing_roles[processing_turn.role] = (
                         processing_roles.get(processing_turn.role, 0) + 1
@@ -834,6 +806,13 @@ class JobRunner:
                     "combined_file": str(combined) if combined else None,
                 }
             )
+            if transcripts and processing_fingerprint:
+                with PipelineSyncStore(self.request.output_dir) as journal:
+                    journal.record_result(
+                        self.request.feed_id,
+                        archive_date,
+                        processing_fingerprint,
+                    )
 
         # A peer may finish while this node processes another day. Pull those
         # artifacts once more without waiting; anything still active remains a

@@ -250,10 +250,10 @@ def _shareable_model_day(
     )
 
 
-def test_followed_feed_automatically_converges_every_retained_model(
+def test_explicit_feed_pull_is_source_only_and_never_merges_model_results(
     tmp_path: Path,
 ) -> None:
-    """Exercise real LAN HTTP discovery, variant retention, and onward reuse."""
+    """Exercise the compatibility source pull without recreating mesh behavior."""
 
     feed_id = "91059"
     archive_date = date(2026, 7, 12)
@@ -311,31 +311,17 @@ def test_followed_feed_automatically_converges_every_retained_model(
             discovery_enabled=False,
         ).sync_feed(consumer, feed_id)
 
-        assert result_a.transcript_artifacts_copied == 3
-        assert result_b.transcript_artifacts_copied == 3
-        assert result_consumer.transcript_artifacts_copied == 5
-        assert result_consumer.days_with_transcript_changes == 1
+        assert result_a.blocks_copied == 0
+        assert result_b.blocks_copied == 0
+        assert result_consumer.blocks_copied == 1
+        assert result_a.transcript_artifacts_copied == 0
+        assert result_b.transcript_artifacts_copied == 0
+        assert result_consumer.transcript_artifacts_copied == 0
+        assert result_consumer.days_with_transcript_changes == 0
         assert result_a.failures == result_b.failures == result_consumer.failures == ()
-        for root in (node_a, node_b, consumer):
-            catalog = LanArchiveCatalog(root, enabled=True, queue_enabled=False)
-            assert set(catalog.transcript_fingerprints(feed_id, archive_date)) == {
-                fingerprint_a,
-                fingerprint_b,
-            }
-            assert len(
-                catalog.transcript_inventory(
-                    feed_id,
-                    archive_date,
-                    fingerprint_a,
-                )
-            ) == 3
-            assert len(
-                catalog.transcript_inventory(
-                    feed_id,
-                    archive_date,
-                    fingerprint_b,
-                )
-            ) == 3
+        assert not list(consumer.glob("**/transcripts/*"))
+        assert len(list((node_a / feed_id).glob("*/transcripts/*.json"))) == 1
+        assert len(list((node_b / feed_id).glob("*/transcripts/*.json"))) == 1
     finally:
         server_a.shutdown()
         server_b.shutdown()

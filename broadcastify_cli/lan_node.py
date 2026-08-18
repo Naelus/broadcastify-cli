@@ -35,6 +35,7 @@ from .quota import (
     normalize_account_profile_id,
     normalize_archive_request_id,
 )
+from .pipeline_sync import PipelineSyncStore, normalize_pipeline_role
 
 
 def validate_lan_host(value: str) -> str:
@@ -137,8 +138,14 @@ def create_lan_node_server(
     discovery_enabled: bool = True,
     advertise_url: str = "",
     background_sync_enabled: bool = False,
+    role: str | None = None,
 ) -> ThreadingHTTPServer:
     host = validate_lan_host(host)
+    pipeline_role = normalize_pipeline_role(
+        role if role is not None else os.getenv("BROADCASTIFY_LAN_ROLE") or "master"
+    )
+    with PipelineSyncStore(output_dir) as pipeline_store:
+        pipeline_node_id = pipeline_store.node_id()
     catalog = LanArchiveCatalog(
         output_dir,
         enabled=True,
@@ -156,6 +163,8 @@ def create_lan_node_server(
             "BROADCASTIFY_LAN_QUEUE_ENABLED",
             default=True,
         ),
+        role=pipeline_role,
+        node_id=pipeline_node_id,
     )
 
     class Handler(BaseHTTPRequestHandler):
@@ -222,6 +231,26 @@ def create_lan_node_server(
                 if reconciler is not None:
                     info["reconciliation"] = reconciler.status()
                 self._json(HTTPStatus.OK, info)
+                return
+            if parsed.path == "/api/lan/v1/changes":
+                query = parse_qs(parsed.query)
+                try:
+                    after = max(0, int((query.get("after") or ["0"])[0]))
+                    limit = min(512, max(1, int((query.get("limit") or ["128"])[0])))
+                except ValueError as exc:
+                    raise LanSyncError("The change cursor is not valid.") from exc
+                with PipelineSyncStore(catalog.output_dir) as journal:
+                    journal.seed_sources()
+                    changes = journal.changes(after, limit=limit)
+                self._json(
+                    HTTPStatus.OK,
+                    {
+                        "protocol": LAN_PROTOCOL,
+                        "node_id": catalog.node_id,
+                        "role": catalog.role,
+                        **changes,
+                    },
+                )
                 return
             if parsed.path == "/api/lan/v1/feed-days":
                 query = parse_qs(parsed.query)
@@ -405,6 +434,28 @@ def create_lan_node_server(
 
         def _post(self) -> None:
             parsed = urlparse(self.path)
+            if parsed.path == "/api/lan/v1/pipeline-request":
+                if catalog.role != "master":
+                    raise LanSyncError("Pipeline requests must be sent to the master.")
+                body = self._body()
+                with PipelineSyncStore(catalog.output_dir) as journal:
+                    request = journal.request(
+                        body.get("feed_id"),
+                        body.get("start_date"),
+                        body.get("end_date"),
+                        requester_node_id=str(body.get("requester_node_id") or ""),
+                        feed_name=str(body.get("feed_name") or ""),
+                    )
+                self._json(
+                    HTTPStatus.ACCEPTED,
+                    {
+                        "protocol": LAN_PROTOCOL,
+                        "accepted": True,
+                        "request_id": int(request["id"]),
+                        "state": str(request["state"]),
+                    },
+                )
+                return
             quota_prefix = "/api/lan/v1/quota/"
             if parsed.path.startswith(quota_prefix):
                 self._post_quota(parsed.path.removeprefix(quota_prefix))
@@ -692,6 +743,8 @@ def create_lan_node_server(
                 discovery_enabled=discovery_enabled,
                 sync_key=catalog.sync_key,
                 queue_enabled=False,
+                role=catalog.role,
+                master_url=os.getenv("BROADCASTIFY_LAN_MASTER_URL") or "",
             ),
             poll_seconds=environment_float(
                 "BROADCASTIFY_LAN_RECONCILE_SECONDS",
@@ -715,6 +768,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--host", default="0.0.0.0", type=validate_lan_host)
     parser.add_argument("--port", type=int, default=8_766)
     parser.add_argument("--advertise-url", default="")
+    parser.add_argument(
+        "--role",
+        choices=("master", "follower"),
+        default=None,
+        help="Own the post-download pipeline or follow its completed results.",
+    )
     parser.add_argument(
         "--no-discovery",
         action="store_true",
@@ -744,6 +803,7 @@ def main() -> int:
             )
         ),
         advertise_url=arguments.advertise_url,
+        role=arguments.role,
         background_sync_enabled=environment_flag(
             "BROADCASTIFY_LAN_BACKGROUND_SYNC",
             default=True,
