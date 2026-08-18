@@ -1429,6 +1429,10 @@ internal sealed class WorkerClient
         startInfo.Environment["PYTHONIOENCODING"] = "utf-8";
         startInfo.Environment["PYTHONUTF8"] = "1";
         startInfo.Environment["BROADCASTIFY_DESKTOP_MASTER"] = "true";
+        startInfo.Environment["BROADCASTIFY_LAN_ROLE"] = "master";
+        startInfo.Environment["BROADCASTIFY_LAN_MASTER_URL"] = "http://127.0.0.1:8766";
+        startInfo.Environment["BROADCASTIFY_LAN_COORDINATOR"] = "http://127.0.0.1:8766";
+        startInfo.Environment["BROADCASTIFY_LAN_QUOTA_COORDINATOR"] = "http://127.0.0.1:8766";
         if (IsBundledRuntime)
         {
             startInfo.Environment["PYTHONNOUSERSITE"] = "1";

@@ -873,6 +873,18 @@ def test_native_system_page_exposes_both_lan_reconciliation_surfaces() -> None:
     window = (
         ROOT / "BroadcastifyCli.WinUI" / "MainWindow.xaml.cs"
     ).read_text(encoding="utf-8")
+    worker = (
+        ROOT / "BroadcastifyCli.WinUI" / "WorkerClient.cs"
+    ).read_text(encoding="utf-8")
+    assert 'startInfo.Environment["BROADCASTIFY_LAN_ROLE"] = "master"' in worker
+    assert (
+        'startInfo.Environment["BROADCASTIFY_LAN_COORDINATOR"] = '
+        '"http://127.0.0.1:8766"' in worker
+    )
+    assert (
+        'startInfo.Environment["BROADCASTIFY_LAN_QUOTA_COORDINATOR"] = '
+        '"http://127.0.0.1:8766"' in worker
+    )
     backend = (
         ROOT / "broadcastify_cli" / "lan_sync.py"
     ).read_text(encoding="utf-8")
