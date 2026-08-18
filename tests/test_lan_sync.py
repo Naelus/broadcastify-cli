@@ -49,6 +49,39 @@ from broadcastify_cli.pipeline_sync import PipelineSyncStore
 from broadcastify_cli.web_app import create_server
 
 
+def test_republishing_same_master_result_advances_the_delta_cursor(
+    tmp_path: Path,
+) -> None:
+    feed_id = "90001"
+    archive_date = date(2026, 7, 13)
+    fingerprint = "b" * 64
+
+    with PipelineSyncStore(tmp_path) as journal:
+        first_sequence = journal.record_result(
+            feed_id,
+            archive_date,
+            fingerprint,
+        )
+        assert [event["sequence"] for event in journal.changes(0)["events"]] == [
+            first_sequence
+        ]
+
+        second_sequence = journal.record_result(
+            feed_id,
+            archive_date,
+            fingerprint,
+        )
+
+        assert second_sequence > first_sequence
+        second_events = journal.changes(first_sequence)["events"]
+        assert len(second_events) == 1
+        assert second_events[0]["sequence"] == second_sequence
+        assert second_events[0]["kind"] == "result"
+        assert second_events[0]["feed_id"] == feed_id
+        assert second_events[0]["archive_date"] == archive_date.isoformat()
+        assert second_events[0]["processing_fingerprint"] == fingerprint
+
+
 def test_master_uses_persistent_source_deltas_without_copying_follower_results(
     tmp_path: Path,
 ) -> None:

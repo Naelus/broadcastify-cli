@@ -129,7 +129,13 @@ class PipelineSyncStore:
         fingerprint = str(processing_fingerprint or "").strip().lower()
         if len(fingerprint) != 64 or any(value not in "0123456789abcdef" for value in fingerprint):
             raise ValueError("A valid processing fingerprint is required.")
-        return self._record("result", feed_id, archive_date, fingerprint)
+        return self._record(
+            "result",
+            feed_id,
+            archive_date,
+            fingerprint,
+            replace_existing=True,
+        )
 
     def _record(
         self,
@@ -137,12 +143,26 @@ class PipelineSyncStore:
         feed_id: object,
         archive_date: object,
         fingerprint: str,
+        *,
+        replace_existing: bool = False,
     ) -> int:
         if kind not in PIPELINE_EVENT_KINDS:
             raise ValueError("Unsupported pipeline event kind.")
         normalized_feed = _feed_id(feed_id)
         normalized_date = _date_value(archive_date).isoformat()
         now = _utc_now()
+        if replace_existing:
+            # A rolling day can produce newer artifacts without changing the
+            # model fingerprint. Replace its prior journal entry so every peer
+            # cursor observes the updated authoritative result.
+            self.connection.execute(
+                """
+                DELETE FROM events
+                WHERE kind=? AND feed_id=? AND archive_date=?
+                  AND processing_fingerprint=?
+                """,
+                (kind, normalized_feed, normalized_date, fingerprint),
+            )
         self.connection.execute(
             """
             INSERT INTO events(
