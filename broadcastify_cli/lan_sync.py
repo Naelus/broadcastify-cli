@@ -3150,15 +3150,19 @@ class LanArchiveSyncClient:
                                 raise LanSyncError(
                                     "The changed master result was not completely verified."
                                 )
-                            # An older result event can legitimately have no
-                            # complete inventory after a rolling day is
-                            # replaced. Advance past that superseded event;
-                            # record_result republishes the completed
-                            # replacement at a newer sequence.
-                            if result.artifacts_available:
-                                result_events += 1
-                                transcript_artifacts_copied += result.artifacts_copied
-                                bytes_copied += result.bytes_copied
+                            if not result.artifacts_available:
+                                # The event may become visible just before its
+                                # hash-bound inventory. Keep the cursor here so
+                                # the next delta pass retries it. A later
+                                # record_result replaces this journal row with
+                                # a newer sequence, so superseded empty events
+                                # cannot permanently block the follower.
+                                raise LanSyncError(
+                                    "The changed master result is not available yet."
+                                )
+                            result_events += 1
+                            transcript_artifacts_copied += result.artifacts_copied
+                            bytes_copied += result.bytes_copied
                         elif kind != "result":
                             raise LanSyncError("The peer advertised an invalid change kind.")
                     except (

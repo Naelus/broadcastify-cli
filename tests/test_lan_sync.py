@@ -82,6 +82,25 @@ def test_republishing_same_master_result_advances_the_delta_cursor(
         assert second_events[0]["processing_fingerprint"] == fingerprint
 
 
+def test_republishing_rolling_source_advances_the_delta_cursor(
+    tmp_path: Path,
+) -> None:
+    feed_id = "90001"
+    archive_date = date(2026, 7, 13)
+
+    with PipelineSyncStore(tmp_path) as journal:
+        first_sequence = journal.record_source(feed_id, archive_date)
+        second_sequence = journal.record_source(feed_id, archive_date)
+
+        assert second_sequence > first_sequence
+        events = journal.changes(first_sequence)["events"]
+        assert len(events) == 1
+        assert events[0]["sequence"] == second_sequence
+        assert events[0]["kind"] == "source"
+        assert events[0]["feed_id"] == feed_id
+        assert events[0]["archive_date"] == archive_date.isoformat()
+
+
 def test_master_uses_persistent_source_deltas_without_copying_follower_results(
     tmp_path: Path,
 ) -> None:
@@ -173,7 +192,7 @@ def test_follower_pulls_completed_source_and_master_authored_result_delta(
         thread.join(timeout=3)
 
 
-def test_follower_skips_superseded_empty_result_and_receives_republication(
+def test_follower_retries_empty_result_and_receives_republication(
     tmp_path: Path,
 ) -> None:
     master_root = tmp_path / "master"
@@ -207,7 +226,8 @@ def test_follower_skips_superseded_empty_result_and_receives_republication(
     )
     try:
         first = client.sync_changes(follower_root)
-        assert first.failures == ()
+        assert first.failures
+        assert "not available yet" in first.failures[0]
         assert first.result_events == 0
 
         _retained_transcribed_feed_day(

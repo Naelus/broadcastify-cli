@@ -118,7 +118,17 @@ class PipelineSyncStore:
         self.close()
 
     def record_source(self, feed_id: object, archive_date: object) -> int:
-        return self._record("source", feed_id, archive_date, "")
+        # A rolling day can gain additional retained blocks while keeping the
+        # same feed/date identity. Republish it so the master observes the
+        # newer completion proof instead of leaving its cursor on an older
+        # source snapshot.
+        return self._record(
+            "source",
+            feed_id,
+            archive_date,
+            "",
+            replace_existing=True,
+        )
 
     def record_result(
         self,
