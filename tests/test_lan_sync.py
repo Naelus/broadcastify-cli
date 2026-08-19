@@ -101,6 +101,70 @@ def test_republishing_rolling_source_advances_the_delta_cursor(
         assert events[0]["archive_date"] == archive_date.isoformat()
 
 
+def test_unchanged_completion_proof_does_not_republish_source_delta(
+    tmp_path: Path,
+) -> None:
+    feed_id = "90001"
+    archive_date = date(2026, 7, 13)
+    day = tmp_path / feed_id / "20260713"
+    day.mkdir(parents=True)
+    first = day / "202607130000-111-90001.mp3"
+    first.write_bytes(b"first")
+    remember_archive_identity(
+        day,
+        feed_id,
+        archive_date,
+        "provider-first",
+        first,
+        listing_prefix=first.name[:12],
+    )
+
+    assert remember_complete_archive_day(
+        day,
+        feed_id,
+        archive_date,
+        ["provider-first"],
+    )
+    with PipelineSyncStore(tmp_path) as journal:
+        first_sequence = journal.changes(0)["cursor"]
+    marker = day / ".broadcastify-archive-complete.json"
+    legacy_payload = json.loads(marker.read_text(encoding="utf-8"))
+    legacy_payload.pop("source_inventory")
+    marker.write_text(json.dumps(legacy_payload), encoding="utf-8")
+
+    assert remember_complete_archive_day(
+        day,
+        feed_id,
+        archive_date,
+        ["provider-first"],
+    )
+    with PipelineSyncStore(tmp_path) as journal:
+        assert journal.changes(first_sequence)["events"] == []
+    assert "source_inventory" in json.loads(marker.read_text(encoding="utf-8"))
+
+    second = day / "202607130030-222-90001.mp3"
+    second.write_bytes(b"second")
+    remember_archive_identity(
+        day,
+        feed_id,
+        archive_date,
+        "provider-second",
+        second,
+        listing_prefix=second.name[:12],
+    )
+    assert remember_complete_archive_day(
+        day,
+        feed_id,
+        archive_date,
+        ["provider-first", "provider-second"],
+    )
+    with PipelineSyncStore(tmp_path) as journal:
+        events = journal.changes(first_sequence)["events"]
+    assert len(events) == 1
+    assert events[0]["kind"] == "source"
+    assert events[0]["sequence"] > first_sequence
+
+
 def test_master_uses_persistent_source_deltas_without_copying_follower_results(
     tmp_path: Path,
 ) -> None:

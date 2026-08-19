@@ -293,11 +293,51 @@ def remember_complete_archive_day(
     day = Path(day_directory)
     with _INDEX_WRITE_LOCK:
         retained_names: set[str] = set()
+        source_inventory: list[dict[str, object]] = []
         for archive_id in normalized_ids:
             cached = cached_archive_for_id(day, feed_id, archive_id)
             if cached is None or cached.name in retained_names:
                 return False
             retained_names.add(cached.name)
+            try:
+                retained_size = cached.stat().st_size
+            except OSError:
+                return False
+            source_inventory.append(
+                {
+                    "archive_id": archive_id,
+                    "filename": cached.name,
+                    "size": retained_size,
+                }
+            )
+        source_inventory.sort(key=lambda value: str(value["archive_id"]))
+        try:
+            existing = json.loads(
+                _completion_path(day).read_text(encoding="utf-8")
+            )
+            existing_ids = existing.get("archive_ids")
+            same_completion = (
+                existing.get("schema_version")
+                == ARCHIVE_CACHE_COMPLETION_SCHEMA_VERSION
+                and str(existing.get("feed_id") or "") == str(feed_id)
+                and str(existing.get("archive_date") or "")
+                == archive_date.isoformat()
+                and isinstance(existing_ids, list)
+                and sorted(str(value) for value in existing_ids)
+                == sorted(normalized_ids)
+            )
+            if same_completion:
+                if existing.get("source_inventory") == source_inventory:
+                    return True
+                if "source_inventory" not in existing:
+                    # Upgrade an older completion proof without flooding the
+                    # delta journal. A changed archive-ID set still follows
+                    # the normal write-and-publish path below.
+                    existing["source_inventory"] = source_inventory
+                    _write_index(_completion_path(day), existing)
+                    return True
+        except (OSError, TypeError, ValueError, json.JSONDecodeError):
+            pass
         day.mkdir(parents=True, exist_ok=True)
         _write_index(
             _completion_path(day),
@@ -306,6 +346,7 @@ def remember_complete_archive_day(
                 "feed_id": str(feed_id),
                 "archive_date": archive_date.isoformat(),
                 "archive_ids": normalized_ids,
+                "source_inventory": source_inventory,
                 "completed_at_unix": round(time.time(), 6),
             },
         )
