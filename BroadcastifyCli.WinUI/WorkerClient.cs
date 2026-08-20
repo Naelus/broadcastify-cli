@@ -134,7 +134,7 @@ internal sealed class WorkerClient
                         System.Globalization.CultureInfo.InvariantCulture),
                 ],
                 redirectStreams: false,
-                lanNodePort: boundedPort);
+                coordinatorPort: boundedPort);
             var process = new Process
             {
                 StartInfo = startInfo,
@@ -1418,7 +1418,7 @@ internal sealed class WorkerClient
         IReadOnlyList<string> arguments,
         IReadOnlyDictionary<string, string>? environment = null,
         bool redirectStreams = true,
-        int? lanNodePort = null)
+        int? coordinatorPort = null)
     {
         var startInfo = new ProcessStartInfo
         {
@@ -1440,7 +1440,7 @@ internal sealed class WorkerClient
         startInfo.Environment["PYTHONUTF8"] = "1";
         startInfo.Environment["BROADCASTIFY_DESKTOP_MASTER"] = "true";
         startInfo.Environment["BROADCASTIFY_LAN_ROLE"] = "master";
-        var configuredLanNodePort = lanNodePort ?? Volatile.Read(ref _lanNodePort);
+        var configuredLanNodePort = coordinatorPort ?? Volatile.Read(ref _lanNodePort);
         if (configuredLanNodePort is < 1024 or > 65535)
         {
             configuredLanNodePort = 8766;

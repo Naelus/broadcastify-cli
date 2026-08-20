@@ -104,8 +104,8 @@ def test_native_and_web_expose_read_only_lan_archive_reuse() -> None:
     ).read_text(encoding="utf-8")
     assert '"-m", "broadcastify_cli.lan_node"' in native_worker
     assert '"--host", "0.0.0.0"' in native_worker
-    assert "int? lanNodePort = null" in native_worker
-    assert "configuredLanNodePort = lanNodePort ?? Volatile.Read(ref _lanNodePort)" in native_worker
+    assert "int? coordinatorPort = null" in native_worker
+    assert "configuredLanNodePort = coordinatorPort ?? Volatile.Read(ref _lanNodePort)" in native_worker
     assert "configuredLanNodePort = 8766" in native_worker
     assert 'startInfo.Environment["BROADCASTIFY_LAN_MASTER_URL"] = localLanNodeUrl' in native_worker
     assert 'startInfo.Environment["BROADCASTIFY_LAN_COORDINATOR"] = localLanNodeUrl' in native_worker
