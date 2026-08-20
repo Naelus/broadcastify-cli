@@ -164,6 +164,8 @@ def test_public_installer_build_rejects_private_environment_and_pins_downloads()
     assert "BeforeTargets=\"PrepareForBuild\"" in targets
     assert '"-p:SourceRevisionId=$sourceCommit"' in build
     assert "source_commit = $sourceCommit" in build
+    assert "$versionInfo.ProductVersion.IndexOf(" in build
+    assert "$versionInfo.ProductVersion.Contains(" not in build
     assert 'tags:' in workflow
     assert '"v*"' in workflow
     assert "gh release upload" in workflow

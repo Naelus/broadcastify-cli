@@ -253,10 +253,10 @@ foreach ($nativeVersionFile in $nativeVersionFiles) {
             "in $nativeVersionFile; expected $Version."
         )
     }
-    if (-not $versionInfo.ProductVersion.Contains(
+    if ($versionInfo.ProductVersion.IndexOf(
             $sourceCommit.Substring(0, 7),
             [StringComparison]::OrdinalIgnoreCase
-        )) {
+        ) -lt 0) {
         throw (
             "The native publish ProductVersion is not bound to source commit " +
             "$sourceCommit in $nativeVersionFile."
