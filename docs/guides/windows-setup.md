@@ -1,7 +1,10 @@
 # Windows setup and first run
 
 The reference Windows experience is a native x64 WinUI 3 application on .NET
-10 and Windows App SDK 2.3.1.
+10 and Windows App SDK 2.3.1. The main shell keeps its Windows 10 version 1809
+(10.0.17763) minimum for the desktop surface. The optional Windows ML helper
+targets Windows 11 24H2 (10.0.26100), so selecting Windows ML requires that
+newer Windows platform while the rest of the shell retains the older minimum.
 
 ## Install a release
 

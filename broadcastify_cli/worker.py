@@ -15,7 +15,7 @@ import warnings
 import wave
 from datetime import date, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from dotenv import load_dotenv
 
@@ -88,7 +88,7 @@ from .library import (
     require_current_range_evidence,
     scan_local_library,
 )
-from .lan_sync import LanArchiveSyncClient
+from .lan_sync import LanArchiveSyncClient, environment_flag
 from .managed_runtime import (
     ManagedRuntimeError,
     install_managed_runtime,
@@ -453,11 +453,27 @@ def archive_quota_status() -> int:
     return 0
 
 
-def coordinated_activity_status() -> int:
+def coordinated_activity_status(
+    settings: Mapping[str, Any] | None = None,
+) -> int:
+    explicit = dict(settings or {})
+    peer_urls = (
+        explicit.get("peer_urls")
+        if settings is not None
+        else os.getenv("BROADCASTIFY_LAN_PEERS")
+    )
+    discovery_enabled = (
+        bool(explicit.get("discovery_enabled"))
+        if settings is not None
+        else environment_flag(
+            "BROADCASTIFY_LAN_DISCOVERY_ENABLED",
+            default=True,
+        )
+    )
     client = LanArchiveSyncClient.from_settings(
         enabled=True,
-        peer_urls=os.getenv("BROADCASTIFY_LAN_PEERS"),
-        discovery_enabled=True,
+        peer_urls=peer_urls,
+        discovery_enabled=discovery_enabled,
     )
     emit(
         {
@@ -2169,14 +2185,18 @@ def load_worker_environment() -> Path | None:
     """Load repository defaults, then an explicitly bundled private env file."""
 
     loaded: Path | None = None
-    repository_env = Path.cwd() / ".env"
-    if repository_env.is_file():
-        load_dotenv(repository_env, override=True)
-        loaded = repository_env
-    account_env = Path.cwd() / ".env.accounts"
-    if account_env.is_file():
-        load_dotenv(account_env, override=True)
-        loaded = account_env
+    isolated_e2e = (
+        os.getenv("BROADCASTIFY_DESKTOP_E2E_ISOLATED") == "1"
+    )
+    if not isolated_e2e:
+        repository_env = Path.cwd() / ".env"
+        if repository_env.is_file():
+            load_dotenv(repository_env, override=True)
+            loaded = repository_env
+        account_env = Path.cwd() / ".env.accounts"
+        if account_env.is_file():
+            load_dotenv(account_env, override=True)
+            loaded = account_env
     configured = os.getenv("BROADCASTIFY_ENV_FILE")
     if configured:
         bundled_env = Path(configured)
@@ -2261,7 +2281,7 @@ def main() -> int:
         if arguments.command == "quota-status":
             return archive_quota_status()
         if arguments.command == "coordinated-status":
-            return coordinated_activity_status()
+            return coordinated_activity_status(json.load(sys.stdin))
         if arguments.command == "managed-runtime-status":
             return managed_runtime_status_command(arguments.profile)
         if arguments.command == "install-managed-runtime":

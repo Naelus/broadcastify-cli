@@ -109,6 +109,14 @@ JSON report is written atomically, checked by the launcher, and cleaned only
 after success. A failed or timed-out probe fails the MSBuild target and retains
 its isolated artifacts for diagnosis.
 
+The Windows release workflow then exercises the compiled installer before it
+can be uploaded. On the clean hosted runner, a CI-only guarded script performs
+a silent fresh install with startup disabled, launches the installed native app
+through the same rendered E2E probe, repeats a same-version upgrade, verifies a
+product-data sentinel survives uninstall, performs a clean reinstall, and
+uninstalls again. The script refuses ordinary local execution and constrains
+all temporary installation cleanup to the runner temporary directory.
+
 The v0.4.32 pre-package validation passed all 418 offline tests, compiled the
 native application with no warnings or errors, and established the original
 four-size rendered matrix plus left/right/resize/unpin AppBar baseline. The

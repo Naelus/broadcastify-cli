@@ -108,6 +108,7 @@ function New-IsolatedProcessStartInfo {
         )) {
         $info.EnvironmentVariables[$name] = ""
     }
+    $info.EnvironmentVariables["BROADCASTIFY_DESKTOP_E2E_ISOLATED"] = "1"
     return $info
 }
 

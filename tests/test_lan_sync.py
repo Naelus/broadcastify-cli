@@ -165,6 +165,76 @@ def test_unchanged_completion_proof_does_not_republish_source_delta(
     assert events[0]["sequence"] > first_sequence
 
 
+def test_changed_retained_source_republishes_exactly_one_delta(
+    tmp_path: Path,
+) -> None:
+    feed_id = "90001"
+    archive_date = date(2026, 7, 13)
+    day = tmp_path / feed_id / "20260713"
+    day.mkdir(parents=True)
+    source = day / "202607130000-111-90001.mp3"
+    source.write_bytes(b"first")
+    remember_archive_identity(
+        day,
+        feed_id,
+        archive_date,
+        "provider-first",
+        source,
+        listing_prefix=source.name[:12],
+    )
+
+    assert remember_complete_archive_day(
+        day,
+        feed_id,
+        archive_date,
+        ["provider-first"],
+    )
+    with PipelineSyncStore(tmp_path) as journal:
+        first_sequence = journal.changes(0)["cursor"]
+
+    source.write_bytes(b"first source was refreshed")
+    remember_archive_identity(
+        day,
+        feed_id,
+        archive_date,
+        "provider-first",
+        source,
+        listing_prefix=source.name[:12],
+    )
+    assert remember_complete_archive_day(
+        day,
+        feed_id,
+        archive_date,
+        ["provider-first"],
+    )
+    with PipelineSyncStore(tmp_path) as journal:
+        changed = journal.changes(first_sequence)
+    assert len(changed["events"]) == 1
+    assert changed["events"][0]["kind"] == "source"
+    changed_sequence = changed["cursor"]
+    marker = json.loads(
+        (day / ".broadcastify-archive-complete.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert marker["source_inventory"] == [
+        {
+            "archive_id": "provider-first",
+            "filename": source.name,
+            "size": source.stat().st_size,
+        }
+    ]
+
+    assert remember_complete_archive_day(
+        day,
+        feed_id,
+        archive_date,
+        ["provider-first"],
+    )
+    with PipelineSyncStore(tmp_path) as journal:
+        assert journal.changes(changed_sequence)["events"] == []
+
+
 def test_master_uses_persistent_source_deltas_without_copying_follower_results(
     tmp_path: Path,
 ) -> None:

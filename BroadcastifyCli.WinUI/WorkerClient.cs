@@ -133,7 +133,8 @@ internal sealed class WorkerClient
                     "--parent-pid", Environment.ProcessId.ToString(
                         System.Globalization.CultureInfo.InvariantCulture),
                 ],
-                redirectStreams: false);
+                redirectStreams: false,
+                lanNodePort: boundedPort);
             var process = new Process
             {
                 StartInfo = startInfo,
@@ -977,12 +978,20 @@ internal sealed class WorkerClient
     }
 
     public async Task<CoordinatedActivityStatus?> GetCoordinatedActivityStatusAsync(
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IReadOnlyList<string>? peerUrls = null,
+        bool discoveryEnabled = true)
     {
         CoordinatedActivityStatus? status = null;
         await RunWorkerAsync(
             ["-m", "broadcastify_cli.worker", "coordinated-status"],
-            null,
+            JsonSerializer.Serialize(
+                new
+                {
+                    peer_urls = peerUrls ?? [],
+                    discovery_enabled = discoveryEnabled,
+                },
+                JsonOptions),
             message =>
             {
                 if (message.TryGetProperty("type", out var type)
@@ -1408,7 +1417,8 @@ internal sealed class WorkerClient
     private ProcessStartInfo CreateStartInfo(
         IReadOnlyList<string> arguments,
         IReadOnlyDictionary<string, string>? environment = null,
-        bool redirectStreams = true)
+        bool redirectStreams = true,
+        int? lanNodePort = null)
     {
         var startInfo = new ProcessStartInfo
         {
@@ -1430,9 +1440,15 @@ internal sealed class WorkerClient
         startInfo.Environment["PYTHONUTF8"] = "1";
         startInfo.Environment["BROADCASTIFY_DESKTOP_MASTER"] = "true";
         startInfo.Environment["BROADCASTIFY_LAN_ROLE"] = "master";
-        startInfo.Environment["BROADCASTIFY_LAN_MASTER_URL"] = "http://127.0.0.1:8766";
-        startInfo.Environment["BROADCASTIFY_LAN_COORDINATOR"] = "http://127.0.0.1:8766";
-        startInfo.Environment["BROADCASTIFY_LAN_QUOTA_COORDINATOR"] = "http://127.0.0.1:8766";
+        var configuredLanNodePort = lanNodePort ?? Volatile.Read(ref _lanNodePort);
+        if (configuredLanNodePort is < 1024 or > 65535)
+        {
+            configuredLanNodePort = 8766;
+        }
+        var localLanNodeUrl = $"http://127.0.0.1:{configuredLanNodePort}";
+        startInfo.Environment["BROADCASTIFY_LAN_MASTER_URL"] = localLanNodeUrl;
+        startInfo.Environment["BROADCASTIFY_LAN_COORDINATOR"] = localLanNodeUrl;
+        startInfo.Environment["BROADCASTIFY_LAN_QUOTA_COORDINATOR"] = localLanNodeUrl;
         if (IsBundledRuntime)
         {
             startInfo.Environment["PYTHONNOUSERSITE"] = "1";

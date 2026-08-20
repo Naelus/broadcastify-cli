@@ -13,7 +13,9 @@ def test_release_version_is_consistent_across_all_entry_points() -> None:
     match = re.search(r'^version = "([^"]+)"$', pyproject, re.MULTILINE)
     assert match is not None
     version = match.group(1)
-    numeric = f"{version}.0"
+    version_parts = version.split(".")
+    assert len(version_parts) in (3, 4)
+    numeric = version if len(version_parts) == 4 else f"{version}.0"
 
     for project in (
         ROOT / "BroadcastifyCli.WinUI" / "BroadcastifyCli.WinUI.csproj",
@@ -301,7 +303,80 @@ def test_tagged_release_uses_the_shipped_windows_product_name() -> None:
         ROOT / ".github" / "workflows" / "windows-release.yml"
     ).read_text(encoding="utf-8")
 
-    assert '--title "Broadcastify Desktop ${{ steps.version.outputs.value }}"' in workflow
+    assert '--title "Broadcastify Desktop $env:RELEASE_VERSION"' in workflow
+
+
+def test_windows_release_workflow_isolates_and_validates_shell_inputs() -> None:
+    workflow = (
+        ROOT / ".github" / "workflows" / "windows-release.yml"
+    ).read_text(encoding="utf-8")
+
+    assert "REQUESTED_VERSION: ${{ inputs.version }}" in workflow
+    assert "REF_NAME: ${{ github.ref_name }}" in workflow
+    assert "REF_TYPE: ${{ github.ref_type }}" in workflow
+    assert "$requested = $env:REQUESTED_VERSION" in workflow
+    assert "Release tags must be v<major>.<minor>.<patch>[.<revision>]." in workflow
+    assert "Release version must contain exactly three or four numeric components." in workflow
+    assert "The requested version must match the pushed release tag." in workflow
+    assert "RELEASE_VERSION: ${{ steps.version.outputs.value }}" in workflow
+    assert "-Version $env:RELEASE_VERSION" in workflow
+    assert "RELEASE_TAG: ${{ github.ref_name }}" in workflow
+    assert "gh release view $env:RELEASE_TAG" in workflow
+    assert "gh release upload $env:RELEASE_TAG" in workflow
+    assert "gh release create $env:RELEASE_TAG" in workflow
+    assert '"${{ inputs.version }}"' not in workflow
+    assert '"${{ github.ref_name }}"' not in workflow
+    assert '"${{ steps.version.outputs.value }}"' not in workflow
+
+
+def test_windows_release_runs_the_guarded_installer_lifecycle_before_upload() -> None:
+    workflow = (
+        ROOT / ".github" / "workflows" / "windows-release.yml"
+    ).read_text(encoding="utf-8")
+    lifecycle = (
+        ROOT / "scripts" / "run_windows_installer_lifecycle.ps1"
+    ).read_text(encoding="utf-8")
+
+    assert "run_windows_installer_lifecycle.ps1" in workflow
+    assert "INSTALLER_PATH: ${{ github.workspace }}\\dist\\windows\\BroadcastifyDesktop-${{ steps.version.outputs.value }}-win-x64-setup.exe" in workflow
+    assert "-Installer $env:INSTALLER_PATH" in workflow
+    assert workflow.index("Exercise installer lifecycle") < workflow.index(
+        "Upload workflow artifact"
+    )
+    assert "GITHUB_ACTIONS=true" in lifecycle
+    assert "RUNNER_TEMP" in lifecycle
+    assert "Assert-ContainedPath" in lifecycle
+    assert "Start-Process" in lifecycle
+    assert "-WindowStyle Hidden" in lifecycle
+    assert "/DISABLESTARTUP" in lifecycle
+    assert "/VERYSILENT" in lifecycle
+    assert "runtime\\python\\python.exe" in lifecycle
+    assert "run_windows_ui_e2e.ps1" in lifecycle
+    assert "[System.IO.File]::WriteAllText" in lifecycle
+    assert "[DateTime]::UtcNow.AddSeconds(15)" in lifecycle
+    assert "same-version upgrade" in lifecycle
+    assert "retained lifecycle sentinel" in lifecycle
+    assert "Uninstall left the application directory behind" in lifecycle
+    assert "Final uninstall did not preserve" in lifecycle
+    assert "Remove-Item -LiteralPath $verifiedData -Recurse -Force" in lifecycle
+
+
+def test_windows_shell_and_optional_helper_minimums_are_documented() -> None:
+    shell = (
+        ROOT / "BroadcastifyCli.WinUI" / "BroadcastifyCli.WinUI.csproj"
+    ).read_text(encoding="utf-8")
+    helper = (
+        ROOT / "BroadcastifyCli.WindowsML" / "BroadcastifyCli.WindowsML.csproj"
+    ).read_text(encoding="utf-8")
+    setup = (ROOT / "docs" / "guides" / "windows-setup.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert "<TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>" in shell
+    assert "<TargetPlatformMinVersion>10.0.26100.0</TargetPlatformMinVersion>" in helper
+    assert "Windows 10 version 1809" in setup
+    assert "Windows 11 24H2" in setup
+    assert "optional Windows ML helper" in setup
 
 
 def test_maintenance_update_uses_checkpointed_shutdown_without_force_kill() -> None:
@@ -362,6 +437,7 @@ def test_every_desktop_build_requires_the_full_offline_product_gate() -> None:
     assert "DesktopDockSide = \"left\"" in ui_e2e
     assert "DesktopDockWidth = 640" in ui_e2e
     assert "BROADCASTIFY_DESKTOP_TEST_ABRUPT_EXIT" in ui_e2e
+    assert 'BROADCASTIFY_DESKTOP_E2E_ISOLATED"] = "1"' in ui_e2e
     assert "Get-DesktopWorkAreaSignature" in ui_e2e
     assert "abrupt_cleanup = $abruptCleanupPassed" in ui_e2e
     assert "UIAutomation" not in ui_e2e

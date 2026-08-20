@@ -44,10 +44,21 @@ jobs:
       - name: Resolve version
         id: version
         shell: pwsh
+        env:
+          REQUESTED_VERSION: ${{ inputs.version }}
+          REF_NAME: ${{ github.ref_name }}
+          REF_TYPE: ${{ github.ref_type }}
         run: |
-          $requested = "${{ inputs.version }}"
-          if ([string]::IsNullOrWhiteSpace($requested) -and "${{ github.ref_type }}" -eq "tag") {
-            $requested = "${{ github.ref_name }}".TrimStart("v")
+          $requested = $env:REQUESTED_VERSION
+          $tagVersion = ""
+          if ($env:REF_TYPE -eq "tag") {
+            if ($env:REF_NAME -notmatch '\Av\d+\.\d+\.\d+(?:\.\d+)?\z') {
+              throw "Release tags must be v<major>.<minor>.<patch>[.<revision>]."
+            }
+            $tagVersion = $env:REF_NAME.Substring(1)
+            if ([string]::IsNullOrWhiteSpace($requested)) {
+              $requested = $tagVersion
+            }
           }
           if ([string]::IsNullOrWhiteSpace($requested)) {
             $text = Get-Content .\pyproject.toml -Raw
@@ -56,14 +67,30 @@ jobs:
               '(?ms)^\[project\].*?^version\s*=\s*"(?<version>\d+\.\d+\.\d+(?:\.\d+)?)"'
             ).Groups["version"].Value
           }
+          if ($requested -notmatch '\A\d+\.\d+\.\d+(?:\.\d+)?\z') {
+            throw "Release version must contain exactly three or four numeric components."
+          }
+          if ($env:REF_TYPE -eq "tag" -and $requested -ne $tagVersion) {
+            throw "The requested version must match the pushed release tag."
+          }
           "value=$requested" >> $env:GITHUB_OUTPUT
 
       - name: Build installer
         shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.value }}
         run: |
           .\scripts\build_windows_installer.ps1 `
-            -Version "${{ steps.version.outputs.value }}" `
+            -Version $env:RELEASE_VERSION `
             -BuildPython (Get-Command python.exe).Source
+
+      - name: Exercise installer lifecycle
+        shell: pwsh
+        env:
+          INSTALLER_PATH: ${{ github.workspace }}\dist\windows\BroadcastifyDesktop-${{ steps.version.outputs.value }}-win-x64-setup.exe
+        run: |
+          .\scripts\run_windows_installer_lifecycle.ps1 `
+            -Installer $env:INSTALLER_PATH
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
@@ -77,12 +104,14 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ steps.version.outputs.value }}
+          RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          $asset = "dist/windows/BroadcastifyDesktop-${{ steps.version.outputs.value }}-win-x64-setup.exe"
-          if (gh release view "${{ github.ref_name }}" *> $null) {
-            gh release upload "${{ github.ref_name }}" $asset --clobber
+          $asset = "dist/windows/BroadcastifyDesktop-${env:RELEASE_VERSION}-win-x64-setup.exe"
+          if (gh release view $env:RELEASE_TAG *> $null) {
+            gh release upload $env:RELEASE_TAG $asset --clobber
           } else {
-            gh release create "${{ github.ref_name }}" $asset `
-              --title "Broadcastify Desktop ${{ steps.version.outputs.value }}" `
+            gh release create $env:RELEASE_TAG $asset `
+              --title "Broadcastify Desktop $env:RELEASE_VERSION" `
               --generate-notes
           }

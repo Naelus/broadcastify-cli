@@ -2976,6 +2976,33 @@ def _append_cited_event_times(
     return answer.rstrip() + "\n\n" + "\n".join(lines)
 
 
+def _answer_statements_are_cited(
+    answer: str,
+    valid_ids: set[str],
+) -> bool:
+    """Require every model-authored answer statement to carry valid evidence."""
+
+    statements: list[str] = []
+    for line in answer.splitlines():
+        statements.extend(
+            re.split(r"(?<=[.!?])\s+(?=[A-Z0-9*•-])", line.strip())
+        )
+    material = [
+        value.strip()
+        for value in statements
+        if re.search(r"[A-Za-z0-9]", value)
+    ]
+    if not material:
+        return False
+    return all(
+        any(
+            evidence_id in valid_ids
+            for evidence_id in re.findall(r"\b(?:E|I|P)\d+\b", statement)
+        )
+        for statement in material
+    )
+
+
 class RangeQuestionAnswerer:
     def __init__(
         self,
@@ -3200,13 +3227,21 @@ class RangeQuestionAnswerer:
         for value in pattern_records:
             valid_ids.update(f"I{incident_id}" for incident_id in value["incident_ids"])
         cited_ids: list[str] = []
-        for value in [
-            *result.get("evidence_ids", []),
-            *re.findall(r"\b(?:E|I|P)\d+\b", answer),
-        ]:
+        for value in re.findall(r"\b(?:E|I|P)\d+\b", answer):
             evidence_id = str(value)
             if evidence_id in valid_ids and evidence_id not in cited_ids:
                 cited_ids.append(evidence_id)
+        citation_limitation = ""
+        if not _answer_statements_are_cited(answer, valid_ids):
+            answer = (
+                "The retained evidence did not support a fully cited answer. "
+                "Try narrowing the date range or question."
+            )
+            cited_ids = []
+            citation_limitation = (
+                "The generated answer was withheld because every material "
+                "statement did not include a valid retained-evidence citation."
+            )
         answer = _append_cited_event_times(
             answer,
             cited_ids,
@@ -3227,6 +3262,8 @@ class RangeQuestionAnswerer:
             for value in result.get("limitations", [])
             if str(value).strip()
         ]
+        if citation_limitation:
+            limitations.insert(0, citation_limitation)
         unavailable_dates = [
             str(value)
             for value in coverage_value.get("unavailable_dates", [])

@@ -781,8 +781,17 @@ public sealed partial class MainWindow : Window
         {
             using var cancellation = new CancellationTokenSource(
                 TimeSpan.FromSeconds(8));
+            var peerUrls = LanPeerUrlsBox.Text
+                .Split(
+                    new[] { '\r', '\n', ',', ';', ' ', '\t' },
+                    StringSplitOptions.RemoveEmptyEntries
+                        | StringSplitOptions.TrimEntries)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
             var status = await _worker.GetCoordinatedActivityStatusAsync(
-                cancellation.Token);
+                cancellation.Token,
+                peerUrls,
+                LanDiscoveryToggle.IsOn);
             if (status is null)
             {
                 throw new InvalidOperationException(

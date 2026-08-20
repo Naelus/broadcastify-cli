@@ -25,6 +25,7 @@ from broadcastify_cli.worker import (
     analysis_self_test,
     archive_quota_status,
     asr_self_test,
+    coordinated_activity_status,
     diarization_self_test,
     emit,
     load_worker_environment,
@@ -35,6 +36,45 @@ from broadcastify_cli.worker import (
     question_coverage,
     run_scheduled_job,
 )
+
+
+def test_coordinated_activity_status_passes_explicit_peers_and_discovery(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class Client:
+        def coordinated_status(self) -> dict[str, bool]:
+            return {"ready": True}
+
+    def from_settings(**kwargs: object) -> Client:
+        captured.update(kwargs)
+        return Client()
+
+    emitted: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        "broadcastify_cli.worker.LanArchiveSyncClient.from_settings",
+        from_settings,
+    )
+    monkeypatch.setattr("broadcastify_cli.worker.emit", emitted.append)
+    monkeypatch.setenv("BROADCASTIFY_LAN_PEERS", "http://127.0.0.1:8766")
+    monkeypatch.setenv("BROADCASTIFY_LAN_DISCOVERY_ENABLED", "on")
+
+    assert coordinated_activity_status(
+        {
+            "peer_urls": ["http://10.0.0.20:9876"],
+            "discovery_enabled": False,
+        }
+    ) == 0
+    assert captured["enabled"] is True
+    assert captured["peer_urls"] == ["http://10.0.0.20:9876"]
+    assert captured["discovery_enabled"] is False
+    assert emitted == [
+        {
+            "type": "coordinated_activity_status",
+            "status": {"ready": True},
+        }
+    ]
 
 
 def test_scheduled_analysis_skips_current_retained_days() -> None:
@@ -209,6 +249,39 @@ def test_named_account_env_never_falls_back_to_default_credentials(
     assert os.environ["BROADCASTIFY_USERNAME"] == "secondary-user"
     assert os.environ["BROADCASTIFY_PASSWORD"] == "secondary-password"
     assert os.environ["BROADCASTIFY_ACCOUNT_PROFILE"] == "secondary"
+
+
+def test_ui_e2e_isolation_skips_repository_environment_files(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (tmp_path / ".env").write_text(
+        "BROADCASTIFY_USERNAME=repository-user\n"
+        "BROADCASTIFY_PASSWORD=repository-password\n",
+        encoding="utf-8",
+    )
+    (tmp_path / ".env.accounts").write_text(
+        "BROADCASTIFY_ACCOUNT_SECONDARY_USERNAME=secondary-user\n"
+        "BROADCASTIFY_ACCOUNT_SECONDARY_PASSWORD=secondary-password\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("BROADCASTIFY_DESKTOP_E2E_ISOLATED", "1")
+    monkeypatch.setenv("BROADCASTIFY_ACCOUNT_PROFILE", "default")
+    monkeypatch.delenv("BROADCASTIFY_ENV_FILE", raising=False)
+    for name in (
+        "BROADCASTIFY_USERNAME",
+        "BROADCASTIFY_PASSWORD",
+        "BROADCASTIFY_SECURE_USERNAME",
+        "BROADCASTIFY_SECURE_PASSWORD",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    loaded = load_worker_environment()
+
+    assert loaded is None
+    assert "BROADCASTIFY_USERNAME" not in os.environ
+    assert "BROADCASTIFY_PASSWORD" not in os.environ
 
 
 def test_library_resume_planning_reads_only_local_state_and_quota(

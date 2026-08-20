@@ -104,6 +104,12 @@ def test_native_and_web_expose_read_only_lan_archive_reuse() -> None:
     ).read_text(encoding="utf-8")
     assert '"-m", "broadcastify_cli.lan_node"' in native_worker
     assert '"--host", "0.0.0.0"' in native_worker
+    assert "int? lanNodePort = null" in native_worker
+    assert "configuredLanNodePort = lanNodePort ?? Volatile.Read(ref _lanNodePort)" in native_worker
+    assert "configuredLanNodePort = 8766" in native_worker
+    assert 'startInfo.Environment["BROADCASTIFY_LAN_MASTER_URL"] = localLanNodeUrl' in native_worker
+    assert 'startInfo.Environment["BROADCASTIFY_LAN_COORDINATOR"] = localLanNodeUrl' in native_worker
+    assert 'startInfo.Environment["BROADCASTIFY_LAN_QUOTA_COORDINATOR"] = localLanNodeUrl' in native_worker
 
     web_html = (
         ROOT / "broadcastify_cli" / "web_static" / "index.html"
@@ -879,12 +885,18 @@ def test_native_system_page_exposes_both_lan_reconciliation_surfaces() -> None:
     assert 'startInfo.Environment["BROADCASTIFY_LAN_ROLE"] = "master"' in worker
     assert (
         'startInfo.Environment["BROADCASTIFY_LAN_COORDINATOR"] = '
-        '"http://127.0.0.1:8766"' in worker
+        'localLanNodeUrl' in worker
     )
     assert (
         'startInfo.Environment["BROADCASTIFY_LAN_QUOTA_COORDINATOR"] = '
-        '"http://127.0.0.1:8766"' in worker
+        'localLanNodeUrl' in worker
     )
+    assert "IReadOnlyList<string>? peerUrls = null" in worker
+    assert "peer_urls = peerUrls ?? []" in worker
+    assert "discovery_enabled = discoveryEnabled" in worker
+    assert "JsonSerializer.Serialize(" in worker
+    assert "peerUrls," in window
+    assert "LanDiscoveryToggle.IsOn" in window
     backend = (
         ROOT / "broadcastify_cli" / "lan_sync.py"
     ).read_text(encoding="utf-8")

@@ -113,6 +113,116 @@ def test_range_question_followup_includes_bounded_chat_context(
     assert "must state its supplied full archive date and time" in client.system
 
 
+def test_range_question_withholds_an_uncited_generated_event(
+    tmp_path: Path,
+) -> None:
+    archive_date = date(2026, 8, 5)
+    transcript = tmp_path / "transcript.json"
+    transcript.write_text(
+        json.dumps(
+            {
+                "model": "test",
+                "segments": [
+                    {
+                        "start": 10.0,
+                        "end": 15.0,
+                        "text": "Dispatch received one report of possible shots fired.",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class UncitedClient:
+        model = "fake-uncited-model"
+
+        def chat_json(self, **kwargs: object) -> dict[str, object]:
+            return {
+                "answer": "A specific shots-fired report happened.",
+                "evidence_ids": [],
+                "limitations": [],
+            }
+
+    with AnalysisStore(tmp_path / "analysis.sqlite3") as store:
+        store.import_transcript("90001", archive_date, transcript)
+        result = RangeQuestionAnswerer(store, UncitedClient()).ask(
+            "90001",
+            archive_date,
+            archive_date,
+            "What happened?",
+        )
+        saved = store.connection.execute(
+            "SELECT answer FROM qa_history WHERE feed_id=?",
+            ("90001",),
+        ).fetchone()
+
+    assert result["answer"] == (
+        "The retained evidence did not support a fully cited answer. "
+        "Try narrowing the date range or question."
+    )
+    assert result["evidence_ids"] == []
+    assert result["limitations"] == [
+        "The generated answer was withheld because every material "
+        "statement did not include a valid retained-evidence citation."
+    ]
+    assert saved is not None
+    assert saved["answer"] == result["answer"]
+
+
+def test_range_question_withholds_mixed_cited_and_uncited_events(
+    tmp_path: Path,
+) -> None:
+    archive_date = date(2026, 8, 5)
+    transcript = tmp_path / "transcript.json"
+    transcript.write_text(
+        json.dumps(
+            {
+                "model": "test",
+                "segments": [
+                    {
+                        "start": 10.0,
+                        "end": 15.0,
+                        "text": "Dispatch received one report of possible shots fired.",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class MixedCitationClient:
+        model = "fake-mixed-citation-model"
+
+        def chat_json(self, **kwargs: object) -> dict[str, object]:
+            return {
+                "answer": (
+                    "One possible report was retained [E1]. "
+                    "A second unsupported event happened."
+                ),
+                "evidence_ids": ["E1"],
+                "limitations": [],
+            }
+
+    with AnalysisStore(tmp_path / "analysis.sqlite3") as store:
+        store.import_transcript("90001", archive_date, transcript)
+        result = RangeQuestionAnswerer(store, MixedCitationClient()).ask(
+            "90001",
+            archive_date,
+            archive_date,
+            "What happened?",
+        )
+
+    assert result["answer"].startswith(
+        "The retained evidence did not support a fully cited answer."
+    )
+    assert result["evidence_ids"] == []
+    assert result["limitations"] == [
+        "The generated answer was withheld because every material "
+        "statement did not include a valid retained-evidence citation."
+    ]
+
+
 def test_range_question_filters_to_ready_month_dates_and_owns_gap_limitation(
     tmp_path: Path,
 ) -> None:
