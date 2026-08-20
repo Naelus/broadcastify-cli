@@ -176,10 +176,12 @@ A later stage cannot make an earlier stale stage look complete.
   complete days. They survive cancellation, quota pauses, app/machine restarts,
   and upgrades, participate in the normal global Resume plan, and self-clear
   only after every day through current is locally complete.
-- A LAN-enabled job first reconciles every peer-retained date for its feed.
-  It discovers a bounded list of every complete peer model fingerprint and
-  pulls every hash-verified source block and transcript set, not only the model
-  selected on the receiving machine. Active peer-owned acquisition/model days are
+- A LAN-enabled job reconciles the current requested date immediately before
+  deciding whether that date needs a provider fallback. A multi-day backlog
+  therefore progresses as LAN reuse, acquisition decision, then the next day;
+  it does not sweep or copy every later peer-retained date before the first
+  missing day can download. It pulls every hash-verified source block needed
+  for the date being considered. Active peer-owned acquisition/model days are
   recorded as incomplete rather than waited on or duplicated; daily schedules
   retry them, and expired or failed renewable claims become eligible again. If
   a different local model/audio result already owns the conventional filenames,

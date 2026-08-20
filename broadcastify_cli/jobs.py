@@ -130,96 +130,11 @@ class JobRunner:
                     "type": "stage",
                     "stage": "lan_sync",
                     "message": (
-                        "Checking the trusted LAN for retained archive blocks "
-                        "before contacting Broadcastify"
+                        "Checking the trusted LAN for each requested day "
+                        "immediately before its Broadcastify fallback"
                     ),
                 }
             )
-            for day_number, archive_date in enumerate(dates, start=1):
-                day_label = archive_date.isoformat()
-
-                def lan_progress(message: str) -> None:
-                    self.emit(
-                        {
-                            "type": "progress",
-                            "stage": "lan_sync",
-                            "current": day_number,
-                            "total": len(dates),
-                            "message": message,
-                        }
-                    )
-
-                try:
-                    sync_result = self.lan_sync.sync_day(
-                        self.request.output_dir,
-                        self.request.feed_id,
-                        archive_date,
-                        progress=lan_progress,
-                    )
-                except Exception as exc:
-                    sync_result = LanSyncResult(
-                        enabled=True,
-                        failures=(str(exc),),
-                    )
-                lan_results[day_label] = sync_result
-            copied = sum(value.blocks_copied for value in lan_results.values())
-            copied_bytes = sum(value.bytes_copied for value in lan_results.values())
-            failures = [
-                failure
-                for value in lan_results.values()
-                for failure in value.failures
-            ]
-            reached = max(
-                (value.peers_reached for value in lan_results.values()),
-                default=0,
-            )
-            if copied:
-                self.emit(
-                    {
-                        "type": "log",
-                        "stage": "lan_sync",
-                        "message": (
-                            f"LAN archive reuse supplied {copied} source block"
-                            f"{'s' if copied != 1 else ''} "
-                            f"({copied_bytes / (1024 * 1024):.1f} MiB). "
-                            "Those blocks will not consume Broadcastify download quota."
-                        ),
-                    }
-                )
-            elif reached:
-                self.emit(
-                    {
-                        "type": "log",
-                        "stage": "lan_sync",
-                        "message": (
-                            "Trusted-LAN peers were reachable, but they had no missing "
-                            "source blocks for this request."
-                        ),
-                    }
-                )
-            else:
-                self.emit(
-                    {
-                        "type": "log",
-                        "stage": "lan_sync",
-                        "message": (
-                            "No trusted-LAN archive peer answered; continuing with the "
-                            "local cache and quota-safe website fallback."
-                        ),
-                    }
-                )
-            if failures:
-                self.emit(
-                    {
-                        "type": "log",
-                        "stage": "lan_sync",
-                        "message": (
-                            f"LAN reuse reported {len(failures)} peer warning"
-                            f"{'s' if len(failures) != 1 else ''}; website fallback "
-                            f"remains available. First warning: {failures[0]}"
-                        ),
-                    }
-                )
 
         downloaded_days: list[tuple[Any, list[Path]]] = []
         quota_message: str | None = None
@@ -263,6 +178,33 @@ class JobRunner:
 
         for day_number, archive_date in enumerate(dates, start=1):
             day_label = archive_date.isoformat()
+            if self.lan_sync.enabled:
+
+                def lan_progress(message: str) -> None:
+                    self.emit(
+                        {
+                            "type": "progress",
+                            "stage": "lan_sync",
+                            "current": day_number,
+                            "total": len(dates),
+                            "message": message,
+                        }
+                    )
+
+                try:
+                    sync_result = self.lan_sync.sync_day(
+                        self.request.output_dir,
+                        self.request.feed_id,
+                        archive_date,
+                        progress=lan_progress,
+                    )
+                except Exception as exc:
+                    sync_result = LanSyncResult(
+                        enabled=True,
+                        failures=(str(exc),),
+                    )
+                lan_results[day_label] = sync_result
+
             if quota_message is not None:
                 local_cache = getattr(self.client, "cached_day_local", None)
                 cache_state = (
@@ -547,6 +489,66 @@ class JobRunner:
                 )
                 continue
             downloaded_days.append((archive_date, audio_files))
+
+        if self.lan_sync.enabled:
+            copied = sum(value.blocks_copied for value in lan_results.values())
+            copied_bytes = sum(value.bytes_copied for value in lan_results.values())
+            failures = [
+                failure
+                for value in lan_results.values()
+                for failure in value.failures
+            ]
+            reached = max(
+                (value.peers_reached for value in lan_results.values()),
+                default=0,
+            )
+            if copied:
+                self.emit(
+                    {
+                        "type": "log",
+                        "stage": "lan_sync",
+                        "message": (
+                            f"LAN archive reuse supplied {copied} source block"
+                            f"{'s' if copied != 1 else ''} "
+                            f"({copied_bytes / (1024 * 1024):.1f} MiB). "
+                            "Those blocks did not consume Broadcastify download quota."
+                        ),
+                    }
+                )
+            elif reached:
+                self.emit(
+                    {
+                        "type": "log",
+                        "stage": "lan_sync",
+                        "message": (
+                            "Trusted-LAN peers were reachable, but they had no missing "
+                            "source blocks for this request."
+                        ),
+                    }
+                )
+            else:
+                self.emit(
+                    {
+                        "type": "log",
+                        "stage": "lan_sync",
+                        "message": (
+                            "No trusted-LAN archive peer answered; the job used the "
+                            "local cache and quota-safe website fallback."
+                        ),
+                    }
+                )
+            if failures:
+                self.emit(
+                    {
+                        "type": "log",
+                        "stage": "lan_sync",
+                        "message": (
+                            f"LAN reuse reported {len(failures)} peer warning"
+                            f"{'s' if len(failures) != 1 else ''}; website fallback "
+                            f"remained available. First warning: {failures[0]}"
+                        ),
+                    }
+                )
 
         day_results: list[dict[str, Any]] = []
         pending_processing_days: list[str] = []

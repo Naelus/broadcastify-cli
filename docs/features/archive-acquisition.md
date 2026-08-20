@@ -112,7 +112,9 @@ at the next daily run. A LAN-deferred or otherwise incomplete result retries
 shortly rather than being recorded as complete. Range acquisition, matching
 LAN reconciliation, and scheduled processing all start with the newest day and
 work backward toward the saved boundary; already-valid days are reused rather
-than repeated. A scheduled processing pass runs at most one model/day before it
+than repeated. LAN reuse and provider fallback are interleaved per day, so a
+long range cannot scan every later peer-retained day before the first missing
+day reaches acquisition. A scheduled processing pass runs at most one model/day before it
 yields the worker back to acquisition. Remaining retained model days stay
 explicitly queued, so newly released allowance on any authorized profile is
 checked before another long inference pass. Explicit user-started jobs are not

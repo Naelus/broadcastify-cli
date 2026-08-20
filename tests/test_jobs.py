@@ -465,6 +465,66 @@ def test_lan_source_reuse_runs_before_any_broadcastify_request(
     assert result["lan_sync"]["blocks_copied"] == 1
 
 
+def test_lan_source_reuse_is_interleaved_with_each_backlog_day(
+    tmp_path: Path,
+) -> None:
+    calls: list[str] = []
+    first_date = date(2026, 7, 12)
+    second_date = date(2026, 7, 13)
+
+    class FakeLanSync:
+        enabled = True
+
+        def sync_day(
+            self,
+            _output_dir: Path,
+            _feed_id: str,
+            requested_date: date,
+            **_kwargs: object,
+        ) -> LanSyncResult:
+            calls.append(f"lan:{requested_date.isoformat()}")
+            return LanSyncResult(enabled=True, peers_reached=1)
+
+    class OrderedClient:
+        def authenticate(self) -> None:
+            calls.append("authenticate")
+
+        def download_day(
+            self,
+            feed_id: str,
+            requested_date: date,
+            output_dir: Path,
+            **_kwargs: object,
+        ) -> list[Path]:
+            calls.append(f"website:{requested_date.isoformat()}")
+            day = output_dir / feed_id / requested_date.strftime("%Y%m%d")
+            day.mkdir(parents=True)
+            source = day / f"{requested_date:%Y%m%d}0000-123456-{feed_id}.mp3"
+            source.write_bytes(b"provider audio")
+            return [source]
+
+    JobRunner(
+        JobRequest(
+            feed_id="90001",
+            start_date=first_date,
+            end_date=second_date,
+            output_dir=tmp_path,
+            lan_sync_enabled=True,
+            newest_first=False,
+        ),
+        client=OrderedClient(),  # type: ignore[arg-type]
+        lan_sync=FakeLanSync(),  # type: ignore[arg-type]
+    ).run()
+
+    assert calls == [
+        "lan:2026-07-12",
+        "authenticate",
+        "website:2026-07-12",
+        "lan:2026-07-13",
+        "website:2026-07-13",
+    ]
+
+
 def test_completed_lan_queue_day_skips_every_broadcastify_request(
     tmp_path: Path,
 ) -> None:
