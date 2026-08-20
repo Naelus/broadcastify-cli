@@ -110,6 +110,9 @@ def test_native_and_web_expose_read_only_lan_archive_reuse() -> None:
     assert 'startInfo.Environment["BROADCASTIFY_LAN_MASTER_URL"] = localLanNodeUrl' in native_worker
     assert 'startInfo.Environment["BROADCASTIFY_LAN_COORDINATOR"] = localLanNodeUrl' in native_worker
     assert 'startInfo.Environment["BROADCASTIFY_LAN_QUOTA_COORDINATOR"] = localLanNodeUrl' in native_worker
+    assert '"--database", Path.Combine(' in native_worker
+    assert '"--working-dir", WorkingDirectory' in native_worker
+    assert '"--enable-job-relay"' in native_worker
 
     web_html = (
         ROOT / "broadcastify_cli" / "web_static" / "index.html"
@@ -126,6 +129,10 @@ def test_native_and_web_expose_read_only_lan_archive_reuse() -> None:
         in web_js
     )
     assert "lan_peer_urls: state.settings.lanPeerUrls" in web_js
+    assert "function catchUpFeeds()" in web_js
+    assert "state.bootstrap.authoritative_feed_spans" in web_js
+    assert "only missing work will run" in web_js
+    assert "Starting Windows master worker" in web_js
 
 
 def test_native_releases_media_handles_before_archive_mutation() -> None:

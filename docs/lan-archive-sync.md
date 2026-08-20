@@ -107,6 +107,24 @@ remains usable.
 `BROADCASTIFY_LAN_BACKGROUND_SYNC` now means bounded journal processing. The
 interval no longer triggers feed-wide reconciliation.
 
+### Public Web surface and private Windows execution
+
+When a NAS hosts the authenticated browser surface, the public tunnel ends at
+that NAS service. The Windows LAN service is never a tunnel origin and must not
+be port-forwarded or exposed to the internet.
+
+With the follower role and `BROADCASTIFY_LAN_MASTER_URL` configured, the Web
+service relays interactive jobs, cancellation, schedules, and resumable
+catch-up intent over the authenticated private-LAN channel to Windows. It also
+reads compact authoritative feed spans, account allowances, and active-job
+status from Windows. The browser may therefore select an explicit feed or its
+entire retained span while Windows owns the actual worker and result.
+
+The NAS keeps serving its own retained Library and media so opening the Web UI
+does not trigger a full remote archive scan. If Windows is unavailable, a
+relayed request fails visibly with a retryable service error; the follower does
+not silently run a competing local job.
+
 ## Acquisition safety
 
 Only one renewable acquisition lease may admit provider archive requests at a

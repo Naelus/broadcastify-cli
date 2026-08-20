@@ -270,6 +270,23 @@ class PipelineSyncStore:
             "has_more": has_more,
         }
 
+    def list_source_spans(self) -> list[dict[str, Any]]:
+        """Return compact source coverage from the durable delta journal."""
+
+        rows = self.connection.execute(
+            """
+            SELECT feed_id,
+                   MIN(archive_date) AS start_date,
+                   MAX(archive_date) AS end_date,
+                   COUNT(*) AS day_count
+            FROM events
+            WHERE kind='source'
+            GROUP BY feed_id
+            ORDER BY feed_id
+            """
+        ).fetchall()
+        return [dict(row) for row in rows]
+
     def cursor(self, peer_url: str, peer_node_id: str) -> int:
         row = self.connection.execute(
             "SELECT sequence FROM cursors WHERE peer_url=? AND peer_node_id=?",

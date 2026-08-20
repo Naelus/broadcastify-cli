@@ -1186,6 +1186,24 @@ class AnalysisStore:
         ).fetchall()
         return [self._with_local_day_paths(row) for row in rows]
 
+    def list_feed_spans(self) -> list[dict[str, Any]]:
+        """Return compact retained transcript spans without walking archive files."""
+
+        rows = self.connection.execute(
+            """
+            SELECT d.feed_id,
+                   COALESCE(NULLIF(c.name, ''), 'Feed ' || d.feed_id) AS feed_name,
+                   MIN(d.archive_date) AS start_date,
+                   MAX(d.archive_date) AS end_date,
+                   COUNT(*) AS day_count
+            FROM feed_days d
+            LEFT JOIN feed_catalog c ON c.feed_id=d.feed_id
+            GROUP BY d.feed_id, c.name
+            ORDER BY d.feed_id
+            """
+        ).fetchall()
+        return [dict(row) for row in rows]
+
     def delete_library_feed(
         self,
         feed_id: str,

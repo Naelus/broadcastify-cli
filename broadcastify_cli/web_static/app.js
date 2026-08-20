@@ -50,7 +50,7 @@ const HARDWARE_PROFILE_DESCRIPTIONS = {
 };
 
 const state = {
-  bootstrap: { days: [], feed_coverage: [], catchups: [], profiles: [], schedules: [], summary: {}, runtime: {} },
+  bootstrap: { days: [], feed_coverage: [], authoritative_feed_spans: [], catchups: [], profiles: [], schedules: [], summary: {}, runtime: {} },
   selectedDay: null,
   selectedDayDetail: null,
   editingSchedule: null,
@@ -558,8 +558,9 @@ function renderAbout() {
   byId("aboutStorage").querySelector("span").textContent = `Library: ${runtime.output_dir || "Unknown"} · Database: ${runtime.database_path || "Unknown"}`;
   const lan = runtime.lan_sync || {};
   const accounts = runtime.account_pool?.quota?.account_count || 0;
-  byId("aboutLan").className = `notice${lan.sharing_enabled && lan.acquisition_queue_available ? " success" : " warning"}`;
-  byId("aboutLan").querySelector("span").textContent = `${lan.sharing_enabled ? "Original-block sharing enabled" : "Original-block sharing disabled"} · ${lan.acquisition_queue_available ? "shared acquisition queue ready" : "shared queue unavailable"} · ${accounts} configured account profile${accounts === 1 ? "" : "s"}.`;
+  const masterReady = !lan.remote_master_jobs || lan.remote_master_connected;
+  byId("aboutLan").className = `notice${lan.sharing_enabled && lan.acquisition_queue_available && masterReady ? " success" : " warning"}`;
+  byId("aboutLan").querySelector("span").textContent = `${lan.remote_master_jobs ? lan.remote_master_connected ? "Windows master relay connected" : `Windows master relay unavailable${lan.remote_master_error ? `: ${lan.remote_master_error}` : ""}` : "This installation owns its jobs"} · ${lan.sharing_enabled ? "original-block sharing enabled" : "original-block sharing disabled"} · ${lan.acquisition_queue_available ? "shared acquisition queue ready" : "shared queue unavailable"} · ${accounts} configured account profile${accounts === 1 ? "" : "s"}.`;
 }
 
 function systemTime(value) {
@@ -577,13 +578,18 @@ function renderSystemActivity() {
   const profiles = payload.account_pool?.profiles || [];
   const schedules = scheduler.schedules || [];
   const reconciliation = payload.reconciliation || {};
+  const masterError = String(payload.remote_master_error || "");
 
   const status = byId("systemActivityNotice");
-  status.className = `notice${payload.node_id ? " success" : " warning"}`;
-  status.querySelector("strong").textContent = payload.node_id
-    ? "Coordinator connected"
+  status.className = `notice${payload.node_id && !masterError ? " success" : " warning"}`;
+  status.querySelector("strong").textContent = payload.node_id && !masterError
+    ? "Windows master connected"
+    : masterError
+      ? "Windows master unavailable"
     : "Coordinator status unavailable";
-  status.querySelector("span").textContent = payload.node_id
+  status.querySelector("span").textContent = masterError
+    ? `${masterError} The next refresh will retry without changing any schedule or retained file.`
+    : payload.node_id
     ? `Node ${String(payload.node_id).slice(0, 12)} · ${Number((payload.peers || []).length)} configured peer${Number((payload.peers || []).length) === 1 ? "" : "s"} · refreshes every 10 seconds while this page is open.`
     : "The next refresh will retry without changing any schedule or retained file.";
 
@@ -663,7 +669,32 @@ async function refreshSystemActivity() {
 
 function catchUpFeed() {
   const feedId = byId("catchUpFeedSelect")?.value || "";
-  return (state.bootstrap.feed_coverage || []).find((value) => String(value.feed_id) === feedId) || null;
+  return catchUpFeeds().find((value) => String(value.feed_id) === feedId) || null;
+}
+
+function catchUpFeeds() {
+  const feeds = new Map((state.bootstrap.feed_coverage || []).map((feed) => [
+    String(feed.feed_id),
+    { ...feed, remote_master: false },
+  ]));
+  const saved = new Map((state.bootstrap.catchups || []).map((catchUp) => [String(catchUp.feed_id), catchUp]));
+  for (const span of state.bootstrap.authoritative_feed_spans || []) {
+    const feedId = String(span.feed_id || "");
+    if (!/^\d+$/.test(feedId)) continue;
+    const current = feeds.get(feedId) || {};
+    const catchUp = saved.get(feedId) || {};
+    feeds.set(feedId, {
+      ...current,
+      feed_id: feedId,
+      feed_name: current.feed_name || span.feed_name || `Feed ${feedId}`,
+      target_start_date: current.target_start_date || span.start_date || "",
+      target_end_date: span.end_date || current.target_end_date || "",
+      catch_up_start_date: current.catch_up_start_date || catchUp.start_date || "",
+      catch_up_saved: Boolean(current.catch_up_saved || catchUp.feed_id),
+      remote_master: true,
+    });
+  }
+  return [...feeds.values()].sort((left, right) => String(left.feed_name).localeCompare(String(right.feed_name)));
 }
 
 function updateCatchUpStatus({ resetStart = false } = {}) {
@@ -695,6 +726,13 @@ function updateCatchUpStatus({ resetStart = false } = {}) {
     .map((day) => String(day.archive_date)));
   const workDays = Math.max(0, targetDays - readyDates.size);
   const saved = Boolean(feed.catch_up_saved);
+  if (feed.remote_master) {
+    notice.className = "notice warning";
+    notice.querySelector("strong").textContent = `${targetDays} calendar days will be checked on the Windows master`;
+    notice.querySelector("span").textContent = `${feed.feed_name} · ${start || "choose a start"} through ${localToday} · only missing work will run${feed.target_end_date ? ` · retained master span ends ${feed.target_end_date}` : ""}${saved ? " · resumable catch-up saved" : ""}.`;
+    byId("clearCatchUpButton").disabled = !saved;
+    return;
+  }
   notice.className = `notice${workDays ? " warning" : " success"}`;
   notice.querySelector("strong").textContent = workDays
     ? `${workDays} of ${targetDays} calendar days need work`
@@ -707,7 +745,7 @@ function renderCatchUpFeeds() {
   const select = byId("catchUpFeedSelect");
   if (!select) return;
   const previous = select.value;
-  const feeds = state.bootstrap.feed_coverage || [];
+  const feeds = catchUpFeeds();
   select.innerHTML = `<option value="">Choose a retained or scheduled feed</option>${feeds.map((feed) => `<option value="${html(feed.feed_id)}">${html(feed.feed_name)} · feed ${html(feed.feed_id)}</option>`).join("")}`;
   select.value = feeds.some((feed) => String(feed.feed_id) === previous)
     ? previous
@@ -1305,7 +1343,7 @@ function updateProviderNotice(message = "") {
 
 async function startJob(command, payload = {}, options = {}) {
   if (state.activeJob) {
-    toast("Another local job is already active.", true);
+    toast(state.bootstrap.runtime?.lan_sync?.remote_master_jobs ? "Another Windows master job is already active." : "Another local job is already active.", true);
     return null;
   }
   try {
@@ -1316,7 +1354,7 @@ async function startJob(command, payload = {}, options = {}) {
     byId("jobDrawer").classList.add("open");
     byId("jobDrawerToggle").setAttribute("aria-expanded", "true");
     byId("jobTitle").textContent = options.label || command.replaceAll("-", " ");
-    byId("jobMessage").textContent = "Starting local worker…";
+    byId("jobMessage").textContent = state.bootstrap.runtime?.lan_sync?.remote_master_jobs ? "Starting Windows master worker…" : "Starting local worker…";
     byId("cancelJobButton").disabled = false;
     renderJob(job);
     pollJob();
@@ -2550,13 +2588,19 @@ function useEntireDownloadedFeed() {
     toast("Enter or select a numeric feed ID first.", true);
     return false;
   }
-  const dates = [...new Set((state.bootstrap.days || [])
-    .filter((day) => String(day.feed_id) === feedId)
-    .filter((day) => Number(day.raw_file_count || 0) > 0 || Boolean(day.has_combined) || Boolean(day.has_transcript))
-    .map((day) => String(day.archive_date || ""))
-    .filter((value) => /^\d{4}-\d{2}-\d{2}$/.test(value)))].sort();
-  if (!dates.length) {
-    toast(`No locally retained days exist for feed ${feedId}.`, true);
+  const authoritativeSpan = (state.bootstrap.authoritative_feed_spans || [])
+    .find((value) => String(value.feed_id) === feedId);
+  const dates = authoritativeSpan
+    ? [String(authoritativeSpan.start_date || ""), String(authoritativeSpan.end_date || "")]
+      .filter((value) => /^\d{4}-\d{2}-\d{2}$/.test(value))
+      .sort()
+    : [...new Set((state.bootstrap.days || [])
+      .filter((day) => String(day.feed_id) === feedId)
+      .filter((day) => Number(day.raw_file_count || 0) > 0 || Boolean(day.has_combined) || Boolean(day.has_transcript))
+      .map((day) => String(day.archive_date || ""))
+      .filter((value) => /^\d{4}-\d{2}-\d{2}$/.test(value)))].sort();
+  if (dates.length < 1) {
+    toast(`No retained days exist on the Windows master for feed ${feedId}.`, true);
     return false;
   }
   byId("askStartDate").value = dates[0];

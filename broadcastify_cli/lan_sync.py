@@ -56,6 +56,7 @@ LAN_QUEUE_RESULT_SECONDS = 24 * 60 * 60.0
 LAN_QUEUE_ROLLING_RESULT_SECONDS = 5 * 60.0
 LAN_QUEUE_REQUEST_BYTES = 256 * 1024
 LAN_QUEUE_RESPONSE_BYTES = 256 * 1024
+LAN_REMOTE_JOB_RESPONSE_BYTES = 2 * 1024 * 1024
 LAN_QUEUE_NODE_PATTERN = re.compile(r"^[A-Za-z0-9_-]{8,80}$")
 LAN_QUEUE_SCOPE_PATTERN = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
 PROCESSING_FINGERPRINT_PATTERN = re.compile(r"^[0-9a-f]{64}$")
@@ -81,6 +82,12 @@ ProgressCallback = Callable[[str], None]
 
 class LanSyncError(RuntimeError):
     pass
+
+
+class LanRemoteRequestError(LanSyncError):
+    def __init__(self, status: int, message: str) -> None:
+        super().__init__(message)
+        self.status = int(status)
 
 
 def environment_flag(name: str, default: bool = False) -> bool:
@@ -3017,6 +3024,134 @@ class LanArchiveSyncClient:
         if not isinstance(payload, Mapping) or payload.get("protocol") != LAN_PROTOCOL:
             raise LanSyncError("The master returned an invalid pipeline response.")
         return dict(payload)
+
+    def _master_request(
+        self,
+        method: str,
+        path: str,
+        payload: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        if self.role != "follower" or not self.master_url:
+            raise LanRemoteRequestError(
+                503,
+                "The Windows master is not configured for this follower.",
+            )
+        headers = self._headers()
+        if payload is not None:
+            headers["Content-Type"] = "application/json"
+        try:
+            with self._lan_session() as session:
+                with session.request(
+                    method,
+                    f"{self.master_url}{path}",
+                    headers=headers,
+                    json=dict(payload) if payload is not None else None,
+                    timeout=(self.connect_timeout, self.read_timeout),
+                    allow_redirects=False,
+                    stream=True,
+                ) as response:
+                    try:
+                        value = self._bounded_json(
+                            response,
+                            LAN_REMOTE_JOB_RESPONSE_BYTES,
+                        )
+                    except LanSyncError:
+                        if response.status_code >= 400:
+                            raise LanRemoteRequestError(
+                                response.status_code,
+                                "The Windows master rejected the remote request.",
+                            ) from None
+                        raise
+                    if response.status_code >= 400:
+                        message = (
+                            str(value.get("error") or "").strip()
+                            if isinstance(value, Mapping)
+                            else ""
+                        )
+                        raise LanRemoteRequestError(
+                            response.status_code,
+                            message or "The Windows master rejected the remote request.",
+                        )
+        except requests.RequestException as exc:
+            raise LanRemoteRequestError(
+                503,
+                f"The Windows master could not be reached: {exc}",
+            ) from exc
+        if not isinstance(value, Mapping) or value.get("protocol") != LAN_PROTOCOL:
+            raise LanSyncError("The Windows master returned an invalid remote response.")
+        return dict(value)
+
+    def start_master_job(
+        self,
+        command: str,
+        payload: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        value = self._master_request(
+            "POST",
+            "/api/lan/v1/jobs",
+            {"command": str(command), "payload": dict(payload)},
+        )
+        job = value.get("job")
+        if not isinstance(job, Mapping):
+            raise LanSyncError("The Windows master did not return a job snapshot.")
+        return dict(job)
+
+    def get_master_job(self, job_id: str) -> dict[str, Any]:
+        value = self._master_request(
+            "GET",
+            f"/api/lan/v1/jobs/{quote(str(job_id), safe='')}",
+        )
+        job = value.get("job")
+        if not isinstance(job, Mapping):
+            raise LanSyncError("The Windows master did not return a job snapshot.")
+        return dict(job)
+
+    def cancel_master_job(self, job_id: str) -> dict[str, Any]:
+        value = self._master_request(
+            "POST",
+            f"/api/lan/v1/jobs/{quote(str(job_id), safe='')}/cancel",
+            {},
+        )
+        job = value.get("job")
+        if not isinstance(job, Mapping):
+            raise LanSyncError("The Windows master did not return a job snapshot.")
+        return dict(job)
+
+    def master_library(self) -> dict[str, Any]:
+        value = self._master_request("GET", "/api/lan/v1/library")
+        library = value.get("library")
+        if not isinstance(library, Mapping):
+            raise LanSyncError("The Windows master did not return its library state.")
+        return dict(library)
+
+    def master_info(self) -> dict[str, Any]:
+        return self._master_request("GET", "/api/lan/v1/info")
+
+    def save_master_schedule(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+        value = self._master_request(
+            "POST",
+            "/api/lan/v1/schedules",
+            payload,
+        )
+        schedule = value.get("schedule")
+        if not isinstance(schedule, Mapping):
+            raise LanSyncError("The Windows master did not return the saved schedule.")
+        return dict(schedule)
+
+    def delete_master_schedule(self, schedule_id: int) -> bool:
+        value = self._master_request(
+            "POST",
+            f"/api/lan/v1/schedules/{int(schedule_id)}/delete",
+            {},
+        )
+        return bool(value.get("deleted"))
+
+    def update_master_catchup(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+        return self._master_request(
+            "POST",
+            "/api/lan/v1/catchups",
+            payload,
+        )
 
     def sync_master_results(
         self,

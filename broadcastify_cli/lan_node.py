@@ -5,6 +5,7 @@ import hmac
 import ipaddress
 import json
 import os
+import re
 import socket
 import threading
 import time
@@ -36,6 +37,13 @@ from .quota import (
     normalize_archive_request_id,
 )
 from .pipeline_sync import PipelineSyncStore, normalize_pipeline_role
+from .storage import AnalysisStore
+from .web_app import (
+    JobManager,
+    WebRequestError,
+    _account_pool_profiles,
+    _select_account_profile,
+)
 
 
 def validate_lan_host(value: str) -> str:
@@ -139,6 +147,9 @@ def create_lan_node_server(
     advertise_url: str = "",
     background_sync_enabled: bool = False,
     role: str | None = None,
+    working_dir: str | Path | None = None,
+    database_path: str | Path | None = None,
+    job_relay_enabled: bool = False,
 ) -> ThreadingHTTPServer:
     host = validate_lan_host(host)
     pipeline_role = normalize_pipeline_role(
@@ -166,6 +177,23 @@ def create_lan_node_server(
         role=pipeline_role,
         node_id=pipeline_node_id,
     )
+    if job_relay_enabled and pipeline_role != "master":
+        raise ValueError("Only the Windows master may host relayed Web jobs.")
+    relay_working_dir = Path(working_dir or Path.cwd()).expanduser().resolve()
+    relay_database_path = (
+        Path(database_path).expanduser().resolve()
+        if database_path
+        else (catalog.output_dir / "broadcastify-analysis.sqlite3").resolve()
+    )
+    job_manager = (
+        JobManager(
+            catalog.output_dir,
+            relay_database_path,
+            relay_working_dir,
+        )
+        if job_relay_enabled
+        else None
+    )
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "RadioArchiveLAN/1"
@@ -178,6 +206,8 @@ def create_lan_node_server(
         def do_GET(self) -> None:  # noqa: N802
             try:
                 self._get()
+            except WebRequestError as exc:
+                self._json(exc.status, {"error": str(exc)})
             except PermissionError as exc:
                 self._json(HTTPStatus.FORBIDDEN, {"error": str(exc)})
             except FileNotFoundError:
@@ -196,6 +226,8 @@ def create_lan_node_server(
             try:
                 self._authorize()
                 self._post()
+            except WebRequestError as exc:
+                self._json(exc.status, {"error": str(exc)})
             except ArchiveRequestBudgetExceeded as exc:
                 self._json(HTTPStatus.TOO_MANY_REQUESTS, {"error": str(exc)})
             except PermissionError as exc:
@@ -225,11 +257,86 @@ def create_lan_node_server(
                 )
                 return
             self._authorize()
+            if parsed.path == "/api/lan/v1/library":
+                if job_manager is None:
+                    raise FileNotFoundError
+                with AnalysisStore(relay_database_path) as store:
+                    transcript_spans = store.list_feed_spans()
+                    schedules = store.list_feed_schedules()
+                    catchups = store.list_library_catchups()
+                with PipelineSyncStore(catalog.output_dir) as journal:
+                    source_spans = journal.list_source_spans()
+                spans: dict[str, dict[str, object]] = {}
+                for raw in [*source_spans, *transcript_spans]:
+                    feed_id = str(raw.get("feed_id") or "")
+                    if not feed_id.isdigit():
+                        continue
+                    current = spans.setdefault(
+                        feed_id,
+                        {
+                            "feed_id": feed_id,
+                            "feed_name": f"Feed {feed_id}",
+                            "start_date": str(raw.get("start_date") or ""),
+                            "end_date": str(raw.get("end_date") or ""),
+                        },
+                    )
+                    current["start_date"] = min(
+                        str(current.get("start_date") or "9999-12-31"),
+                        str(raw.get("start_date") or "9999-12-31"),
+                    )
+                    current["end_date"] = max(
+                        str(current.get("end_date") or ""),
+                        str(raw.get("end_date") or ""),
+                    )
+                    feed_name = str(raw.get("feed_name") or "").strip()
+                    if feed_name:
+                        current["feed_name"] = feed_name[:200]
+                library = {
+                    "feed_spans": [spans[key] for key in sorted(spans)],
+                    "schedules": schedules,
+                    "catchups": catchups,
+                    "account_pool": _account_pool_profiles(
+                        relay_working_dir,
+                        job_manager.credential_store,
+                    ),
+                }
+                self._json(
+                    HTTPStatus.OK,
+                    {"protocol": LAN_PROTOCOL, "library": library},
+                )
+                return
+            job_prefix = "/api/lan/v1/jobs/"
+            if parsed.path.startswith(job_prefix):
+                if job_manager is None:
+                    raise FileNotFoundError
+                job_id = unquote(parsed.path.removeprefix(job_prefix))
+                if not re.fullmatch(r"[0-9a-f]{16}", job_id):
+                    raise LanSyncError("The relayed job ID is not valid.")
+                self._json(
+                    HTTPStatus.OK,
+                    {
+                        "protocol": LAN_PROTOCOL,
+                        "job": job_manager.get(job_id),
+                    },
+                )
+                return
             if parsed.path == "/api/lan/v1/info":
                 info = catalog.info()
                 reconciler = getattr(self.server, "lan_reconciler", None)
                 if reconciler is not None:
                     info["reconciliation"] = reconciler.status()
+                if job_manager is not None:
+                    with AnalysisStore(relay_database_path) as store:
+                        schedules = store.list_feed_schedules()
+                    info["job_relay"] = job_manager.status()
+                    info["schedules"] = schedules[:100]
+                    info["account_pool"] = _account_pool_profiles(
+                        relay_working_dir,
+                        job_manager.credential_store,
+                    )
+                else:
+                    info["job_relay"] = {"enabled": False, "active": None}
+                    info["schedules"] = []
                 self._json(HTTPStatus.OK, info)
                 return
             if parsed.path == "/api/lan/v1/changes":
@@ -434,6 +541,110 @@ def create_lan_node_server(
 
         def _post(self) -> None:
             parsed = urlparse(self.path)
+            if parsed.path == "/api/lan/v1/jobs":
+                if job_manager is None:
+                    raise FileNotFoundError
+                body = self._body()
+                command = str(body.get("command") or "").strip()
+                payload = body.get("payload") or {}
+                if not isinstance(payload, dict):
+                    raise LanSyncError("The relayed job payload must be an object.")
+                self._json(
+                    HTTPStatus.ACCEPTED,
+                    {
+                        "protocol": LAN_PROTOCOL,
+                        "job": job_manager.start(command, payload),
+                    },
+                )
+                return
+            job_prefix = "/api/lan/v1/jobs/"
+            if parsed.path.startswith(job_prefix) and parsed.path.endswith("/cancel"):
+                if job_manager is None:
+                    raise FileNotFoundError
+                job_id = unquote(
+                    parsed.path.removeprefix(job_prefix).removesuffix("/cancel")
+                )
+                if not re.fullmatch(r"[0-9a-f]{16}", job_id):
+                    raise LanSyncError("The relayed job ID is not valid.")
+                self._body()
+                self._json(
+                    HTTPStatus.OK,
+                    {
+                        "protocol": LAN_PROTOCOL,
+                        "job": job_manager.cancel(job_id),
+                    },
+                )
+                return
+            if parsed.path == "/api/lan/v1/schedules":
+                if job_manager is None:
+                    raise FileNotFoundError
+                body = self._body()
+                requested_profile_id = str(
+                    body.get("account_profile_id") or "automatic"
+                ).strip().lower()
+                if requested_profile_id != "automatic":
+                    _select_account_profile(
+                        relay_working_dir,
+                        job_manager.credential_store,
+                        requested_profile_id,
+                    )
+                with AnalysisStore(relay_database_path) as store:
+                    schedule = store.save_feed_schedule(body)
+                self._json(
+                    HTTPStatus.OK,
+                    {"protocol": LAN_PROTOCOL, "schedule": schedule},
+                )
+                return
+            schedule_prefix = "/api/lan/v1/schedules/"
+            if parsed.path.startswith(schedule_prefix) and parsed.path.endswith("/delete"):
+                if job_manager is None:
+                    raise FileNotFoundError
+                value = parsed.path.removeprefix(schedule_prefix).removesuffix("/delete")
+                try:
+                    schedule_id = int(value)
+                except ValueError as exc:
+                    raise LanSyncError("A numeric schedule ID is required.") from exc
+                self._body()
+                with AnalysisStore(relay_database_path) as store:
+                    deleted = store.delete_feed_schedule(schedule_id)
+                if not deleted:
+                    raise WebRequestError(
+                        HTTPStatus.NOT_FOUND,
+                        "That feed schedule was not found on the Windows master.",
+                    )
+                self._json(
+                    HTTPStatus.OK,
+                    {"protocol": LAN_PROTOCOL, "deleted": True},
+                )
+                return
+            if parsed.path == "/api/lan/v1/catchups":
+                if job_manager is None:
+                    raise FileNotFoundError
+                body = self._body()
+                action = str(body.get("action") or "save").strip().lower()
+                with AnalysisStore(relay_database_path) as store:
+                    if action == "save":
+                        catchup = store.save_library_catchup(
+                            {
+                                **body,
+                                "through_current": True,
+                                "end_date": "",
+                            }
+                        )
+                        result: dict[str, object] = {"catchup": catchup}
+                    elif action == "clear":
+                        result = {
+                            "deleted": store.delete_library_catchup(
+                                str(body.get("feed_id") or "")
+                            )
+                        }
+                    else:
+                        raise LanSyncError("Unknown catch-up action.")
+                self._json(
+                    HTTPStatus.OK,
+                    {"protocol": LAN_PROTOCOL, **result},
+                )
+                return
             if parsed.path == "/api/lan/v1/pipeline-request":
                 if catalog.role != "master":
                     raise LanSyncError("Pipeline requests must be sent to the master.")
@@ -709,6 +920,8 @@ def create_lan_node_server(
 
     server = LanNodeServer((host, port), Handler)
     server.catalog = catalog  # type: ignore[attr-defined]
+    server.job_manager = job_manager  # type: ignore[attr-defined]
+    server.relay_database_path = relay_database_path  # type: ignore[attr-defined]
     server.quiet = False  # type: ignore[attr-defined]
     server.lan_discovery = None  # type: ignore[attr-defined]
     server.lan_reconciler = None  # type: ignore[attr-defined]
@@ -769,6 +982,19 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--port", type=int, default=8_766)
     parser.add_argument("--advertise-url", default="")
     parser.add_argument(
+        "--database",
+        help="Authoritative Windows analysis database for relayed Web work.",
+    )
+    parser.add_argument(
+        "--working-dir",
+        help="Authoritative Windows app-data directory for relayed Web work.",
+    )
+    parser.add_argument(
+        "--enable-job-relay",
+        action="store_true",
+        help="Accept authenticated follower jobs and execute them on this master.",
+    )
+    parser.add_argument(
         "--role",
         choices=("master", "follower"),
         default=None,
@@ -804,6 +1030,9 @@ def main() -> int:
         ),
         advertise_url=arguments.advertise_url,
         role=arguments.role,
+        working_dir=arguments.working_dir,
+        database_path=arguments.database,
+        job_relay_enabled=arguments.enable_job_relay,
         background_sync_enabled=environment_flag(
             "BROADCASTIFY_LAN_BACKGROUND_SYNC",
             default=True,

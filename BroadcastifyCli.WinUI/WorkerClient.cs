@@ -130,6 +130,11 @@ internal sealed class WorkerClient
                         System.Globalization.CultureInfo.InvariantCulture),
                     "--output-dir", output,
                     "--role", "master",
+                    "--database", Path.Combine(
+                        output,
+                        "broadcastify-analysis.sqlite3"),
+                    "--working-dir", WorkingDirectory,
+                    "--enable-job-relay",
                     "--parent-pid", Environment.ProcessId.ToString(
                         System.Globalization.CultureInfo.InvariantCulture),
                 ],

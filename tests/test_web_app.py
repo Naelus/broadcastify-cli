@@ -22,6 +22,8 @@ from broadcastify_cli.area_watch import (
 )
 from broadcastify_cli.storage import AnalysisStore
 from broadcastify_cli.credential_store import EncryptedCredentialStore
+from broadcastify_cli.lan_node import create_lan_node_server
+from broadcastify_cli.pipeline_sync import PipelineSyncStore
 from broadcastify_cli.web_app import (
     FeedScheduleCoordinator,
     JobManager,
@@ -1232,6 +1234,290 @@ def test_web_app_allows_explicit_trusted_lan_binding(tmp_path: Path) -> None:
         assert runtime["loopback_only"] is False
         assert runtime["access_scope"] == "trusted-lan"
         assert runtime["bind_host"] == "0.0.0.0"
+    finally:
+        connection.close()
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=3)
+
+
+def test_follower_web_relays_selected_feed_work_and_saved_intent_to_windows_master(
+    tmp_path: Path,
+) -> None:
+    master_root = tmp_path / "windows-archive"
+    master_database = master_root / "broadcastify-analysis.sqlite3"
+    master_working = tmp_path / "windows-data"
+    master_working.mkdir()
+    with PipelineSyncStore(master_root) as pipeline:
+        pipeline.record_source("90002", date(2026, 7, 1))
+        pipeline.record_source("90002", date(2026, 7, 31))
+    master = create_lan_node_server(
+        master_root,
+        host="127.0.0.1",
+        port=0,
+        sync_key="relay-test-key",
+        discovery_enabled=False,
+        role="master",
+        working_dir=master_working,
+        database_path=master_database,
+        job_relay_enabled=True,
+    )
+    master.quiet = True  # type: ignore[attr-defined]
+    master_jobs = master.job_manager  # type: ignore[attr-defined]
+    captured: dict[str, object] = {}
+    snapshot = {
+        "id": "0123456789abcdef",
+        "command": "ask",
+        "feed_id": "90002",
+        "status": "running",
+        "created_at": "2026-08-20T00:00:00+00:00",
+        "started_at": "2026-08-20T00:00:01+00:00",
+        "finished_at": "",
+        "events": [],
+        "result": None,
+        "error": "",
+    }
+
+    def start_master_job(command: str, payload: dict[str, object]) -> dict[str, object]:
+        if command == "search":
+            raise WebRequestError(
+                409,
+                "Another archive or model job is already active.",
+            )
+        captured["command"] = command
+        captured["payload"] = dict(payload)
+        return dict(snapshot)
+
+    def get_master_job(job_id: str) -> dict[str, object]:
+        captured["get_job_id"] = job_id
+        return dict(snapshot)
+
+    def cancel_master_job(job_id: str) -> dict[str, object]:
+        captured["cancel_job_id"] = job_id
+        return {**snapshot, "status": "canceling"}
+
+    master_jobs.start = start_master_job
+    master_jobs.get = get_master_job
+    master_jobs.cancel = cancel_master_job
+    master_thread = threading.Thread(target=master.serve_forever, daemon=True)
+    master_thread.start()
+
+    follower_root = tmp_path / "nas-archive"
+    follower_database = follower_root / "broadcastify-analysis.sqlite3"
+    follower_working = tmp_path / "nas-data"
+    follower_working.mkdir()
+    (follower_working / ".env").write_text(
+        "BROADCASTIFY_LAN_SHARING=true\n"
+        "BROADCASTIFY_LAN_ROLE=follower\n"
+        "BROADCASTIFY_LAN_DISCOVERY_ENABLED=false\n"
+        f"BROADCASTIFY_LAN_MASTER_URL=http://127.0.0.1:{master.server_port}\n"
+        "BROADCASTIFY_LAN_SYNC_KEY=relay-test-key\n",
+        encoding="utf-8",
+    )
+    follower = create_server(
+        follower_root,
+        follower_database,
+        port=0,
+        working_dir=follower_working,
+    )
+    follower.quiet = True  # type: ignore[attr-defined]
+    assert follower.state.scheduler._thread is None  # type: ignore[attr-defined]
+    follower_thread = threading.Thread(target=follower.serve_forever, daemon=True)
+    follower_thread.start()
+    connection = http.client.HTTPConnection(
+        "127.0.0.1", follower.server_port, timeout=5
+    )
+    try:
+        response, body = _request(connection, "GET", "/")
+        assert response.status == 200
+        cookie = response.getheader("Set-Cookie", "").split(";", 1)[0]
+        token_match = re.search(
+            rb'<meta name="app-token" content="([^"]+)">', body
+        )
+        assert token_match is not None
+        token = token_match.group(1).decode()
+
+        response, body = _request(
+            connection,
+            "GET",
+            "/api/bootstrap",
+            cookie=cookie,
+        )
+        bootstrap = json.loads(body)
+        assert response.status == 200
+        assert bootstrap["runtime"]["lan_sync"]["remote_master_jobs"] is True
+        assert bootstrap["runtime"]["lan_sync"]["remote_master_connected"] is True
+        assert bootstrap["authoritative_feed_spans"] == [
+            {
+                "feed_id": "90002",
+                "feed_name": "Feed 90002",
+                "start_date": "2026-07-01",
+                "end_date": "2026-07-31",
+            }
+        ]
+
+        question = {
+            "feed_id": "90002",
+            "start_date": "2026-07-01",
+            "end_date": "2026-07-31",
+            "question": "What happened on this selected feed?",
+        }
+        response, body = _request(
+            connection,
+            "POST",
+            "/api/jobs",
+            cookie=cookie,
+            token=token,
+            body={"command": "ask", "payload": question},
+        )
+        assert response.status == 202
+        assert json.loads(body)["id"] == "0123456789abcdef"
+        assert captured["command"] == "ask"
+        assert captured["payload"] == question
+
+        response, body = _request(
+            connection,
+            "POST",
+            "/api/jobs",
+            cookie=cookie,
+            token=token,
+            body={"command": "search", "payload": {"query": "selected feed"}},
+        )
+        assert response.status == 409
+        assert "already active" in json.loads(body)["error"]
+
+        response, body = _request(
+            connection,
+            "GET",
+            "/api/jobs/0123456789abcdef",
+            cookie=cookie,
+        )
+        assert response.status == 200
+        assert json.loads(body)["status"] == "running"
+        assert captured["get_job_id"] == "0123456789abcdef"
+
+        schedule_body = {
+            "feed_id": "90002",
+            "feed_name": "Selected Feed",
+            "run_time_local": "06:30",
+            "lookback_days": 2,
+            "backfill_start_date": "2026-07-01",
+            "recurring_catch_up": True,
+            "account_profile_id": "automatic",
+            "job": {"combine": True, "transcribe": True, "diarize": True},
+            "analyze": True,
+            "enabled": True,
+        }
+        response, body = _request(
+            connection,
+            "POST",
+            "/api/schedules",
+            cookie=cookie,
+            token=token,
+            body=schedule_body,
+        )
+        assert response.status == 200
+        saved_schedule = json.loads(body)["schedule"]
+        assert saved_schedule["feed_id"] == "90002"
+
+        response, body = _request(
+            connection,
+            "POST",
+            "/api/catchups",
+            cookie=cookie,
+            token=token,
+            body={
+                "action": "save",
+                "feed_id": "90002",
+                "feed_name": "Selected Feed",
+                "start_date": "2026-07-01",
+                "recurring": True,
+            },
+        )
+        assert response.status == 200
+        assert json.loads(body)["catchup"]["feed_id"] == "90002"
+
+        with AnalysisStore(master_database) as store:
+            assert [value["feed_id"] for value in store.list_feed_schedules()] == [
+                "90002"
+            ]
+            assert [value["feed_id"] for value in store.list_library_catchups()] == [
+                "90002"
+            ]
+        with AnalysisStore(follower_database) as store:
+            assert store.list_feed_schedules() == []
+            assert store.list_library_catchups() == []
+
+        response, body = _request(
+            connection,
+            "POST",
+            "/api/jobs/0123456789abcdef/cancel",
+            cookie=cookie,
+            token=token,
+            body={},
+        )
+        assert response.status == 200
+        assert json.loads(body)["status"] == "canceling"
+        assert captured["cancel_job_id"] == "0123456789abcdef"
+    finally:
+        connection.close()
+        follower.shutdown()
+        follower.server_close()
+        follower_thread.join(timeout=3)
+        master.shutdown()
+        master.server_close()
+        master_thread.join(timeout=3)
+
+
+def test_follower_web_does_not_run_jobs_locally_when_windows_master_is_unavailable(
+    tmp_path: Path,
+) -> None:
+    working = tmp_path / "nas-data"
+    working.mkdir()
+    (working / ".env").write_text(
+        "BROADCASTIFY_LAN_SHARING=true\n"
+        "BROADCASTIFY_LAN_ROLE=follower\n"
+        "BROADCASTIFY_LAN_DISCOVERY_ENABLED=false\n"
+        "BROADCASTIFY_LAN_MASTER_URL=http://127.0.0.1:1\n",
+        encoding="utf-8",
+    )
+    server = create_server(
+        tmp_path / "nas-archive",
+        port=0,
+        working_dir=working,
+    )
+    server.quiet = True  # type: ignore[attr-defined]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    connection = http.client.HTTPConnection(
+        "127.0.0.1", server.server_port, timeout=5
+    )
+    try:
+        response, body = _request(connection, "GET", "/")
+        cookie = response.getheader("Set-Cookie", "").split(";", 1)[0]
+        token_match = re.search(
+            rb'<meta name="app-token" content="([^"]+)">', body
+        )
+        assert token_match is not None
+        response, body = _request(
+            connection,
+            "POST",
+            "/api/jobs",
+            cookie=cookie,
+            token=token_match.group(1).decode(),
+            body={
+                "command": "ask",
+                "payload": {
+                    "feed_id": "90002",
+                    "start_date": "2026-07-01",
+                    "end_date": "2026-07-31",
+                    "question": "What happened?",
+                },
+            },
+        )
+        assert response.status == 503
+        assert "Windows master" in json.loads(body)["error"]
+        assert server.state.jobs.__class__.__name__ == "RemoteMasterJobManager"  # type: ignore[attr-defined]
     finally:
         connection.close()
         server.shutdown()

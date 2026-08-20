@@ -47,6 +47,7 @@ from .lan_sync import (
     LanArchiveReconciler,
     LanArchiveSyncClient,
     LanDiscoveryResponder,
+    LanRemoteRequestError,
     LanSyncError,
     normalize_peer_url,
     normalize_peer_urls,
@@ -512,6 +513,7 @@ class WebRequestError(Exception):
 class JobRecord:
     id: str
     command: str
+    feed_id: str = ""
     account_profile_id: str = DEFAULT_ACCOUNT_PROFILE_ID
     status: str = "queued"
     created_at: str = field(default_factory=utc_now)
@@ -527,6 +529,7 @@ class JobRecord:
         return {
             "id": self.id,
             "command": self.command,
+            "feed_id": self.feed_id,
             "account_profile_id": self.account_profile_id,
             "status": self.status,
             "created_at": self.created_at,
@@ -637,6 +640,7 @@ class JobManager:
             job = JobRecord(
                 id=secrets.token_hex(8),
                 command=command,
+                feed_id=str(request_payload.get("feed_id") or "")[:40],
                 account_profile_id=account_profile_id,
             )
             self._jobs[job.id] = job
@@ -647,6 +651,34 @@ class JobManager:
             daemon=True,
         ).start()
         return job.snapshot()
+
+    def status(self) -> dict[str, Any]:
+        with self._lock:
+            active = next(
+                (
+                    job
+                    for job in reversed(list(self._jobs.values()))
+                    if job.status in {"queued", "running", "canceling"}
+                ),
+                None,
+            )
+            return {
+                "enabled": True,
+                "active": (
+                    {
+                        "id": active.id,
+                        "command": active.command,
+                        "phase": active.command,
+                        "feed_id": active.feed_id,
+                        "status": active.status,
+                        "account_profile_id": active.account_profile_id,
+                        "created_at": active.created_at,
+                        "started_at": active.started_at,
+                    }
+                    if active is not None
+                    else None
+                ),
+            }
 
     def get(self, job_id: str) -> dict[str, Any]:
         with self._lock:
@@ -964,12 +996,50 @@ class JobManager:
         return [command], payload
 
 
+class RemoteMasterJobManager:
+    """Relay browser jobs to the authoritative Windows worker."""
+
+    def __init__(self, client: LanArchiveSyncClient) -> None:
+        self.client = client
+        self.credential_store = None
+
+    @staticmethod
+    def _raise_web_error(exc: Exception) -> None:
+        if isinstance(exc, LanRemoteRequestError):
+            raise WebRequestError(exc.status, str(exc)) from exc
+        raise WebRequestError(
+            HTTPStatus.SERVICE_UNAVAILABLE,
+            f"The Windows master is unavailable: {exc}",
+        ) from exc
+
+    def start(self, command: str, payload: dict[str, Any]) -> dict[str, Any]:
+        try:
+            return self.client.start_master_job(command, payload)
+        except (LanSyncError, OSError) as exc:
+            self._raise_web_error(exc)
+        raise AssertionError("unreachable")
+
+    def get(self, job_id: str) -> dict[str, Any]:
+        try:
+            return self.client.get_master_job(job_id)
+        except (LanSyncError, OSError) as exc:
+            self._raise_web_error(exc)
+        raise AssertionError("unreachable")
+
+    def cancel(self, job_id: str) -> dict[str, Any]:
+        try:
+            return self.client.cancel_master_job(job_id)
+        except (LanSyncError, OSError) as exc:
+            self._raise_web_error(exc)
+        raise AssertionError("unreachable")
+
+
 class FeedScheduleCoordinator:
     """Run persisted feed schedules while the Web/NAS service is alive."""
 
     def __init__(
         self,
-        jobs: JobManager,
+        jobs: JobManager | RemoteMasterJobManager,
         database_path: Path,
         working_dir: Path,
         *,
@@ -1315,7 +1385,7 @@ class WebAppState:
     working_dir: Path
     static_dir: Path
     session_token: str
-    jobs: JobManager
+    jobs: JobManager | RemoteMasterJobManager
     scheduler: FeedScheduleCoordinator
     bind_host: str
     access_scope: str
@@ -1323,6 +1393,7 @@ class WebAppState:
     lan_catalog: LanArchiveCatalog
     lan_reconciler: LanArchiveReconciler
     credential_store: EncryptedCredentialStore
+    master_client: LanArchiveSyncClient | None
 
 
 def _safe_media_path(state: WebAppState, relative_value: str) -> Path:
@@ -1592,19 +1663,20 @@ def create_server(
         )
     except ValueError:
         lan_reconcile_seconds = 5 * 60.0
+    master_client = LanArchiveSyncClient(
+        enabled=lan_catalog.enabled,
+        peer_urls=lan_catalog.peer_urls,
+        discovery_enabled=lan_discovery_enabled,
+        sync_key=lan_catalog.sync_key,
+        queue_enabled=False,
+        role=lan_catalog.role,
+        master_url=str(
+            readiness_values.get("BROADCASTIFY_LAN_MASTER_URL") or ""
+        ),
+    )
     lan_reconciler = LanArchiveReconciler(
         root,
-        LanArchiveSyncClient(
-            enabled=lan_catalog.enabled,
-            peer_urls=lan_catalog.peer_urls,
-            discovery_enabled=lan_discovery_enabled,
-            sync_key=lan_catalog.sync_key,
-            queue_enabled=False,
-            role=lan_catalog.role,
-            master_url=str(
-                readiness_values.get("BROADCASTIFY_LAN_MASTER_URL") or ""
-            ),
-        ),
+        master_client,
         enabled=(
             background_sync_enabled
             and _environment_flag(
@@ -1620,7 +1692,14 @@ def create_server(
         if credential_store_path is not None
         else EncryptedCredentialStore.for_working_directory(work)
     )
-    jobs = JobManager(root, database, work, credential_store)
+    remote_master_enabled = bool(
+        lan_catalog.role == "follower" and master_client.master_url
+    )
+    jobs: JobManager | RemoteMasterJobManager = (
+        RemoteMasterJobManager(master_client)
+        if remote_master_enabled
+        else JobManager(root, database, work, credential_store)
+    )
     scheduler = FeedScheduleCoordinator(jobs, database, work)
     state = WebAppState(
         output_dir=root,
@@ -1636,6 +1715,7 @@ def create_server(
         lan_catalog=lan_catalog,
         lan_reconciler=lan_reconciler,
         credential_store=credential_store,
+        master_client=(master_client if remote_master_enabled else None),
     )
 
     class Handler(BaseHTTPRequestHandler):
@@ -2000,18 +2080,49 @@ def create_server(
                     state.credential_store,
                 )
                 info = state.lan_catalog.info()
+                master_error = ""
+                if state.master_client is not None:
+                    try:
+                        info = state.master_client.master_info()
+                    except (LanSyncError, OSError) as exc:
+                        master_error = str(exc)
+                remote_account_pool = info.get("account_pool")
+                if isinstance(remote_account_pool, dict):
+                    account_pool = remote_account_pool
+                remote_job_relay = dict(info.get("job_relay") or {})
                 self._json(
                     HTTPStatus.OK,
                     {
                         **info,
-                        "scheduler": state.scheduler.status(),
-                        "reconciliation": state.lan_reconciler.status(),
+                        "scheduler": (
+                            {
+                                "active": remote_job_relay.get("active"),
+                                "schedules": list(info.get("schedules") or []),
+                            }
+                            if state.master_client is not None and not master_error
+                            else {"active": None, "schedules": []}
+                            if state.master_client is not None
+                            else state.scheduler.status()
+                        ),
+                        "reconciliation": (
+                            dict(info.get("reconciliation") or {})
+                            if state.master_client is not None and not master_error
+                            else state.lan_reconciler.status()
+                        ),
                         "account_pool": account_pool,
+                        "remote_master_error": master_error[:240],
                     },
                 )
                 return
             if parsed.path == "/api/bootstrap":
                 library = _library_payload(state)
+                authoritative_library: dict[str, Any] | None = None
+                master_error = ""
+                if state.master_client is not None:
+                    try:
+                        authoritative_library = state.master_client.master_library()
+                    except (LanSyncError, OSError) as exc:
+                        master_error = str(exc)
                 readiness_values, _environment_file = _readiness_environment(
                     state.working_dir
                 )
@@ -2023,6 +2134,13 @@ def create_server(
                     profiles = store.list_area_profiles()
                     area_runs = store.list_area_acquisition_runs(limit=20)
                     schedules = store.list_feed_schedules()
+                if authoritative_library is not None:
+                    schedules = list(authoritative_library.get("schedules") or [])
+                    remote_account_pool = authoritative_library.get("account_pool")
+                    if isinstance(remote_account_pool, dict):
+                        account_pool = remote_account_pool
+                elif state.master_client is not None:
+                    schedules = []
                 self._json(
                     HTTPStatus.OK,
                     {
@@ -2030,6 +2148,18 @@ def create_server(
                         "profiles": profiles,
                         "area_runs": area_runs,
                         "schedules": schedules,
+                        "catchups": (
+                            list(authoritative_library.get("catchups") or [])
+                            if authoritative_library is not None
+                            else []
+                            if state.master_client is not None
+                            else library.get("catchups", [])
+                        ),
+                        "authoritative_feed_spans": (
+                            list(authoritative_library.get("feed_spans") or [])
+                            if authoritative_library is not None
+                            else []
+                        ),
                         "runtime": {
                             "version": __version__,
                             "source_commit": str(
@@ -2066,6 +2196,13 @@ def create_server(
                                 "processing_queue_available": bool(
                                     state.lan_catalog.processing_queue.enabled
                                 ),
+                                "remote_master_jobs": state.master_client is not None,
+                                "remote_master_connected": (
+                                    authoritative_library is not None
+                                    if state.master_client is not None
+                                    else False
+                                ),
+                                "remote_master_error": master_error[:240],
                             },
                             **_runtime_readiness(state),
                         },
@@ -2294,43 +2431,59 @@ def create_server(
                 requested_profile_id = str(
                     body.get("account_profile_id") or "automatic"
                 ).strip().lower()
-                if requested_profile_id != "automatic":
+                if (
+                    requested_profile_id != "automatic"
+                    and state.master_client is None
+                ):
                     _select_account_profile(
                         state.working_dir,
                         state.credential_store,
                         requested_profile_id,
                     )
-                with AnalysisStore(state.database_path) as store:
-                    schedule = store.save_feed_schedule(body)
+                if state.master_client is not None:
+                    try:
+                        schedule = state.master_client.save_master_schedule(body)
+                    except (LanSyncError, OSError) as exc:
+                        RemoteMasterJobManager._raise_web_error(exc)
+                else:
+                    with AnalysisStore(state.database_path) as store:
+                        schedule = store.save_feed_schedule(body)
                 self._json(HTTPStatus.OK, {"schedule": schedule})
                 return
             if parsed.path == "/api/catchups":
                 body = self._body()
                 action = str(body.get("action") or "save").strip().lower()
                 try:
-                    with AnalysisStore(state.database_path) as store:
-                        if action == "save":
-                            catchup = store.save_library_catchup(
-                                {
-                                    **body,
-                                    "through_current": True,
-                                    "end_date": "",
-                                }
-                            )
-                            self._json(
-                                HTTPStatus.OK,
-                                {"catchup": catchup},
-                            )
-                        elif action == "clear":
-                            deleted = store.delete_library_catchup(
-                                str(body.get("feed_id") or "")
-                            )
-                            self._json(
-                                HTTPStatus.OK,
-                                {"deleted": deleted},
-                            )
-                        else:
-                            raise ValueError("Unknown catch-up action.")
+                    if state.master_client is not None:
+                        result = state.master_client.update_master_catchup(body)
+                        result.pop("protocol", None)
+                        self._json(HTTPStatus.OK, result)
+                    else:
+                        with AnalysisStore(state.database_path) as store:
+                            if action == "save":
+                                catchup = store.save_library_catchup(
+                                    {
+                                        **body,
+                                        "through_current": True,
+                                        "end_date": "",
+                                    }
+                                )
+                                self._json(
+                                    HTTPStatus.OK,
+                                    {"catchup": catchup},
+                                )
+                            elif action == "clear":
+                                deleted = store.delete_library_catchup(
+                                    str(body.get("feed_id") or "")
+                                )
+                                self._json(
+                                    HTTPStatus.OK,
+                                    {"deleted": deleted},
+                                )
+                            else:
+                                raise ValueError("Unknown catch-up action.")
+                except (LanSyncError, OSError) as exc:
+                    RemoteMasterJobManager._raise_web_error(exc)
                 except ValueError as exc:
                     raise WebRequestError(
                         HTTPStatus.BAD_REQUEST,
@@ -2343,8 +2496,16 @@ def create_server(
                     schedule_id = int(value)
                 except ValueError:
                     raise WebRequestError(HTTPStatus.BAD_REQUEST, "A numeric schedule ID is required.") from None
-                with AnalysisStore(state.database_path) as store:
-                    deleted = store.delete_feed_schedule(schedule_id)
+                if state.master_client is not None:
+                    try:
+                        deleted = state.master_client.delete_master_schedule(
+                            schedule_id
+                        )
+                    except (LanSyncError, OSError) as exc:
+                        RemoteMasterJobManager._raise_web_error(exc)
+                else:
+                    with AnalysisStore(state.database_path) as store:
+                        deleted = store.delete_feed_schedule(schedule_id)
                 if not deleted:
                     raise WebRequestError(HTTPStatus.NOT_FOUND, "That feed schedule was not found.")
                 self._json(HTTPStatus.OK, {"deleted": True})
@@ -2798,7 +2959,11 @@ def create_server(
     server.state = state  # type: ignore[attr-defined]
     server.quiet = False  # type: ignore[attr-defined]
     server.lan_discovery = None  # type: ignore[attr-defined]
-    state.scheduler.start()
+    # A follower with a configured Windows master may display and edit master
+    # schedules, but must never execute an old local schedule as a competing
+    # pipeline owner.
+    if not remote_master_enabled:
+        state.scheduler.start()
     if state.lan_catalog.enabled and lan_discovery_enabled:
         def advertised_url(remote_address: str) -> str:
             if configured_advertisement:
