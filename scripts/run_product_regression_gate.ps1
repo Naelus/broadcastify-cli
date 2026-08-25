@@ -27,14 +27,7 @@ if (-not (Test-Path -LiteralPath $Python -PathType Leaf)) {
 $arguments = @("-m", "pytest", "-q")
 if ($Focused) {
     $arguments += @(
-        "tests\e2e\test_product_workflows.py",
-        "tests\test_library.py",
-        "tests\test_feed_schedules.py",
-        "tests\test_analysis.py",
-        "tests\test_worker.py",
-        "tests\test_web_app.py",
-        "tests\test_ui_contracts.py",
-        "tests\test_windows_installer.py"
+        "tests\e2e\test_product_workflows.py"
     )
 }
 

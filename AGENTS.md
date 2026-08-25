@@ -43,6 +43,38 @@ identity unchanged.
   exhausted profile must hand off promptly to the next eligible profile, while
   LAN reuse and retained local processing continue independently.
 
+## Verification integrity
+
+When considering a large number of mechanical tests around the code, treat that
+instinct as a failure signal. Discard the proposed tests and work through this
+reasoning loop instead:
+
+1. To the best of my understanding, what is the desired outcome that needs to
+   be proven?
+2. Do the prior direction and context of the session refine, narrow, or
+   simplify my understanding of that outcome?
+3. More broadly, what is Ace trying to make work here? Does that understanding
+   further change or simplify the desired outcome?
+4. What must be true for a verification method to faithfully demonstrate the
+   integrity of that outcome?
+5. What different verification ideas would I consider with fresh eyes, without
+   being anchored to the current implementation?
+
+Designing valuable verification is expensive, careful work. A test is valuable
+only to the extent that it has integrity with respect to the desired outcome.
+Prefer tests that cross the real boundary where failure matters and exercise
+observable behavior, state transitions, failure handling, or recovery. Each
+retained or proposed test should have a concrete regression story: what user-
+meaningful failure it detects and why a cheaper existing test would not.
+
+Fixtures and assertions that merely restate the implementation are unnecessary
+and wasteful by default. Proving that code behaves like itself is a narrow,
+justified exception only when the source artifact is itself the shipped
+contract, no executable boundary is practical, and the assertion protects a
+specific release, safety, or compatibility invariant. Keep such artifact tests
+structural and minimal; do not inventory source strings, control names, or
+implementation steps.
+
 ## Efficient verification
 
 Every native or installer build is commit-gated. Commit all tracked source,
@@ -50,10 +82,11 @@ tests, documentation, version, and release metadata first; never build from a
 dirty tracked worktree. If source changes after a build, create a new commit
 before rebuilding. A versioned installer is immutable for its source commit.
 
-Run focused tests while iterating, then the full offline suite and native build:
+Choose focused tests from the observed failure and desired outcome while
+iterating, then run the full offline suite and native build:
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest -q tests\test_library.py tests\test_ui_contracts.py
+.\.venv\Scripts\python.exe -m pytest -q tests\e2e\test_product_workflows.py
 .\.venv\Scripts\python.exe -m pytest -q
 dotnet build .\BroadcastifyCli.WinUI\BroadcastifyCli.WinUI.csproj -c Release --no-restore
 ```
