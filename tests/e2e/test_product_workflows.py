@@ -36,6 +36,8 @@ SECRET_ENVIRONMENT_NAMES = {
     "BROADCASTIFY_ANALYSIS_API_KEY",
 }
 
+pytestmark = pytest.mark.usefixtures("fast_server_shutdown")
+
 
 def _worker_environment(
     session_root: Path,

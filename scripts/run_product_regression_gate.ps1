@@ -24,7 +24,10 @@ if (-not (Test-Path -LiteralPath $Python -PathType Leaf)) {
     throw "The product regression Python interpreter was not found: $Python"
 }
 
-$arguments = @("-m", "pytest", "-q")
+$arguments = @(
+    "-m", "pytest", "-q",
+    "--durations=10", "--durations-min=0.25"
+)
 if ($Focused) {
     $arguments += @(
         "tests\e2e\test_product_workflows.py"

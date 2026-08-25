@@ -75,6 +75,12 @@ specific release, safety, or compatibility invariant. Keep such artifact tests
 structural and minimal; do not inventory source strings, control names, or
 implementation steps.
 
+Test runtime must also be attributable to the outcome being proven. Do not
+spend production polling intervals, network timeouts, retry delays, or server
+shutdown waits when their duration is not the subject of the test. Profile the
+full suite when it slows down and remove incidental waiting before reducing
+behavioral coverage.
+
 ## Efficient verification
 
 Every native or installer build is commit-gated. Commit all tracked source,

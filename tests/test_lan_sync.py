@@ -49,6 +49,9 @@ from broadcastify_cli.pipeline_sync import PipelineSyncStore
 from broadcastify_cli.web_app import create_server
 
 
+pytestmark = pytest.mark.usefixtures("fast_server_shutdown")
+
+
 def test_republishing_same_master_result_advances_the_delta_cursor(
     tmp_path: Path,
 ) -> None:

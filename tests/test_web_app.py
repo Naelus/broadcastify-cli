@@ -35,6 +35,9 @@ from broadcastify_cli.web_app import (
 )
 
 
+pytestmark = pytest.mark.usefixtures("fast_server_shutdown")
+
+
 def _request(
     connection: http.client.HTTPConnection,
     method: str,
@@ -1478,6 +1481,7 @@ def test_follower_web_does_not_run_jobs_locally_when_windows_master_is_unavailab
         "BROADCASTIFY_LAN_SHARING=true\n"
         "BROADCASTIFY_LAN_ROLE=follower\n"
         "BROADCASTIFY_LAN_DISCOVERY_ENABLED=false\n"
+        "BROADCASTIFY_LAN_BACKGROUND_SYNC=false\n"
         "BROADCASTIFY_LAN_MASTER_URL=http://127.0.0.1:1\n",
         encoding="utf-8",
     )
@@ -1487,6 +1491,8 @@ def test_follower_web_does_not_run_jobs_locally_when_windows_master_is_unavailab
         working_dir=working,
     )
     server.quiet = True  # type: ignore[attr-defined]
+    assert server.state.master_client is not None  # type: ignore[attr-defined]
+    server.state.master_client.connect_timeout = 0.1  # type: ignore[attr-defined]
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     connection = http.client.HTTPConnection(
