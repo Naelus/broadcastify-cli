@@ -1551,11 +1551,11 @@ public sealed partial class MainWindow
         DockMenuFlyout.Opened += (_, _) => flyoutOpened = true;
         PrepareDesktopDockMenu();
         DockMenuFlyout.ShowAt(DockButton);
-        await WaitForUiLayoutAsync(100);
         Require(
-            flyoutOpened
-                && DockUnpinMenuItem.Visibility == Visibility.Visible
-                && DockMenuSeparator.Visibility == Visibility.Visible,
+            await WaitForUiConditionAsync(() =>
+                flyoutOpened
+                    && DockUnpinMenuItem.Visibility == Visibility.Visible
+                    && DockMenuSeparator.Visibility == Visibility.Visible),
             $"docked-{label}: the side/unpin flyout did not open with all pinned actions.");
         Require(
             AutomationProperties.GetAutomationId(DockLeftMenuItem)
@@ -1565,8 +1565,12 @@ public sealed partial class MainWindow
                 && AutomationProperties.GetAutomationId(DockUnpinMenuItem)
                     == "DockUnpinMenuItem",
             $"docked-{label}: the dock flyout lost its automation identities.");
+        var flyoutClosed = false;
+        DockMenuFlyout.Closed += (_, _) => flyoutClosed = true;
         DockMenuFlyout.Hide();
-        await WaitForUiLayoutAsync(60);
+        Require(
+            await WaitForUiConditionAsync(() => flyoutClosed),
+            $"docked-{label}: the side/unpin flyout did not close before the dialog opened.");
 
         var dialogContent = CreateDialogTextContent(
             string.Join(
@@ -1621,14 +1625,22 @@ public sealed partial class MainWindow
 
     private async Task<bool> WaitForDialogContainmentAsync(ContentDialog dialog)
     {
+        return await WaitForUiConditionAsync(() =>
+        {
+            dialog.UpdateLayout();
+            return dialog.ActualWidth > 0
+                && dialog.ActualWidth <= WindowRoot.ActualWidth + 2
+                && dialog.ActualHeight <= WindowRoot.ActualHeight + 2;
+        });
+    }
+
+    private async Task<bool> WaitForUiConditionAsync(Func<bool> condition)
+    {
         const int attempts = 30;
         for (var attempt = 0; attempt < attempts; attempt++)
         {
             WindowRoot.UpdateLayout();
-            dialog.UpdateLayout();
-            if (dialog.ActualWidth > 0
-                && dialog.ActualWidth <= WindowRoot.ActualWidth + 2
-                && dialog.ActualHeight <= WindowRoot.ActualHeight + 2)
+            if (condition())
             {
                 return true;
             }
@@ -1637,10 +1649,7 @@ public sealed partial class MainWindow
         }
 
         WindowRoot.UpdateLayout();
-        dialog.UpdateLayout();
-        return dialog.ActualWidth > 0
-            && dialog.ActualWidth <= WindowRoot.ActualWidth + 2
-            && dialog.ActualHeight <= WindowRoot.ActualHeight + 2;
+        return condition();
     }
 
     private static List<Dictionary<string, object>> VerifyDpiAndWidthPolicy()
