@@ -1,6 +1,6 @@
 # Feature inventory
 
-Last updated: August 20, 2026
+Last updated: September 3, 2026
 
 Status labels: **Validated**, **Implemented**, **Evaluated**, **Foundation**, or
 **Planned**. Detailed behavior and retained validation evidence belong in
@@ -71,7 +71,7 @@ See [evidence analysis](docs/features/evidence-analysis.md),
 | Linux user service | Validated | Install/start/stop/status/log/restart and data-preserving uninstall. |
 | TrueNAS App | Validated | Persistent host-path data, trusted-LAN UI, AMD Vulkan, unprivileged/read-only container boundary, the same named-account/catch-up/schedule controls as the desktop workflow, and a live ten-second System activity surface for coordinated acquisition, model claims, reconciliation, per-account allowances, and schedules. |
 | Verified Windows publish | Validated | WinUI resources, namespaced Windows ML helper, normal/private environment isolation. |
-| Standalone Windows installer | Validated | Per-user Inno Setup package with self-contained .NET app/helper, embedded Python, FFmpeg, Windows ML and portable inference runtimes; every native/package build requires committed source and the full offline product regression gate before compilation, embeds that commit in ProductVersion and the manifest, public stages reject PDBs/private state, and the generated public installer must pass a CI-only fresh-install, installed-app E2E, same-version upgrade, data-preserving uninstall, and clean-reinstall lifecycle before upload. Interactive setup discloses default-on login startup, and silent setup requires explicit startup/launch flags. |
+| Standalone Windows installer | Validated | Per-user Inno Setup package with self-contained .NET app/helper, embedded Python, FFmpeg, Windows ML and portable inference runtimes; every native/package build requires committed source and the full offline product regression gate before compilation, while a fast executable packaging preflight first validates release metadata, required tools, the current PowerShell parser, and native-version comparison compatibility. The preflight is compatible with both Windows PowerShell 5.1 and PowerShell 7. The package embeds the source commit in ProductVersion and the manifest, removes third-party test trees while preserving runtime testing modules, runs the packaged worker diagnostics entry point from isolated temporary state, rejects PDBs/private state, and must pass a CI-only fresh-install, installed-app E2E, same-version upgrade, data-preserving uninstall, and clean-reinstall lifecycle before upload. Interactive setup discloses default-on login startup, and silent setup requires explicit startup/launch flags. |
 | Packaged CUDA runtime manager | Validated | Explicit isolated Python/CUDA install from a fully hashed Windows lock; source/license/size/path disclosure, progress, cancellation, retained cache, safe resume, atomic promotion, app-update reuse, and clean staged-package ASR/Community-1 execution are proven. |
 | Additional accelerator add-ons | Foundation | OpenVINO/Vulkan packaged dependency lifecycles and release signing remain future work; their source/runtime paths continue to work when explicitly configured. |
 

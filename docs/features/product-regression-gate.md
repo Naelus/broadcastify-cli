@@ -78,11 +78,13 @@ The trusted-LAN workflow proves that:
   between long inference runs; and
 - failed or expired claims release safely without publishing partial work.
 
-Native UI and release contracts remain in the full suite. They cover the About
-version surface, media-player detachment before deletion, nonmodal completion,
-startup recovery, maintenance-close versus explicit-cancel schedule semantics,
-version consistency, immutable commit metadata, private-file exclusion, and
-installer data preservation.
+Backend state and release-safety contracts remain in the full suite. They cover
+media mutation and deletion recovery, startup recovery, maintenance-close
+versus explicit-cancel schedule semantics, version consistency, immutable
+commit metadata, private-file exclusion, and the executable packaging
+preflight. User-visible About, navigation, scrolling, and docking outcomes are
+proven by the compiled native E2E below rather than by source-text assertions;
+installer data preservation is proven by the release lifecycle itself.
 
 After the offline suite passes and the native executable is compiled, every
 desktop build launches that just-built executable in an isolated test-data

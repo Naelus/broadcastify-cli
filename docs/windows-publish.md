@@ -36,6 +36,15 @@ debug build cannot donate embedded PDB paths to a public package. Before Inno
 Setup runs, a binary-safe scan rejects PDBs, local databases/settings/logs,
 model weights, build-machine paths, and any current environment secret value.
 
+Before the full regression suite or native publication begins, the packaging
+entry point runs an executable compatibility preflight. It verifies all release
+version contracts, the full source revision, Python 3.12, .NET and Inno Setup
+availability, parses every PowerShell packaging helper, and exercises the exact
+string-comparison overloads used to bind native ProductVersion metadata to the
+source commit. The preflight has been exercised under Windows PowerShell 5.1
+and PowerShell 7, and it runs in the actual installer path, so basic shell or
+tool failures happen before the expensive publish stage.
+
 Output:
 
 ```text
@@ -80,6 +89,13 @@ an explicit path. The build removes pip's generated console-launcher directory:
 those stubs contain an absolute path to the build interpreter, while every
 installed worker is launched portably as a module through the bundled
 `python.exe`.
+
+Third-party directories named `test` or `tests` are removed from the portable
+runtime after installation; runtime modules such as `numpy.testing` remain.
+The build then imports the packaged application and inference dependencies and
+runs the packaged worker's diagnostics command with isolated temporary storage
+and no inherited account or provider credentials. Only that successful runtime
+smoke allows the stage to proceed to the public-file scan and installer.
 
 Python 3.12.10 and the FFmpeg 8.1.2 essentials archive are SHA-256 pinned.
 Python wheel versions are exact in

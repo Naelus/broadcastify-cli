@@ -16,6 +16,7 @@ $innoScript = Join-Path $repositoryRoot "installer\BroadcastifyDesktop.iss"
 $constraints = Join-Path $repositoryRoot "installer\windows-runtime-constraints.txt"
 $cudaRequirementsSource = Join-Path $repositoryRoot "installer\windows-managed-cuda-lock.txt"
 $publicReleaseScanner = Join-Path $repositoryRoot "scripts\scan_public_release.py"
+$packagingPreflight = Join-Path $repositoryRoot "scripts\verify_windows_packaging_preflight.ps1"
 $pythonVersion = "3.12.10"
 $pythonSha256 = "4ACBED6DD1C744B0376E3B1CF57CE906F9DC9E95E68824584C8099A63025A3C3"
 $pythonUrl = "https://www.python.org/ftp/python/$pythonVersion/python-$pythonVersion-embed-amd64.zip"
@@ -175,6 +176,22 @@ if ($BundleLocalEnv -and (
         ))) {
     throw "A private environment build cannot write to the public release directory. Use dist\windows-private or another explicitly private location."
 }
+$builder = Resolve-BuildPython
+$compiler = ""
+if (-not $SkipInstaller) {
+    $compiler = Resolve-InnoCompiler
+}
+$preflightResult = & $packagingPreflight `
+    -RepositoryRoot $repositoryRoot `
+    -Version $Version `
+    -SourceCommit $sourceCommit `
+    -BuildPython $builder `
+    -InnoCompiler $compiler `
+    -SkipInstaller:$SkipInstaller
+Write-Host (
+    "Packaging preflight passed under PowerShell " +
+    "$($preflightResult.powershell) with Python $($preflightResult.python)."
+)
 $cache = [System.IO.Path]::GetFullPath($CacheDirectory)
 $stageRoot = Assert-ChildPath `
     (Join-Path $repositoryRoot ".tmp") `
@@ -306,11 +323,6 @@ Expand-Archive -LiteralPath $pythonArchive -DestinationPath $pythonRoot -Force
     "import site"
 ) | Set-Content -LiteralPath (Join-Path $pythonRoot "python312._pth") -Encoding ASCII
 
-$builder = Resolve-BuildPython
-$builderVersion = & $builder -c "import sys; print('.'.join(map(str, sys.version_info[:3])))"
-if ($LASTEXITCODE -ne 0 -or $builderVersion -notmatch '^3\.12\.') {
-    throw "The build interpreter must be Python 3.12; found $builderVersion."
-}
 $packageTarget = "$repositoryRoot[windowsml,qwen,portable-diarization]"
 & $builder -m pip install `
     --disable-pip-version-check `
@@ -338,15 +350,30 @@ if (Test-Path -LiteralPath $generatedLauncherDirectory) {
     Remove-Item -LiteralPath $verifiedLauncherDirectory -Recurse -Force
 }
 $prunableRuntimeTests = @(
-    (Join-Path $sitePackages "onnx\backend\test"),
-    (Join-Path $sitePackages "onnx\test"),
-    (Join-Path $sitePackages "numpy\tests")
+    Get-ChildItem -LiteralPath $sitePackages -Directory -Recurse |
+        Where-Object { $_.Name -eq "test" -or $_.Name -eq "tests" } |
+        Sort-Object FullName -Descending
 )
+$prunedRuntimeTestBytes = [int64](
+    $prunableRuntimeTests |
+        ForEach-Object {
+            (Get-ChildItem -LiteralPath $_.FullName -File -Recurse |
+                Measure-Object Length -Sum).Sum
+        } |
+        Measure-Object -Sum
+).Sum
 foreach ($runtimeTestPath in $prunableRuntimeTests) {
-    if (Test-Path -LiteralPath $runtimeTestPath) {
-        $verifiedRuntimeTestPath = Assert-ChildPath $sitePackages $runtimeTestPath
-        Remove-Item -LiteralPath $verifiedRuntimeTestPath -Recurse -Force
-    }
+    $verifiedRuntimeTestPath = Assert-ChildPath `
+        $sitePackages `
+        $runtimeTestPath.FullName
+    Remove-Item -LiteralPath $verifiedRuntimeTestPath -Recurse -Force
+}
+$remainingRuntimeTests = @(
+    Get-ChildItem -LiteralPath $sitePackages -Directory -Recurse |
+        Where-Object { $_.Name -eq "test" -or $_.Name -eq "tests" }
+)
+if ($remainingRuntimeTests.Count -gt 0) {
+    throw "The portable runtime still contains third-party test trees."
 }
 Get-ChildItem -LiteralPath $sitePackages -Filter __pycache__ -Recurse -Directory |
     Sort-Object FullName -Descending |
@@ -505,10 +532,47 @@ $embeddedPython = Join-Path $pythonRoot "python.exe"
 $oldNoUserSite = $env:PYTHONNOUSERSITE
 $oldNoBytecode = $env:PYTHONDONTWRITEBYTECODE
 $oldFfmpeg = $env:FFMPEG_PATH
+$runtimeSmokeRoot = Assert-ChildPath `
+    $stageRoot `
+    (Join-Path $stageRoot "runtime-smoke")
+$isolatedRuntimeEnvironment = @(
+    "BROADCASTIFY_USERNAME",
+    "BROADCASTIFY_PASSWORD",
+    "BROADCASTIFY_SECURE_USERNAME",
+    "BROADCASTIFY_SECURE_PASSWORD",
+    "HUGGINGFACE_TOKEN",
+    "HUGGINGFACE_SECURE_TOKEN",
+    "HF_TOKEN",
+    "OPENAI_API_KEY",
+    "BROADCASTIFY_ANALYSIS_API_KEY",
+    "BROADCASTIFY_ANALYSIS_DB",
+    "BROADCASTIFY_SECURE_ANALYSIS_DB",
+    "BROADCASTIFY_LIBRARY_ROOT",
+    "BROADCASTIFY_QUOTA_LEDGER",
+    "BROADCASTIFY_CREDENTIAL_STORE",
+    "BROADCASTIFY_ENV_FILE"
+)
+$savedRuntimeEnvironment = @{}
 try {
     $env:PYTHONNOUSERSITE = "1"
     $env:PYTHONDONTWRITEBYTECODE = "1"
     $env:FFMPEG_PATH = Join-Path $toolsRoot "ffmpeg.exe"
+    foreach ($name in $isolatedRuntimeEnvironment) {
+        $savedRuntimeEnvironment[$name] = [Environment]::GetEnvironmentVariable(
+            $name,
+            [EnvironmentVariableTarget]::Process
+        )
+        [Environment]::SetEnvironmentVariable(
+            $name,
+            $null,
+            [EnvironmentVariableTarget]::Process
+        )
+    }
+    New-Item -ItemType Directory -Force -Path $runtimeSmokeRoot | Out-Null
+    $env:BROADCASTIFY_LIBRARY_ROOT = Join-Path $runtimeSmokeRoot "archives"
+    $env:BROADCASTIFY_SECURE_ANALYSIS_DB = Join-Path $runtimeSmokeRoot "analysis.sqlite3"
+    $env:BROADCASTIFY_QUOTA_LEDGER = Join-Path $runtimeSmokeRoot "quota.sqlite3"
+    $env:BROADCASTIFY_CREDENTIAL_STORE = Join-Path $runtimeSmokeRoot "credentials.enc"
     & $embeddedPython -B -c (
         "import broadcastify_cli, cryptography, requests, sherpa_onnx; " +
         "import onnxruntime_genai; from zoneinfo import ZoneInfo; " +
@@ -521,11 +585,34 @@ try {
     if ($LASTEXITCODE -ne 0) {
         throw "The bundled FFmpeg smoke test failed with exit code $LASTEXITCODE."
     }
+    Push-Location $runtimeSmokeRoot
+    try {
+        $runtimeDiagnostics = @(
+            & $embeddedPython -B -m broadcastify_cli.worker diagnostics
+        )
+        if ($LASTEXITCODE -ne 0 -or
+            -not ($runtimeDiagnostics -match '"type"\s*:\s*"diagnostics"')) {
+            throw "The packaged worker diagnostics smoke test failed."
+        }
+    }
+    finally {
+        Pop-Location
+    }
 }
 finally {
     $env:PYTHONNOUSERSITE = $oldNoUserSite
     $env:PYTHONDONTWRITEBYTECODE = $oldNoBytecode
     $env:FFMPEG_PATH = $oldFfmpeg
+    foreach ($entry in $savedRuntimeEnvironment.GetEnumerator()) {
+        [Environment]::SetEnvironmentVariable(
+            $entry.Key,
+            $entry.Value,
+            [EnvironmentVariableTarget]::Process
+        )
+    }
+    if (Test-Path -LiteralPath $runtimeSmokeRoot) {
+        Remove-Item -LiteralPath $runtimeSmokeRoot -Recurse -Force
+    }
 }
 Get-ChildItem -LiteralPath $sitePackages -Filter __pycache__ -Recurse -Directory |
     Sort-Object FullName -Descending |
@@ -555,6 +642,10 @@ $manifest = [ordered]@{
         app_wheel_sha256 = $appWheelSha256
         cuda_requirements_sha256 = $cudaRequirementsSha256
         profiles = @("cuda")
+    }
+    runtime_pruning = [ordered]@{
+        test_tree_count = $prunableRuntimeTests.Count
+        bytes = $prunedRuntimeTestBytes
     }
     private_environment = [bool]$BundleLocalEnv
     built_utc = [DateTime]::UtcNow.ToString("o")
@@ -590,7 +681,6 @@ if ($SkipInstaller) {
     return
 }
 
-$compiler = Resolve-InnoCompiler
 & $compiler `
     "/DMyAppVersion=$Version" `
     "/DMyAppVersionNumeric=$numericVersion" `
@@ -615,4 +705,6 @@ if (-not (Test-Path -LiteralPath $installer -PathType Leaf)) {
     private_environment = [bool]$BundleLocalEnv
     embedded_python = $embeddedPython
     bundled_ffmpeg = (Join-Path $toolsRoot "ffmpeg.exe")
+    pruned_test_tree_count = $prunableRuntimeTests.Count
+    pruned_test_bytes = $prunedRuntimeTestBytes
 }
