@@ -1743,16 +1743,36 @@ public sealed partial class MainWindow
             scrollableHeight > 1,
             $"{label}: content did not expose a vertical scroll range.");
         scrollViewer.ChangeView(null, scrollableHeight, null, true);
-        await WaitForUiLayoutAsync(35);
         Require(
-            scrollViewer.VerticalOffset > Math.Min(1, scrollableHeight / 2),
+            await WaitForScrollOffsetAsync(
+                scrollViewer,
+                offset => offset > Math.Min(1, scrollableHeight / 2)),
             $"{label}: scrolling to the end did not change the vertical offset.");
         scrollViewer.ChangeView(null, 0, null, true);
-        await WaitForUiLayoutAsync(35);
         Require(
-            scrollViewer.VerticalOffset <= 1,
+            await WaitForScrollOffsetAsync(scrollViewer, offset => offset <= 1),
             $"{label}: scrolling back to the start did not restore the top.");
         return Math.Round(scrollableHeight, 1);
+    }
+
+    private static async Task<bool> WaitForScrollOffsetAsync(
+        ScrollViewer scrollViewer,
+        Func<double, bool> condition)
+    {
+        const int attempts = 20;
+        for (var attempt = 0; attempt < attempts; attempt++)
+        {
+            scrollViewer.UpdateLayout();
+            if (condition(scrollViewer.VerticalOffset))
+            {
+                return true;
+            }
+
+            await Task.Delay(10);
+        }
+
+        scrollViewer.UpdateLayout();
+        return condition(scrollViewer.VerticalOffset);
     }
 
     private async Task<int> ExerciseItemsScrollAsync(
