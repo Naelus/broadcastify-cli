@@ -121,8 +121,8 @@ checked before another long inference pass. Explicit user-started jobs are not
 subject to this scheduler fairness bound. If the rolling archive guard is
 closed, cached days can still finish locally and missing acquisition remains
 deferred until the ledger's next-safe time. The schedule itself becomes eligible
-every five minutes so newly retained LAN blocks or transcript results continue
-moving between nodes instead of waiting for that distant provider release. The
+every five minutes so retained local stages and explicitly enabled per-day LAN
+reuse continue instead of waiting for that distant provider release. The
 acquisition runner reads that local ledger before authentication; a
 closed guard permits trusted-LAN reuse, local processing, and cache reuse only
 for days with a valid local completion snapshot. It does not authenticate,
@@ -130,8 +130,8 @@ load archive listings, or request archive media. A locally proven range
 therefore completes normally, while a merely partial or unproven day retains
 the quota deferral. The desktop checks schedules while it is open; its
 visible, default-on Windows startup option keeps it available after user
-sign-in. The Web/TrueNAS service owns a background coordinator and can run them
-continuously under its normal service supervisor.
+sign-in. An optional follower Web service can stay available under its own
+service supervisor, but it is not a dependency of the Windows schedule.
 
 Schedules live in the evidence database and survive restart. An interrupted
 running schedule is returned to a deferred state on startup, waits one minute
@@ -143,7 +143,7 @@ for that day. A failed worker attempt remains incomplete and retries the same
 due date after a fifteen-minute backoff instead of being treated as that day's
 successful run. A quota-paused schedule is rechecked after startup and then at
 five-minute intervals, so a far-future website retry cannot strand
-combination, transcription, speaker labeling, analysis, or LAN reconciliation
+combination, transcription, speaker labeling, analysis, or optional per-day LAN reuse
 that needs no provider request. The persistent guard still prevents
 authentication, listing, or archive-media requests until the exact profile is
 safe. The Windows activity log reports startup recovery. Only one local worker
@@ -151,8 +151,8 @@ job runs at a time. Stored schedule JSON removes direct Hugging
 Face and analysis API-key values; those secrets must remain in the platform
 credential store, active session, or private environment.
 
-Before any scheduled per-day analysis pass, both the native Windows scheduler
-and the Web/TrueNAS worker compare the retained transcript and analysis
+Before any scheduled per-day analysis pass, the native Windows scheduler and
+any optional follower worker compare the retained transcript and analysis
 fingerprints. Days that are already current are logged and skipped, so a
 five-minute quota recheck cannot spend most of its interval re-importing the
 same transcripts or rebuilding an unchanged semantic index. If that retained
@@ -172,8 +172,8 @@ website turn while this node processes a different claimed feed/day. If every
 profile is closed, cached days still process locally, the schedule persists the
 earliest next-safe time, and missing acquisition resumes there.
 
-The Windows and Web/TrueNAS account surfaces use the same profile IDs and
-automatic policy. The Web service may load named profiles from its encrypted
+Windows is the authoritative account surface. An optional follower Web service
+may use the same profile IDs and automatic policy, loading named profiles from its encrypted
 AES-GCM credential store or its private, persistent environment file. It shows
 only profile labels, usernames, session availability, and per-profile quota
 status; passwords never enter bootstrap/status responses. A real sign-in writes
@@ -182,11 +182,11 @@ the independent 240-request automated budgets plus each ten-request reserve.
 
 On Windows, **Manage schedules** can edit the daily time, lookback, historical
 catch-up date, one-time/recurring mode, account policy, enabled state, local processing stages, and incident analysis
-for an existing feed. The Web/TrueNAS schedule list exposes the same edit and
+for an existing feed. An optional follower schedule list exposes the same edit and
 enable/disable controls rather than requiring removal and recreation.
 Changing those basics preserves the schedule's saved model, accelerator,
 speaker-tuning, and LAN choices. The schedule always writes into the Library
-currently selected in Settings. The desktop and Web/NAS scheduler pass that
+currently selected in Settings. The desktop and optional follower scheduler pass that
 canonical root at claim time, so it also replaces a stale absolute path left by
 a previous Library selection. Direct/legacy callers without an active Library
 selection resolve a relative `archives` value against the evidence database
@@ -205,17 +205,19 @@ nearest/highest-priority feed.
 
 One renewable producer lease still owns the single global upstream stream, so
 an authorized follower may acquire a requested source day without opening a
-second provider stream. Windows is the post-download master. It clones every
-newly completed follower day, verifies the exact filename/size/SHA-256/provider
-identity manifest, and alone owns combination, transcription, diarization,
-analysis, and indexing. Followers submit ranges to Windows and later pull only
-Windows-authored completed transcript sets.
+second provider stream. Windows is the standalone post-download master. When a
+Windows job explicitly enables LAN source reuse, it pulls that requested day,
+verifies the exact filename/size/SHA-256/provider identity manifest, and alone
+owns combination, transcription, diarization, analysis, and indexing.
+Followers submit ranges to Windows and later pull only Windows-authored
+completed transcript sets.
 
 Synchronization is driven by a persistent append-only event journal and a
-per-peer cursor. Jobs check only requested dates; the background worker applies
-one bounded delta page. Neither path enumerates a complete feed or all model
-fingerprints. Windows interactive and local processing paths never wait for a
-follower. A missing master pauses follower requests and new coordinated
+per-peer cursor. Windows jobs check only requested dates and do not run a
+background follower pull. Optional followers may apply one bounded delta page
+to receive finished Windows results. Neither path enumerates a complete feed or
+all model fingerprints. Windows interactive and local processing paths never
+wait for a follower. A missing master pauses follower requests and new coordinated
 provider access but cannot block retained local use. Promotion is explicit.
 
 Broadcastify source labels can drift slightly across midnight even when the

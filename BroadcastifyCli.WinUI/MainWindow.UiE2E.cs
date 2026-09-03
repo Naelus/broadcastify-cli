@@ -396,7 +396,7 @@ public sealed partial class MainWindow
         SystemActivityInfoBar.Message =
             "Isolated multi-node state verifies the pinned and floating activity surface.";
         SystemAcquisitionText.Text =
-            "Synthetic NAS node is acquiring feed 999991 for 2026-08-01 with the secondary account profile.";
+            "Synthetic optional follower is acquiring feed 999991 for 2026-08-01 with the secondary account profile.";
         SystemAcquisitionDetailText.Text = string.Concat(
             Enumerable.Repeat(
                 "The global lease remains sequential and retained blocks are reusable. ",

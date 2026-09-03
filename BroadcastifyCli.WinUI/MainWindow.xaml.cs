@@ -307,8 +307,8 @@ public sealed partial class MainWindow : Window
                 ? InfoBarSeverity.Success
                 : InfoBarSeverity.Informational;
             LanShareInfoBar.Title = LanShareToggle.IsOn
-                ? "LAN peer and queue producer are active"
-                : "This Windows client is not seeding";
+                ? "Windows master service is active"
+                : "Optional follower access is off";
             LanShareInfoBar.Message = status;
         }
         catch (Exception exception)
@@ -847,16 +847,9 @@ public sealed partial class MainWindow : Window
                     processing.Select(value =>
                         $"• {CoordinatedNodeLabel(value)} · feed {value.FeedId} · {value.ArchiveDate}"));
 
-            SystemReconciliationText.Text = string.Join(
-                Environment.NewLine,
-                ReconciliationSummary(
-                    "Coordinator",
-                    status.Reconciliation),
-                ReconciliationSummary(
-                    string.IsNullOrWhiteSpace(status.LocalNodeUrl)
-                        ? "Windows node"
-                        : $"Windows node ({status.LocalNodeUrl})",
-                    status.LocalReconciliation));
+            SystemReconciliationText.Text = ReconciliationSummary(
+                "Windows master",
+                status.Reconciliation);
 
             SystemQuotaText.Text = quotaStatuses.Count == 0
                 ? "No account allowance status was returned."
@@ -881,7 +874,7 @@ public sealed partial class MainWindow : Window
                     ? $" · {activeSchedule.Current}/{activeSchedule.Total}"
                     : "";
                 scheduleLines.Add(
-                    $"• Coordinator active · {activeSchedule.FeedName} ({activeSchedule.FeedId})"
+                    $"• Windows active · {activeSchedule.FeedName} ({activeSchedule.FeedId})"
                     + $" · {stage}{archiveDate}{progress}"
                     + $" · account {activeSchedule.AccountProfileId}");
             }
@@ -897,7 +890,7 @@ public sealed partial class MainWindow : Window
                         ? ""
                         : $" · {value.Message}")));
             SystemSchedulesText.Text = scheduleLines.Count == 0
-                ? "No enabled Windows or coordinator schedules were reported."
+                ? "No enabled Windows schedules were reported."
                 : string.Join(Environment.NewLine, scheduleLines);
 
             var activeLabel = acquisition is not null
@@ -906,7 +899,7 @@ public sealed partial class MainWindow : Window
                     ? $"{processing.Count} model/day claim{(processing.Count == 1 ? " is" : "s are")} active"
                     : activeSchedule is not null
                         ? $"Feed {activeSchedule.FeedId} {activeSchedule.Phase} is active"
-                    : "Coordinated workers are between active leases";
+                    : "Windows is between active jobs";
             SystemActivityInfoBar.Severity = status.Connected
                 ? acquisition is not null
                     ? InfoBarSeverity.Success
@@ -916,7 +909,7 @@ public sealed partial class MainWindow : Window
                 ? activeLabel
                 : "The coordinated activity surface is unavailable";
             SystemActivityInfoBar.Message = status.Connected
-                ? $"Connected to {status.CoordinatorUrl}. This view refreshes every 10 seconds while open."
+                ? "The Windows master service is healthy. This view refreshes every 10 seconds while open."
                 : status.Error;
         }
         catch (OperationCanceledException)
@@ -967,7 +960,7 @@ public sealed partial class MainWindow : Window
     {
         if (!status.Enabled)
         {
-            return $"• {label}: background convergence is not available.";
+            return $"• {label}: no background follower pull. Selected jobs may still reuse follower source blocks when enabled.";
         }
         if (status.Running)
         {

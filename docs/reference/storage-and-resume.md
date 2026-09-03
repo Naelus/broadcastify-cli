@@ -189,10 +189,12 @@ A later stage cannot make an earlier stale stage look complete.
   `.broadcastify-derived/<processing-fingerprint>/<audio-sha256>/` rather than
   overwritten or rejected; it remains hash-bound, reusable, automatically
   discoverable on later feed passes, and shareable onward to another node.
-- The Windows LAN node and browser/TrueNAS host run the same LAN-only
-  followed-feed reconciliation at startup and every five minutes even while a
-  long archive/model job is active. It never admits a provider request and its
-  bounded non-secret status is exposed on the trusted-LAN info surface.
+- The Windows master does not background-pull follower journals. It remains
+  independent and checks a follower only for the selected feed/day when the
+  user enables LAN source reuse. Optional follower browser hosts may run a
+  bounded LAN-only delta pull so they can receive completed Windows-authored
+  results; that pass never admits a provider request. Non-secret transfer
+  status remains available on the trusted-LAN info surface.
 - Native settings are atomically written; activity/crash logs append.
 - A managed CUDA install retains its checksum-verified download cache and
   partial environment after cancellation; an exclusive lock prevents two app

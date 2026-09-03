@@ -995,6 +995,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Accept authenticated follower jobs and execute them on this master.",
     )
     parser.add_argument(
+        "--no-background-sync",
+        action="store_true",
+        help=(
+            "Serve and coordinate optional followers without pulling their "
+            "journal in the background."
+        ),
+    )
+    parser.add_argument(
         "--role",
         choices=("master", "follower"),
         default=None,
@@ -1012,6 +1020,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Exit when the owning desktop process exits.",
     )
     return parser
+
+
+def _background_sync_enabled(*, disabled_by_command_line: bool) -> bool:
+    return (
+        not disabled_by_command_line
+        and environment_flag(
+            "BROADCASTIFY_LAN_BACKGROUND_SYNC",
+            default=True,
+        )
+    )
 
 
 def main() -> int:
@@ -1033,9 +1051,8 @@ def main() -> int:
         working_dir=arguments.working_dir,
         database_path=arguments.database,
         job_relay_enabled=arguments.enable_job_relay,
-        background_sync_enabled=environment_flag(
-            "BROADCASTIFY_LAN_BACKGROUND_SYNC",
-            default=True,
+        background_sync_enabled=_background_sync_enabled(
+            disabled_by_command_line=arguments.no_background_sync,
         ),
     )
     _start_parent_watchdog(server, arguments.parent_pid)

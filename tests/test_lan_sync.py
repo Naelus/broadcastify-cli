@@ -36,7 +36,9 @@ from broadcastify_cli.lan_sync import (
 )
 from broadcastify_cli.models import JobRequest
 from broadcastify_cli.lan_node import (
+    _background_sync_enabled,
     _load_environment,
+    build_parser as build_lan_node_parser,
     create_lan_node_server,
     validate_lan_host,
 )
@@ -50,6 +52,19 @@ from broadcastify_cli.web_app import create_server
 
 
 pytestmark = pytest.mark.usefixtures("fast_server_shutdown")
+
+
+def test_windows_master_cli_disables_background_pull_even_if_env_enables_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("BROADCASTIFY_LAN_BACKGROUND_SYNC", "true")
+
+    arguments = build_lan_node_parser().parse_args(["--no-background-sync"])
+
+    assert arguments.no_background_sync is True
+    assert not _background_sync_enabled(
+        disabled_by_command_line=arguments.no_background_sync,
+    )
 
 
 def test_republishing_same_master_result_advances_the_delta_cursor(

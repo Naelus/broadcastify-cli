@@ -118,7 +118,7 @@ internal sealed class WorkerClient
                     _lanNodeConfiguration,
                     StringComparison.OrdinalIgnoreCase))
             {
-                return $"Sharing original archive blocks and eligible for shared upstream leases on trusted LAN port {boundedPort}.";
+                return $"Windows master is available for optional follower requests on trusted LAN port {boundedPort}.";
             }
 
             StopLanNodeCore();
@@ -135,6 +135,7 @@ internal sealed class WorkerClient
                         "broadcastify-analysis.sqlite3"),
                     "--working-dir", WorkingDirectory,
                     "--enable-job-relay",
+                    "--no-background-sync",
                     "--parent-pid", Environment.ProcessId.ToString(
                         System.Globalization.CultureInfo.InvariantCulture),
                 ],
@@ -199,7 +200,7 @@ internal sealed class WorkerClient
                             "radio-archive-lan/1",
                             StringComparison.Ordinal))
                         {
-                            return $"Sharing original archive blocks and eligible for shared upstream leases on trusted LAN port {boundedPort}.";
+                            return $"Windows master is available for optional follower requests on trusted LAN port {boundedPort}.";
                         }
                     }
                 }

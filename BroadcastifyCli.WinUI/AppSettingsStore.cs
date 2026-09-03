@@ -32,8 +32,8 @@ internal sealed record DesktopSettings
     public string CodexCliPath { get; init; } = "";
     public bool AllowExternalAnalysis { get; init; }
     public bool RememberAnalysisApiKey { get; init; }
-    public bool LanSyncEnabled { get; init; } = true;
-    public bool LanDiscoveryEnabled { get; init; } = true;
+    public bool LanSyncEnabled { get; init; }
+    public bool LanDiscoveryEnabled { get; init; }
     public string LanPeerUrls { get; init; } = "";
     public bool LanShareEnabled { get; init; } = true;
     public int LanSharePort { get; init; } = 8766;

@@ -1,17 +1,18 @@
 # Trusted-LAN master and followers
 
-Broadcastify Desktop uses a master/follower topology on a trusted LAN. The
-Windows desktop is the post-download master. Browser, NAS, and other nodes are
-followers.
+Broadcastify Desktop works standalone on Windows. It may also expose a
+master/follower topology on a trusted LAN, with Windows as the post-download
+master and browser, NAS, or other machines as optional followers.
 
 The topology has two deliberately separate planes:
 
 1. Provider acquisition remains globally sequential and protected by the
    persistent per-account rolling guard. An authorized follower may acquire a
    requested source day under that guard.
-2. Post-download work belongs to Windows. The master clones every newly
-   completed source day, then owns combination, transcription, diarization,
-   analysis, indexing, and interactive questions.
+2. Post-download work belongs to Windows. For explicitly requested work with
+   LAN reuse enabled, the master can pull a completed follower source day and
+   then owns combination, transcription, diarization, analysis, indexing, and
+   interactive questions.
 
 A follower submits its requested feed/date range to Windows. It may help obtain
 the original blocks, but it does not publish competing model results. After the
@@ -31,8 +32,10 @@ node ID and requests only later events. A bounded pass processes at most one
 page and resumes from its cursor after interruption.
 
 This replaces the old behavior that enumerated every retained day and model
-fingerprint every five minutes. Normal jobs check only their requested dates.
-The background worker processes only journal deltas; it does not scan the full
+fingerprint every five minutes. Windows jobs check only their requested dates;
+the Windows master does not run a background follower pull. An optional
+follower's background worker processes only bounded journal deltas from
+Windows so it can receive finished master results. It does not scan the full
 archive, enumerate unrelated fingerprints, or make provider requests.
 
 Source transfer still verifies filename, feed/date containment, size, SHA-256,
@@ -74,14 +77,17 @@ only master-local state and never wait for a follower.
 
 The native desktop launches its LAN service with the `master` role on port
 `8766` by default. It remains eligible for the one upstream acquisition lease,
-accepts follower range requests, incrementally clones follower source
-completions, and publishes its completed model results.
+accepts follower range requests, pulls a follower source completion only while
+processing requested work with LAN reuse enabled, and publishes its completed
+model results. Serving followers does not enable background reconciliation.
 
-Keep original-block sharing enabled and configure explicit numeric private peer
-URLs where discovery is unreliable. The optional sync key must match every
-participant. The app owns the service process and stops it during shutdown.
+LAN source reuse and discovery default off on a fresh Windows install. Enable
+them only when a follower should contribute source blocks, and configure
+explicit numeric private URLs where discovery is unreliable. The optional sync
+key must match every participant. The app owns the service process and stops it
+during shutdown.
 
-## Browser, Linux, and NAS followers
+## Optional browser, Linux, and NAS followers
 
 A follower configuration points all authority at the Windows service:
 
@@ -109,9 +115,10 @@ interval no longer triggers feed-wide reconciliation.
 
 ### Public Web surface and private Windows execution
 
-When a NAS hosts the authenticated browser surface, the public tunnel ends at
-that NAS service. The Windows LAN service is never a tunnel origin and must not
-be port-forwarded or exposed to the internet.
+If a separate machine hosts an authenticated browser surface, any public tunnel
+ends at that service. This is an optional deployment, not a Windows runtime or
+release dependency. The Windows LAN service is never a tunnel origin and must
+not be port-forwarded or exposed to the internet.
 
 With the follower role and `BROADCASTIFY_LAN_MASTER_URL` configured, the Web
 service relays interactive jobs, cancellation, schedules, and resumable

@@ -23,9 +23,10 @@ a browser UI for Windows, Linux, macOS, and TrueNAS, plus command-line tools.
 - Downloads archive blocks conservatively with cache reuse, sequential pacing,
   resumable jobs, a durable 240-of-250 rolling-window guard per account, an
   authorization-gated sequential account pool, and optional trusted-LAN sharing.
-- Uses Windows as the post-download master. Follower nodes can request or
-  acquire guarded source days, Windows clones each completed day and owns its
-  model work, and followers pull only completed Windows-authored results.
+- Uses Windows as the standalone post-download master. Optional follower nodes
+  can request work or acquire guarded source days, but Windows never waits on
+  them, pulls source blocks only for requested work when reuse is enabled, and
+  remains the sole author of model and analysis results.
 - Saves daily schedules for explicitly selected feeds; each run revisits a
   short recent window, can clear an older catch-up boundary after completion
   or keep it as a recurring full-range gap check, and continues at rolling
