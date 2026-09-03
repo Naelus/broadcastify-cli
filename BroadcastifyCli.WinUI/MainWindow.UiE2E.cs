@@ -1584,12 +1584,12 @@ public sealed partial class MainWindow
             DefaultButton = ContentDialogButton.Close,
         };
         var operation = dialog.ShowAsync();
-        await WaitForUiLayoutAsync(180);
+        var dialogContained = await WaitForDialogContainmentAsync(dialog);
         Require(
-            dialog.ActualWidth > 0
-                && dialog.ActualWidth <= WindowRoot.ActualWidth + 2
-                && dialog.ActualHeight <= WindowRoot.ActualHeight + 2,
-            $"docked-{label}: the dialog clipped outside the pinned window.");
+            dialogContained,
+            $"docked-{label}: the dialog did not settle inside the pinned window "
+                + $"(dialog {dialog.ActualWidth:F1}x{dialog.ActualHeight:F1}, "
+                + $"window {WindowRoot.ActualWidth:F1}x{WindowRoot.ActualHeight:F1}).");
         var scrollable = await ExerciseScrollAsync(
             dialogContent,
             $"docked-{label}/dialog");
@@ -1617,6 +1617,30 @@ public sealed partial class MainWindow
             ["dialog_scrollable_height"] = scrollable,
             ["dialog_buttons"] = buttons.Count,
         };
+    }
+
+    private async Task<bool> WaitForDialogContainmentAsync(ContentDialog dialog)
+    {
+        const int attempts = 30;
+        for (var attempt = 0; attempt < attempts; attempt++)
+        {
+            WindowRoot.UpdateLayout();
+            dialog.UpdateLayout();
+            if (dialog.ActualWidth > 0
+                && dialog.ActualWidth <= WindowRoot.ActualWidth + 2
+                && dialog.ActualHeight <= WindowRoot.ActualHeight + 2)
+            {
+                return true;
+            }
+
+            await Task.Delay(10);
+        }
+
+        WindowRoot.UpdateLayout();
+        dialog.UpdateLayout();
+        return dialog.ActualWidth > 0
+            && dialog.ActualWidth <= WindowRoot.ActualWidth + 2
+            && dialog.ActualHeight <= WindowRoot.ActualHeight + 2;
     }
 
     private static List<Dictionary<string, object>> VerifyDpiAndWidthPolicy()
