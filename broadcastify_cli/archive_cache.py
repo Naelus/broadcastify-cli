@@ -139,17 +139,37 @@ def cached_archive_for_id(
 ) -> Path | None:
     """Resolve an exact provider archive ID without relying on display timestamps."""
 
+    return cached_archives_for_ids(day_directory, feed_id, [archive_id])[0]
+
+
+def cached_archives_for_ids(
+    day_directory: str | Path,
+    feed_id: str,
+    archive_ids: Sequence[str],
+) -> list[Path | None]:
+    """Resolve a batch against one index read, rechecking every retained file."""
+
+    if not archive_ids:
+        return []
     day = Path(day_directory)
-    payload = _load_index(day, feed_id)
-    raw = payload["archives"].get(str(archive_id))
+    archives = _load_index(day, feed_id)["archives"]
+    # Keep this snapshot local to the operation. Persisting it across calls
+    # would hide index repairs or refreshed audio during a resumed download.
+    return [_cached_archive_from_index(day, archives, str(value)) for value in archive_ids]
+
+
+def _cached_archive_from_index(
+    day: Path,
+    archives: Mapping[str, Any],
+    archive_id: str,
+) -> Path | None:
+    raw = archives.get(archive_id)
     if not isinstance(raw, dict):
         return None
     filename = str(raw.get("filename") or "")
     if not filename or Path(filename).name != filename:
         return None
-    if _canonical_archive_id_for_filename(payload["archives"], filename) != str(
-        archive_id
-    ):
+    if _canonical_archive_id_for_filename(archives, filename) != archive_id:
         return None
     candidate = day / filename
     try:
@@ -294,8 +314,9 @@ def remember_complete_archive_day(
     with _INDEX_WRITE_LOCK:
         retained_names: set[str] = set()
         source_inventory: list[dict[str, object]] = []
-        for archive_id in normalized_ids:
-            cached = cached_archive_for_id(day, feed_id, archive_id)
+        for archive_id, cached in zip(
+            normalized_ids, cached_archives_for_ids(day, feed_id, normalized_ids),
+        ):
             if cached is None or cached.name in retained_names:
                 return False
             retained_names.add(cached.name)
@@ -315,6 +336,8 @@ def remember_complete_archive_day(
             existing = json.loads(
                 _completion_path(day).read_text(encoding="utf-8")
             )
+            if not isinstance(existing, dict):
+                existing = {}
             existing_ids = existing.get("archive_ids")
             same_completion = (
                 existing.get("schema_version")
@@ -404,8 +427,7 @@ def complete_cached_archive_day(
         return None
     files: list[Path] = []
     retained_names: set[str] = set()
-    for archive_id in archive_ids:
-        cached = cached_archive_for_id(day, feed_id, archive_id)
+    for cached in cached_archives_for_ids(day, feed_id, archive_ids):
         if cached is None or cached.name in retained_names:
             return None
         retained_names.add(cached.name)

@@ -442,6 +442,7 @@ def test_exact_identity_rejects_changed_or_unsafe_cached_file(tmp_path: Path) ->
 
 def test_completion_snapshot_requires_one_file_per_exact_identity(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     archive_date = date(2026, 7, 12)
     day_dir = tmp_path / "90001" / "20260712"
@@ -495,9 +496,21 @@ def test_completion_snapshot_requires_one_file_per_exact_identity(
         archive_date,
         ["provider-first", "provider-alias", "provider-second"],
     )
+    index_reads = 0
+    original_read_text = Path.read_text
+
+    def count_index_reads(path: Path, *args, **kwargs):
+        nonlocal index_reads
+        if path.name == ".broadcastify-archive-index.json":
+            index_reads += 1
+        return original_read_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", count_index_reads)
     cached = complete_cached_archive_day(day_dir, "90001", archive_date)
     assert cached == ([first, second, alias], 3)
+    assert index_reads == 1
 
+    # Reuse is confined to this check: a later disk change must invalidate it.
     second.write_bytes(b"changed-size")
     assert complete_cached_archive_day(day_dir, "90001", archive_date) is None
 
@@ -529,6 +542,8 @@ def test_completion_snapshot_refuses_partial_identity_set(tmp_path: Path) -> Non
 def test_completion_snapshot_supports_proven_empty_day(tmp_path: Path) -> None:
     archive_date = date(2026, 7, 12)
     day_dir = tmp_path / "90001" / "20260712"
+    day_dir.mkdir(parents=True)
+    (day_dir / ".broadcastify-archive-complete.json").write_text("[]", encoding="utf-8")
 
     assert remember_complete_archive_day(
         day_dir,

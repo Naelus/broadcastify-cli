@@ -209,7 +209,10 @@ def ask(
     semantic: bool,
 ) -> None:
     """Ask an evidence-grounded question over a range or entire retained feed."""
-    days = scan_local_library(db.parent, db)
+    days = scan_local_library(
+        db.parent, db, feed_id=feed_id,
+        start_date=start_date, end_date=end_date,
+    )
     if entire_feed:
         if start_date is not None or end_date is not None:
             raise click.UsageError(

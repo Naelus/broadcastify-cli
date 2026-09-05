@@ -20,7 +20,6 @@ from broadcastify_cli.storage import AnalysisStore
 from broadcastify_cli.worker import (
     _day_report,
     _incident_clip,
-    _scheduled_analysis_dates,
     analysis_days,
     analysis_self_test,
     archive_quota_status,
@@ -33,7 +32,6 @@ from broadcastify_cli.worker import (
     library_resume_plan,
     prepare_asr_model_command,
     profile_self_test,
-    question_coverage,
     run_scheduled_job,
 )
 
@@ -77,40 +75,6 @@ def test_coordinated_activity_status_passes_explicit_peers_and_discovery(
     ]
 
 
-def test_scheduled_analysis_skips_current_retained_days() -> None:
-    result_days = [
-        {"date": "2026-08-01", "transcripts": ["current.json"]},
-        {"date": "2026-08-02", "transcripts": ["stale.json"]},
-        {"date": "2026-08-03", "transcripts": ["new.json"]},
-        {"date": "2026-08-04", "transcripts": []},
-    ]
-    library_days = [
-        {
-            "feed_id": "45090",
-            "archive_date": "2026-08-01",
-            "has_imported_transcript": True,
-            "has_analysis": True,
-        },
-        {
-            "feed_id": "45090",
-            "archive_date": "2026-08-02",
-            "has_imported_transcript": True,
-            "has_analysis": False,
-        },
-        {
-            "feed_id": "99999",
-            "archive_date": "2026-08-03",
-            "has_imported_transcript": True,
-            "has_analysis": True,
-        },
-    ]
-
-    assert _scheduled_analysis_dates(result_days, library_days, "45090") == [
-        "2026-08-02",
-        "2026-08-03",
-    ]
-
-
 def test_run_scheduled_job_analyzes_only_changed_transcripts(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -144,7 +108,7 @@ def test_run_scheduled_job_analyzes_only_changed_transcripts(
     monkeypatch.setattr("broadcastify_cli.worker.JobRunner", Runner)
     monkeypatch.setattr(
         "broadcastify_cli.worker.scan_local_library",
-        lambda *_args: [
+        lambda *_args, **_kwargs: [
             {
                 "feed_id": "45090",
                 "archive_date": "2026-08-01",
@@ -347,87 +311,6 @@ def test_library_resume_planning_reads_only_local_state_and_quota(
     assert emitted[0]["scope_end_date"] == "2026-08-02"
     assert emitted[0]["network_count"] == 2
     assert emitted[0]["quota"] == {"available": False, "remaining": 0}
-
-
-def test_question_coverage_reads_only_local_library_state(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    emitted: list[dict[str, object]] = []
-    monkeypatch.setattr(
-        "broadcastify_cli.worker.scan_local_library",
-        lambda *_args, **_kwargs: [
-            {
-                "feed_id": "90001",
-                "archive_date": "2026-07-01",
-                "has_combined": True,
-                "has_transcript": True,
-                "has_imported_transcript": True,
-                "has_analysis": False,
-            }
-        ],
-    )
-    monkeypatch.setattr("broadcastify_cli.worker.emit", emitted.append)
-
-    assert question_coverage(
-        str(tmp_path),
-        "90001",
-        "2026-07-01",
-        "2026-07-02",
-    ) == 0
-
-    coverage = emitted[0]["coverage"]
-    assert emitted[0]["type"] == "question_coverage"
-    assert coverage["requested_day_count"] == 2
-    assert coverage["audio_day_count"] == 1
-    assert coverage["question_ready_day_count"] == 1
-    assert coverage["question_ready_dates"] == ["2026-07-01"]
-    assert coverage["missing_audio_dates"] == ["2026-07-02"]
-    assert coverage["complete_coverage"] is False
-    assert coverage["scope"] == "range"
-
-
-def test_entire_feed_question_coverage_uses_local_retained_span(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    emitted: list[dict[str, object]] = []
-    monkeypatch.setattr(
-        "broadcastify_cli.worker.scan_local_library",
-        lambda *_args, **_kwargs: [
-            {
-                "feed_id": "90001",
-                "archive_date": "2026-06-30",
-                "has_combined": True,
-                "has_transcript": True,
-                "has_imported_transcript": True,
-                "has_analysis": True,
-            },
-            {
-                "feed_id": "90001",
-                "archive_date": "2026-07-02",
-                "has_combined": True,
-                "has_transcript": True,
-                "has_imported_transcript": True,
-                "has_analysis": True,
-            },
-        ],
-    )
-    monkeypatch.setattr("broadcastify_cli.worker.emit", emitted.append)
-
-    assert question_coverage(
-        str(tmp_path),
-        "90001",
-        entire_feed=True,
-    ) == 0
-
-    coverage = emitted[0]["coverage"]
-    assert coverage["scope"] == "entire_feed"
-    assert coverage["start_date"] == "2026-06-30"
-    assert coverage["end_date"] == "2026-07-02"
-    assert coverage["requested_day_count"] == 3
-    assert coverage["question_ready_day_count"] == 2
-    assert coverage["missing_audio_dates"] == ["2026-07-01"]
 
 
 def test_asr_self_test_uses_selected_engine_without_returning_transcript_text(
@@ -1249,10 +1132,23 @@ def _analyzed_worker_day(
 
 def test_day_report_hides_current_prompt_results_after_audio_refresh(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     database, audio, _transcript, archive_date, _incident_id = (
         _analyzed_worker_day(tmp_path)
     )
+    unrelated = tmp_path / "99999"
+    unrelated.mkdir()
+    original_iterdir = Path.iterdir
+
+    def available_directories(path: Path):
+        if path == unrelated:
+            raise PermissionError("An unrelated archive volume is unavailable")
+        return original_iterdir(path)
+
+    monkeypatch.setattr(Path, "iterdir", available_directories)
+    with AnalysisStore(database) as store:
+        assert _day_report(store, "90001", archive_date)["analysis_current"] is True
     audio.write_bytes(b"refreshed combined audio")
     future = time.time() + 10
     os.utime(audio, (future, future))

@@ -951,23 +951,17 @@ class JobManager:
             raise WebRequestError(HTTPStatus.BAD_REQUEST, "That local job type is not supported.")
         if command in {"run", "continue-local", "analyze-day", "ask"}:
             payload["output_dir"] = str(self.output_dir)
-        if command == "run":
+        if command in {"run", "run-scheduled", "run-area"}:
+            if command == "run":
+                job_payload = payload
+            else:
+                values, _environment_file = _readiness_environment(self.working_dir)
+                job_payload = _apply_automatic_processing_defaults(
+                    dict(payload.get("job") or {}),
+                    _processing_defaults(values),
+                )
             # The browser UI keeps a single upstream downloader, preserves
-            # source blocks, and asks trusted-LAN peers before website access.
-            payload["download_jobs"] = 1
-            payload["keep_originals"] = True
-            payload.setdefault("lan_sync_enabled", True)
-            payload.setdefault("lan_discovery_enabled", True)
-            if payload.get("diarize"):
-                payload["combine"] = True
-                payload["transcribe"] = True
-        if command == "run-scheduled":
-            job_payload = dict(payload.get("job") or {})
-            values, _environment_file = _readiness_environment(self.working_dir)
-            job_payload = _apply_automatic_processing_defaults(
-                job_payload,
-                _processing_defaults(values),
-            )
+            # source blocks, and uses the same safeguards for nested jobs.
             job_payload["output_dir"] = str(self.output_dir)
             job_payload["download_jobs"] = 1
             job_payload["keep_originals"] = True
@@ -976,23 +970,8 @@ class JobManager:
             if job_payload.get("diarize"):
                 job_payload["combine"] = True
                 job_payload["transcribe"] = True
-            payload["job"] = job_payload
-        if command == "run-area":
-            job_payload = dict(payload.get("job") or {})
-            values, _environment_file = _readiness_environment(self.working_dir)
-            job_payload = _apply_automatic_processing_defaults(
-                job_payload,
-                _processing_defaults(values),
-            )
-            job_payload["output_dir"] = str(self.output_dir)
-            job_payload["download_jobs"] = 1
-            job_payload["keep_originals"] = True
-            job_payload.setdefault("lan_sync_enabled", True)
-            job_payload.setdefault("lan_discovery_enabled", True)
-            if job_payload.get("diarize"):
-                job_payload["combine"] = True
-                job_payload["transcribe"] = True
-            payload["job"] = job_payload
+            if command != "run":
+                payload["job"] = job_payload
         return [command], payload
 
 
@@ -1487,7 +1466,10 @@ def _local_day_state(
     feed_id: str,
     archive_date: date,
 ) -> dict[str, Any]:
-    library = scan_local_library(state.output_dir, state.database_path)
+    library = scan_local_library(
+        state.output_dir, state.database_path, feed_id=feed_id,
+        start_date=archive_date, end_date=archive_date,
+    )
     day_state = next(
         (
             value

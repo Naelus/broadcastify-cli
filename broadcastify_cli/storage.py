@@ -1155,9 +1155,24 @@ class AnalysisStore:
         ).fetchone()
         return self._with_local_day_paths(row) if row is not None else None
 
-    def list_days(self, feed_id: str | None = None) -> list[dict[str, Any]]:
-        where = "WHERE d.feed_id=?" if feed_id else ""
-        parameters: tuple[object, ...] = (feed_id,) if feed_id else ()
+    def list_days(
+        self,
+        feed_id: str | None = None,
+        *,
+        start_date: date | None = None,
+        end_date: date | None = None,
+    ) -> list[dict[str, Any]]:
+        clauses: list[str] = []
+        parameters: list[object] = []
+        for clause, value in (
+            ("d.feed_id=?", feed_id or None),
+            ("d.archive_date>=?", start_date.isoformat() if start_date else None),
+            ("d.archive_date<=?", end_date.isoformat() if end_date else None),
+        ):
+            if value is not None:
+                clauses.append(clause)
+                parameters.append(value)
+        where = "WHERE " + " AND ".join(clauses) if clauses else ""
         rows = self.connection.execute(
             f"""
             SELECT d.*,

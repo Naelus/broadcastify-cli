@@ -29,6 +29,7 @@ start.
 - [Why WinUI 3 and a browser companion](decisions/ui-and-platforms.md)
 - [Why the model stack is split by stage](decisions/model-stack.md)
 - [Evidence, identity, and privacy policy](decisions/evidence-and-privacy.md)
+- [Regression test scope and bounded Library reads](decisions/regression-test-scope.md)
 
 ## Reference and validation
 

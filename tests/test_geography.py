@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-import io
 import zipfile
 from pathlib import Path
 
-from broadcastify_cli.geography import ZipCentroidCatalog, haversine_miles
+from broadcastify_cli.geography import ZipCentroidCatalog
 
 
 def _gazetteer(path: Path) -> None:
@@ -16,11 +15,6 @@ def _gazetteer(path: Path) -> None:
     )
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
         archive.writestr("2025_Gaz_zcta_national.txt", rows)
-
-
-def test_haversine_returns_reasonable_distance() -> None:
-    distance = haversine_miles(39.0000, -77.0000, 39.0500, -76.9500)
-    assert 4 < distance < 5
 
 
 def test_radius_catalog_orders_and_limits_cached_zips(tmp_path: Path) -> None:

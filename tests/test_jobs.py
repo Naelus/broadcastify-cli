@@ -136,14 +136,14 @@ def test_scheduled_processing_limit_queues_remaining_local_days(
 
     monkeypatch.setattr("broadcastify_cli.jobs.LocalTranscriber", ProcessingTranscriber)
     events: list[dict[str, object]] = []
-    request = JobRequest(
-        feed_id="5318",
-        start_date=first_day,
-        end_date=last_day,
-        output_dir=tmp_path,
-        transcribe=True,
-        max_processing_days=1,
-    )
+    request = JobRequest.from_dict({
+        "feed_id": "5318",
+        "start_date": first_day.isoformat(),
+        "end_date": last_day.isoformat(),
+        "output_dir": str(tmp_path),
+        "transcribe": True,
+        "max_processing_days": "1",
+    })
 
     result = JobRunner(
         request,

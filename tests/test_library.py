@@ -811,6 +811,20 @@ def test_library_discovers_partial_and_analyzed_days(tmp_path: Path) -> None:
     assert incomplete["needs_network"] is True
     assert incomplete["primary_action"] == "resume_download"
 
+    # Scoped reads retain the same evidence state for both indexed and
+    # raw-only days; the inclusive date bounds also apply to database rows.
+    assert scan_local_library(
+        tmp_path, database, feed_id="90001",
+        start_date=date(2026, 7, 12), end_date=date(2026, 7, 12),
+    ) == [analyzed]
+    assert scan_local_library(
+        tmp_path, database, feed_id="90003",
+        start_date=date(2026, 7, 7), end_date=date(2026, 7, 7),
+    ) == [incomplete]
+    assert scan_local_library(
+        tmp_path, database, feed_id="90001", end_date=date(2026, 7, 11),
+    ) == []
+
 
 def test_library_separates_working_audio_and_cleans_old_orphans(
     tmp_path: Path,

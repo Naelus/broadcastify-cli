@@ -348,7 +348,10 @@ def run_scheduled_job() -> int:
             required_analysis_dates = set(
                 _scheduled_analysis_dates(
                     result_days,
-                    scan_local_library(request.output_dir, DEFAULT_DATABASE),
+                    scan_local_library(
+                        request.output_dir, DEFAULT_DATABASE, feed_id=request.feed_id,
+                        start_date=request.start_date, end_date=request.end_date,
+                    ),
                     request.feed_id,
                 )
             )
@@ -1419,6 +1422,7 @@ def analysis_days(feed_id: str | None) -> int:
         for value in scan_local_library(
             DEFAULT_DATABASE.parent,
             DEFAULT_DATABASE,
+            feed_id=feed_id,
         )
     }
     for day in days:
@@ -1532,7 +1536,10 @@ def _library_state_for_store(
     return next(
         (
             value
-            for value in scan_local_library(store.path.parent, store.path)
+            for value in scan_local_library(
+                store.path.parent, store.path, feed_id=feed_id,
+                start_date=archive_date, end_date=archive_date,
+            )
             if value["feed_id"] == feed_id
             and value["archive_date"] == archive_date.isoformat()
         ),
@@ -1849,7 +1856,10 @@ def continue_local_day() -> int:
     state = next(
         (
             value
-            for value in scan_local_library(request.output_dir, DEFAULT_DATABASE)
+            for value in scan_local_library(
+                request.output_dir, DEFAULT_DATABASE, feed_id=request.feed_id,
+                start_date=request.archive_date, end_date=request.archive_date,
+            )
             if value["feed_id"] == request.feed_id
             and value["archive_date"] == request.archive_date.isoformat()
         ),
@@ -1889,7 +1899,10 @@ def ask_archive() -> int:
     )
     with AnalysisStore(DEFAULT_DATABASE) as store:
         coverage = build_archive_question_coverage(
-            scan_local_library(Path(output_dir), DEFAULT_DATABASE),
+            scan_local_library(
+                Path(output_dir), DEFAULT_DATABASE, feed_id=feed_id,
+                start_date=start_date, end_date=end_date,
+            ),
             feed_id,
             start_date,
             end_date,
@@ -1934,13 +1947,12 @@ def question_coverage(
     end_date: str = "",
     entire_feed: bool = False,
 ) -> int:
-    days = scan_local_library(Path(output_dir), DEFAULT_DATABASE)
     if entire_feed:
         if start_date or end_date:
             raise ValueError(
                 "Use entire-feed coverage or explicit start/end dates, not both."
             )
-        resolved_start, resolved_end = entire_archive_feed_range(days, feed_id)
+        resolved_start = resolved_end = None
     else:
         if not start_date or not end_date:
             raise ValueError(
@@ -1948,6 +1960,13 @@ def question_coverage(
             )
         resolved_start = date.fromisoformat(start_date)
         resolved_end = date.fromisoformat(end_date)
+    days = scan_local_library(
+        Path(output_dir), DEFAULT_DATABASE, feed_id=feed_id,
+        start_date=resolved_start, end_date=resolved_end,
+    )
+    if entire_feed:
+        resolved_start, resolved_end = entire_archive_feed_range(days, feed_id)
+    assert resolved_start is not None and resolved_end is not None
     result = build_archive_question_coverage(
         days,
         feed_id,

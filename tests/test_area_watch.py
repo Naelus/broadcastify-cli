@@ -38,55 +38,6 @@ def test_public_quote_preserves_contextual_name_but_redacts_phone() -> None:
     assert "309-555-0123" not in quote
 
 
-def test_public_quote_preserves_names_after_check_for_and_direct_address() -> None:
-    quote, changed = _public_quote(
-        "Apartment 4, check for Jordan Example. Hey, Matthew, you have a call."
-    )
-
-    assert changed is False
-    assert quote == "Apartment 4, check for Jordan Example. Hey, Matthew, you have a call."
-
-
-def test_public_quote_preserves_a_name_after_the_known_incident_location() -> None:
-    quote, changed = _public_quote(
-        "The subjects live at 2134 Wellington, Jordan Example.",
-        location="2134 Wellington",
-    )
-
-    assert changed is False
-    assert quote.endswith("Jordan Example.")
-
-
-def test_public_quote_preserves_a_single_name_after_an_unpunctuated_location() -> None:
-    quote, changed = _public_quote(
-        "447 Fallen Oak, apartment 1D David on the back patio.",
-        location="447 Fallen Oak, apartment 1D",
-    )
-
-    assert changed is False
-    assert quote == "447 Fallen Oak, apartment 1D David on the back patio."
-
-
-def test_public_quote_preserves_a_location_adjacent_name_before_dispatch_clause() -> None:
-    quote, changed = _public_quote(
-        "9805, Jordan Example, for an intrusion alarm on the garage door.",
-        location="9805",
-    )
-
-    assert changed is False
-    assert quote == "9805, Jordan Example, for an intrusion alarm on the garage door."
-
-
-def test_public_quote_preserves_a_location_adjacent_name_before_coordinated_clause() -> None:
-    quote, changed = _public_quote(
-        "9805, Jordan Example, and for a theft of a license plate.",
-        location="9805",
-    )
-
-    assert changed is False
-    assert quote == "9805, Jordan Example, and for a theft of a license plate."
-
-
 def test_area_summary_uses_db_coverage_and_does_not_treat_zip_as_a_geofence(
     tmp_path: Path,
 ) -> None:

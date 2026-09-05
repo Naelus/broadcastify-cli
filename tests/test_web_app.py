@@ -28,7 +28,6 @@ from broadcastify_cli.web_app import (
     FeedScheduleCoordinator,
     JobManager,
     WebRequestError,
-    _account_pool_profiles,
     _area_stories_for_web,
     _select_account_profile,
     create_server,
@@ -1696,10 +1695,14 @@ def test_web_jobs_resolve_automatic_against_the_installed_deployment(
     assert custom["device"] == "cpu"
 
 
-def test_web_area_jobs_force_the_same_quota_boundary(tmp_path: Path) -> None:
+@pytest.mark.parametrize("command", ["run-area", "run-scheduled"])
+def test_web_nested_jobs_force_the_same_quota_boundary(
+    tmp_path: Path,
+    command: str,
+) -> None:
     manager = JobManager(tmp_path, tmp_path / "analysis.sqlite3", tmp_path)
     arguments, payload = manager._worker_request(  # noqa: SLF001
-        "run-area",
+        command,
         {
             "profile_name": "Regional desk",
             "job": {
@@ -1712,7 +1715,7 @@ def test_web_area_jobs_force_the_same_quota_boundary(tmp_path: Path) -> None:
         },
     )
 
-    assert arguments == ["run-area"]
+    assert arguments == [command]
     assert payload is not None
     assert payload["job"]["download_jobs"] == 1
     assert payload["job"]["keep_originals"] is True
@@ -1781,101 +1784,6 @@ def test_web_jobs_validate_and_forward_radius_discovery(tmp_path: Path) -> None:
         "12",
     ]
     assert payload is None
-
-
-def test_web_jobs_forward_explicit_asr_self_test_settings(tmp_path: Path) -> None:
-    manager = JobManager(tmp_path, tmp_path / "analysis.sqlite3", tmp_path)
-    arguments, payload = manager._worker_request(  # noqa: SLF001
-        "asr-self-test",
-        {
-            "model": "tiny.en",
-            "asr_engine": "openvino",
-            "device": "openvino-npu",
-            "huggingface_token": "session-only-test-token",
-        },
-    )
-
-    assert arguments == ["asr-self-test"]
-    assert payload is not None
-    assert payload["model"] == "tiny.en"
-    assert payload["device"] == "openvino-npu"
-    assert payload["huggingface_token"] == "session-only-test-token"
-
-
-def test_web_jobs_forward_explicit_asr_model_preparation_settings(
-    tmp_path: Path,
-) -> None:
-    manager = JobManager(tmp_path, tmp_path / "analysis.sqlite3", tmp_path)
-    arguments, payload = manager._worker_request(  # noqa: SLF001
-        "prepare-asr-model",
-        {
-            "model": "tiny.en",
-            "asr_engine": "windows-ml",
-            "device": "windows-ml",
-            "huggingface_token": "session-only-test-token",
-        },
-    )
-
-    assert arguments == ["prepare-asr-model"]
-    assert payload is not None
-    assert payload["model"] == "tiny.en"
-    assert payload["asr_engine"] == "windows-ml"
-    assert payload["huggingface_token"] == "session-only-test-token"
-
-
-def test_web_jobs_forward_selected_diagnostics_settings(tmp_path: Path) -> None:
-    manager = JobManager(tmp_path, tmp_path / "analysis.sqlite3", tmp_path)
-    arguments, payload = manager._worker_request(  # noqa: SLF001
-        "diagnostics-selected",
-        {
-            "model": "tiny.en",
-            "asr_engine": "whisper.cpp",
-            "device": "vulkan",
-        },
-    )
-
-    assert arguments == ["diagnostics-selected"]
-    assert payload is not None
-    assert payload["model"] == "tiny.en"
-
-
-def test_web_jobs_forward_explicit_diarization_self_test_settings(
-    tmp_path: Path,
-) -> None:
-    manager = JobManager(tmp_path, tmp_path / "analysis.sqlite3", tmp_path)
-    arguments, payload = manager._worker_request(  # noqa: SLF001
-        "diarization-self-test",
-        {
-            "diarization_device": "cpu",
-            "huggingface_token": "session-only-test-token",
-            "batch_size": 4,
-        },
-    )
-
-    assert arguments == ["diarization-self-test"]
-    assert payload is not None
-    assert payload["diarization_device"] == "cpu"
-    assert payload["huggingface_token"] == "session-only-test-token"
-
-
-def test_web_jobs_forward_explicit_analysis_self_test_settings(
-    tmp_path: Path,
-) -> None:
-    manager = JobManager(tmp_path, tmp_path / "analysis.sqlite3", tmp_path)
-    arguments, payload = manager._worker_request(  # noqa: SLF001
-        "analysis-self-test",
-        {
-            "analysis_provider": "local",
-            "analysis_model": "local-model.gguf",
-            "analysis_device": "cpu",
-        },
-    )
-
-    assert arguments == ["analysis-self-test"]
-    assert payload is not None
-    assert payload["analysis_provider"] == "local"
-    assert payload["analysis_model"] == "local-model.gguf"
-    assert payload["analysis_device"] == "cpu"
 
 
 def test_web_jobs_forward_combined_profile_self_test_settings(

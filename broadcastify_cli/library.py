@@ -14,7 +14,7 @@ from .analysis import PROMPT_VERSION
 from .archive_cache import (
     ARCHIVE_CACHE_COMPLETION_FILENAME,
     ARCHIVE_CACHE_COMPLETION_SCHEMA_VERSION,
-    cached_archive_for_id,
+    cached_archives_for_ids,
     collapsed_archive_identity_count,
 )
 from .audio import combined_output_is_current
@@ -1009,8 +1009,8 @@ def _archive_source_snapshot(
     retained = 0
     if valid:
         retained = sum(
-            cached_archive_for_id(day_directory, feed_id, archive_id) is not None
-            for archive_id in archive_ids
+            path is not None
+            for path in cached_archives_for_ids(day_directory, feed_id, archive_ids)
         )
     current_local = now or datetime.now().astimezone()
     if current_local.tzinfo is None:
@@ -1369,20 +1369,35 @@ def _state_for_day(
 def scan_local_library(
     output_dir: str | Path = "archives",
     database_path: str | Path | None = None,
+    *,
+    feed_id: str | None = None,
+    start_date: date | None = None,
+    end_date: date | None = None,
 ) -> list[dict[str, Any]]:
+    """Read fresh retained state, inspecting only the requested feed and dates."""
+
+    if feed_id is not None and not feed_id.isdigit():
+        raise ValueError("Feed ID must contain only digits.")
     output_root = Path(output_dir)
     cleanup_pending_library_deletions(output_root)
     database = Path(database_path) if database_path else output_root / "broadcastify-analysis.sqlite3"
     with AnalysisStore(database) as store:
         stored_days = {
             (str(value["feed_id"]), date.fromisoformat(str(value["archive_date"]))): value
-            for value in store.list_days()
+            for value in store.list_days(
+                feed_id, start_date=start_date, end_date=end_date,
+            )
         }
         feed_names = _friendly_feed_names(store)
 
     keys = set(stored_days)
     if output_root.is_dir():
-        for feed_directory in output_root.iterdir():
+        # Select directories before walking or hashing their contents. A day
+        # report should not depend on the size or availability of other feeds.
+        feed_directories = (
+            (output_root / feed_id,) if feed_id is not None else output_root.iterdir()
+        )
+        for feed_directory in feed_directories:
             if not feed_directory.is_dir() or not feed_directory.name.isdigit():
                 continue
             for day_directory in feed_directory.iterdir():
@@ -1394,7 +1409,10 @@ def scan_local_library(
                     )
                 except ValueError:
                     continue
-                keys.add((feed_directory.name, archive_date))
+                if (start_date is None or archive_date >= start_date) and (
+                    end_date is None or archive_date <= end_date
+                ):
+                    keys.add((feed_directory.name, archive_date))
 
     results = []
     for feed_id, archive_date in keys:
@@ -1432,14 +1450,10 @@ def require_current_range_evidence(
         if archive_dates is not None
         else None
     )
-    states = {
-        (str(value["feed_id"]), str(value["archive_date"])): value
-        for value in scan_local_library(store.path.parent, store.path)
-    }
     relevant: set[tuple[str, str]] = set()
     days: dict[tuple[str, str], dict[str, Any]] = {}
     for feed_id in normalized:
-        for day in store.list_days(feed_id):
+        for day in store.list_days(feed_id, start_date=start_date, end_date=end_date):
             archive_value = str(day["archive_date"])
             if (
                 start_date.isoformat() <= archive_value <= end_date.isoformat()
@@ -1481,7 +1495,11 @@ def require_current_range_evidence(
 
     stale: list[tuple[str, str]] = []
     for key in sorted(relevant):
-        state = states.get(key)
+        # Validate only evidence this consumer can actually use, against the
+        # live files. No cross-request cache may hide a rewritten transcript.
+        state = _state_for_day(
+            store.path.parent, key[0], date.fromisoformat(key[1]), days.get(key), "",
+        )
         current = bool(
             state
             and (
