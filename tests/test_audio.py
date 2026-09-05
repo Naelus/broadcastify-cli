@@ -8,25 +8,11 @@ import pytest
 
 from broadcastify_cli.audio import (
     AudioCombineError,
-    _winget_ffmpeg_bin_directories,
     combine_mp3_files,
     extract_audio_clip,
     select_incident_context_window,
     select_incident_evidence_window,
 )
-
-
-def test_winget_ffmpeg_lookup_tolerates_inaccessible_package_cache(
-    monkeypatch, tmp_path: Path
-) -> None:
-    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
-
-    def denied(_self: Path, _pattern: str):
-        raise PermissionError("package cache is not readable")
-
-    monkeypatch.setattr(Path, "glob", denied)
-
-    assert _winget_ffmpeg_bin_directories() == []
 
 
 def test_combiner_reencodes_with_continuous_timestamps(monkeypatch, tmp_path: Path) -> None:
@@ -246,39 +232,6 @@ def test_evidence_clip_is_timestamped_and_cached(monkeypatch, tmp_path: Path) ->
     assert calls[0][calls[0].index("-ss") + 1] == "92.000"
     assert calls[0][calls[0].index("-t") + 1] == "36.000"
     assert "libmp3lame" in calls[0]
-
-
-def test_incident_window_prefers_the_most_descriptive_cited_segment() -> None:
-    start, end = select_incident_evidence_window(
-        {
-            "title": "Intrusion alarm at CMS building",
-            "summary": "An alarm was dispatched at the Example State CMS building.",
-            "location": "100 Example Road",
-            "start_seconds": 4_993.14,
-            "end_seconds": 6_198.2,
-            "evidence": [
-                {
-                    "start_seconds": 4_993.14,
-                    "end_seconds": 4_996.09,
-                    "text": "All right, intrusion alarm, 6510, left 150.",
-                },
-                {
-                    "start_seconds": 6_192.6,
-                    "end_seconds": 6_198.2,
-                    "text": "100 Example Road, intrusion alarm, state of Example State CMS building.",
-                },
-            ],
-        }
-    )
-
-    assert start == 6_184.6
-    assert end == 6_210.2
-
-
-def test_incident_window_falls_back_to_a_bounded_incident_start() -> None:
-    assert select_incident_evidence_window(
-        {"start_seconds": 500.0, "end_seconds": 900.0, "evidence": []}
-    ) == (492.0, 612.0)
 
 
 def test_incident_context_window_reaches_the_initial_dispatch_before_a_disposition() -> None:

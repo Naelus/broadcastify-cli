@@ -1,4 +1,3 @@
-from pathlib import Path
 
 from broadcastify_cli.broadcastify import BroadcastifyClient
 from broadcastify_cli.models import FeedSearchResult
@@ -84,11 +83,6 @@ def test_parse_feed_search_result() -> None:
     assert results[0].status == "Online"
 
 
-def test_parser_ignores_navigation_feed_links() -> None:
-    html = '<nav><a href="/listen/feed/32602">Top feed</a></nav>'
-    assert BroadcastifyClient.parse_feed_search_html(html) == []
-
-
 def test_parse_county_feed_table_shape() -> None:
     result = BroadcastifyClient.parse_feed_search_html(COUNTY_HTML)[0]
 
@@ -97,16 +91,6 @@ def test_parse_county_feed_table_shape() -> None:
     assert result.description == "Covers all DPD Division Dispatch Channels"
     assert result.genre == "Public Safety"
     assert result.listeners == 21
-
-
-def test_parse_zip_match_county_path() -> None:
-    html = """
-    <main><h3>Zip Code Match</h3>
-      <a href="/listen/ctid/2579">Dallas, TX</a>
-      <a href="/listen/ctid/2579">View Dallas County Feeds</a>
-    </main>
-    """
-    assert BroadcastifyClient.parse_zip_county_paths(html) == ["/listen/ctid/2579"]
 
 
 def test_general_search_follows_county_result_and_ranks_concise_name_match() -> None:
@@ -146,33 +130,6 @@ def test_area_search_deduplicates_feeds_and_tracks_matching_zips() -> None:
     assert results[0]["nearest_zip_code"] == "75201"
 
 
-def test_area_search_prioritizes_nearest_radius_match() -> None:
-    client = BroadcastifyClient()
-    responses = {
-        "12345": [FeedSearchResult("100", "Center fire", listeners=2)],
-        "12346": [FeedSearchResult("200", "Nearby police", listeners=200)],
-    }
-    client.feeds_for_zip = lambda query: responses[query]  # type: ignore[method-assign]
-
-    results = client.search_area_feeds(
-        ["12345", "12346"], zip_distances={"12345": 0.0, "12346": 4.5}
-    )
-
-    assert [value["feed_id"] for value in results] == ["100", "200"]
-    assert [value["distance_miles"] for value in results] == [0.0, 4.5]
-    assert [value["priority_rank"] for value in results] == [1, 2]
-
-
-def test_area_search_rejects_non_zip_queries() -> None:
-    client = BroadcastifyClient()
-    try:
-        client.search_area_feeds(["Dallas"])
-    except ValueError as exc:
-        assert "five digits" in str(exc)
-    else:
-        raise AssertionError("Area searches should validate ZIP codes before network access.")
-
-
 def test_parse_current_archive_payload() -> None:
     payload = {
         "archives": [
@@ -194,31 +151,3 @@ def test_parse_archive_filename_prefix_uses_feed_timezone() -> None:
     assert BroadcastifyClient.parse_archive_filename_prefixes(payload) == {
         "90003-1783140752": "202607032352"
     }
-
-
-def test_parse_archive_payload_rejects_old_shape() -> None:
-    try:
-        BroadcastifyClient.parse_archive_payload({"data": [[12345]]})
-    except TypeError:
-        pass
-    else:
-        raise AssertionError("The retired archive payload shape should not be accepted.")
-
-
-def test_existing_archive_is_reused_without_download(tmp_path: Path) -> None:
-    archive = tmp_path / "202607120000-12345-90001.mp3"
-    archive.write_bytes(b"audio")
-    assert BroadcastifyClient._existing_archive(tmp_path, "90001", "12345") == archive
-
-
-def test_existing_archive_matches_current_epoch_url_identifier(tmp_path: Path) -> None:
-    archive = tmp_path / "202607032352-672850-90003.mp3"
-    archive.write_bytes(b"audio")
-    current_identifier = "90003-1783140752"
-
-    assert (
-        BroadcastifyClient._existing_archive(
-            tmp_path, "90003", current_identifier, "202607032352"
-        )
-        == archive
-    )

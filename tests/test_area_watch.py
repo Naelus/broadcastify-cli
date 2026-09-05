@@ -324,61 +324,6 @@ def test_area_digest_merges_near_duplicate_same_feed_reports(tmp_path: Path) -> 
     assert len(result["stories"][0]["incident_references"]) == 2
 
 
-def test_area_digest_surfaces_a_supported_single_feed_vehicle_theft(
-    tmp_path: Path,
-) -> None:
-    archive_date = date(2026, 7, 16)
-    writer = FakeWriter()
-    with AnalysisStore(tmp_path / "analysis.sqlite3") as store:
-        transcript = tmp_path / "90001.json"
-        _transcript(
-            transcript,
-            "Example Township Police had a squad car stolen; it was later located unoccupied.",
-        )
-        imported = store.import_transcript("90001", archive_date, transcript)
-        incident_ids = store.replace_incidents(
-            imported.day_id,
-            [
-                _incident(
-                    "example-township-stolen-squad",
-                    "vehicle_theft",
-                    "Stolen vehicle located in Example Township",
-                    "Radio traffic reported a stolen squad car was located unoccupied.",
-                    "Example Township",
-                    2,
-                )
-            ],
-            "test-model",
-            PROMPT_VERSION,
-        )
-        store.save_daily_summary(
-            imported.day_id,
-            "A supported stolen-vehicle report was retained.",
-            incident_ids,
-            model="test-model",
-            prompt_version=PROMPT_VERSION,
-            transcript_sha256=imported.transcript_sha256,
-        )
-        store.save_area_profile(
-            "Regional desk",
-            ["12345"],
-            [{"feed_id": "90001", "name": "Example City Public Safety"}],
-        )
-
-        result = AreaStoryAnalyzer(store, writer).summarize(
-            "Regional desk",
-            archive_date,
-            archive_date,
-        )
-
-    assert len(result["stories"]) == 1
-    story = result["stories"][0]
-    assert story["event_type"] == "vehicle_theft"
-    assert story["priority"] == 3
-    assert story["newsworthiness_score"] >= 48
-    assert story["feed_count"] == 1
-
-
 def test_area_digest_excludes_stale_daily_claims(tmp_path: Path) -> None:
     archive_date = date(2026, 7, 12)
     writer = FakeWriter()

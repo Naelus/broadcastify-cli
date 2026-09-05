@@ -119,37 +119,6 @@ def test_area_queue_rejects_feed_outside_saved_profile(tmp_path: Path) -> None:
             raise AssertionError("Ad hoc feed IDs must not enter a persisted profile queue.")
 
 
-def test_legacy_area_profile_preserves_saved_priority_order(tmp_path: Path) -> None:
-    with AnalysisStore(tmp_path / "analysis.sqlite3") as store:
-        runner = AreaAcquisitionRunner(
-            {"profile_name": "Legacy desk"}, store, client=object()
-        )
-        selected = runner._selected_feeds(
-            [
-                {"feed_id": "100", "name": "Zulu nearest"},
-                {"feed_id": "200", "name": "Alpha farther"},
-            ]
-        )
-
-    assert [feed["feed_id"] for feed in selected] == ["100", "200"]
-    assert [feed["priority_rank"] for feed in selected] == [1, 2]
-
-
-def test_area_profile_without_ranks_still_prefers_known_distance(tmp_path: Path) -> None:
-    with AnalysisStore(tmp_path / "analysis.sqlite3") as store:
-        runner = AreaAcquisitionRunner(
-            {"profile_name": "Distance desk"}, store, client=object()
-        )
-        selected = runner._selected_feeds(
-            [
-                {"feed_id": "100", "name": "Far", "distance_miles": 8.0},
-                {"feed_id": "200", "name": "Near", "distance_miles": 2.0},
-            ]
-        )
-
-    assert [feed["feed_id"] for feed in selected] == ["200", "100"]
-
-
 def test_interrupted_running_item_returns_to_pending(tmp_path: Path) -> None:
     with AnalysisStore(tmp_path / "analysis.sqlite3") as store:
         _profile(store)

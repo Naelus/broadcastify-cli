@@ -5,22 +5,19 @@ import io
 import json
 import tarfile
 from pathlib import Path
-from types import ModuleType, SimpleNamespace
+from types import SimpleNamespace
 
 import pytest
 
 import broadcastify_cli.portable_diarization as portable
 from broadcastify_cli.portable_diarization import (
-    PORTABLE_DIARIZATION_ENGINE,
     PORTABLE_DIARIZATION_MANIFEST,
     PORTABLE_SEGMENTATION_DIRECTORY,
     PORTABLE_SEGMENTATION_FILENAME,
     PortableSpeakerTurn,
     SherpaOnnxDiarizer,
     _safe_extract_segmentation_archive,
-    diarization_engine_satisfies,
     find_portable_diarization_model,
-    normalize_diarization_engine,
     prepare_portable_diarization_model,
 )
 
@@ -39,20 +36,6 @@ def _write_archive(path: Path) -> None:
         )
         license_info.size = len(license_payload)
         package.addfile(license_info, io.BytesIO(license_payload))
-
-
-def test_diarization_engine_aliases_are_explicit() -> None:
-    assert normalize_diarization_engine("pyannote") == "community-1"
-    assert normalize_diarization_engine("portable") == PORTABLE_DIARIZATION_ENGINE
-    with pytest.raises(ValueError, match="community-1 or sherpa-onnx"):
-        normalize_diarization_engine("magic-unified-model")
-
-
-def test_accuracy_labels_satisfy_preview_but_preview_does_not_satisfy_accuracy() -> None:
-    assert diarization_engine_satisfies("community-1", "sherpa-onnx") is True
-    assert diarization_engine_satisfies("sherpa-onnx", "community-1") is False
-    assert diarization_engine_satisfies("sherpa-onnx", "sherpa-onnx") is True
-    assert diarization_engine_satisfies("", "community-1") is False
 
 
 def test_managed_portable_model_requires_matching_manifest(

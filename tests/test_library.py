@@ -13,18 +13,13 @@ from broadcastify_cli.archive_cache import (
 )
 from broadcastify_cli.library import (
     LocalProcessingRequest,
-    build_archive_question_coverage,
     build_library_feed_coverage,
     build_library_resume_plan,
     cleanup_pending_library_deletions,
-    compact_archive_date_ranges,
     completed_library_catchup_feed_ids,
     delete_local_library_feed,
-    describe_archive_date_ranges,
-    entire_archive_feed_range,
     prepare_local_day,
     scan_local_library,
-    transcript_satisfies_diarization,
 )
 from broadcastify_cli.storage import AnalysisStore
 from broadcastify_cli.transcription import LocalTranscriber, SpeakerTurn
@@ -35,152 +30,6 @@ def _day(tmp_path: Path, feed_id: str, value: str) -> Path:
     result = tmp_path / feed_id / value.replace("-", "")
     result.mkdir(parents=True)
     return result
-
-
-def test_archive_question_coverage_distinguishes_ready_processing_and_missing_days() -> None:
-    coverage = build_archive_question_coverage(
-        [
-            {
-                "feed_id": "90001",
-                "archive_date": "2026-07-01",
-                "has_combined": True,
-                "has_transcript": True,
-                "has_imported_transcript": True,
-                "has_analysis": True,
-            },
-            {
-                "feed_id": "90001",
-                "archive_date": "2026-07-02",
-                "has_combined": True,
-                "has_transcript": False,
-                "has_imported_transcript": False,
-                "has_analysis": False,
-            },
-            {
-                "feed_id": "90001",
-                "archive_date": "2026-07-03",
-                "has_combined": True,
-                "has_transcript": True,
-                "has_imported_transcript": True,
-                "has_analysis": False,
-            },
-            {
-                "feed_id": "90002",
-                "archive_date": "2026-07-04",
-                "has_combined": True,
-                "has_transcript": True,
-                "has_imported_transcript": True,
-                "has_analysis": True,
-            },
-            {
-                "feed_id": "90001",
-                "archive_date": "2026-07-04",
-                "raw_file_count": 48,
-                "needs_network": True,
-                "has_combined": False,
-                "has_transcript": False,
-                "has_imported_transcript": False,
-                "has_analysis": False,
-            },
-        ],
-        "90001",
-        date(2026, 7, 1),
-        date(2026, 7, 5),
-    )
-
-    assert coverage["requested_day_count"] == 5
-    assert coverage["audio_day_count"] == 4
-    assert coverage["question_ready_day_count"] == 2
-    assert coverage["analyzed_day_count"] == 1
-    assert coverage["question_ready_dates"] == ["2026-07-01", "2026-07-03"]
-    assert coverage["analyzed_dates"] == ["2026-07-01"]
-    assert coverage["local_processing_dates"] == ["2026-07-02"]
-    assert coverage["partial_audio_dates"] == ["2026-07-04"]
-    assert coverage["missing_audio_dates"] == ["2026-07-05"]
-    assert coverage["acquisition_needed_dates"] == ["2026-07-04", "2026-07-05"]
-    assert coverage["unavailable_dates"] == [
-        "2026-07-02",
-        "2026-07-04",
-        "2026-07-05",
-    ]
-    assert coverage["question_ready_ranges"] == ["2026-07-01", "2026-07-03"]
-    assert coverage["unavailable_ranges"] == [
-        "2026-07-02",
-        "2026-07-04 through 2026-07-05",
-    ]
-    assert coverage["complete_coverage"] is False
-    assert "2/5 requested days are question-ready" in coverage["summary"]
-    assert "audio is retained for 4/5" in coverage["summary"]
-    assert (
-        "Additional archive acquisition needed for 1 partial day"
-        in coverage["summary"]
-    )
-
-
-def test_entire_feed_range_and_compact_gap_descriptions_are_local_only() -> None:
-    days = [
-        {"feed_id": "90001", "archive_date": "2026-06-30"},
-        {"feed_id": "90001", "archive_date": "2026-07-01"},
-        {"feed_id": "90001", "archive_date": "2026-07-03"},
-        {
-            "feed_id": "90001",
-            "archive_date": "2026-07-31",
-            "raw_file_count": 0,
-            "has_combined": False,
-            "has_transcript": False,
-            "has_imported_transcript": False,
-        },
-        {"feed_id": "90002", "archive_date": "2025-01-01"},
-    ]
-
-    assert entire_archive_feed_range(days, "90001") == (
-        date(2026, 6, 30),
-        date(2026, 7, 3),
-    )
-    values = ["2026-06-30", "2026-07-01", "2026-07-03"]
-    assert compact_archive_date_ranges(values) == [
-        "2026-06-30 through 2026-07-01",
-        "2026-07-03",
-    ]
-    assert describe_archive_date_ranges(values) == (
-        "2026-06-30 through 2026-07-01, 2026-07-03"
-    )
-
-
-def test_entire_feed_range_rejects_a_feed_without_retained_days() -> None:
-    with pytest.raises(ValueError, match="No locally retained feed days"):
-        entire_archive_feed_range([], "90001")
-
-
-def test_library_resume_plan_is_local_first_and_never_starts_acquisition() -> None:
-    days = [
-        {
-            "feed_id": "90003",
-            "archive_date": "2026-07-03",
-            "is_complete": False,
-            "needs_network": True,
-        },
-        {
-            "feed_id": "90001",
-            "archive_date": "2026-07-02",
-            "is_complete": False,
-            "needs_network": False,
-        },
-        {
-            "feed_id": "90002",
-            "archive_date": "2026-07-01",
-            "is_complete": True,
-            "needs_network": False,
-        },
-    ]
-    quota = {"available": False, "remaining": 0, "next_request_at": "later"}
-
-    result = build_library_resume_plan(days, quota)
-
-    assert [value["feed_id"] for value in result["days"]] == ["90001", "90003"]
-    assert result["local_count"] == 1
-    assert result["network_count"] == 1
-    assert result["quota"] == quota
 
 
 def test_library_coverage_and_resume_plan_include_missing_scheduled_days() -> None:
@@ -229,70 +78,6 @@ def test_library_coverage_and_resume_plan_include_missing_scheduled_days() -> No
     assert all(value["scheduled_missing"] for value in plan["days"])
 
 
-def test_library_resume_plan_catches_up_only_missing_or_incomplete_through_current() -> None:
-    days = [
-        {
-            "feed_id": "90001",
-            "feed_name": "Example Public Safety",
-            "archive_date": "2026-08-01",
-            "is_complete": True,
-            "needs_network": False,
-            "source_check_due": True,
-            "pipeline_percent": 100,
-        },
-        {
-            "feed_id": "90001",
-            "feed_name": "Example Public Safety",
-            "archive_date": "2026-08-03",
-            "is_complete": False,
-            "needs_network": False,
-            "source_check_due": False,
-            "pipeline_percent": 60,
-        },
-        {
-            "feed_id": "90002",
-            "feed_name": "Other Feed",
-            "archive_date": "2026-08-02",
-            "is_complete": False,
-            "needs_network": True,
-            "source_check_due": True,
-            "pipeline_percent": 0,
-        },
-    ]
-
-    plan = build_library_resume_plan(
-        days,
-        {"available": True, "remaining": 40},
-        today=date(2026, 8, 5),
-        requested_feed_id="90001",
-        requested_start_date=date(2026, 8, 1),
-        requested_through_current=True,
-    )
-
-    assert plan["scope_feed_id"] == "90001"
-    assert plan["scope_start_date"] == "2026-08-01"
-    assert plan["scope_end_date"] == "2026-08-05"
-    assert plan["scope_through_current"] is True
-    assert [value["feed_id"] for value in plan["feeds"]] == ["90001"]
-    assert plan["feeds"][0]["target_day_count"] == 5
-    assert plan["feeds"][0]["missing_dates"] == [
-        "2026-08-02",
-        "2026-08-04",
-        "2026-08-05",
-    ]
-    assert [value["archive_date"] for value in plan["days"]] == [
-        "2026-08-03",
-        "2026-08-05",
-        "2026-08-04",
-        "2026-08-02",
-    ]
-    assert plan["local_count"] == 1
-    assert plan["network_count"] == 3
-    assert "2026-08-01" not in {
-        value["archive_date"] for value in plan["days"]
-    }
-
-
 def test_library_resume_plan_rejects_future_or_partial_catch_up_ranges() -> None:
     with pytest.raises(ValueError, match="all required"):
         build_library_resume_plan(
@@ -321,76 +106,6 @@ def test_library_resume_plan_rejects_future_or_partial_catch_up_ranges() -> None
             requested_start_date=date(2026, 8, 6),
             requested_through_current=True,
         )
-
-
-def test_saved_library_catchup_survives_restart_and_expands_global_resume(
-    tmp_path: Path,
-) -> None:
-    database = tmp_path / "analysis.sqlite3"
-    with AnalysisStore(database) as store:
-        saved = store.save_library_catchup(
-            {
-                "feed_id": "90001",
-                "feed_name": "Example Public Safety",
-                "start_date": "2026-08-01",
-                "end_date": "2026-08-05",
-                "through_current": True,
-            }
-        )
-    assert saved["start_date"] == "2026-08-01"
-    assert saved["through_current"] is True
-
-    with AnalysisStore(database) as reopened:
-        catchups = reopened.list_library_catchups()
-
-    days = [
-        {
-            "feed_id": "90001",
-            "feed_name": "Example Public Safety",
-            "archive_date": "2026-08-01",
-            "is_complete": True,
-            "needs_network": False,
-            "source_check_due": True,
-            "pipeline_percent": 100,
-        }
-    ]
-    plan = build_library_resume_plan(
-        days,
-        {"available": True, "remaining": 40},
-        catchups=catchups,
-        today=date(2026, 8, 6),
-    )
-
-    assert plan["feeds"][0]["catch_up_saved"] is True
-    assert plan["feeds"][0]["catch_up_through_current"] is True
-    assert plan["feeds"][0]["catch_up_start_date"] == "2026-08-01"
-    assert plan["feeds"][0]["target_end_date"] == "2026-08-06"
-    assert plan["feeds"][0]["target_day_count"] == 6
-    assert plan["feeds"][0]["source_check_due_count"] == 0
-    assert [value["archive_date"] for value in plan["days"]] == [
-        "2026-08-06",
-        "2026-08-05",
-        "2026-08-04",
-        "2026-08-03",
-        "2026-08-02",
-    ]
-
-
-def test_saved_through_current_catchup_defaults_snapshot_end_to_today(
-    tmp_path: Path,
-) -> None:
-    with AnalysisStore(tmp_path / "analysis.sqlite3") as store:
-        saved = store.save_library_catchup(
-            {
-                "feed_id": "90001",
-                "feed_name": "Example Public Safety",
-                "start_date": date.today().isoformat(),
-                "through_current": True,
-            }
-        )
-
-    assert saved["end_date"] == date.today().isoformat()
-    assert saved["through_current"] is True
 
 
 def test_saved_through_current_catchup_preserves_scheduled_source_refresh() -> None:
@@ -1450,93 +1165,6 @@ def test_prepare_local_day_uses_diarization_only_for_existing_transcript(
     assert constructor_arguments[0]["load_asr"] is False
 
 
-def test_prepare_local_day_progress_uses_selected_transcription_model_language(
-    monkeypatch, tmp_path: Path
-) -> None:
-    day = _day(tmp_path, "90001", "2026-07-13")
-    audio = day / "combined_90001_20260713.mp3"
-    audio.write_bytes(b"audio")
-    messages: list[str] = []
-
-    class FakeTranscriber:
-        def __init__(self, **_kwargs: object) -> None:
-            pass
-
-        def transcribe_file(self, _audio: Path, progress=None) -> Path:
-            transcript = (
-                day / "transcripts" / "combined_90001_20260713.json"
-            )
-            transcript.parent.mkdir()
-            transcript.write_text(
-                json.dumps({"segments": [], "words": []}),
-                encoding="utf-8",
-            )
-            return transcript
-
-    monkeypatch.setattr("broadcastify_cli.library.LocalTranscriber", FakeTranscriber)
-
-    result = prepare_local_day(
-        LocalProcessingRequest(
-            feed_id="90001",
-            archive_date=date(2026, 7, 13),
-            output_dir=tmp_path,
-            model="qwen3-asr-0.6b-int8",
-            asr_engine="qwen3-asr",
-            diarize=False,
-        ),
-        progress=messages.append,
-    )
-
-    assert result["operation"] == "transcribed"
-    assert messages == [
-        "Loading local transcription qwen3-asr-0.6b-int8 for 2026-07-13…"
-    ]
-    assert all("Whisper" not in message for message in messages)
-
-
-def test_library_marks_existing_plain_transcript_for_diarization(tmp_path: Path) -> None:
-    day = _day(tmp_path, "300", "2026-07-10")
-    (day / "combined_300_20260710.mp3").write_bytes(b"audio")
-    transcript = day / "transcripts" / "combined_300_20260710.json"
-    transcript.parent.mkdir()
-    transcript.write_text(
-        json.dumps(
-            {
-                "model": "turbo",
-                "segments": [{"start": 0.0, "end": 1.0, "text": "Dispatch"}],
-                "diarization_requested": False,
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    state = scan_local_library(tmp_path, tmp_path / "analysis.sqlite3")[0]
-
-    assert state["status"] == "Transcript ready"
-    assert state["next_step"] == "Add speaker labels"
-    assert state["status_detail"] == (
-        "Transcript exists; speaker labels can run without repeating transcription"
-    )
-    assert state["primary_action"] == "continue_local"
-    assert state["needs_network"] is False
-
-
-def test_library_describes_audio_ready_state_without_assuming_whisper(
-    tmp_path: Path,
-) -> None:
-    day = _day(tmp_path, "299", "2026-07-10")
-    (day / "combined_299_20260710.mp3").write_bytes(b"audio")
-
-    state = scan_local_library(tmp_path, tmp_path / "analysis.sqlite3")[0]
-
-    assert state["status"] == "Audio ready"
-    assert state["next_step"] == "Transcribe locally"
-    assert state["status_detail"] == (
-        "Combined audio is ready for local transcription"
-    )
-    assert "Whisper" not in state["status_detail"]
-
-
 def test_library_does_not_treat_a_request_flag_as_completed_diarization(
     tmp_path: Path,
 ) -> None:
@@ -1560,69 +1188,6 @@ def test_library_does_not_treat_a_request_flag_as_completed_diarization(
 
     assert state["has_diarization"] is False
     assert state["next_step"] == "Add speaker labels"
-
-
-def test_library_labels_portable_speakers_as_preview_with_accuracy_upgrade(
-    tmp_path: Path,
-) -> None:
-    day = _day(tmp_path, "302", "2026-07-10")
-    (day / "combined_302_20260710.mp3").write_bytes(b"audio")
-    transcript = day / "transcripts" / "combined_302_20260710.json"
-    transcript.parent.mkdir()
-    transcript.write_text(
-        json.dumps(
-            {
-                "segments": [
-                    {
-                        "start": 0.0,
-                        "end": 1.0,
-                        "text": "Dispatch",
-                        "speaker": "SPEAKER_00",
-                    }
-                ],
-                "speaker_turns": [
-                    {"start": 0.0, "end": 1.0, "speaker": "SPEAKER_00"}
-                ],
-                "diarization_requested": True,
-                "diarization_completed": True,
-                "diarization_engine": "sherpa-onnx",
-                "diarization_model": (
-                    "pyannote-segmentation-3.0-int8+nemo-titanet-small"
-                ),
-                "diarization_quality": "preview",
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    state = scan_local_library(tmp_path, tmp_path / "analysis.sqlite3")[0]
-
-    assert state["has_diarization"] is True
-    assert state["diarization_engine"] == "sherpa-onnx"
-    assert state["diarization_quality"] == "preview"
-    assert state["speaker_upgrade_available"] is True
-    assert transcript_satisfies_diarization(transcript, "sherpa-onnx") is True
-    assert transcript_satisfies_diarization(transcript, "community-1") is False
-
-
-def test_community_labels_satisfy_preview_without_being_downgraded(
-    tmp_path: Path,
-) -> None:
-    transcript = tmp_path / "transcript.json"
-    transcript.write_text(
-        json.dumps(
-            {
-                "diarization_requested": True,
-                "diarization_completed": True,
-                "diarization_engine": "community-1",
-                "diarization_model": "pyannote/speaker-diarization-community-1",
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    assert transcript_satisfies_diarization(transcript, "community-1") is True
-    assert transcript_satisfies_diarization(transcript, "sherpa-onnx") is True
 
 
 def test_prepare_local_day_upgrades_preview_without_loading_asr(

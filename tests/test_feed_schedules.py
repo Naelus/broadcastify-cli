@@ -4,7 +4,6 @@ import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-import pytest
 
 from broadcastify_cli.storage import AnalysisStore
 
@@ -262,60 +261,6 @@ def test_maintenance_defer_retries_but_explicit_cancel_is_final(
         assert store.claim_due_feed_schedule(now=now + timedelta(hours=1)) is None
 
 
-def test_recurring_catch_up_keeps_boundary_after_success_and_rechecks_next_day(
-    tmp_path: Path,
-) -> None:
-    database = tmp_path / "analysis.sqlite3"
-    now = datetime(2026, 7, 23, 3, 0, tzinfo=timezone(timedelta(hours=-5)))
-    payload = _payload()
-    payload["backfill_start_date"] = "2026-07-03"
-    payload["recurring_catch_up"] = True
-
-    with AnalysisStore(database) as store:
-        saved = store.save_feed_schedule(payload)
-        claimed = store.claim_due_feed_schedule(now=now)
-        assert claimed is not None
-        assert claimed["recurring_catch_up"] is True
-        assert claimed["job"]["start_date"] == "2026-07-03"
-
-        completed = store.finish_feed_schedule(
-            int(saved["id"]),
-            due_date="2026-07-23",
-            status="complete",
-            now=now + timedelta(minutes=5),
-        )
-        assert completed["backfill_start_date"] == "2026-07-03"
-        assert completed["recurring_catch_up"] is True
-        assert store.claim_due_feed_schedule(now=now + timedelta(hours=1)) is None
-
-        next_run = store.claim_due_feed_schedule(now=now + timedelta(days=1))
-        assert next_run is not None
-        assert next_run["job"]["start_date"] == "2026-07-03"
-        assert next_run["job"]["end_date"] == "2026-07-24"
-
-
-def test_recurring_catch_up_requires_a_start_date(tmp_path: Path) -> None:
-    payload = _payload()
-    payload["recurring_catch_up"] = True
-
-    with AnalysisStore(tmp_path / "analysis.sqlite3") as store:
-        with pytest.raises(ValueError, match="requires a catch-up start date"):
-            store.save_feed_schedule(payload)
-
-
-def test_schedule_rejects_a_future_historical_catch_up_date(tmp_path: Path) -> None:
-    payload = _payload()
-    payload["backfill_start_date"] = (datetime.now().date() + timedelta(days=1)).isoformat()
-
-    with AnalysisStore(tmp_path / "analysis.sqlite3") as store:
-        try:
-            store.save_feed_schedule(payload)
-        except ValueError as exc:
-            assert "cannot be in the future" in str(exc)
-        else:
-            raise AssertionError("A future catch-up date should be rejected.")
-
-
 def test_disabled_schedule_does_not_claim_and_can_be_removed(tmp_path: Path) -> None:
     database = tmp_path / "analysis.sqlite3"
     now = datetime(2026, 7, 23, 3, 0, tzinfo=timezone.utc)
@@ -324,21 +269,6 @@ def test_disabled_schedule_does_not_claim_and_can_be_removed(tmp_path: Path) -> 
         assert store.claim_due_feed_schedule(now=now) is None
         assert store.delete_feed_schedule(int(saved["id"])) is True
         assert store.list_feed_schedules(now=now) == []
-
-
-def test_claim_preserves_an_explicit_absolute_library(tmp_path: Path) -> None:
-    database = tmp_path / "database" / "analysis.sqlite3"
-    library = (tmp_path / "selected library").resolve()
-    payload = _payload()
-    payload["job"] = {**dict(payload["job"]), "output_dir": str(library)}
-    now = datetime(2026, 7, 23, 3, 0, tzinfo=timezone.utc)
-
-    with AnalysisStore(database) as store:
-        store.save_feed_schedule(payload)
-        claimed = store.claim_due_feed_schedule(now=now)
-
-    assert claimed is not None
-    assert claimed["job"]["output_dir"] == str(library)
 
 
 def test_claim_runtime_library_overrides_stale_absolute_path(tmp_path: Path) -> None:

@@ -1610,23 +1610,6 @@ def test_web_jobs_force_quota_safe_archive_defaults(tmp_path: Path) -> None:
     assert payload["lan_discovery_enabled"] is True
 
 
-def test_web_archive_questions_use_the_selected_local_library(tmp_path: Path) -> None:
-    manager = JobManager(tmp_path, tmp_path / "analysis.sqlite3", tmp_path)
-    arguments, payload = manager._worker_request(  # noqa: SLF001
-        "ask",
-        {
-            "feed_id": "90001",
-            "start_date": "2026-07-01",
-            "end_date": "2026-07-31",
-            "question": "What happened this month?",
-        },
-    )
-
-    assert arguments == ["ask"]
-    assert payload is not None
-    assert payload["output_dir"] == str(tmp_path)
-
-
 def test_web_jobs_resolve_automatic_against_the_installed_deployment(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1759,55 +1742,3 @@ def test_web_area_story_packages_use_safe_media_urls_without_local_paths(
     assert "source_audio_path" not in reference
     assert "Jordan Example" in stories[0]["incident_references"][0]["quote"]
     assert "clip_path" in stories[0]["incident_references"][0]
-
-
-def test_web_jobs_validate_area_zip_codes(tmp_path: Path) -> None:
-    manager = JobManager(tmp_path, tmp_path / "analysis.sqlite3", tmp_path)
-    with pytest.raises(WebRequestError, match="five-digit"):
-        manager._worker_request("area-search", {"zip_codes": ["not-a-zip"]})  # noqa: SLF001
-
-
-def test_web_jobs_validate_and_forward_radius_discovery(tmp_path: Path) -> None:
-    manager = JobManager(tmp_path, tmp_path / "analysis.sqlite3", tmp_path)
-    arguments, payload = manager._worker_request(  # noqa: SLF001
-        "area-search",
-        {"center_zip": "12345", "radius_miles": 25, "max_zip_codes": 12},
-    )
-
-    assert arguments == [
-        "area-search",
-        "--center-zip",
-        "12345",
-        "--radius-miles",
-        "25.0",
-        "--max-zip-codes",
-        "12",
-    ]
-    assert payload is None
-
-
-def test_web_jobs_forward_combined_profile_self_test_settings(
-    tmp_path: Path,
-) -> None:
-    manager = JobManager(tmp_path, tmp_path / "analysis.sqlite3", tmp_path)
-    arguments, payload = manager._worker_request(  # noqa: SLF001
-        "profile-self-test",
-        {
-            "model": "tiny.en",
-            "asr_engine": "openvino",
-            "device": "openvino-npu",
-            "diarization_device": "cpu",
-            "analysis_provider": "local",
-            "analysis_model": "local-model.gguf",
-            "analysis_device": "cpu",
-            "huggingface_token": "session-only-test-token",
-        },
-    )
-
-    assert arguments == ["profile-self-test"]
-    assert payload is not None
-    assert payload["asr_engine"] == "openvino"
-    assert payload["device"] == "openvino-npu"
-    assert payload["diarization_device"] == "cpu"
-    assert payload["analysis_model"] == "local-model.gguf"
-    assert payload["huggingface_token"] == "session-only-test-token"

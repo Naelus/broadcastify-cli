@@ -28,7 +28,6 @@ from broadcastify_cli.lan_sync import (
     LanDiscoveryResponder,
     LanDownloadTurn,
     LanProcessingQueue,
-    discovery_destinations,
     discover_lan_peers,
     normalize_peer_url,
     normalize_peer_urls,
@@ -64,58 +63,6 @@ def test_windows_master_cli_disables_background_pull_even_if_env_enables_it(
     assert not _background_sync_enabled(
         disabled_by_command_line=arguments.no_background_sync,
     )
-
-
-def test_republishing_same_master_result_advances_the_delta_cursor(
-    tmp_path: Path,
-) -> None:
-    feed_id = "90001"
-    archive_date = date(2026, 7, 13)
-    fingerprint = "b" * 64
-
-    with PipelineSyncStore(tmp_path) as journal:
-        first_sequence = journal.record_result(
-            feed_id,
-            archive_date,
-            fingerprint,
-        )
-        assert [event["sequence"] for event in journal.changes(0)["events"]] == [
-            first_sequence
-        ]
-
-        second_sequence = journal.record_result(
-            feed_id,
-            archive_date,
-            fingerprint,
-        )
-
-        assert second_sequence > first_sequence
-        second_events = journal.changes(first_sequence)["events"]
-        assert len(second_events) == 1
-        assert second_events[0]["sequence"] == second_sequence
-        assert second_events[0]["kind"] == "result"
-        assert second_events[0]["feed_id"] == feed_id
-        assert second_events[0]["archive_date"] == archive_date.isoformat()
-        assert second_events[0]["processing_fingerprint"] == fingerprint
-
-
-def test_republishing_rolling_source_advances_the_delta_cursor(
-    tmp_path: Path,
-) -> None:
-    feed_id = "90001"
-    archive_date = date(2026, 7, 13)
-
-    with PipelineSyncStore(tmp_path) as journal:
-        first_sequence = journal.record_source(feed_id, archive_date)
-        second_sequence = journal.record_source(feed_id, archive_date)
-
-        assert second_sequence > first_sequence
-        events = journal.changes(first_sequence)["events"]
-        assert len(events) == 1
-        assert events[0]["sequence"] == second_sequence
-        assert events[0]["kind"] == "source"
-        assert events[0]["feed_id"] == feed_id
-        assert events[0]["archive_date"] == archive_date.isoformat()
 
 
 @pytest.mark.parametrize("damaged_marker", ["[]", "future"])
@@ -2576,23 +2523,6 @@ def test_one_hop_discovery_finds_a_read_only_lan_peer(tmp_path: Path) -> None:
         assert found == ("http://127.0.0.1:8766",)
     finally:
         responder.close()
-
-
-def test_discovery_includes_real_interface_directed_broadcasts(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(
-        lan_sync,
-        "local_ipv4_broadcasts",
-        lambda: ("10.20.31.255", "192.168.50.255", "10.20.31.255"),
-    )
-
-    assert discovery_destinations() == (
-        "255.255.255.255",
-        "239.255.77.77",
-        "10.20.31.255",
-        "192.168.50.255",
-    )
 
 
 def test_job_request_rejects_public_peer_urls() -> None:

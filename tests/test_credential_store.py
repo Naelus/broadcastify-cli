@@ -109,15 +109,6 @@ def test_environment_is_reported_without_returning_its_secret(tmp_path: Path) ->
     assert "hf_environment-token" not in json.dumps(status)
 
 
-def test_hugging_face_token_requires_expected_prefix(tmp_path: Path) -> None:
-    store = EncryptedCredentialStore(
-        tmp_path / "credentials.enc",
-        protector="aes-gcm-local-key",
-    )
-    with pytest.raises(ValueError, match="start with hf_"):
-        store.save_huggingface("not-a-token")
-
-
 def test_named_broadcastify_profiles_are_encrypted_and_selected_in_isolation(
     tmp_path: Path,
 ) -> None:

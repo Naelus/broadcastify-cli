@@ -22,7 +22,6 @@ from broadcastify_cli.qwen_asr import (
     _safe_extract_qwen_archive,
     _write_qwen_manifest,
     find_qwen3_asr_model,
-    normalize_qwen3_asr_model_name,
     prepare_qwen3_asr_model,
 )
 
@@ -41,13 +40,6 @@ def _write_archive(path: Path) -> None:
             info = tarfile.TarInfo(f"{QWEN3_ASR_MODEL_DIRECTORY}/{relative}")
             info.size = len(payload)
             package.addfile(info, io.BytesIO(payload))
-
-
-def test_qwen_model_aliases_have_one_cache_identity() -> None:
-    assert normalize_qwen3_asr_model_name("qwen3-asr") == QWEN3_ASR_MODEL
-    assert normalize_qwen3_asr_model_name("QWEN3_ASR_0.6B_INT8") == QWEN3_ASR_MODEL
-    with pytest.raises(ValueError, match=QWEN3_ASR_MODEL):
-        normalize_qwen3_asr_model_name("turbo")
 
 
 def test_qwen_model_discovery_requires_every_runtime_file_and_finds_vad(

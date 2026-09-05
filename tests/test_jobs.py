@@ -302,45 +302,6 @@ def test_full_rolling_guard_never_authenticates_and_still_uses_cache(
     assert any("will not be contacted" in str(event.get("message")) for event in events)
 
 
-def test_full_rolling_guard_with_complete_cache_finishes_without_false_limit(
-    tmp_path: Path,
-) -> None:
-    archive_date = date(2026, 7, 3)
-    cached_dir = tmp_path / "90001" / archive_date.strftime("%Y%m%d")
-    cached_dir.mkdir(parents=True)
-    cached = cached_dir / "202607030000-provider-90001.mp3"
-    cached.write_bytes(b"retained audio")
-
-    class GuardedClient:
-        def archive_quota_status(self) -> dict[str, object]:
-            return {"available": False}
-
-        def cached_day_local(
-            self, *_args: object
-        ) -> tuple[list[Path], int] | None:
-            return [cached], 1
-
-        def cached_day(self, *_args: object) -> tuple[list[Path], int]:
-            raise AssertionError("The network-capable cache check must not run.")
-
-        def authenticate(self) -> None:
-            raise AssertionError("A complete cache must not authenticate.")
-
-    result = JobRunner(
-        JobRequest(
-            feed_id="90001",
-            start_date=archive_date,
-            end_date=archive_date,
-            output_dir=tmp_path,
-        ),
-        client=GuardedClient(),  # type: ignore[arg-type]
-    ).run()
-
-    assert result["completed_days"] == 1
-    assert result["missing_days"] == []
-    assert result["download_limited"] is False
-
-
 def test_real_client_full_guard_uses_completion_snapshot_without_session_calls(
     tmp_path: Path,
 ) -> None:
@@ -406,63 +367,6 @@ def test_real_client_full_guard_uses_completion_snapshot_without_session_calls(
     assert result["completed_days"] == 1
     assert result["missing_days"] == []
     assert result["download_limited"] is False
-
-
-def test_lan_source_reuse_runs_before_any_broadcastify_request(
-    tmp_path: Path,
-) -> None:
-    calls: list[str] = []
-    archive_date = date(2026, 7, 12)
-
-    class FakeLanSync:
-        enabled = True
-
-        def sync_day(
-            self,
-            output_dir: Path,
-            feed_id: str,
-            requested_date: date,
-            **_kwargs: object,
-        ) -> LanSyncResult:
-            calls.append("lan")
-            day = output_dir / feed_id / requested_date.strftime("%Y%m%d")
-            day.mkdir(parents=True)
-            (day / "202607120000-123456-90001.mp3").write_bytes(b"peer audio")
-            return LanSyncResult(enabled=True, peers_reached=1, blocks_copied=1)
-
-    class OrderedClient:
-        def authenticate(self) -> None:
-            calls.append("authenticate")
-
-        def download_day(
-            self,
-            feed_id: str,
-            requested_date: date,
-            output_dir: Path,
-            **_kwargs: object,
-        ) -> list[Path]:
-            calls.append("website")
-            return sorted(
-                (output_dir / feed_id / requested_date.strftime("%Y%m%d")).glob(
-                    "*.mp3"
-                )
-            )
-
-    request = JobRequest(
-        feed_id="90001",
-        start_date=archive_date,
-        end_date=archive_date,
-        output_dir=tmp_path,
-        lan_sync_enabled=True,
-    )
-    result = JobRunner(
-        request,
-        client=OrderedClient(),  # type: ignore[arg-type]
-        lan_sync=FakeLanSync(),  # type: ignore[arg-type]
-    ).run()
-
-    assert calls == ["lan", "authenticate", "website"]
-    assert result["lan_sync"]["blocks_copied"] == 1
 
 
 def test_lan_source_reuse_is_interleaved_with_each_backlog_day(

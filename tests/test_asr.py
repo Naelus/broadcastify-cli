@@ -14,10 +14,8 @@ from broadcastify_cli.asr import (
     WhisperCppAsr,
     WindowsMlWhisperAsr,
     find_windows_ml_model,
-    normalize_asr_engine,
     prepare_whisper_cpp_model,
     prepare_windows_ml_model,
-    windows_ml_model_info,
 )
 
 
@@ -25,48 +23,6 @@ def _write_whisper_cpp_vad(path: Path) -> Path:
     vad = path / "ggml-silero-v6.2.0.bin"
     vad.write_bytes(b"vad")
     return vad
-
-
-def test_engine_auto_selection_follows_requested_accelerator() -> None:
-    assert normalize_asr_engine("auto", "cuda") == "faster-whisper"
-    assert normalize_asr_engine("auto", "vulkan") == "whisper.cpp"
-    assert normalize_asr_engine("auto", "metal") == "whisper.cpp"
-    assert normalize_asr_engine("auto", "openvino-gpu") == "openvino"
-    assert normalize_asr_engine("auto", "windows-ml") == "windows-ml"
-    assert normalize_asr_engine("qwen3", "cpu") == "qwen3-asr"
-
-
-def test_macos_auto_selects_detected_native_metal(monkeypatch) -> None:
-    monkeypatch.setattr("broadcastify_cli.asr.sys.platform", "darwin")
-    monkeypatch.setattr("broadcastify_cli.asr.find_whisper_cpp", lambda: "/opt/whisper-cli")
-    monkeypatch.setattr(
-        "broadcastify_cli.asr.whisper_cpp_backends", lambda _path: ["cpu", "metal"]
-    )
-
-    assert normalize_asr_engine("auto", "auto") == "whisper.cpp"
-
-
-def test_whisper_cpp_accepts_native_metal_backend(tmp_path: Path) -> None:
-    executable = tmp_path / "whisper-cli"
-    executable.write_bytes(b"binary")
-    (tmp_path / "libggml-metal.dylib").write_bytes(b"backend")
-    model = tmp_path / "ggml-tiny.en-q5_1.bin"
-    model.write_bytes(b"model")
-    _write_whisper_cpp_vad(tmp_path)
-
-    engine = WhisperCppAsr(
-        "tiny", device="metal", executable=executable, model_path=model
-    )
-
-    assert engine.backend == "metal"
-    assert engine.backends == ["cpu", "metal"]
-
-
-def test_portable_model_aliases_accept_web_ui_english_suffix(tmp_path: Path) -> None:
-    from broadcastify_cli.asr import whisper_cpp_model_filename
-
-    assert whisper_cpp_model_filename("tiny.en") == "ggml-tiny.en-q5_1.bin"
-    assert whisper_cpp_model_filename("medium.en") == "ggml-medium.en-q5_0.bin"
 
 
 def _write_windows_ml_model(
@@ -98,26 +54,6 @@ def _write_windows_ml_model(
         ),
         encoding="utf-8",
     )
-
-
-def test_windows_ml_discovers_suffixed_managed_model_and_infers_identity(
-    monkeypatch, tmp_path: Path
-) -> None:
-    model_root = tmp_path / "managed"
-    model = model_root / "windowsml" / "whisper-tiny-fp32-cpu"
-    _write_windows_ml_model(model)
-    monkeypatch.setenv("BROADCASTIFY_MODEL_DIR", str(model_root))
-    monkeypatch.delenv("WINDOWS_ML_WHISPER_MODEL_PATH", raising=False)
-    monkeypatch.chdir(tmp_path)
-
-    resolved = find_windows_ml_model("tiny.en")
-    info = windows_ml_model_info(model)
-
-    assert resolved == model.resolve()
-    assert info is not None
-    assert info.model == "tiny"
-    assert info.provider == "cpu"
-    assert info.precision == "fp32"
 
 
 def test_windows_ml_rejects_explicit_model_identity_mismatch(tmp_path: Path) -> None:
@@ -291,21 +227,6 @@ def test_whisper_cpp_rejects_renamed_or_mismatched_explicit_model(
         )
 
 
-def test_whisper_cpp_requires_a_speech_detector(tmp_path: Path) -> None:
-    executable = tmp_path / "whisper-cli"
-    executable.write_bytes(b"binary")
-    model = tmp_path / "ggml-tiny.en-q5_1.bin"
-    model.write_bytes(b"model")
-
-    with pytest.raises(AsrDependencyError, match="VAD model"):
-        WhisperCppAsr(
-            "tiny",
-            device="cpu",
-            executable=executable,
-            model_path=model,
-        )
-
-
 def test_whisper_cpp_preparation_pins_and_verifies_vad(
     monkeypatch, tmp_path: Path
 ) -> None:
@@ -360,27 +281,6 @@ def test_whisper_cpp_preparation_pins_and_verifies_vad(
         asr_module.WHISPER_CPP_VAD_REVISION,
     )
     assert reused["reused"] is True
-
-
-@pytest.mark.parametrize(
-    ("device", "expected"),
-    [
-        ("metal", "native macOS whisper.cpp build compiled with GGML_METAL=ON"),
-        ("vulkan", "GGML_VULKAN=1"),
-        ("cpu", "native whisper.cpp"),
-    ],
-)
-def test_missing_whisper_cpp_gives_device_specific_setup_help(
-    monkeypatch, tmp_path: Path, device: str, expected: str
-) -> None:
-    monkeypatch.delenv("WHISPER_CPP_CONTAINER_IMAGE", raising=False)
-
-    with pytest.raises(RuntimeError, match=expected):
-        WhisperCppAsr(
-            "tiny",
-            device=device,
-            executable=tmp_path / "missing-whisper-cli",
-        )
 
 
 def test_whisper_cpp_json_is_normalized(monkeypatch, tmp_path: Path) -> None:

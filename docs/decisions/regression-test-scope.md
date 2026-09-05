@@ -5,7 +5,7 @@ Tests were evaluated by the product failure they detect, the boundary they
 exercise, and whether existing coverage already proves the same outcome.
 Test authorship is not evidence of relevance.
 
-## Removed coverage and its replacement
+## Initial audit: removed coverage and its replacement
 
 | Removed tests | Reason and retained proof |
 | --- | --- |
@@ -14,12 +14,32 @@ Test authorship is not evidence of relevance.
 | Processing-limit field parsing in `test_models.py` | The scheduled-processing workflow now parses the incoming value and proves that excess retained days are deferred. |
 | Standalone scheduled-analysis selection in `test_worker.py` | The scheduled-job test proves that current transcripts are skipped and changed transcripts reach analysis. |
 | Two mocked question-coverage wrappers in `test_worker.py` | The product workflow invokes real worker subprocesses for both month and entire-feed scope using retained audio, transcripts, and a real database. |
-| Five web settings pass-through examples | The combined-profile test covers the common payload path; deployment-default tests cover automatic/custom selection. Worker and adapter tests retain each model stage's execution, failure, and secret-handling coverage. |
+| Five web settings pass-through examples | The initial audit consolidated the common payload checks; the stricter pass below removes the combined-profile forwarding check too. Deployment-default tests and worker/adapter execution, failure, and secret-handling coverage remain. |
 | Two Dockerfile source-string inventories in `test_linux_service.py` | Text presence and order cannot prove executable permissions or image metadata. Image construction remains a container-release responsibility; offline Python results do not claim to verify a container build. |
 
 Seventeen test functions were removed. The nested-job acquisition guard test
 also covers scheduled jobs, so the collected suite changes from 461 to 445
 cases. Parameterization alone is not counted as removing redundant coverage.
+
+## Stricter pass: essential regressions
+
+At the user's request, a second pass from `0fc79be` removed 100 more test
+functions (103 collected cases) and roughly 2,700 lines of test code. The
+remaining 342 cases pass the full offline gate. No replacement tests, hidden
+assertion loops, or skips were added, and this pass changes no production code.
+
+| Removed coverage | Decision |
+| --- | --- |
+| Mocked Library/resume/question wrappers and duplicate cache, LAN, schedule, and selection examples | Retain the product workflows and stronger state-transition tests that cross files, databases, subprocesses, or HTTP boundaries. |
+| Accelerator diagnostic metadata and icon-header suites | Drop low-priority display/header checks. Keep runtime execution, installation integrity, and compiled native layout/docking verification. |
+| Alias, formatting, setup-help, optional configuration, and minor validation examples | Deliberately narrow coverage; these do not warrant individual regressions in the essential suite. |
+| Additional incident phrasing, speaker-label, progress-display, and search permutations | Keep the primary behavior and failure boundaries without maintaining every presentation or input variant. |
+
+Some deleted tests exercised real behavior. Their removal trades lower-priority
+coverage for a smaller maintenance burden; it does not mean every deleted test
+was incapable of failing. Persistent quota limits, credential isolation,
+retained-data recovery, processing integrity, and core app workflows remain the
+selection criteria for future tests.
 
 ## Retained boundaries
 
@@ -31,7 +51,7 @@ cases. Parameterization alone is not counted as removing redundant coverage.
 | Storage and Library | Mutation, migration, file locks, deletion recovery, mixed imported paths, and stale evidence are distinct regressions. Similar fixtures do not make these outcomes interchangeable. |
 | Audio, transcription, ASR, portable diarization, Qwen | Keep timestamp continuity, model identity, chunk offsets, fallback, interrupted checkpoints, and completed-artifact validation. Native/model adapters are faked at the external boundary to keep the suite offline. |
 | Analysis, analysis clients, Area Watch | Keep evidence support, privacy, bounded context, external-provider consent, checkpoint reuse, coverage gaps, and stale result rejection. |
-| Accelerator/runtime setup and Linux service | Keep capability selection, cache compatibility, verified installation/resume, safe service configuration, and runtime validation. |
+| Runtime setup and Linux service | Keep adapter execution, cache compatibility, verified installation/resume, safe service configuration, and runtime validation. Diagnostic display variants are outside the essential suite. |
 | Native frontend, build and release | Keep compiled layout/docking workflows, release-scanner execution, version consistency, and minimal structural build-gate checks. No source-text inventory substitutes for native execution. |
 
 ## Production changes justified by the review

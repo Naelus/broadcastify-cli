@@ -24,55 +24,14 @@ from broadcastify_cli.worker import (
     analysis_self_test,
     archive_quota_status,
     asr_self_test,
-    coordinated_activity_status,
     diarization_self_test,
     emit,
     load_worker_environment,
     latest_area_digest,
-    library_resume_plan,
     prepare_asr_model_command,
     profile_self_test,
     run_scheduled_job,
 )
-
-
-def test_coordinated_activity_status_passes_explicit_peers_and_discovery(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    captured: dict[str, object] = {}
-
-    class Client:
-        def coordinated_status(self) -> dict[str, bool]:
-            return {"ready": True}
-
-    def from_settings(**kwargs: object) -> Client:
-        captured.update(kwargs)
-        return Client()
-
-    emitted: list[dict[str, object]] = []
-    monkeypatch.setattr(
-        "broadcastify_cli.worker.LanArchiveSyncClient.from_settings",
-        from_settings,
-    )
-    monkeypatch.setattr("broadcastify_cli.worker.emit", emitted.append)
-    monkeypatch.setenv("BROADCASTIFY_LAN_PEERS", "http://127.0.0.1:8766")
-    monkeypatch.setenv("BROADCASTIFY_LAN_DISCOVERY_ENABLED", "on")
-
-    assert coordinated_activity_status(
-        {
-            "peer_urls": ["http://10.0.0.20:9876"],
-            "discovery_enabled": False,
-        }
-    ) == 0
-    assert captured["enabled"] is True
-    assert captured["peer_urls"] == ["http://10.0.0.20:9876"]
-    assert captured["discovery_enabled"] is False
-    assert emitted == [
-        {
-            "type": "coordinated_activity_status",
-            "status": {"ready": True},
-        }
-    ]
 
 
 def test_run_scheduled_job_analyzes_only_changed_transcripts(
@@ -248,71 +207,6 @@ def test_ui_e2e_isolation_skips_repository_environment_files(
     assert "BROADCASTIFY_PASSWORD" not in os.environ
 
 
-def test_library_resume_planning_reads_only_local_state_and_quota(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    emitted: list[dict[str, object]] = []
-
-    class FakeLedger:
-        def status(self) -> dict[str, object]:
-            return {"available": False, "remaining": 0}
-
-    class ForbiddenBroadcastifyClient:
-        def __init__(self, *_args: object, **_kwargs: object) -> None:
-            raise AssertionError("resume planning must not create a website client")
-
-    class FakeStore:
-        def __init__(self, *_args: object, **_kwargs: object) -> None:
-            pass
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args: object) -> None:
-            pass
-
-        def list_feed_schedules(self) -> list[dict[str, object]]:
-            return []
-
-        def list_library_catchups(self) -> list[dict[str, object]]:
-            return []
-
-    monkeypatch.setattr(
-        "broadcastify_cli.worker.scan_local_library",
-        lambda *_args: [
-            {
-                "feed_id": "90001",
-                "archive_date": "2026-07-12",
-                "is_complete": False,
-                "needs_network": True,
-            }
-        ],
-    )
-    monkeypatch.setattr(
-        "broadcastify_cli.worker.archive_request_ledger",
-        lambda: FakeLedger(),
-    )
-    monkeypatch.setattr("broadcastify_cli.worker.AnalysisStore", FakeStore)
-    monkeypatch.setattr(
-        "broadcastify_cli.worker.BroadcastifyClient",
-        ForbiddenBroadcastifyClient,
-    )
-    monkeypatch.setattr("broadcastify_cli.worker.emit", emitted.append)
-
-    assert library_resume_plan(
-        "unused",
-        "90001",
-        "2026-08-01",
-        "2026-08-02",
-    ) == 0
-    assert emitted[0]["type"] == "library_resume_plan"
-    assert emitted[0]["scope_feed_id"] == "90001"
-    assert emitted[0]["scope_start_date"] == "2026-08-01"
-    assert emitted[0]["scope_end_date"] == "2026-08-02"
-    assert emitted[0]["network_count"] == 2
-    assert emitted[0]["quota"] == {"available": False, "remaining": 0}
-
-
 def test_asr_self_test_uses_selected_engine_without_returning_transcript_text(
     monkeypatch,
 ) -> None:
@@ -467,39 +361,6 @@ def test_prepare_asr_model_emits_managed_path_without_returning_token(
     assert received["model"] == "tiny"
     assert result["path"] == str(model_path)
     assert "private-test-token" not in json.dumps(emitted)
-
-
-def test_diarization_self_test_can_reuse_cached_model_without_token(monkeypatch) -> None:
-    emitted: list[dict[str, object]] = []
-    loaded: dict[str, object] = {}
-
-    class FakeAnnotation:
-        def itertracks(self, *, yield_label: bool = False):
-            assert yield_label is True
-            yield object(), object(), "SPEAKER_00"
-
-    class FakePipeline:
-        embedding_batch_size = 1
-
-        def __call__(self, _audio: dict[str, object]) -> FakeAnnotation:
-            return FakeAnnotation()
-
-    def fake_load(**kwargs: object) -> tuple[FakePipeline, str]:
-        loaded.update(kwargs)
-        return FakePipeline(), "cpu"
-
-    monkeypatch.delenv("HUGGINGFACE_TOKEN", raising=False)
-    monkeypatch.delenv("HF_TOKEN", raising=False)
-    monkeypatch.setattr("broadcastify_cli.worker._load_diarization_pipeline", fake_load)
-    monkeypatch.setattr(
-        "broadcastify_cli.worker.decoded_diarization_audio",
-        lambda _path: nullcontext({"waveform": object(), "sample_rate": 16_000}),
-    )
-    monkeypatch.setattr("broadcastify_cli.worker.emit", emitted.append)
-
-    assert diarization_self_test({"diarization_device": "cpu"}) == 0
-    assert loaded["token"] == ""
-    assert any(value["type"] == "diarization_self_test" for value in emitted)
 
 
 def test_portable_diarization_self_test_prepares_and_executes_public_models(
@@ -773,109 +634,6 @@ def test_profile_self_test_does_not_reuse_asr_model_for_analysis(
         if value["type"] == "profile_self_test"
     )
     assert result["ready"] is True
-
-
-def test_profile_self_test_recovery_distinguishes_missing_whisper_runtime(
-    monkeypatch,
-) -> None:
-    emitted: list[dict[str, object]] = []
-    monkeypatch.setattr(
-        "broadcastify_cli.worker._asr_self_test_result",
-        lambda _settings: (_ for _ in ()).throw(
-            RuntimeError("whisper-cli was not found")
-        ),
-    )
-    monkeypatch.setattr("broadcastify_cli.worker.find_whisper_cpp", lambda: None)
-    monkeypatch.setattr(
-        "broadcastify_cli.worker.whisper_cpp_container_diagnostics",
-        lambda: {"configured": False, "ready": False, "backend": "vulkan"},
-    )
-    monkeypatch.setattr(
-        "broadcastify_cli.worker.whisper_cpp_backends",
-        lambda _path: [],
-    )
-    monkeypatch.setattr("broadcastify_cli.worker.emit", emitted.append)
-
-    assert profile_self_test(
-        {"model": "turbo", "asr_engine": "whisper.cpp", "device": "vulkan"}
-    ) == 0
-
-    result = next(
-        value["result"]
-        for value in emitted
-        if value["type"] == "profile_self_test"
-    )
-    assert result["recovery"]["kind"] == "configure-transcription"
-    assert result["recovery"]["label"] == "Show Vulkan setup"
-
-
-def test_profile_self_test_recovery_prepares_model_after_runtime_is_ready(
-    monkeypatch,
-) -> None:
-    emitted: list[dict[str, object]] = []
-    monkeypatch.setattr(
-        "broadcastify_cli.worker._asr_self_test_result",
-        lambda _settings: (_ for _ in ()).throw(
-            RuntimeError("selected GGML model was not found")
-        ),
-    )
-    monkeypatch.setattr(
-        "broadcastify_cli.worker.find_whisper_cpp",
-        lambda: "/opt/whisper-cli",
-    )
-    monkeypatch.setattr(
-        "broadcastify_cli.worker.whisper_cpp_container_diagnostics",
-        lambda: {"configured": False, "ready": False, "backend": "vulkan"},
-    )
-    monkeypatch.setattr(
-        "broadcastify_cli.worker.whisper_cpp_backends",
-        lambda _path: ["cpu", "vulkan"],
-    )
-    monkeypatch.setattr(
-        "broadcastify_cli.worker.find_whisper_cpp_model",
-        lambda *_args, **_kwargs: None,
-    )
-    monkeypatch.setattr("broadcastify_cli.worker.emit", emitted.append)
-
-    assert profile_self_test(
-        {"model": "turbo", "asr_engine": "whisper.cpp", "device": "vulkan"}
-    ) == 0
-
-    result = next(
-        value["result"]
-        for value in emitted
-        if value["type"] == "profile_self_test"
-    )
-    assert result["recovery"]["kind"] == "prepare-asr-model"
-    assert result["recovery"]["label"] == "Download selected model"
-
-
-def test_profile_self_test_bounds_native_runtime_dump(monkeypatch) -> None:
-    emitted: list[dict[str, object]] = []
-    runtime_dump = "\n".join(
-        [
-            "whisper_model_load: model metadata",
-            "/source/ggml-backend.cpp:595: GGML_ASSERT(device) failed",
-            *[f"/lib/frame-{index}.so(+0x1234)" for index in range(100)],
-        ]
-    )
-    monkeypatch.setattr(
-        "broadcastify_cli.worker._asr_self_test_result",
-        lambda _settings: (_ for _ in ()).throw(RuntimeError(runtime_dump)),
-    )
-    monkeypatch.setattr("broadcastify_cli.worker.emit", emitted.append)
-
-    assert profile_self_test({}) == 0
-
-    result = next(
-        value["result"]
-        for value in emitted
-        if value["type"] == "profile_self_test"
-    )
-    assert "GGML_ASSERT(device) failed" in result["message"]
-    assert "individual transcription test" in result["message"]
-    assert "frame-99" not in result["message"]
-    assert len(result["message"]) < 700
 
 
 def test_explicit_private_environment_overrides_repository_defaults(

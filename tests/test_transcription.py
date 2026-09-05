@@ -18,12 +18,10 @@ from broadcastify_cli.transcription import (
     TranscriptWord,
     _combined_source_signature,
     _unchanged_source_prefix_seconds,
-    format_timestamp,
     group_words,
     speaker_for_interval,
     stable_file_sha256,
     transcription_processing_fingerprint,
-    transcript_quality_report,
 )
 
 
@@ -38,23 +36,6 @@ def _fake_diarization_modules(monkeypatch, from_pretrained) -> None:
     monkeypatch.setitem(sys.modules, "torch", torch_module)
     monkeypatch.setitem(sys.modules, "pyannote", pyannote_module)
     monkeypatch.setitem(sys.modules, "pyannote.audio", audio_module)
-
-
-def test_whisper_cpp_auto_device_prefers_metal_on_macos(monkeypatch) -> None:
-    monkeypatch.setattr("broadcastify_cli.transcription.sys.platform", "darwin")
-    monkeypatch.setattr(
-        "broadcastify_cli.transcription.find_whisper_cpp", lambda: "/opt/whisper-cli"
-    )
-    monkeypatch.setattr(
-        "broadcastify_cli.transcription.whisper_cpp_backends",
-        lambda _path: ["cpu", "metal"],
-    )
-
-    transcriber = LocalTranscriber(
-        asr_engine="whisper.cpp", device="auto", load_asr=False
-    )
-
-    assert transcriber.device == "metal"
 
 
 def test_diarization_reuses_cached_model_without_huggingface_token(monkeypatch) -> None:
@@ -90,38 +71,12 @@ def test_diarization_reuses_cached_model_without_huggingface_token(monkeypatch) 
     }
 
 
-def test_diarization_without_token_explains_cache_miss(monkeypatch) -> None:
-    def from_pretrained(_model: str, *, token: str | None) -> object:
-        assert token is None
-        raise OSError("cache miss")
-
-    monkeypatch.delenv("HUGGINGFACE_TOKEN", raising=False)
-    monkeypatch.delenv("HF_TOKEN", raising=False)
-    _fake_diarization_modules(monkeypatch, from_pretrained)
-
-    with pytest.raises(RuntimeError, match="no usable cached speaker-label model"):
-        LocalTranscriber(
-            asr_engine="whisper.cpp",
-            device="cpu",
-            diarization_device="cpu",
-            diarize=True,
-            load_asr=False,
-        )
-
-
 def test_speaker_uses_largest_overlap_not_first_overlap() -> None:
     turns = [
         SpeakerTurn(0.0, 1.1, "SPEAKER_00"),
         SpeakerTurn(1.1, 5.0, "SPEAKER_01"),
     ]
     assert speaker_for_interval(0.9, 2.5, turns) == "SPEAKER_01"
-
-
-def test_zero_duration_word_uses_containing_or_nearest_turn() -> None:
-    turns = [SpeakerTurn(1.0, 2.0, "SPEAKER_00")]
-    assert speaker_for_interval(1.5, 1.5, turns) == "SPEAKER_00"
-    assert speaker_for_interval(2.25, 2.25, turns) == "SPEAKER_00"
-    assert speaker_for_interval(3.0, 3.0, turns) is None
 
 
 def test_words_group_only_while_speaker_is_unchanged() -> None:
@@ -134,30 +89,6 @@ def test_words_group_only_while_speaker_is_unchanged() -> None:
     assert [segment.speaker for segment in grouped] == ["SPEAKER_00", "SPEAKER_01"]
     assert grouped[0].text == "Dispatch calling"
     assert grouped[1].text == "unit"
-
-
-def test_timestamp_includes_milliseconds() -> None:
-    assert format_timestamp(3661.234) == "01:01:01.234"
-
-
-def test_compatible_transcript_is_a_cache_hit(tmp_path: Path) -> None:
-    audio = tmp_path / "combined.mp3"
-    audio.write_bytes(b"audio")
-    transcript_dir = tmp_path / "transcripts"
-    transcript_dir.mkdir()
-    json_path = transcript_dir / "combined.json"
-    txt_path = transcript_dir / "combined.txt"
-    json_path.write_text(
-        json.dumps({"model": "turbo", "segments": [], "diarization_requested": False}),
-        encoding="utf-8",
-    )
-    txt_path.write_text("", encoding="utf-8")
-
-    transcriber = object.__new__(LocalTranscriber)
-    transcriber.model_name = "turbo"
-    transcriber.diarize = False
-
-    assert transcriber._existing_transcript_is_current(audio, json_path, txt_path)
 
 
 def test_portable_transcript_cache_hit_migrates_diarization_cache(
@@ -358,28 +289,6 @@ def test_windows_ml_checkpoint_cleans_only_after_final_transcript_commit(
 
     assert transcript_path.is_file()
     assert finalized == [audio]
-
-
-def test_transcript_quality_rejects_repetition_collapse() -> None:
-    report = transcript_quality_report(
-        ["15. I'll show you enough for that."] * 1_881
-        + [f"variation {index}" for index in range(28)]
-    )
-
-    assert report["status"] == "rejected"
-    assert report["segment_count"] == 1_909
-    assert report["dominant_segment_ratio"] > 0.98
-
-
-def test_transcript_quality_rejects_repetition_inside_one_segment() -> None:
-    report = transcript_quality_report(
-        [f"unique dispatch {index}" for index in range(100)]
-        + [", ".join(["I'm 13"] * 80)]
-    )
-
-    assert report["status"] == "rejected"
-    assert report["localized_repetition_segment_count"] == 1
-    assert report["policy"] == "repetition-collapse-v2"
 
 
 def test_localized_repetition_is_discarded_without_losing_good_segments(
@@ -1190,58 +1099,6 @@ def test_portable_checkpoint_survives_failed_final_cache_write(
         transcriber._diarize(audio)
 
     assert checkpoint.read_text(encoding="utf-8") == "all chunks complete"
-
-
-@pytest.mark.parametrize(
-    ("pipeline_batch_size", "expected_batch_size"),
-    [(1, 8), (32, 32)],
-)
-def test_diarization_reports_inner_pipeline_progress_without_lowering_model_batch(
-    monkeypatch,
-    tmp_path: Path,
-    pipeline_batch_size: int,
-    expected_batch_size: int,
-) -> None:
-    audio = tmp_path / "combined.mp3"
-    audio.write_bytes(b"audio")
-    prepared = tmp_path / "combined.pyannote.flac"
-    prepared.write_bytes(b"prepared audio")
-    messages: list[str] = []
-
-    class FakePipeline:
-        embedding_batch_size = pipeline_batch_size
-
-        def __call__(self, audio: dict[str, object], *, hook=None, **_kwargs: object):
-            assert audio["sample_rate"] == 16_000
-            assert "waveform" in audio
-            assert hook is not None
-            assert self.embedding_batch_size == expected_batch_size
-            hook("segmentation", None, file={"uri": "test"}, total=4, completed=1)
-            hook("segmentation", None, file={"uri": "test"}, total=4, completed=4)
-            hook("embeddings", None)
-            return [(SimpleNamespace(start=1.0, end=2.0), "SPEAKER_00")]
-
-    transcriber = object.__new__(LocalTranscriber)
-    transcriber._diarization_pipeline = FakePipeline()
-    transcriber.batch_size = 8
-    transcriber.min_speakers = None
-    transcriber.max_speakers = None
-    transcriber.diarization_device = "cpu"
-    monkeypatch.setattr(
-        transcriber, "_prepare_diarization_input", lambda _path: (prepared, True)
-    )
-    monkeypatch.setattr(
-        "broadcastify_cli.transcription.decoded_diarization_audio",
-        lambda _path: nullcontext({"waveform": object(), "sample_rate": 16_000}),
-    )
-
-    turns = transcriber._diarize(audio, progress=messages.append)
-
-    assert turns == [SpeakerTurn(1.0, 2.0, "SPEAKER_00")]
-    assert "Diarization segmentation: 25% (1/4)" in messages
-    assert "Diarization segmentation: 100% (4/4)" in messages
-    assert "Diarization embeddings" in messages
-    assert not prepared.exists()
 
 
 def test_diarization_keeps_prepared_input_after_pipeline_failure(

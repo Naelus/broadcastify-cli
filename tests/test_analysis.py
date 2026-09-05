@@ -20,97 +20,13 @@ from broadcastify_cli.analysis import (
     format_archive_time,
     build_transcript_windows,
     find_cached_huggingface_gguf,
-    find_llama_server,
     incident_claim_has_evidence_support,
     normalize_local_model_reference,
-    normalize_event_type,
-    normalize_priority,
-    prepare_llama_environment,
     prepare_llama_loader_environment,
     redact_public_text,
     resolve_local_llama_model,
 )
 from broadcastify_cli.storage import AnalysisStore
-
-
-def test_range_question_followup_includes_bounded_chat_context(
-    tmp_path: Path,
-) -> None:
-    archive_date = date(2026, 8, 5)
-    transcript = tmp_path / "transcript.json"
-    transcript.write_text(
-        json.dumps(
-            {
-                "model": "test",
-                "segments": [
-                    {
-                        "start": 10.0,
-                        "end": 15.0,
-                        "text": "Dispatch received one report of possible shots fired.",
-                    }
-                ],
-            }
-        ),
-        encoding="utf-8",
-    )
-    manifest = tmp_path / "combined.manifest.json"
-    manifest.write_text(
-        json.dumps(
-            {
-                "sources": [
-                    {
-                        "archive_start": "2026-08-05T14:30:00",
-                        "combined_start_seconds": 0,
-                    }
-                ]
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    class ChatClient:
-        model = "fake-gemma-chat"
-
-        def __init__(self) -> None:
-            self.user = ""
-            self.system = ""
-
-        def chat_json(self, **kwargs: object) -> dict[str, object]:
-            self.user = str(kwargs["user"])
-            self.system = str(kwargs["system"])
-            return {
-                "answer": "One report was retained [E1].",
-                "evidence_ids": [],
-                "limitations": [],
-            }
-
-    client = ChatClient()
-    with AnalysisStore(tmp_path / "analysis.sqlite3") as store:
-        store.import_transcript(
-            "90001", archive_date, transcript, manifest_path=manifest
-        )
-        result = RangeQuestionAnswerer(store, client).ask(
-            "90001",
-            archive_date,
-            archive_date,
-            "How many were there?",
-            history=[
-                {"role": "user", "content": "Were any shots reported?"},
-                {"role": "assistant", "content": "There was one possible report."},
-            ],
-        )
-
-    assert result["answer"] == (
-        "One report was retained [E1].\n\n"
-        "Cited event dates and times (archive time):\n"
-        "- E1 — 2026-08-05 14:30:10 — retrieved transcript evidence"
-    )
-    assert result["evidence_ids"] == ["E1"]
-    assert "EARLIER CHAT:" in client.user
-    assert "USER: Were any shots reported?" in client.user
-    assert "CURRENT QUESTION: How many were there?" in client.user
-    assert "RETRIEVED TRANSCRIPT EVIDENCE:" in client.user
-    assert "must state its supplied full archive date and time" in client.system
 
 
 def test_range_question_withholds_an_uncited_generated_event(
@@ -221,228 +137,6 @@ def test_range_question_withholds_mixed_cited_and_uncited_events(
         "The generated answer was withheld because every material "
         "statement did not include a valid retained-evidence citation."
     ]
-
-
-def test_range_question_filters_to_ready_month_dates_and_owns_gap_limitation(
-    tmp_path: Path,
-) -> None:
-    ready_date = date(2026, 7, 1)
-    unavailable_date = date(2026, 7, 2)
-    ready_transcript = tmp_path / "ready.json"
-    unavailable_transcript = tmp_path / "unavailable.json"
-    ready_transcript.write_text(
-        json.dumps(
-            {
-                "model": "test",
-                "segments": [
-                    {
-                        "start": 1.0,
-                        "end": 3.0,
-                        "text": "A retained July report mentioned possible shots fired.",
-                    }
-                ],
-            }
-        ),
-        encoding="utf-8",
-    )
-    unavailable_transcript.write_text(
-        json.dumps(
-            {
-                "model": "test",
-                "segments": [
-                    {
-                        "start": 1.0,
-                        "end": 3.0,
-                        "text": "This unavailable date must never reach the model.",
-                    }
-                ],
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    class CoverageClient:
-        model = "fake-month-model"
-
-        def __init__(self) -> None:
-            self.user = ""
-
-        def chat_json(self, **kwargs: object) -> dict[str, object]:
-            self.user = str(kwargs["user"])
-            return {
-                "answer": "One possible report was retained [E1].",
-                "evidence_ids": ["E1"],
-                "limitations": [],
-            }
-
-    coverage = {
-        "feed_id": "90001",
-        "start_date": "2026-07-01",
-        "end_date": "2026-07-02",
-        "requested_day_count": 2,
-        "audio_day_count": 2,
-        "question_ready_day_count": 1,
-        "analyzed_day_count": 0,
-        "question_ready_dates": ["2026-07-01"],
-        "analyzed_dates": [],
-        "unavailable_dates": ["2026-07-02"],
-        "summary": "1/2 requested days are question-ready.",
-    }
-    client = CoverageClient()
-    with AnalysisStore(tmp_path / "analysis.sqlite3") as store:
-        store.import_transcript("90001", ready_date, ready_transcript)
-        store.import_transcript("90001", unavailable_date, unavailable_transcript)
-        result = RangeQuestionAnswerer(store, client).ask(
-            "90001",
-            ready_date,
-            unavailable_date,
-            "Were shots reported?",
-            coverage=coverage,
-        )
-
-    assert "A retained July report" in client.user
-    assert "must never reach the model" not in client.user
-    assert "LOCAL COVERAGE (authoritative)" in client.user
-    assert "Never interpret an unavailable date as a day with no activity" in client.user
-    assert result["coverage"] == coverage
-    assert result["limitations"] == [
-        "Partial retained coverage: no question-ready transcript for 2026-07-02."
-    ]
-    assert (
-        "2026-07-01 at archive offset 00:00:01 (clock time unavailable)"
-        in result["answer"]
-    )
-
-
-def test_range_question_supplies_deterministic_hotspot_pattern_evidence(
-    tmp_path: Path,
-) -> None:
-    first_date = date(2026, 7, 6)
-    second_date = date(2026, 7, 7)
-
-    class PatternClient:
-        model = "fake-pattern-model"
-
-        def __init__(self) -> None:
-            self.user = ""
-            self.system = ""
-            self.location_id = ""
-
-        def chat_json(self, **kwargs: object) -> dict[str, object]:
-            self.user = str(kwargs["user"])
-            self.system = str(kwargs["system"])
-            self.location_id = next(
-                line.split()[0]
-                for line in self.user.splitlines()
-                if "repeated extracted location Main and First" in line
-            )
-            return {
-                "answer": (
-                    "Main and First repeated in two extracted records "
-                    f"[{self.location_id}]."
-                ),
-                "evidence_ids": [self.location_id],
-                "limitations": [],
-            }
-
-    client = PatternClient()
-    with AnalysisStore(tmp_path / "analysis.sqlite3") as store:
-        for index, archive_date in enumerate((first_date, second_date), start=1):
-            transcript = tmp_path / f"transcript-{index}.json"
-            manifest = tmp_path / f"manifest-{index}.json"
-            transcript.write_text(
-                json.dumps(
-                    {
-                        "model": "test",
-                        "segments": [
-                            {
-                                "start": 7_200.0 * index,
-                                "end": 7_205.0 * index,
-                                "text": "Dispatch reported possible shots at Main and First.",
-                            }
-                        ],
-                    }
-                ),
-                encoding="utf-8",
-            )
-            manifest.write_text(
-                json.dumps(
-                    {
-                        "sources": [
-                            {
-                                "archive_start": (
-                                    f"{archive_date.isoformat()}T"
-                                    + ("08:00:00" if index == 1 else "15:00:00")
-                                ),
-                                "combined_start_seconds": 0,
-                            }
-                        ]
-                    }
-                ),
-                encoding="utf-8",
-            )
-            imported = store.import_transcript(
-                "90001", archive_date, transcript, manifest_path=manifest
-            )
-            store.replace_incidents(
-                imported.day_id,
-                [
-                    {
-                        "fingerprint": f"pattern-{index}",
-                        "event_type": "shots_fired",
-                        "title": "Possible shots reported",
-                        "summary": "Dispatch reported possible shots.",
-                        "location": "Main and First",
-                        "start_seconds": 7_200.0 * index,
-                        "end_seconds": 7_205.0 * index,
-                        "priority": 4,
-                        "confidence": 0.9,
-                        "evidence": [],
-                        "attributes": {},
-                    }
-                ],
-                model="test-model",
-                prompt_version=PROMPT_VERSION,
-            )
-        coverage = {
-            "feed_id": "90001",
-            "start_date": first_date.isoformat(),
-            "end_date": second_date.isoformat(),
-            "requested_day_count": 2,
-            "audio_day_count": 2,
-            "question_ready_day_count": 2,
-            "analyzed_day_count": 2,
-            "question_ready_dates": [first_date.isoformat(), second_date.isoformat()],
-            "question_ready_ranges": [f"{first_date} through {second_date}"],
-            "analyzed_dates": [first_date.isoformat(), second_date.isoformat()],
-            "unavailable_dates": [],
-            "unavailable_ranges": [],
-            "summary": "2/2 requested days are question-ready.",
-        }
-        result = RangeQuestionAnswerer(store, client).ask(
-            "90001",
-            first_date,
-            second_date,
-            "Where and when are the hot spots?",
-            coverage=coverage,
-        )
-
-    assert "DETERMINISTIC RANGE PATTERNS:" in client.user
-    assert "repeated extracted location Main and First=2 incident(s)" in client.user
-    assert "weekday distribution:" in client.user
-    assert "six-hour archive-time distribution:" in client.user
-    assert "06:00-11:59 archive time=1" in client.user
-    assert "18:00-23:59 archive time=1" in client.user
-    assert "population-normalized crime rates" in client.system
-    assert result["evidence_ids"] == [client.location_id]
-    assert "2026-07-06 10:00:00" in result["answer"]
-    assert "2026-07-07 19:00:00" in result["answer"]
-    assert any(
-        value["kind"] == "location"
-        and value["label"] == "Main and First"
-        and value["count"] == 2
-        for value in result["patterns"]
-    )
 
 
 def test_managed_llama_cpu_device_disables_every_gpu_layer() -> None:
@@ -798,36 +492,6 @@ def test_daily_summary_uses_deterministic_fallback_after_two_ungrounded_briefs()
     assert any("deterministic evidence summary" in value for value in progress)
 
 
-def test_llama_lookup_tolerates_inaccessible_winget_cache(
-    monkeypatch, tmp_path: Path
-) -> None:
-    monkeypatch.delenv("LLAMA_SERVER_PATH", raising=False)
-    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
-    monkeypatch.setattr("broadcastify_cli.analysis.shutil.which", lambda _name: None)
-
-    def denied(_self: Path, _pattern: str):
-        raise PermissionError("package cache is not readable")
-
-    monkeypatch.setattr(Path, "glob", denied)
-
-    assert find_llama_server() is None
-
-
-def test_llama_environment_provides_rootless_cache_paths(
-    tmp_path: Path,
-) -> None:
-    prepared = prepare_llama_environment(
-        {"HOME": str(tmp_path / "missing"), "HUGGINGFACE_TOKEN": "test-token"},
-        tmp_path / "runtime",
-        platform_name="posix",
-    )
-
-    assert Path(prepared["HOME"]).is_dir()
-    assert Path(prepared["LLAMA_CACHE"]).is_dir()
-    assert Path(prepared["HF_HOME"]).is_dir()
-    assert prepared["HF_TOKEN"] == "test-token"
-
-
 def test_llama_loader_path_is_scoped_and_prefers_executable_siblings(
     tmp_path: Path,
 ) -> None:
@@ -851,30 +515,6 @@ def test_llama_loader_path_is_scoped_and_prefers_executable_siblings(
     ]
     assert prepared["UNRELATED"] == "retained"
     assert original["LD_LIBRARY_PATH"].startswith("/shared/ggml")
-
-
-def test_llama_loader_path_uses_macos_variable_and_skips_windows(
-    tmp_path: Path,
-) -> None:
-    executable = tmp_path / "llama-server"
-    executable.write_bytes(b"binary")
-
-    mac = prepare_llama_loader_environment(
-        {"DYLD_LIBRARY_PATH": "/existing"},
-        executable,
-        platform_name="darwin",
-    )
-    windows = prepare_llama_loader_environment(
-        {"PATH": "C:\\Windows"},
-        executable,
-        platform_name="win32",
-    )
-
-    assert mac["DYLD_LIBRARY_PATH"].split(os.pathsep) == [
-        str(tmp_path.resolve()),
-        "/existing",
-    ]
-    assert windows == {"PATH": "C:\\Windows"}
 
 
 def test_legacy_llama_model_reuses_main_gguf_from_older_hub_snapshot(
@@ -912,25 +552,6 @@ def test_missing_legacy_llama_model_migrates_to_available_quant(
     ) == (None, "ggml-org/gemma-4-12B-it-GGUF:Q4_0")
 
 
-def test_explicit_local_gguf_is_resolved_without_hub_lookup(tmp_path: Path) -> None:
-    model = tmp_path / "portable-model.gguf"
-    model.write_bytes(b"model")
-
-    assert resolve_local_llama_model(
-        str(model), cache_roots=[tmp_path / "empty"]
-    ) == (model.resolve(), str(model))
-
-
-def test_windows_cover_full_timeline() -> None:
-    segments = [
-        {"segment_index": 0, "start_seconds": 10.0, "end_seconds": 20.0, "text": "one"},
-        {"segment_index": 1, "start_seconds": 8_000.0, "end_seconds": 8_010.0, "text": "two"},
-    ]
-    windows = build_transcript_windows(segments, window_seconds=7_200, overlap_seconds=0)
-    assert len(windows) == 2
-    assert windows[-1].segments[0]["segment_index"] == 1
-
-
 def test_dense_transcript_windows_are_bounded_with_small_context_overlap() -> None:
     segments = [
         {
@@ -960,62 +581,6 @@ def test_dense_transcript_windows_are_bounded_with_small_context_overlap() -> No
         & set(segment["segment_index"] for segment in second.segments)
         for first, second in zip(windows, windows[1:])
     )
-
-
-def test_clear_evidence_corrects_category_and_routine_priority() -> None:
-    assert normalize_event_type("Shoplifting in progress in the bathroom", "shots_fired") == "theft_shoplifting"
-    assert normalize_event_type("A bald male has a silver handgun", "warrant_arrest") == "person_with_weapon"
-    assert normalize_event_type("She reported a single gunshot", "other") == "shots_fired"
-    assert normalize_event_type("Juveniles running northeast", "fire") == "suspicious_activity"
-    assert normalize_event_type("Residential intrusion alarm", "warrant_arrest") == "burglary"
-    assert normalize_event_type("The stolen vehicle was found", "domestic_disturbance") == "vehicle_theft"
-    assert normalize_event_type("They located the stolen spot car", "other") == "vehicle_theft"
-    assert normalize_event_type("He broke out three bus windows", "vehicle_theft") == "property_damage"
-    assert normalize_event_type("A vehicle attempting to flee without lights", "vehicle_theft") == "vehicle_pursuit"
-    assert normalize_event_type("Welfare check for an elderly man", "warrant_arrest") == "welfare_check"
-    assert normalize_event_type("Check the welfare of a resident", "warrant_arrest") == "welfare_check"
-    assert normalize_event_type("A female is having trouble breathing", "other") == "medical"
-    assert normalize_event_type("A person collapsed; medic to evaluate", "other") == "medical"
-    assert normalize_event_type("Trying to steal packages off the porch", "other") == "theft"
-    assert normalize_event_type("The neighbor made threats", "other") == "threats"
-    assert normalize_event_type("Female screaming in the lobby", "assault") == "disturbance"
-    assert normalize_event_type("Screaming near some type of ambulance fight", "assault") == "disturbance"
-    assert normalize_event_type("Juveniles getting ready to fight", "assault") == "disturbance"
-    assert normalize_event_type("Routine follow-up requested", "warrant_arrest") == "other"
-    assert normalize_priority("theft_shoplifting", 5) == 3
-    assert normalize_priority("unknown", 5) == 2
-    assert normalize_priority("vehicle_theft", 2) == 3
-    assert normalize_priority("vehicle_pursuit", 2) == 4
-
-
-def test_public_text_redacts_contextual_private_names_and_identifiers() -> None:
-    text, changed = redact_public_text(
-        "Trouble with Logan Spangler; caller 309-555-0123, DOB 1/2/1980.",
-        redact_private_names=True,
-    )
-
-    assert changed is True
-    assert "Logan Spangler" not in text
-    assert "[private person]" in text
-    assert "[phone redacted]" in text
-    assert "[date of birth redacted]" in text
-
-    radio_text, radio_changed = redact_public_text(
-        "Collar, Nick Schieber. Latina Johnson, black female, "
-        "date of birth 3, 2587.",
-        redact_private_names=True,
-    )
-    assert radio_changed is True
-    assert "Nick Schieber" not in radio_text
-    assert "Latina Johnson" not in radio_text
-    assert "2587" not in radio_text
-
-    single_name, single_changed = redact_public_text(
-        "Amiel was threatening to come to the location.",
-        redact_private_names=True,
-    )
-    assert single_changed is True
-    assert "Amiel" not in single_name
 
 
 def test_incident_validation_preserves_spoken_names_and_keeps_evidence() -> None:

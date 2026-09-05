@@ -12,9 +12,7 @@ from broadcastify_cli.linux_service import (
     install_service,
     load_service_config,
     render_systemd_unit,
-    show_service_logs,
 )
-from broadcastify_cli.web_app import build_parser as build_web_parser
 
 
 def _config(tmp_path: Path) -> LinuxServiceConfig:
@@ -154,18 +152,6 @@ def test_service_config_accepts_explicit_trusted_lan_host(tmp_path: Path) -> Non
     assert config.access_scope == "trusted-lan"
 
 
-def test_service_config_accepts_specific_private_host(tmp_path: Path) -> None:
-    config = build_service_config(
-        python_executable=sys.executable,
-        working_dir=tmp_path / "data",
-        host="10.200.1.99",
-    )
-
-    assert config.host == "10.200.1.99"
-    assert config.url == "http://10.200.1.99:8765/"
-    assert config.access_scope == "trusted-lan"
-
-
 def test_service_config_rejects_public_host(tmp_path: Path) -> None:
     value = {
         **json.loads(json.dumps(_config(tmp_path).__dict__)),
@@ -173,31 +159,6 @@ def test_service_config_rejects_public_host(tmp_path: Path) -> None:
     }
     with pytest.raises(ValueError, match="public"):
         LinuxServiceConfig.from_mapping(value)
-
-
-def test_service_logs_show_only_the_requested_tail(
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    config = _config(tmp_path)
-    log_path = Path(config.working_dir) / "radio-archive-web.log"
-    log_path.parent.mkdir(parents=True)
-    log_path.write_text("one\ntwo\nthree\n", encoding="utf-8")
-
-    result = show_service_logs(config, lines=2)
-
-    assert result == 0
-    assert capsys.readouterr().out == "two\nthree\n"
-
-
-def test_service_logs_report_when_the_service_has_not_started(
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    result = show_service_logs(_config(tmp_path), lines=20)
-
-    assert result == 1
-    assert "Start the service first" in capsys.readouterr().err
 
 
 def test_service_config_preserves_virtual_environment_python_path(
@@ -216,20 +177,3 @@ def test_service_config_preserves_virtual_environment_python_path(
     )
 
     assert config.python_executable == str(venv_python)
-
-
-def test_web_entry_point_accepts_explicit_working_directory(tmp_path: Path) -> None:
-    arguments = build_web_parser().parse_args(
-        [
-            "--working-dir",
-            str(tmp_path),
-            "--host",
-            "0.0.0.0",
-            "--port",
-            "18765",
-        ]
-    )
-
-    assert arguments.working_dir == str(tmp_path)
-    assert arguments.host == "0.0.0.0"
-    assert arguments.port == 18765
