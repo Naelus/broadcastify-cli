@@ -64,6 +64,9 @@ The trusted-LAN workflow proves that:
   never imports that follower's model output;
 - followers submit ranges to Windows and consume completed Windows-authored
   source/result deltas once across cursor persistence and restart;
+- legacy source discovery serves healthy days even when another completion
+  marker is malformed or future-dated, preserves retained files, and does not
+  republish already journaled days during migration or restart;
 - every acquisition node uses the Windows coordinator while local retained
   browsing remains available during coordinator failure;
 - the protected Web System activity surface refreshes coordinated acquisition,

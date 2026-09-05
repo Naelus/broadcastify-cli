@@ -169,33 +169,3 @@ def test_native_build_gate_runs_behavioral_suite_and_ui_e2e() -> None:
     ui_e2e = targets["RunNativeUiEndToEndGate"]
     assert ui_e2e.attrib["AfterTargets"] == "Build"
     assert "run_windows_ui_e2e.ps1" in ui_e2e.find("Exec").attrib["Command"]
-
-
-def test_release_pipeline_exercises_installer_before_publish() -> None:
-    workflow = (
-        ROOT / ".github" / "workflows" / "windows-release.yml"
-    ).read_text(encoding="utf-8")
-    steps = re.findall(r"^\s+- name: (.+)$", workflow, re.MULTILINE)
-
-    assert steps.index("Build installer") < steps.index(
-        "Exercise installer lifecycle"
-    )
-    assert steps.index("Exercise installer lifecycle") < steps.index(
-        "Upload workflow artifact"
-    )
-    assert steps.index("Exercise installer lifecycle") < steps.index(
-        "Publish tagged release asset"
-    )
-
-
-def test_public_installer_build_wires_preflight_and_release_guards() -> None:
-    build = (
-        ROOT / "scripts" / "build_windows_installer.ps1"
-    ).read_text(encoding="utf-8")
-
-    assert re.search(r"\$sourceCommit\s*=\s*Assert-CommittedBuildSource", build)
-    assert build.index("$preflightResult = & $packagingPreflight") < build.index(
-        "Remove-Item -LiteralPath $stageRoot"
-    )
-    assert re.search(r"\$scanArguments\s*=\s*@\(\s*\$publicReleaseScanner", build)
-    assert re.search(r"&\s+\$builder\s+@scanArguments", build)

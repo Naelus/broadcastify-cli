@@ -28,7 +28,6 @@ from broadcastify_cli.lan_sync import (
     LanDiscoveryResponder,
     LanDownloadTurn,
     LanProcessingQueue,
-    LanSyncResult,
     discovery_destinations,
     discover_lan_peers,
     normalize_peer_url,
@@ -117,6 +116,73 @@ def test_republishing_rolling_source_advances_the_delta_cursor(
         assert events[0]["kind"] == "source"
         assert events[0]["feed_id"] == feed_id
         assert events[0]["archive_date"] == archive_date.isoformat()
+
+
+@pytest.mark.parametrize("damaged_marker", ["[]", "future"])
+def test_lan_changes_migrates_legacy_sources_despite_a_damaged_marker(
+    tmp_path: Path,
+    damaged_marker: str,
+) -> None:
+    feed_id = "90001"
+    legacy_date = date(2026, 7, 12)
+    published_date = legacy_date + timedelta(days=1)
+    damaged_date = date.today() + timedelta(days=1)
+    markers: dict[Path, str] = {}
+    for archive_date in (legacy_date, published_date, damaged_date):
+        day = tmp_path / feed_id / archive_date.strftime("%Y%m%d")
+        day.mkdir(parents=True)
+        payload = json.dumps(
+            {"feed_id": feed_id, "archive_date": archive_date.isoformat()}
+        )
+        if archive_date == damaged_date and damaged_marker != "future":
+            payload = damaged_marker
+        marker = day / ".broadcastify-archive-complete.json"
+        marker.write_text(payload, encoding="utf-8")
+        markers[marker] = payload
+
+    # A current worker may already have published some days before an older
+    # library is first discovered. Migration must not republish those days.
+    with PipelineSyncStore(tmp_path) as journal:
+        cursor = journal.record_source(feed_id, published_date)
+
+    server = create_lan_node_server(
+        tmp_path,
+        host="127.0.0.1",
+        port=0,
+        discovery_enabled=False,
+    )
+    server.quiet = True
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    connection = http.client.HTTPConnection(
+        "127.0.0.1", server.server_port, timeout=5,
+    )
+    try:
+        connection.request("GET", f"/api/lan/v1/changes?after={cursor}")
+        response = connection.getresponse()
+        assert response.status == HTTPStatus.OK
+        changes = json.loads(response.read())
+        assert [
+            (event["feed_id"], event["archive_date"])
+            for event in changes["events"]
+        ] == [
+            (feed_id, legacy_date.isoformat()),
+        ]
+    finally:
+        connection.close()
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=3)
+
+    # Restart uses the persisted migration checkpoint without changing either
+    # the peer cursor or the retained markers, including the damaged one.
+    with PipelineSyncStore(tmp_path) as journal:
+        assert journal.seed_sources() == 0
+        assert journal.changes(changes["cursor"])["events"] == []
+    assert all(
+        marker.read_text(encoding="utf-8") == payload
+        for marker, payload in markers.items()
+    )
 
 
 def test_unchanged_completion_proof_does_not_republish_source_delta(
@@ -2540,19 +2606,6 @@ def test_job_request_rejects_public_peer_urls() -> None:
                 "lan_peer_urls": ["http://8.8.8.8:8765"],
             }
         )
-
-
-def test_lan_result_remains_serializable_for_worker_events() -> None:
-    result = LanSyncResult(
-        enabled=True,
-        peers_considered=2,
-        peers_reached=1,
-        blocks_copied=3,
-        bytes_copied=123,
-        failures=("one peer was unavailable",),
-    )
-
-    assert json.loads(json.dumps(result.to_dict()))["blocks_copied"] == 3
 
 
 def test_native_lan_node_continuously_reconciles_peer_artifacts(

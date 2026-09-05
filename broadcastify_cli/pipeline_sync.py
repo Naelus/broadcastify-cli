@@ -213,10 +213,12 @@ class PipelineSyncStore:
                 marker = day_dir / ".broadcastify-archive-complete.json"
                 try:
                     payload = json.loads(marker.read_text(encoding="utf-8"))
-                    archive_date = date.fromisoformat(
-                        str(payload.get("archive_date") or "")
-                    )
-                except (OSError, TypeError, ValueError, json.JSONDecodeError):
+                    # A damaged retained marker must not prevent peers from
+                    # discovering healthy days elsewhere in the same library.
+                    if not isinstance(payload, dict):
+                        continue
+                    archive_date = _date_value(payload.get("archive_date"))
+                except (OSError, TypeError, ValueError):
                     continue
                 if (
                     str(payload.get("feed_id") or "") == feed_dir.name
@@ -224,7 +226,9 @@ class PipelineSyncStore:
                 ):
                     discovered.append((feed_dir.name, archive_date))
         for feed_id, archive_date in discovered:
-            self.record_source(feed_id, archive_date)
+            # Migration fills journal gaps; it is not evidence of new audio.
+            # Keep existing sequences so caught-up peers do not copy days again.
+            self._record("source", feed_id, archive_date, "")
         self.connection.execute(
             "INSERT OR REPLACE INTO metadata(key, value) VALUES('sources_seeded', ?)",
             (_utc_now(),),
