@@ -6849,6 +6849,24 @@ public sealed partial class MainWindow : Window
                     + $"all returned transcript days instead. {exception.Message}");
             }
         }
+        if (jobResult is not null && request.MaxProcessingDays is > 0)
+        {
+            var limit = request.MaxProcessingDays.Value;
+            var deferredAnalysis = requiredTranscriptDays.Skip(limit)
+                .Select(day => day.ArchiveDate).ToList();
+            foreach (var archiveDate in deferredAnalysis)
+            {
+                if (!jobResult.PendingProcessingDays.Contains(archiveDate))
+                {
+                    jobResult.PendingProcessingDays.Add(archiveDate);
+                }
+            }
+            if (deferredAnalysis.Count > 0)
+            {
+                AppendLog($"{deferredAnalysis.Count} analysis day(s) remain queued; current coverage gets another turn after this day.");
+            }
+            requiredTranscriptDays = requiredTranscriptDays.Take(limit).ToList();
+        }
         foreach (var day in requiredTranscriptDays)
         {
             cancellationToken.ThrowIfCancellationRequested();

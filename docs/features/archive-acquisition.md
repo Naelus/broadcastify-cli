@@ -189,6 +189,8 @@ shared quota reservation boundary so manual jobs cannot drain that reserve.
 Profile ordering is primary, secondary when present, then other IDs sorted
 alphabetically. The reserve prevents history from spending future current
 capacity; it does not reset requests that an account has already consumed.
+Scheduled transcription and analysis each yield after one retained day;
+unfinished analysis dates remain queued rather than marking the schedule done.
 
 On Windows, **Manage schedules** can edit the daily time, lookback, historical
 catch-up date, one-time/recurring mode, account policy, enabled state, local processing stages, and incident analysis
