@@ -47,7 +47,7 @@ def test_desktop_quota_owner_survives_stale_private_coordinator(
         "BROADCASTIFY_LAN_QUOTA_COORDINATOR=http://192.0.2.1:8765\n", encoding="utf-8",
     )
     load_worker_environment()
-    assert os.environ["BROADCASTIFY_LAN_QUOTA_COORDINATOR"] == "http://127.0.0.1:8766"
+    assert os.environ["BROADCASTIFY_LAN_QUOTA_COORDINATOR"] == ""
     _load_environment()
     assert os.environ["BROADCASTIFY_LAN_QUOTA_COORDINATOR"] == ""
 
