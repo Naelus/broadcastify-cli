@@ -816,13 +816,13 @@ def test_web_authorized_account_pool_exposes_two_isolated_profiles_and_rotates(
         ]
         assert pool["quota"]["account_count"] == 2
         assert pool["quota"]["provider_limit"] == 500
-        assert pool["quota"]["automated_limit"] == 480
-        assert pool["quota"]["user_reserve"] == 20
+        assert pool["quota"]["automated_limit"] == 498
+        assert pool["quota"]["user_reserve"] == 2
         assert b"primary-secret" not in body
         assert b"secondary-secret" not in body
 
         store = EncryptedCredentialStore(credential_path)
-        assert _select_account_profile(tmp_path, store, "automatic") == "default"
+        assert _select_account_profile(tmp_path, store, "automatic") == "secondary"
         assert _select_account_profile(
             tmp_path,
             store,

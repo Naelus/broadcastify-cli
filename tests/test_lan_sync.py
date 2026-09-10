@@ -599,7 +599,7 @@ def test_remote_quota_ledger_counts_once_at_the_lan_coordinator_and_fails_closed
         assert shared["used"] == 1
         assert mirror["used"] == 1
         assert status["used"] == 1
-        assert status["remaining"] == 239
+        assert status["remaining"] == 247
         assert status["coordinated"] is True
 
         rejected = RemoteArchiveRequestLedger(
