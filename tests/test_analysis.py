@@ -492,6 +492,49 @@ def test_daily_summary_uses_deterministic_fallback_after_two_ungrounded_briefs()
     assert any("deterministic evidence summary" in value for value in progress)
 
 
+def test_truncated_daily_brief_finishes_days_and_reuses_saved_evidence(
+    tmp_path: Path,
+) -> None:
+    transcript = tmp_path / "transcript.json"
+    transcript.write_text(json.dumps({
+        "model": "test", "duration": 30.0,
+        "segments": [{"start": 10.0, "end": 15.0,
+                      "text": "Police just had a squad car stolen."}],
+    }), encoding="utf-8")
+
+    class TruncatedBriefClient:
+        model = "test"
+        extraction_calls = 0
+        summary_calls = 0
+
+        def chat_json(self, **kwargs: object) -> dict[str, object]:
+            if kwargs["schema_name"] == "police_radio_incidents":
+                self.extraction_calls += 1
+                return {"incidents": []}
+            self.summary_calls += 1
+            raise LlamaServerError(
+                "Local model returned invalid JSON (finish_reason=length): {"
+            )
+
+    client = TruncatedBriefClient()
+    with AnalysisStore(tmp_path / "analysis.sqlite3") as store:
+        analyzer = IncidentAnalyzer(store, client)
+        for archive_date in (date(2026, 7, 16), date(2026, 7, 17)):
+            store.import_transcript("90001", archive_date, transcript)
+            result = analyzer.analyze_day("90001", archive_date)
+            assert result["incidents"] > 0
+            assert "vehicle theft" in result["summary"]
+            day = store.get_day("90001", archive_date)
+            saved = store.get_daily_summary(
+                int(day["id"]), client.model, PROMPT_VERSION,
+                str(day["transcript_sha256"]),
+            )
+            assert saved["summary"] == result["summary"]
+            assert analyzer.analyze_day("90001", archive_date)["summary"] == result["summary"]
+    assert client.extraction_calls == 2
+    assert client.summary_calls == 2
+
+
 def test_llama_loader_path_is_scoped_and_prefers_executable_siblings(
     tmp_path: Path,
 ) -> None:

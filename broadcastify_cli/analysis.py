@@ -2170,13 +2170,29 @@ class IncidentAnalyzer:
         )
         allowed_incident_ids = {int(value["id"]) for value in incidents}
         for attempt in range(2):
-            result = self.client.chat_json(
-                system=system,
-                user=user,
-                schema_name="daily_activity_summary",
-                schema=schema,
-                max_tokens=2_048,
-            )
+            try:
+                result = self.client.chat_json(
+                    system=system,
+                    user=user,
+                    schema_name="daily_activity_summary",
+                    schema=schema,
+                    max_tokens=2_048,
+                )
+            except LlamaServerError as exc:
+                # Extraction is already saved. A malformed optional prose brief
+                # must not strand this day and every later day on each retry.
+                # Transport/server failures still propagate for normal recovery.
+                if not any(message in str(exc) for message in (
+                    "Local model returned invalid JSON",
+                    "Local model JSON response must be an object",
+                    "Local model did not return complete JSON after retry",
+                )):
+                    raise
+                self.progress(
+                    "The local model could not finish a valid daily brief; "
+                    "using the deterministic evidence summary."
+                )
+                return self._fallback_summary(incidents)
             summary = str(result.get("summary") or "").strip()
             if summary:
                 grounding_issues = self._daily_summary_grounding_issues(
