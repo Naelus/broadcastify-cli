@@ -1037,7 +1037,10 @@ internal sealed class WorkerClient
         {
             ids.Insert(0, "default");
         }
-        return ids.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        return ids.Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(value => value == "default" ? 0 : value == "secondary" ? 1 : 2)
+            .ThenBy(value => value, StringComparer.OrdinalIgnoreCase)
+            .ToList();
     }
 
     public bool AuthorizedAccountPoolEnabled =>

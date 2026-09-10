@@ -1861,6 +1861,9 @@ public sealed record ArchiveQuotaStatus
     [JsonPropertyName("user_reserve")]
     public int UserReserve { get; init; }
 
+    [JsonPropertyName("current_only")]
+    public bool CurrentOnly { get; init; }
+
     [JsonPropertyName("used")]
     public int Used { get; init; }
 

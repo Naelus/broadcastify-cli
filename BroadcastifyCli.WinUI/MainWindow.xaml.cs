@@ -711,7 +711,7 @@ public sealed partial class MainWindow : Window
                     : "All authorized account profiles are waiting";
                 ArchiveQuotaInfoBar.Message =
                     $"{statuses.Count} profiles × each account's standard limit · {totalUsed} used in their independent rolling 24-hour windows · {totalReserve} total held for manual use. "
-                    + "Downloads remain sequential and spaced."
+                    + $"{statuses.Count(value => value.CurrentOnly)} profile(s) reserved for current coverage. Downloads remain sequential and spaced."
                     + (nextPoolSlot is not null
                         ? $" Next pool slot: {nextPoolSlot.Value.ToLocalTime():g}."
                         : "");
@@ -6442,11 +6442,40 @@ public sealed partial class MainWindow : Window
         string NextRequestAt,
         string Message)> RunScheduledJobAcrossAccountsAsync(
         FeedSchedule schedule,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool currentCoverageOnly = false)
     {
         if (_worker is null)
         {
             return (null, false, "", "The worker is unavailable.");
+        }
+        if (!currentCoverageOnly)
+        {
+            var today = DateTime.Today;
+            var followed = await _worker.ListFeedSchedulesAsync(cancellationToken);
+            AppendLog("Checking current coverage for every followed feed before historical catch-up. Third and later accounts are reserved for today and the previous two days.");
+            foreach (var recent in followed.Where(value => value.Enabled))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var current = recent with
+                {
+                    AccountProfileId = "automatic",
+                    Analyze = false,
+                    Job = recent.Job with
+                    {
+                        FeedId = recent.FeedId,
+                        FeedName = recent.FeedName,
+                        StartDate = today.AddDays(-2).ToString("yyyy-MM-dd"),
+                        EndDate = today.ToString("yyyy-MM-dd"),
+                        OutputDirectory = PersistedOutputDirectory(),
+                        Combine = false,
+                        Transcribe = false,
+                        Diarize = false,
+                    },
+                };
+                AppendLog($"Current coverage: {recent.FeedName} — today and the previous two days.");
+                await RunScheduledJobAcrossAccountsAsync(current, cancellationToken, currentCoverageOnly: true);
+            }
         }
         var automatic = string.Equals(
             schedule.AccountProfileId,
@@ -6458,6 +6487,10 @@ public sealed partial class MainWindow : Window
             {
                 automatic ? "default" : schedule.AccountProfileId,
             };
+        if (!currentCoverageOnly && automatic && profileIds.Count > 2)
+        {
+            profileIds = profileIds.Take(2).ToList();
+        }
         var pooledAcquisition = automatic
             && _worker.AuthorizedAccountPoolEnabled
             && profileIds.Count > 1;
@@ -6465,7 +6498,7 @@ public sealed partial class MainWindow : Window
         {
             MaxProcessingDays = 1,
         };
-        var acquisitionJob = pooledAcquisition
+        var acquisitionJob = pooledAcquisition || currentCoverageOnly
             ? schedule.Job with
             {
                 Combine = false,
@@ -6504,7 +6537,7 @@ public sealed partial class MainWindow : Window
                 lastResult = await RunAndAnalyzeJobAsync(
                     acquisitionJob,
                     cancellationToken,
-                    pooledAcquisition ? false : schedule.Analyze,
+                    pooledAcquisition || currentCoverageOnly ? false : schedule.Analyze,
                     status.AccountProfileId);
                 processingProfileId = status.AccountProfileId;
                 if (lastResult?.DownloadLimited != true)
@@ -6547,6 +6580,11 @@ public sealed partial class MainWindow : Window
                     $"Account profile {status.AccountProfileId} could not authenticate; "
                     + "trying the next authorized profile without discarding retained work.");
             }
+        }
+        if (currentCoverageOnly)
+        {
+            return (lastResult, lastResult?.DownloadLimited ?? eligible.Count == 0, "",
+                "Current coverage acquisition pass finished; retained processing remains queued.");
         }
         if (pooledAcquisition && (lastResult is not null || eligible.Count == 0))
         {

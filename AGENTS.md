@@ -12,8 +12,11 @@ identity unchanged.
   diagnostics containing secrets, or machine-specific working notes.
 - Test archive planning, resume, and quota behavior with temporary files,
   fakes, or cached fixtures. Do not spend live Broadcastify requests in tests.
-- Keep archive requests sequential and behind the persistent 240-request rolling
-  guard, leaving the documented manual-use reserve intact. Cached/LAN reuse and
+- Keep archive requests sequential and behind the persistent rolling guard:
+  248 for the primary account and 250 for each additional account. Preserve all
+  recorded usage and stop immediately on provider throttling. In an authorized
+  pool, reserve third-and-later accounts for today and the previous two days;
+  check current coverage across followed feeds before historical work. Cached/LAN reuse and
   local processing must happen before a website request.
 - Destructive Library actions require a clear non-default confirmation, strict
   path containment, and database/filesystem recovery behavior.

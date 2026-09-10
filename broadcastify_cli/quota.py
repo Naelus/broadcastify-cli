@@ -6,7 +6,7 @@ import sqlite3
 import threading
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
 
@@ -16,7 +16,7 @@ from .lan_sync import LAN_PROTOCOL, normalize_peer_url
 
 
 PROVIDER_ARCHIVE_REQUEST_LIMIT = 250
-AUTOMATED_ARCHIVE_REQUEST_LIMIT = 240
+AUTOMATED_ARCHIVE_REQUEST_LIMIT = 248
 USER_ARCHIVE_REQUEST_RESERVE = (
     PROVIDER_ARCHIVE_REQUEST_LIMIT - AUTOMATED_ARCHIVE_REQUEST_LIMIT
 )
@@ -26,6 +26,24 @@ DEFAULT_ARCHIVE_QUOTA_FILENAME = ".broadcastify-archive-quota.sqlite3"
 DEFAULT_ACCOUNT_PROFILE_ID = "default"
 _ACCOUNT_PROFILE_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 _ARCHIVE_REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9_.-]{1,200}$")
+
+
+def current_only_account(profile_id: str) -> bool:
+    """Protect third-and-later authorized accounts from historical work."""
+    if str(os.getenv("BROADCASTIFY_AUTHORIZED_ACCOUNT_POOL") or "").lower() not in {
+        "1", "true", "yes", "on",
+    }:
+        return False
+    profiles = {"default"}
+    profiles.update(
+        value.lower() for value in re.split(
+            r"[,;\s]+", os.getenv("BROADCASTIFY_ACCOUNT_PROFILES") or ""
+        ) if _ACCOUNT_PROFILE_PATTERN.fullmatch(value.lower())
+    )
+    ordered = sorted(profiles, key=lambda value: (
+        0 if value == "default" else 1 if value == "secondary" else 2, value,
+    ))
+    return profile_id in ordered[2:]
 
 
 class ArchiveRequestBudgetExceeded(RuntimeError):
@@ -82,7 +100,7 @@ class ArchiveRequestLedger:
         path: str | Path | None = None,
         *,
         base_dir: str | Path | None = None,
-        limit: int = AUTOMATED_ARCHIVE_REQUEST_LIMIT,
+        limit: int | None = None,
         provider_limit: int = PROVIDER_ARCHIVE_REQUEST_LIMIT,
         window_seconds: float = ARCHIVE_REQUEST_WINDOW_SECONDS,
         clock: Callable[[], float] = time.time,
@@ -95,11 +113,15 @@ class ArchiveRequestLedger:
             if path is not None
             else archive_quota_path(base_dir)
         )
+        self.account_profile_id = normalize_account_profile_id(account_profile_id)
+        if limit is None:
+            limit = (AUTOMATED_ARCHIVE_REQUEST_LIMIT
+                     if self.account_profile_id == DEFAULT_ACCOUNT_PROFILE_ID
+                     else PROVIDER_ARCHIVE_REQUEST_LIMIT)
         self.limit = max(1, int(limit))
         self.provider_limit = max(self.limit, int(provider_limit))
         self.window_seconds = max(60.0, float(window_seconds))
         self.clock = clock
-        self.account_profile_id = normalize_account_profile_id(account_profile_id)
         configured_spacing = request_spacing_seconds
         if configured_spacing is None:
             try:
@@ -290,6 +312,7 @@ class ArchiveRequestLedger:
             "provider_limit": self.provider_limit,
             "automated_limit": self.limit,
             "user_reserve": self.user_reserve,
+            "current_only": current_only_account(self.account_profile_id),
             "window_seconds": int(self.window_seconds),
             "used": used,
             "remaining": remaining,
@@ -376,6 +399,14 @@ class ArchiveRequestLedger:
         archive_id: str,
     ) -> int:
         archive_id = normalize_archive_request_id(archive_id)
+        if current_only_account(self.account_profile_id):
+            today = datetime.fromtimestamp(self.clock()).date()
+            if date.fromisoformat(str(archive_date)) < today - timedelta(days=2):
+                raise ArchiveRequestBudgetExceeded(
+                    f"Account profile {self.account_profile_id} is reserved for "
+                    "current coverage (today and the previous two days). "
+                    "Historical catch-up must use the first two accounts."
+                )
         while True:
             now = float(self.clock())
             connection = self._connect()

@@ -73,6 +73,7 @@ def _date_value(value: str) -> date:
 
 
 def _load_environment() -> None:
+    desktop_master = os.getenv("BROADCASTIFY_DESKTOP_MASTER") == "true"
     load_dotenv(Path.cwd() / ".env", override=True)
     load_dotenv(Path.cwd() / ".env.accounts", override=True)
     configured = os.getenv("BROADCASTIFY_ENV_FILE")
@@ -80,6 +81,10 @@ def _load_environment() -> None:
         path = Path(configured).expanduser()
         if path.is_file():
             load_dotenv(path, override=True)
+    if desktop_master:
+        # The desktop companion owns the ledger. Do not proxy quota status to
+        # a stale web/NAS coordinator from an older private environment file.
+        os.environ["BROADCASTIFY_LAN_QUOTA_COORDINATOR"] = ""
 
 
 def _windows_wait_for_process_exit(parent_pid: int) -> None:

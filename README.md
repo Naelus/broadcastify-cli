@@ -21,7 +21,7 @@ a browser UI for Windows, Linux, macOS, and TrueNAS, plus command-line tools.
 - Searches feeds by agency, place, or ZIP and builds explicit radius-based area
   profiles.
 - Downloads archive blocks conservatively with cache reuse, sequential pacing,
-  resumable jobs, a durable 240-of-250 rolling-window guard per account, an
+  resumable jobs, durable rolling guards (248 primary, 250 additional accounts), an
   authorization-gated sequential account pool, and optional trusted-LAN sharing.
 - Uses Windows as the standalone post-download master. Optional follower nodes
   can request work or acquire guarded source days, but Windows never waits on

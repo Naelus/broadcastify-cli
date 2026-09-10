@@ -34,6 +34,24 @@ from broadcastify_cli.worker import (
 )
 
 
+def test_desktop_quota_owner_survives_stale_private_coordinator(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from broadcastify_cli.lan_node import _load_environment
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("BROADCASTIFY_DESKTOP_MASTER", "true")
+    monkeypatch.setenv("BROADCASTIFY_LAN_QUOTA_COORDINATOR", "http://127.0.0.1:8766")
+    monkeypatch.setenv("BROADCASTIFY_ENV_FILE", "")
+    monkeypatch.setenv("BROADCASTIFY_DESKTOP_E2E_ISOLATED", "0")
+    (tmp_path / ".env").write_text(
+        "BROADCASTIFY_LAN_QUOTA_COORDINATOR=http://192.0.2.1:8765\n", encoding="utf-8",
+    )
+    load_worker_environment()
+    assert os.environ["BROADCASTIFY_LAN_QUOTA_COORDINATOR"] == "http://127.0.0.1:8766"
+    _load_environment()
+    assert os.environ["BROADCASTIFY_LAN_QUOTA_COORDINATOR"] == ""
+
+
 def test_run_scheduled_job_analyzes_only_changed_transcripts(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -143,8 +161,8 @@ def test_archive_quota_status_mints_one_persistent_installation_identity(
 
     statuses = [value["status"] for value in emitted]
     assert statuses[0]["instance_id"] == statuses[1]["instance_id"]
-    assert statuses[0]["automated_limit"] == 240
-    assert statuses[0]["user_reserve"] == 10
+    assert statuses[0]["automated_limit"] == 248
+    assert statuses[0]["user_reserve"] == 2
 
 
 def test_named_account_env_never_falls_back_to_default_credentials(

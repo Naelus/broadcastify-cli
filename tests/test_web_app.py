@@ -532,9 +532,9 @@ def test_loopback_web_app_serves_library_transcript_and_media(
         assert "credentials" in bootstrap["runtime"]
         assert bootstrap["runtime"]["lan_sync"]["sharing_enabled"] is False
         assert bootstrap["runtime"]["archive_quota"]["provider_limit"] == 250
-        assert bootstrap["runtime"]["archive_quota"]["automated_limit"] == 240
-        assert bootstrap["runtime"]["archive_quota"]["user_reserve"] == 10
-        assert bootstrap["runtime"]["archive_quota"]["remaining"] == 240
+        assert bootstrap["runtime"]["archive_quota"]["automated_limit"] == 248
+        assert bootstrap["runtime"]["archive_quota"]["user_reserve"] == 2
+        assert bootstrap["runtime"]["archive_quota"]["remaining"] == 248
         assert bootstrap["schedules"] == []
 
         response, body = _request(
@@ -552,7 +552,7 @@ def test_loopback_web_app_serves_library_transcript_and_media(
         assert activity["activity"]["acquisition"] is None
         assert activity["activity"]["processing"] == []
         assert activity["reconciliation"]["enabled"] is False
-        assert activity["account_pool"]["quota"]["remaining"] == 240
+        assert activity["account_pool"]["quota"]["remaining"] == 248
 
         response, body = _request(
             connection,

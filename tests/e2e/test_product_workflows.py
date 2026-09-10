@@ -459,7 +459,8 @@ def test_saved_resume_recurring_restart_and_live_session_delete(
     assert primary_quota["account_profile_id"] == "default"
     assert secondary_quota["account_profile_id"] == "secondary"
     assert primary_quota["instance_id"] != secondary_quota["instance_id"]
-    assert primary_quota["automated_limit"] == secondary_quota["automated_limit"] == 240
+    assert primary_quota["automated_limit"] == 248
+    assert secondary_quota["automated_limit"] == 250
 
     recovered = _run_worker(
         tmp_path,

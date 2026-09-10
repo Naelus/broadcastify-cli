@@ -2204,6 +2204,10 @@ def load_worker_environment() -> Path | None:
     """Load repository defaults, then an explicitly bundled private env file."""
 
     loaded: Path | None = None
+    desktop_coordinator = (
+        os.getenv("BROADCASTIFY_LAN_QUOTA_COORDINATOR")
+        if os.getenv("BROADCASTIFY_DESKTOP_MASTER") == "true" else None
+    )
     isolated_e2e = (
         os.getenv("BROADCASTIFY_DESKTOP_E2E_ISOLATED") == "1"
     )
@@ -2222,6 +2226,8 @@ def load_worker_environment() -> Path | None:
         if bundled_env.is_file():
             load_dotenv(bundled_env, override=True)
             loaded = bundled_env
+    if desktop_coordinator is not None:
+        os.environ["BROADCASTIFY_LAN_QUOTA_COORDINATOR"] = desktop_coordinator
     account_profile_id = normalize_account_profile_id()
     os.environ["BROADCASTIFY_ACCOUNT_PROFILE"] = account_profile_id
     if account_profile_id != "default":

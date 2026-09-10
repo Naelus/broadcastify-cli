@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from datetime import datetime, timedelta
 
 import pytest
 
@@ -10,6 +11,32 @@ from broadcastify_cli.quota import (
     RATE_LIMIT_RELEASE_GRACE_SECONDS,
     normalize_archive_request_id,
 )
+
+
+@pytest.mark.parametrize("profile,limit", [("default", 248), ("secondary", 250), ("tertiary", 250)])
+def test_new_caps_preserve_usage_and_protect_current_reserve(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, profile: str, limit: int,
+) -> None:
+    monkeypatch.setenv("BROADCASTIFY_AUTHORIZED_ACCOUNT_POOL", "true")
+    monkeypatch.setenv("BROADCASTIFY_ACCOUNT_PROFILES", "secondary,tertiary")
+    now = datetime(2026, 9, 10, 12).timestamp()
+    today = datetime.fromtimestamp(now).date()
+    path = tmp_path / "quota.sqlite3"
+    old = ArchiveRequestLedger(path, account_profile_id=profile, limit=240, clock=lambda: now)
+    for index in range(240):
+        old.reserve(feed_id="90001", archive_date=today.isoformat(), archive_id=str(index))
+    ledger = ArchiveRequestLedger(path, account_profile_id=profile, clock=lambda: now)
+    assert ledger.status()["used"] == 240
+    assert ledger.status()["remaining"] == limit - 240
+    if profile == "tertiary":
+        with pytest.raises(ArchiveRequestBudgetExceeded, match="reserved for current"):
+            ledger.reserve(feed_id="90001", archive_date=(today-timedelta(days=3)).isoformat(), archive_id="old")
+        assert ledger.status()["used"] == 240
+    for index in range(240, limit):
+        ledger.reserve(feed_id="90001", archive_date=(today-timedelta(days=2)).isoformat(), archive_id=str(index))
+    with pytest.raises(ArchiveRequestBudgetExceeded):
+        ledger.reserve(feed_id="90001", archive_date=today.isoformat(), archive_id="overflow")
+    assert ArchiveRequestLedger(path, account_profile_id=profile, clock=lambda: now).status()["used"] == limit
 
 
 def test_provider_archive_id_accepts_current_ids_without_allowing_paths() -> None:
@@ -31,8 +58,8 @@ def test_instance_ledger_mints_stable_identity_and_reserves_user_capacity(
 
     assert first.status()["instance_id"] == second.status()["instance_id"]
     assert first.status()["provider_limit"] == 250
-    assert first.status()["automated_limit"] == 240
-    assert first.status()["user_reserve"] == 10
+    assert first.status()["automated_limit"] == 248
+    assert first.status()["user_reserve"] == 2
 
     limited_first = ArchiveRequestLedger(
         tmp_path / "shared.sqlite3",
@@ -253,7 +280,7 @@ def test_rate_limit_block_is_confined_to_the_account_that_received_it(
 
     assert primary.status()["blocked"] is True
     assert secondary.status()["blocked"] is False
-    assert secondary.status()["remaining"] == 240
+    assert secondary.status()["remaining"] == 250
 
 
 def test_account_rotation_obeys_one_cross_profile_spacing_gate(

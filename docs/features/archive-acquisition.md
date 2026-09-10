@@ -70,9 +70,10 @@ visible without mistaking cache reuse for a new request.
 
 Operational account guidance describes a 250-request rolling 24-hour allowance
 that counts archive play and download requests. Each configured account profile
-mints a stable local ledger identity and admits at most 240 automated archive
-requests in its own rolling 24-hour window, leaving 10 unspent for manual
-review. A locally authorization-gated development/testing deployment can use N
+mints a stable local ledger identity. The primary account admits 248 requests
+per rolling 24 hours, leaving two for manual review; additional accounts admit
+250. Existing usage is preserved across policy changes. A locally
+authorization-gated development/testing deployment can use N
 approved accounts for N × standard capacity; other deployments remain on one
 profile.
 
@@ -178,7 +179,16 @@ AES-GCM credential store or its private, persistent environment file. It shows
 only profile labels, usernames, session availability, and per-profile quota
 status; passwords never enter bootstrap/status responses. A real sign-in writes
 one cookie file per profile, and aggregate capacity is reported as the sum of
-the independent 240-request automated budgets plus each ten-request reserve.
+the independent budgets: 248 primary plus 250 per additional account.
+
+Windows checks today and the previous two days for every enabled followed feed
+before starting a historical acquisition turn. All authorized accounts can
+serve this current range. The first two profiles also serve historical work;
+third-and-later profiles are reserved for current coverage, enforced at the
+shared quota reservation boundary so manual jobs cannot drain that reserve.
+Profile ordering is primary, secondary when present, then other IDs sorted
+alphabetically. The reserve prevents history from spending future current
+capacity; it does not reset requests that an account has already consumed.
 
 On Windows, **Manage schedules** can edit the daily time, lookback, historical
 catch-up date, one-time/recurring mode, account policy, enabled state, local processing stages, and incident analysis
