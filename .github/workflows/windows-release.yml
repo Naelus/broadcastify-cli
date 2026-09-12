@@ -108,10 +108,21 @@ jobs:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
           $asset = "dist/windows/BroadcastifyDesktop-${env:RELEASE_VERSION}-win-x64-setup.exe"
-          if (gh release view $env:RELEASE_TAG *> $null) {
-            gh release upload $env:RELEASE_TAG $asset --clobber
+          $releaseJson = gh release view $env:RELEASE_TAG --json assets
+          # Native exit status determines success; redirected output is always empty.
+          if ($LASTEXITCODE -eq 0) {
+            $release = $releaseJson | ConvertFrom-Json
+            $assetName = Split-Path -Path $asset -Leaf
+            if ($release.assets.name -contains $assetName) {
+              Write-Host "Installer already published for $env:RELEASE_TAG; preserving it."
+              exit 0
+            }
+            gh release upload $env:RELEASE_TAG $asset
           } else {
             gh release create $env:RELEASE_TAG $asset `
               --title "Broadcastify Desktop $env:RELEASE_VERSION" `
               --generate-notes
+          }
+          if ($LASTEXITCODE -ne 0) {
+            throw "Failed to publish installer for $env:RELEASE_TAG."
           }
