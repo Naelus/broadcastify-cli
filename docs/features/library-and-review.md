@@ -23,6 +23,13 @@ spends an archive-media request. Today's snapshot becomes eligible for a
 refresh after 30 minutes; it is refreshed only by an explicit/scheduled guarded
 resume.
 
+The Library refreshes its counts and coverage every ten seconds while open,
+including during long background jobs. Refreshes do not overlap or interrupt
+recording playback. **Backlog** counts unfinished feed-days, not processing
+operations: combining audio can advance a day without removing it from the
+count while transcription, speaker labels, or analysis remain. The summary
+shows how many retained days await analysis and when the counts were updated.
+
 The five stages are archive audio, combination, transcription, speaker labels,
 and analysis. Each stage is detected from completion evidence, not merely from a
 requested flag or filename.

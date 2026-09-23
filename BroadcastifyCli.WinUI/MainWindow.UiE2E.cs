@@ -70,6 +70,7 @@ public sealed partial class MainWindow
         try
         {
             report["startup_docking"] = await VerifyStartupDockRestoreAsync();
+            report["library_live_refresh"] = await VerifyLibraryLiveRefreshAsync();
             ConfigureUiEndToEndFixture();
             report["responsive_breakpoint"] = VerifyResponsiveBreakpointContract();
             report["layout_matrix"] = await RunUiLayoutMatrixAsync();
@@ -103,6 +104,71 @@ public sealed partial class MainWindow
             TitleBarCloseButton_Click(
                 TitleBarCloseButton,
                 new RoutedEventArgs());
+        }
+    }
+
+    private async Task<Dictionary<string, object?>> VerifyLibraryLiveRefreshAsync()
+    {
+        var libraryRoot = Path.GetFullPath(OutputFolderBox.Text);
+        Require(
+            Environment.GetEnvironmentVariable("BROADCASTIFY_DESKTOP_E2E_ISOLATED") == "1"
+                && !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(
+                    AppSettingsStore.TestDataRootEnvironment))
+                && string.Equals(libraryRoot, Environment.GetEnvironmentVariable(
+                    "BROADCASTIFY_LIBRARY_ROOT"), StringComparison.OrdinalIgnoreCase),
+            "Library refresh requires the runner's isolated data and library directories.");
+        Require(_worker is null && _pipelineCancellation is null,
+            "The refresh probe cannot replace an active worker or pipeline.");
+        ShowPage("library");
+        using var pipeline = new CancellationTokenSource();
+        try
+        {
+            _worker = new WorkerClient();
+            _worker.SetLibraryDirectory(libraryRoot);
+            _pipelineCancellation = pipeline;
+            await RefreshVisibleStatusAsync();
+            Require(LibraryAttentionCountText.Text == "0" && _libraryDays.Count == 0,
+                "The isolated library did not initially report an empty backlog.");
+
+            var dayDirectory = Path.Combine(libraryRoot, "999992", "20260101");
+            Directory.CreateDirectory(dayDirectory);
+            var audioPath = Path.Combine(dayDirectory, "combined_999992_20260101.mp3");
+            // Discovery only needs retained bytes; this probe never decodes or plays audio.
+            await File.WriteAllBytesAsync(audioPath, [1, 2, 3]);
+            await RefreshVisibleStatusAsync();
+            Require(LibraryAttentionCountText.Text == "1"
+                    && _visibleLibraryDays.Count == 1
+                    && _visibleLibraryDays[0].HasCombined,
+                "The timer callback did not discover persisted progress during an active pipeline.");
+
+            var playbackSource = Windows.Media.Core.MediaSource.CreateFromUri(new Uri(audioPath));
+            _libraryMediaPlayer.Source = playbackSource;
+            var selectedDay = _selectedLibraryDay;
+            var firstRefresh = RefreshVisibleStatusAsync();
+            var overlappingRefresh = RefreshVisibleStatusAsync();
+            await Task.WhenAll(firstRefresh, overlappingRefresh);
+            Require(LibraryAttentionCountText.Text == "1" && !_refreshingLibrary,
+                "Overlapping timer callbacks left library refresh unfinished.");
+            Require(ReferenceEquals(_libraryMediaPlayer.Source, playbackSource)
+                    && ReferenceEquals(_selectedLibraryDay, selectedDay),
+                "A background refresh interrupted the selected recording.");
+            return new Dictionary<string, object?>
+            {
+                ["initial_backlog"] = 0,
+                ["refreshed_backlog"] = 1,
+                ["active_pipeline_refresh"] = true,
+                ["playback_preserved"] = true,
+            };
+        }
+        finally
+        {
+            _pipelineCancellation = null;
+            _worker = null;
+            _libraryMediaPlayer.Source = null;
+            _libraryDays.Clear();
+            _visibleLibraryDays.Clear();
+            _libraryFeeds.Clear();
+            ShowLibraryDetails(null);
         }
     }
 

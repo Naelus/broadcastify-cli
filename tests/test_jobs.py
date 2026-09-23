@@ -369,6 +369,86 @@ def test_real_client_full_guard_uses_completion_snapshot_without_session_calls(
     assert result["download_limited"] is False
 
 
+def test_local_processing_cannot_acquire_when_quota_is_available(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    feed_id = "90001"
+    retained_day = date(2026, 7, 3)
+    incomplete_day = date(2026, 7, 4)
+    sources: list[Path] = []
+    for archive_date in (retained_day, incomplete_day):
+        day_dir = tmp_path / feed_id / archive_date.strftime("%Y%m%d")
+        day_dir.mkdir(parents=True)
+        source = day_dir / f"{archive_date:%Y%m%d}0000-provider-{feed_id}.mp3"
+        source.write_bytes(b"retained audio")
+        sources.append(source)
+        remember_archive_identity(
+            day_dir, feed_id, archive_date, "provider-id", source,
+            listing_prefix=f"{archive_date:%Y%m%d}0000",
+        )
+    assert remember_complete_archive_day(
+        sources[0].parent, feed_id, retained_day, ["provider-id"],
+    )
+    ledger = ArchiveRequestLedger(tmp_path / "quota.sqlite3")
+    assert ledger.status()["available"]
+
+    def forbidden(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("Local processing must never enter acquisition.")
+
+    class NoLanAcquisition:
+        enabled = True
+        role = "master"
+
+        def __getattr__(self, _name: str) -> object:
+            return forbidden
+
+    transcribed: list[Path] = []
+
+    class RetainedTranscriber:
+        device = "cpu"
+        device_index = 0
+        compute_type = "float32"
+
+        def __init__(self, **_kwargs: object) -> None:
+            pass
+
+        def transcribe_files(self, files: list[Path], **_kwargs: object) -> list[Path]:
+            transcribed.extend(files)
+            transcript = files[0].with_suffix(".json")
+            transcript.write_text("{}", encoding="utf-8")
+            return [transcript]
+
+    monkeypatch.setattr("broadcastify_cli.jobs.LocalTranscriber", RetainedTranscriber)
+    with BroadcastifyClient(
+        quota_ledger=ledger, cookie_path=tmp_path / "cookies.json",
+    ) as client:
+        monkeypatch.setattr(client, "authenticate", forbidden)
+        monkeypatch.setattr(client, "archive_quota_status", forbidden)
+        monkeypatch.setattr(client, "download_day", forbidden)
+        monkeypatch.setattr(client.session, "request", forbidden)
+        result = JobRunner(
+            JobRequest.from_dict({
+                "feed_id": feed_id,
+                "start_date": retained_day.isoformat(),
+                "end_date": incomplete_day.isoformat(),
+                "output_dir": str(tmp_path),
+                "transcribe": True,
+                "local_only": True,
+                "lan_sync_enabled": True,
+            }),
+            client=client,
+            lan_sync=NoLanAcquisition(),  # type: ignore[arg-type]
+        ).run()
+
+    assert transcribed == [sources[0]]
+    assert result["completed_days"] == 1
+    assert result["missing_days"] == [incomplete_day.isoformat()]
+    assert result["download_limited"] is False
+    assert ledger.status()["used"] == 0
+    assert all(source.read_bytes() == b"retained audio" for source in sources)
+
+
 def test_lan_source_reuse_is_interleaved_with_each_backlog_day(
     tmp_path: Path,
 ) -> None:

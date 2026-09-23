@@ -48,7 +48,8 @@ class JobRunner:
     def run(self) -> dict[str, Any]:
         dates = list(self.request.dates())
         follower = getattr(self.lan_sync, "role", "master") == "follower"
-        if follower:
+        lan_enabled = self.lan_sync.enabled and not self.request.local_only
+        if follower and not self.request.local_only:
             try:
                 self.lan_sync.request_master_pipeline(
                     self.request.output_dir,
@@ -78,12 +79,12 @@ class JobRunner:
                 )
         transcriber = None
         if self.request.transcribe and not follower:
+            next_stage = "retained processing" if self.request.local_only else "archive acquisition"
             self.emit(
                 {
                     "type": "log",
                     "message": (
-                        f"Loading local model {self.request.model} before "
-                        "archive acquisition..."
+                        f"Loading local model {self.request.model} before {next_stage}..."
                     ),
                 }
             )
@@ -124,7 +125,7 @@ class JobRunner:
         feed_reconciliation = LanFeedSyncResult(enabled=False)
         lan_results: dict[str, LanSyncResult] = {}
         lan_transcript_results: dict[str, LanTranscriptSyncResult] = {}
-        if self.lan_sync.enabled:
+        if lan_enabled:
             self.emit(
                 {
                     "type": "stage",
@@ -139,7 +140,11 @@ class JobRunner:
         downloaded_days: list[tuple[Any, list[Path]]] = []
         quota_message: str | None = None
         quota_status = getattr(self.client, "archive_quota_status", None)
-        initial_quota = quota_status() if callable(quota_status) else {}
+        initial_quota = (
+            quota_status()
+            if callable(quota_status) and not self.request.local_only
+            else {}
+        )
         if initial_quota and not bool(initial_quota.get("available", True)):
             quota_message = (
                 "The local rolling archive-request guard has no automated "
@@ -178,7 +183,31 @@ class JobRunner:
 
         for day_number, archive_date in enumerate(dates, start=1):
             day_label = archive_date.isoformat()
-            if self.lan_sync.enabled:
+            if self.request.local_only:
+                # Acquisition runs independently while model work uses a proven
+                # retained snapshot. A newly available quota slot must never
+                # turn this worker into a second website or LAN source writer.
+                cache_state = self.client.cached_day_local(
+                    self.request.feed_id,
+                    archive_date,
+                    self.request.output_dir,
+                )
+                if cache_state is not None:
+                    cached, _expected = cache_state
+                    downloaded_days.append((archive_date, cached))
+                else:
+                    self.emit(
+                        {
+                            "type": "log",
+                            "stage": "download",
+                            "message": (
+                                f"Leaving {day_label} queued for acquisition: "
+                                "this worker processes complete retained days only."
+                            ),
+                        }
+                    )
+                continue
+            if lan_enabled:
 
                 def lan_progress(message: str) -> None:
                     self.emit(
@@ -261,7 +290,7 @@ class JobRunner:
                     progress=queue_progress,
                     defer_active=True,
                 )
-                if self.lan_sync.enabled and callable(coordinate)
+                if lan_enabled and callable(coordinate)
                 else LanDownloadTurn(role="uncoordinated")
             )
             queue_roles[turn.role] = queue_roles.get(turn.role, 0) + 1
@@ -490,7 +519,7 @@ class JobRunner:
                 continue
             downloaded_days.append((archive_date, audio_files))
 
-        if self.lan_sync.enabled:
+        if lan_enabled:
             copied = sum(value.blocks_copied for value in lan_results.values())
             copied_bytes = sum(value.bytes_copied for value in lan_results.values())
             failures = [
@@ -582,10 +611,14 @@ class JobRunner:
             )
 
             if follower:
-                master_result = self.lan_sync.sync_master_results(
-                    self.request.output_dir,
-                    self.request.feed_id,
-                    archive_date,
+                master_result = (
+                    self.lan_sync.sync_master_results(
+                        self.request.output_dir,
+                        self.request.feed_id,
+                        archive_date,
+                    )
+                    if not self.request.local_only
+                    else LanTranscriptSyncResult(enabled=False)
                 )
                 lan_transcript_results[day_label] = master_result
                 transcripts = list(master_result.transcripts)
@@ -857,7 +890,7 @@ class JobRunner:
             "missing_days": missing_days,
             "pending_processing_days": pending_processing_days,
             "lan_sync": {
-                "enabled": self.lan_sync.enabled,
+                "enabled": lan_enabled,
                 "blocks_copied": sum(
                     value.blocks_copied for value in lan_results.values()
                 ),

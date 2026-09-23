@@ -1,5 +1,14 @@
 # Archive acquisition
 
+Scheduled Windows catch-up keeps a single sequential acquisition pass running
+alongside local model work. The model worker reads only proven-complete local
+source snapshots and cannot authenticate, download, or pull LAN sources. The
+acquisition pass checks current coverage across followed feeds before historical
+work, retains the per-account rolling caps and recent-only account reserves,
+and rechecks available allowance once a minute between passes. It is cancelled
+and awaited before the foreground schedule starts another acquisition pass.
+Completed sources and processing checkpoints remain resumable on cancellation.
+
 ## Scope
 
 Acquisition covers website feed discovery, premium sign-in, archive listing,

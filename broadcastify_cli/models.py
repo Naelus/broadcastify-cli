@@ -55,6 +55,7 @@ class JobRequest:
     lan_peer_urls: tuple[str, ...] = ()
     newest_first: bool = True
     max_processing_days: int | None = None
+    local_only: bool = False
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "JobRequest":
@@ -108,6 +109,7 @@ class JobRequest:
             ),
             lan_peer_urls=normalize_peer_urls(value.get("lan_peer_urls")),
             newest_first=bool(value.get("newest_first", True)),
+            local_only=bool(value.get("local_only", False)),
             max_processing_days=(
                 int(value["max_processing_days"])
                 if value.get("max_processing_days") not in {None, ""}

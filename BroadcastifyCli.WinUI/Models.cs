@@ -481,6 +481,9 @@ internal sealed record JobRequest : AnalysisProviderRequest
 
     [JsonPropertyName("max_processing_days")]
     public int? MaxProcessingDays { get; init; }
+
+    [JsonPropertyName("local_only")]
+    public bool LocalOnly { get; init; }
 }
 
 internal sealed record AsrSelfTestRequest
