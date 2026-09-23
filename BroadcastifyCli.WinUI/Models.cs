@@ -484,6 +484,9 @@ internal sealed record JobRequest : AnalysisProviderRequest
 
     [JsonPropertyName("local_only")]
     public bool LocalOnly { get; init; }
+
+    [JsonPropertyName("reuse_completed_sources")]
+    public bool ReuseCompletedSources { get; init; }
 }
 
 internal sealed record AsrSelfTestRequest

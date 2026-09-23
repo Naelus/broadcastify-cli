@@ -292,6 +292,8 @@ def remember_complete_archive_day(
     feed_id: str,
     archive_date: date,
     archive_ids: Sequence[str],
+    *,
+    refresh_checked_at: bool = False,
 ) -> bool:
     """Persist a locally verifiable, network-free completion snapshot.
 
@@ -350,7 +352,13 @@ def remember_complete_archive_day(
                 == sorted(normalized_ids)
             )
             if same_completion:
+                if refresh_checked_at:
+                    # An unchanged authenticated listing still renews the live
+                    # day's check interval, without republishing source bytes.
+                    existing["completed_at_unix"] = round(time.time(), 6)
                 if existing.get("source_inventory") == source_inventory:
+                    if refresh_checked_at:
+                        _write_index(_completion_path(day), existing)
                     return True
                 if "source_inventory" not in existing:
                     # Upgrade an older completion proof without flooding the
@@ -392,12 +400,15 @@ def complete_cached_archive_day(
     day_directory: str | Path,
     feed_id: str,
     archive_date: date,
+    *,
+    require_fresh: bool = False,
 ) -> tuple[list[Path], int] | None:
     """Return a proven complete snapshot using local files only.
 
     ``None`` means no valid completion proof is available. ``([], 0)`` is a
     valid authenticated empty-day snapshot. Every provider identity must map
-    to a distinct timeline filename.
+    to a distinct timeline filename. Acquisition can require a recent live-day
+    listing, or a final historical listing made after that archive day ended.
     """
 
     day = Path(day_directory)
@@ -416,6 +427,21 @@ def complete_cached_archive_day(
         or not isinstance(payload.get("archive_ids"), list)
     ):
         return None
+    if require_fresh:
+        try:
+            checked_at = float(payload.get("completed_at_unix") or 0)
+            now = time.time()
+            if not 0 < checked_at <= now:
+                return None
+            today = datetime.fromtimestamp(now).date()
+            if archive_date >= today:
+                if now - checked_at >= 30 * 60:
+                    return None
+            elif datetime.fromtimestamp(checked_at).date() <= archive_date:
+                # Yesterday's last live snapshot may omit its final tracks.
+                return None
+        except (OSError, OverflowError, TypeError, ValueError):
+            return None
     raw_ids = payload["archive_ids"]
     if len(raw_ids) > 1_000 or any(
         not isinstance(value, str) or not value or len(value) > 200

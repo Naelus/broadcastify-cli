@@ -207,6 +207,16 @@ class JobRunner:
                         }
                     )
                 continue
+            if self.request.reuse_completed_sources:
+                cached = self.client.cached_day_local(
+                    self.request.feed_id,
+                    archive_date,
+                    self.request.output_dir,
+                    require_fresh=True,
+                )
+                if cached is not None:
+                    downloaded_days.append((archive_date, cached[0]))
+                    continue
             if lan_enabled:
 
                 def lan_progress(message: str) -> None:

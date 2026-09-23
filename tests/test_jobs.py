@@ -1,4 +1,5 @@
-from datetime import date
+import json
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 
 from broadcastify_cli.jobs import JobRunner
@@ -447,6 +448,72 @@ def test_local_processing_cannot_acquire_when_quota_is_available(
     assert result["download_limited"] is False
     assert ledger.status()["used"] == 0
     assert all(source.read_bytes() == b"retained audio" for source in sources)
+
+
+def test_scheduled_acquisition_reuses_sources_and_refreshes_only_due_listings(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    feed_id = "90001"
+    today = date.today()
+    days = [today - timedelta(days=offset) for offset in range(4)]
+    for offset, archive_date in enumerate(days):
+        day_dir = tmp_path / feed_id / archive_date.strftime("%Y%m%d")
+        day_dir.mkdir(parents=True)
+        source = day_dir / f"{archive_date:%Y%m%d}0000-provider-{feed_id}.mp3"
+        source.write_bytes(b"retained audio")
+        remember_archive_identity(
+            day_dir, feed_id, archive_date, "provider-id", source,
+            listing_prefix=f"{archive_date:%Y%m%d}0000",
+        )
+        if offset != 2:  # Raw files alone do not prove a complete listing.
+            assert remember_complete_archive_day(
+                day_dir, feed_id, archive_date, ["provider-id"],
+            )
+        if offset < 2:
+            marker = day_dir / ".broadcastify-archive-complete.json"
+            payload = json.loads(marker.read_text(encoding="utf-8"))
+            checked = (
+                datetime.now() - timedelta(minutes=31)
+                if offset == 0
+                else datetime.combine(archive_date, time(12))
+            )
+            payload["completed_at_unix"] = checked.timestamp()
+            marker.write_text(json.dumps(payload), encoding="utf-8")
+
+    listings: list[date] = []
+    authentications: list[bool] = []
+
+    def list_archives(_feed_id: str, archive_date: date) -> list[str]:
+        listings.append(archive_date)
+        return ["provider-id"]
+
+    def forbidden(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("These retained source files need no website download.")
+
+    request = JobRequest.from_dict({
+        "feed_id": feed_id,
+        "start_date": days[-1].isoformat(),
+        "end_date": today.isoformat(),
+        "output_dir": str(tmp_path),
+        "reuse_completed_sources": True,
+    })
+    with BroadcastifyClient(
+        quota_ledger=ArchiveRequestLedger(tmp_path / "quota.sqlite3"),
+        cookie_path=tmp_path / "cookies.json",
+    ) as client:
+        monkeypatch.setattr(client, "authenticate", lambda: authentications.append(True))
+        monkeypatch.setattr(client, "get_archive_ids", list_archives)
+        monkeypatch.setattr(client.session, "request", forbidden)
+        first = JobRunner(request, client=client).run()
+        assert listings == [today, today, days[1], days[2]]
+        assert first["completed_days"] == 4
+        assert first["missing_days"] == []
+        listings.clear()
+        authentications.clear()
+        second = JobRunner(request, client=client).run()
+        assert second["completed_days"] == 4
+        assert listings == authentications == []
 
 
 def test_lan_source_reuse_is_interleaved_with_each_backlog_day(

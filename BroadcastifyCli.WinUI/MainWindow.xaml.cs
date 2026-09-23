@@ -6538,6 +6538,7 @@ public sealed partial class MainWindow : Window
             DownloadJobs = 1,
             MaxProcessingDays = null,
             LocalOnly = false,
+            ReuseCompletedSources = true,
         };
         var statuses = new List<ArchiveQuotaStatus>();
         foreach (var profileId in profileIds)

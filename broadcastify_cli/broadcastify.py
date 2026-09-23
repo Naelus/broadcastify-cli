@@ -751,6 +751,7 @@ class BroadcastifyClient:
                 feed_id,
                 archive_date,
                 (),
+                refresh_checked_at=True,
             ):
                 raise BroadcastifyError(
                     f"Could not record the empty archive day {archive_date.isoformat()} as complete."
@@ -964,6 +965,7 @@ class BroadcastifyClient:
             feed_id,
             archive_date,
             archive_ids,
+            refresh_checked_at=True,
         ):
             raise BroadcastifyError(
                 "Archive cache integrity failed while recording the complete day."
@@ -1042,6 +1044,7 @@ class BroadcastifyClient:
             feed_id,
             archive_date,
             archive_ids,
+            refresh_checked_at=True,
         ):
             return [], len(archive_ids)
         return sorted(dict.fromkeys(cached)), len(archive_ids)
@@ -1051,11 +1054,15 @@ class BroadcastifyClient:
         feed_id: str,
         archive_date: date,
         output_dir: str | Path,
+        *,
+        require_fresh: bool = False,
     ) -> tuple[list[Path], int] | None:
         """Return a proven complete day without authentication or networking."""
 
         day_dir = Path(output_dir) / feed_id / archive_date.strftime("%Y%m%d")
-        return complete_cached_archive_day(day_dir, feed_id, archive_date)
+        return complete_cached_archive_day(
+            day_dir, feed_id, archive_date, require_fresh=require_fresh,
+        )
 
     def remember_cached_day_complete(
         self,

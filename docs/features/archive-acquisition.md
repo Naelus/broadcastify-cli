@@ -8,6 +8,10 @@ work, retains the per-account rolling caps and recent-only account reserves,
 and rechecks available allowance once a minute between passes. It is cancelled
 and awaited before the foreground schedule starts another acquisition pass.
 Completed sources and processing checkpoints remain resumable on cancellation.
+These passes reuse validated completed source snapshots before contacting the
+website. Today's listing is refreshed only when its 30-minute interval expires;
+a snapshot captured while a historical day was still live gets a final check.
+An authenticated check renews that timestamp even when no new blocks appeared.
 
 ## Scope
 
