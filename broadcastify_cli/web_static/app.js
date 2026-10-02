@@ -942,7 +942,7 @@ function filteredDays() {
   const filter = byId("libraryFilter").value;
   return state.bootstrap.days.filter((day) => {
     const matchesSearch = !search || `${day.feed_name} ${day.feed_id} ${day.archive_date} ${day.status}`.toLowerCase().includes(search);
-    const matchesFilter = filter === "all" || (filter === "complete" ? day.is_complete : !day.is_complete);
+    const matchesFilter = filter === "all" || (filter === "complete" ? day.is_complete : day.source_check_due || (!day.is_complete && !day.source_unavailable && !day.awaiting_source));
     return matchesSearch && matchesFilter;
   });
 }
@@ -1026,7 +1026,7 @@ function renderDayDetail(activeTab = "incidents") {
   if (!detail) return;
   const day = detail.state;
   const primaryLabel = day.primary_action === "open_review" ? "Review evidence" : day.next_step;
-  const actionDisabled = day.primary_action === "resume_download" ? "" : "";
+  const actionDisabled = day.primary_action === "none" ? "disabled" : "";
   byId("dayDetail").innerHTML = `
     <div class="detail-head"><div><h2>${html(day.feed_name)}</h2><p>Feed ${html(day.feed_id)} · ${html(day.archive_date)} · ${dayStorage(day)}</p></div>
       <div class="button-row">${day.speaker_upgrade_available ? '<button class="button secondary" data-action="upgrade-speakers" title="Replace fast preview labels with Community-1 without repeating transcription.">Improve speakers</button>' : ""}

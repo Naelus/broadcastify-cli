@@ -28,7 +28,23 @@ including during long background jobs. Refreshes do not overlap or interrupt
 recording playback. **Backlog** counts unfinished feed-days, not processing
 operations: combining audio can advance a day without removing it from the
 count while transcription, speaker labels, or analysis remain. The summary
-shows how many retained days await analysis and when the counts were updated.
+separates ready-to-review days, local work, source checks, confirmed unavailable
+archives, and days waiting for publication, with the last refresh time.
+
+An authenticated empty listing checked after a historical day ended is shown
+as **No archive available**. It remains visible as a coverage gap, contributes
+no unfinished work, and is not offered by Resume or counted as analyzed.
+The manual source-check action remains available. An empty folder, invalid
+completion record, or missing downloaded file is never sufficient evidence to
+dismiss a day. An empty listing captured before a day ended requires a final
+check. Today's empty listing is **Waiting for source audio** and becomes
+eligible for a new source check after 30 minutes. Existing retained evidence is
+never hidden just because a later listing is empty.
+
+When every listed raw block is retained but the combined recording is missing
+or outdated, the day is **Ready to combine**. Finish locally combines those
+verified files before transcription, preserving the originals and spending no
+archive allowance.
 
 The five stages are archive audio, combination, transcription, speaker labels,
 and analysis. Each stage is detected from completion evidence, not merely from a
@@ -48,7 +64,8 @@ requested flag or filename.
   current day whenever Library or **Resume / prioritize…** reloads it. The saved
   catch-up survives app restart, cancellation, quota pause, machine restart, and
   upgrades; it is not limited to reopening the catch-up dialog. It self-clears
-  only after every calendar day through current has local completion evidence.
+  only after every calendar day through current has local completion evidence
+  or a confirmed historical empty listing; waiting for live audio keeps it saved.
   The dialog can explicitly replace or clear it, or promote the selected feed
   and start date into a daily recurring catch-up. Recurring mode keeps that
   boundary after a complete run and checks it through the then-current day at

@@ -333,6 +333,8 @@
                                 <ComboBoxItem Content="Needs attention" Tag="attention" />
                                 <ComboBoxItem Content="Ready to review" Tag="complete" />
                                 <ComboBoxItem Content="Needs download" Tag="network" />
+                                <ComboBoxItem Content="No archive available" Tag="unavailable" />
+                                <ComboBoxItem Content="Waiting for source audio" Tag="waiting" />
                             </ComboBox>
                         </Grid>
 

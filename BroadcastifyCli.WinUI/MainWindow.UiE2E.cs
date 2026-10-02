@@ -152,12 +152,33 @@ public sealed partial class MainWindow
             Require(ReferenceEquals(_libraryMediaPlayer.Source, playbackSource)
                     && ReferenceEquals(_selectedLibraryDay, selectedDay),
                 "A background refresh interrupted the selected recording.");
+            _libraryMediaPlayer.Source = null;
+            var emptyDirectory = Path.Combine(libraryRoot, "999992", "20260102");
+            Directory.CreateDirectory(emptyDirectory);
+            await File.WriteAllTextAsync(Path.Combine(emptyDirectory, ".broadcastify-archive-complete.json"),
+                JsonSerializer.Serialize(new
+                {
+                    schema_version = 1, feed_id = "999992", archive_date = "2026-01-02",
+                    archive_ids = Array.Empty<string>(), completed_at_unix = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                }));
+            await RefreshVisibleStatusAsync();
+            Require(LibraryAttentionCountText.Text == "1" && _libraryDays.Count == 2,
+                "A confirmed empty archive inflated the unfinished backlog.");
+            _pipelineCancellation = null;
+            ShowLibraryDetails(_libraryDays.Single(day => day.SourceUnavailable));
+            UpdateCommandAvailability();
+            Require(!LibraryDetailPrimaryButton.IsEnabled
+                    && LibraryDetailInfoBar.Title == "No archive available"
+                    && LibraryBacklogSummaryText.Text.Contains("1 day(s) have no archive available"),
+                "An unavailable archive still offered processing or lacked a separate explanation.");
+            _pipelineCancellation = pipeline;
             return new Dictionary<string, object?>
             {
                 ["initial_backlog"] = 0,
                 ["refreshed_backlog"] = 1,
                 ["active_pipeline_refresh"] = true,
                 ["playback_preserved"] = true,
+                ["unavailable_excluded_from_backlog"] = true,
             };
         }
         finally

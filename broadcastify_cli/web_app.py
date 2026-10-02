@@ -1414,7 +1414,13 @@ def _library_payload(state: WebAppState) -> dict[str, Any]:
             "feed_count": len({value["feed_id"] for value in days}),
             "day_count": len(days),
             "complete_count": sum(bool(value["is_complete"]) for value in days),
-            "attention_count": sum(not bool(value["is_complete"]) for value in days),
+            "attention_count": sum(
+                bool(value.get("source_check_due")) or not any(value.get(key) for key in
+                    ("is_complete", "source_unavailable", "awaiting_source"))
+                for value in days
+            ),
+            "source_unavailable_count": sum(bool(value["source_unavailable"]) for value in days),
+            "awaiting_source_count": sum(bool(value["awaiting_source"]) for value in days),
             "storage_bytes": sum(int(value["storage_bytes"]) for value in days),
             "working_storage_bytes": sum(
                 int(value["working_storage_bytes"]) for value in days

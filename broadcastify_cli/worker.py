@@ -1465,7 +1465,10 @@ def library_days(output_dir: str) -> int:
                 "feed_count": len(feeds),
                 "day_count": len(days),
                 "complete_count": sum(bool(value["is_complete"]) for value in days),
-                "attention_count": sum(not bool(value["is_complete"]) for value in days),
+                "attention_count": sum(int(value["backlog_count"]) for value in feeds),
+                "source_unavailable_count": sum(bool(value["source_unavailable"]) for value in days),
+                "awaiting_source_count": sum(bool(value["awaiting_source"]) for value in days),
+                "local_processing_day_count": sum(int(value["local_processing_day_count"]) for value in feeds),
                 "storage_bytes": sum(int(value["storage_bytes"]) for value in days),
                 "working_storage_bytes": sum(
                     int(value["working_storage_bytes"]) for value in days

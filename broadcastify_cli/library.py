@@ -16,8 +16,9 @@ from .archive_cache import (
     ARCHIVE_CACHE_COMPLETION_SCHEMA_VERSION,
     cached_archives_for_ids,
     collapsed_archive_identity_count,
+    complete_cached_archive_day,
 )
-from .audio import combined_output_is_current
+from .audio import combine_mp3_files, combined_output_is_current
 from .portable_diarization import (
     COMMUNITY_DIARIZATION_ENGINE,
     COMMUNITY_DIARIZATION_QUALITY,
@@ -39,6 +40,13 @@ DAY_DIRECTORY_PATTERN = re.compile(r"^\d{8}$")
 PENDING_DELETE_PATTERN = re.compile(r"^\.deleting-\d+-[0-9a-f]{32}$")
 CURRENT_DAY_SOURCE_REFRESH = timedelta(minutes=30)
 DELETE_DETACH_RETRY_SECONDS = (0.0, 0.15, 0.3, 0.6, 1.0, 1.5)
+
+
+def _pending_processing(day: dict[str, Any]) -> bool:
+    # An authenticated empty listing is a coverage gap, not a model job.
+    return not any(day.get(key) for key in (
+        "is_complete", "source_unavailable", "awaiting_source",
+    ))
 
 
 def _schedule_target_dates(
@@ -171,7 +179,7 @@ def build_library_feed_coverage(
             if target_values
             else list(retained)
         )
-        incomplete = [value for value in target_days if not bool(value.get("is_complete"))]
+        incomplete = [value for value in target_days if _pending_processing(value)]
         source_due = [
             value
             for value in target_days
@@ -193,7 +201,7 @@ def build_library_feed_coverage(
                 )
             )
             or (
-                bool(value.get("is_complete"))
+                not _pending_processing(value)
                 and bool(value.get("source_check_due"))
                 and (
                     str(value.get("archive_date") or "")
@@ -213,13 +221,16 @@ def build_library_feed_coverage(
         latest_date = date.fromisoformat(latest_local) if latest_local else None
         days_behind = max(0, (current - latest_date).days) if latest_date else None
         expected_count = len(target_dates) if target_dates else len(retained)
+        unavailable_count = sum(bool(value.get("source_unavailable")) for value in target_days)
+        waiting_count = sum(bool(value.get("awaiting_source")) for value in target_days)
+        available_count = expected_count - unavailable_count - waiting_count
         progress_points = sum(
             max(0, min(100, int(value.get("pipeline_percent") or 0)))
             for value in target_days
         )
         progress_percent = (
-            round(progress_points / expected_count)
-            if expected_count
+            progress_points // available_count
+            if available_count
             else 0
         )
         names = [
@@ -255,11 +266,11 @@ def build_library_feed_coverage(
         backlog_count = len(set(missing_dates) | network_days | local_processing_dates)
         catchup_saved = catchup is not None
         if catchup_saved and backlog_count == 0:
-            status = "Saved catch-up range is complete"
+            status = "Available audio in the saved range is complete"
         elif catchup_saved:
             status = f"{backlog_count} catch-up day{'s' if backlog_count != 1 else ''} need work"
         elif scheduled and backlog_count == 0:
-            status = "Caught up for the scheduled range"
+            status = "Available audio in the scheduled range is complete"
         elif scheduled:
             status = f"{backlog_count} scheduled day{'s' if backlog_count != 1 else ''} need work"
         elif incomplete:
@@ -289,6 +300,8 @@ def build_library_feed_coverage(
                 "target_day_count": expected_count,
                 "retained_day_count": len(target_days) if target_dates else len(retained),
                 "ready_day_count": sum(bool(value.get("is_complete")) for value in target_days),
+                "source_unavailable_count": unavailable_count,
+                "awaiting_source_count": waiting_count,
                 "incomplete_day_count": len(incomplete),
                 "missing_day_count": len(missing_dates),
                 "missing_dates": missing_dates,
@@ -453,10 +466,10 @@ def build_library_resume_plan(
             )
         )
         and (
-            not bool(value.get("is_complete"))
+            _pending_processing(value)
             or (
                 bool(value.get("source_check_due"))
-                and not has_requested_range
+                and (not has_requested_range or bool(value.get("awaiting_source")))
                 and not _saved_through_current_contains(
                     value,
                     catchups or [],
@@ -485,7 +498,7 @@ def build_library_resume_plan(
             existing_keys.add(key)
     for value in candidates:
         value["needs_local_processing"] = bool(
-            not value.get("is_complete")
+            _pending_processing(value)
             and not value.get("needs_network")
         )
         if bool(value.get("source_check_due")):
@@ -781,7 +794,8 @@ def completed_library_catchup_feed_ids(
             today=current,
             requested_ranges={feed_id: (start_date, end_date)},
         )
-        if coverage and int(coverage[0].get("backlog_count") or 0) == 0:
+        if (coverage and int(coverage[0].get("backlog_count") or 0) == 0
+                and int(coverage[0].get("awaiting_source_count") or 0) == 0):
             completed.append(feed_id)
     return completed
 
@@ -1016,10 +1030,14 @@ def _archive_source_snapshot(
     if current_local.tzinfo is None:
         current_local = current_local.astimezone()
     current_utc = current_local.astimezone(timezone.utc)
-    source_check_due = archive_date >= current_local.date() and (
-        checked_value is None
-        or current_utc - checked_value >= CURRENT_DAY_SOURCE_REFRESH
+    checked_valid = checked_value is not None and checked_value <= current_utc
+    historical = archive_date < current_local.date()
+    final_check = checked_valid and checked_value.astimezone(current_local.tzinfo).date() > archive_date
+    source_check_due = (
+        not checked_valid or current_utc - checked_value >= CURRENT_DAY_SOURCE_REFRESH
+        if not historical else bool(valid and not final_check)
     )
+    empty_listing = bool(valid and checked_valid and not archive_ids)
     return {
         "known_source_count": len(archive_ids) if valid else 0,
         "retained_source_count": retained if valid else 0,
@@ -1027,6 +1045,8 @@ def _archive_source_snapshot(
         "source_checked_at": checked_at,
         "source_snapshot_complete": bool(valid and retained == len(archive_ids)),
         "source_check_due": source_check_due,
+        "source_unavailable": bool(empty_listing and historical and final_check),
+        "awaiting_source": bool(empty_listing and not historical),
     }
 
 
@@ -1202,7 +1222,26 @@ def _state_for_day(
         else 0
     )
 
-    if int(source_snapshot["missing_source_count"]) > 0:
+    # Never hide retained evidence because a later provider listing is empty.
+    no_retained_audio = not raw_files and not has_combined_file and not transcript_file_exists
+    source_unavailable = bool(source_snapshot["source_unavailable"] and no_retained_audio)
+    awaiting_source = bool(source_snapshot["awaiting_source"] and no_retained_audio)
+    complete_sources = bool(
+        raw_files and source_snapshot["source_snapshot_complete"]
+        and len(raw_files) == int(source_snapshot["retained_source_count"])
+        and collapsed_identity_count == 0
+    )
+    if source_unavailable:
+        next_step = "No processing required; source can be checked manually"
+        action = "none"
+        status = "No archive available"
+        status_detail = "Broadcastify returned no audio for this finished day; excluded from unfinished work"
+    elif awaiting_source:
+        next_step = "Check for published audio" if source_snapshot["source_check_due"] else "Wait for Broadcastify to publish audio"
+        action = "resume_download" if source_snapshot["source_check_due"] else "none"
+        status = "Waiting for source audio"
+        status_detail = "Today's last authenticated listing was empty; scheduled checks continue as the day develops"
+    elif int(source_snapshot["missing_source_count"]) > 0:
         next_step = "Restore missing source audio"
         action = "resume_download"
         status = "Archive source repair required"
@@ -1223,6 +1262,11 @@ def _state_for_day(
             "the previous recording is preserved but hidden until the exact "
             "missing source positions are restored"
         )
+    elif complete_sources and not has_combined:
+        next_step = "Combine retained audio locally"
+        action = "continue_local"
+        status = "Ready to combine"
+        status_detail = f"All {len(raw_files)} listed source segments are retained; no download is needed"
     elif has_stale_combined:
         next_step = "Refresh archive day"
         action = "resume_download"
@@ -1303,6 +1347,8 @@ def _state_for_day(
         if has_stale_analysis
         else "Not analyzed",
     ]
+    if source_unavailable or awaiting_source:
+        stage_parts = [status, "No audio to combine, transcribe, or analyze"]
     resolved_feed_name = feed_name or _manifest_feed_name(manifest)
     if external_layout:
         storage_bytes, working_storage_bytes = files_storage_usage(
@@ -1353,9 +1399,12 @@ def _state_for_day(
         "primary_action": action,
         "can_open_review": has_analysis,
         "is_complete": has_diarization and has_analysis,
+        "source_unavailable": source_unavailable,
+        "awaiting_source": awaiting_source,
         "needs_network": (
-            not has_combined
-            or int(source_snapshot["missing_source_count"]) > 0
+            not (source_unavailable or awaiting_source)
+            and (not has_combined and not complete_sources
+                 or int(source_snapshot["missing_source_count"]) > 0)
         ),
         "known_source_count": int(source_snapshot["known_source_count"]),
         "retained_source_count": int(source_snapshot["retained_source_count"]),
@@ -1598,6 +1647,16 @@ def prepare_local_day(
     stem = f"combined_{request.feed_id}_{request.archive_date:%Y%m%d}"
     audio = day_directory / f"{stem}.mp3"
     transcript = day_directory / "transcripts" / f"{stem}.json"
+    cached = complete_cached_archive_day(day_directory, request.feed_id, request.archive_date)
+    if cached and cached[0] and not combined_output_is_current(
+        audio, day_directory / f"{stem}.manifest.json", cached[0],
+    ):
+        if progress:
+            progress("Combining verified retained source audio locally…")
+        combine_mp3_files(
+            day_directory, request.feed_id, request.archive_date,
+            source_files=cached[0], delete_sources=False,
+        )
     if not audio.is_file():
         raise FileNotFoundError(
             "This day has no combined local audio. Resume its archive download first."

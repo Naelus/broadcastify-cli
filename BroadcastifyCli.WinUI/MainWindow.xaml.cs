@@ -4294,13 +4294,13 @@ public sealed partial class MainWindow : Window
             LibraryDayCountText.Text = result.Summary.DayCount.ToString("N0");
             LibraryAttentionCountText.Text = result.Summary.BacklogCount.ToString("N0");
             LibraryCompleteCountText.Text = result.Summary.CompleteCount.ToString("N0");
-            LibraryBacklogSummaryText.Text = result.Summary.BacklogCount == 0
-                ? "Every configured target day and retained processing stage is caught up. Source availability is based on the last authenticated listing snapshot; today's snapshot is refreshed at most every 30 minutes when resumed."
-                : $"{result.Summary.BacklogCount:N0} feed-day(s) need work: "
-                    + $"{result.Days.Count(day => day.HasDiarization && !day.HasAnalysis):N0} await analysis; "
-                    + $"{result.Summary.MissingDayCount:N0} scheduled day(s) are absent; "
-                    + $"{result.Summary.NetworkDayCount:N0} need a source check or download. "
-                    + "A day leaves the backlog when all required work is complete; combining alone may not reduce it.";
+            LibraryBacklogSummaryText.Text =
+                $"{result.Summary.CompleteCount:N0} ready to review · "
+                + $"{result.Summary.LocalProcessingDayCount:N0} need local processing · "
+                + $"{result.Summary.NetworkDayCount:N0} need a source check or download. "
+                + $"{result.Summary.SourceUnavailableCount:N0} day(s) have no archive available; "
+                + $"{result.Summary.AwaitingSourceCount:N0} are waiting for published audio. "
+                + "Empty source listings are not unfinished processing; today's listings are checked every 30 minutes by active schedules.";
             LibraryBacklogSummaryText.Text += $" Updated {DateTime.Now:T}; refreshes every 10 seconds while Library is open.";
             SyncAnalysisFeedSelection();
             // Refreshing counts must not reload a recording the user is listening to.
@@ -4346,9 +4346,11 @@ public sealed partial class MainWindow : Window
              || day.ArchiveDate.Contains(query, StringComparison.OrdinalIgnoreCase))
             && (filter switch
             {
-                "attention" => !day.IsComplete,
+                "attention" => day.NeedsWork,
                 "complete" => day.IsComplete,
                 "network" => day.NeedsNetwork || day.SourceCheckDue,
+                "unavailable" => day.SourceUnavailable,
+                "waiting" => day.AwaitingSource,
                 _ => true,
             }));
         _visibleLibraryDays.Clear();
@@ -4454,10 +4456,26 @@ public sealed partial class MainWindow : Window
             : day.HasTranscript
                 ? "→  5. Event analysis — local classification and summary remain"
                 : "○  5. Event analysis — waits for a transcript";
+        if (day.SourceUnavailable || day.AwaitingSource)
+        {
+            LibraryDownloadStageText.Text = day.SourceUnavailable
+                ? "—  1. Archive audio — Broadcastify returned an empty listing for this finished day"
+                : "○  1. Archive audio — waiting for Broadcastify to publish audio";
+            LibraryCombineStageText.Text = "—  2. Combine — no source audio to process";
+            LibraryTranscriptStageText.Text = "—  3. Transcription — no source audio to process";
+            LibraryDiarizationStageText.Text = "—  4. Speaker labels — no source audio to process";
+            LibraryAnalysisStageText.Text = "—  5. Event analysis — no source audio to process";
+        }
+        else if (day.SourceSnapshotComplete && !day.HasCombined && day.RawFileCount > 0)
+        {
+            LibraryDownloadStageText.Text = $"✓  1. Archive audio — all {day.KnownSourceCount:N0} listed blocks retained";
+            LibraryCombineStageText.Text = "→  2. Combine — ready to run locally";
+        }
         LibraryPathText.Text = $"Local folder: {day.DayDirectory}";
 
         LibraryDetailPrimaryButton.Content = day.PrimaryButtonLabel;
-        LibraryDetailPrimaryButton.IsEnabled = _worker is not null && _operationCancellation is null;
+        LibraryDetailPrimaryButton.IsEnabled = _worker is not null && _operationCancellation is null
+            && day.PrimaryAction != "none";
         LibraryDetailReviewButton.IsEnabled = day.CanOpenReview && _operationCancellation is null;
         LibraryDetailReviewButton.Visibility = day.CanOpenReview
             && day.PrimaryAction != "open_review"
@@ -5078,6 +5096,10 @@ public sealed partial class MainWindow : Window
         bool forceSourceCheck = false)
     {
         if (_worker is null || _pipelineCancellation is not null)
+        {
+            return;
+        }
+        if (day.PrimaryAction == "none" && !forceSourceCheck)
         {
             return;
         }
@@ -8953,7 +8975,8 @@ public sealed partial class MainWindow : Window
         LibraryFeedCoverageList.IsEnabled = interactive && !_libraryMutationBusy;
         LibraryDetailPrimaryButton.IsEnabled = interactive
             && pipelineIdle
-            && selectedDay is not null;
+            && selectedDay is not null
+            && selectedDay.PrimaryAction != "none";
         LibraryDetailReviewButton.IsEnabled = interactive
             && selectedDay?.CanOpenReview == true;
         LibraryCheckSourceButton.IsEnabled = interactive

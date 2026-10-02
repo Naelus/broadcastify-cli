@@ -1002,6 +1002,14 @@ public sealed record LibraryDay
     [JsonPropertyName("is_complete")]
     public bool IsComplete { get; init; }
 
+    [JsonPropertyName("source_unavailable")]
+    public bool SourceUnavailable { get; init; }
+
+    [JsonPropertyName("awaiting_source")]
+    public bool AwaitingSource { get; init; }
+
+    public bool NeedsWork => SourceCheckDue || (!IsComplete && !SourceUnavailable && !AwaitingSource);
+
     [JsonPropertyName("needs_network")]
     public bool NeedsNetwork { get; init; }
 
@@ -1032,8 +1040,10 @@ public sealed record LibraryDay
     public string FeedAndDate => $"{FeedName} · feed {FeedId} · {ArchiveDate}";
     public string DateAndStatus => $"{ArchiveDate} · {Status}";
     public string StatusAndNext => $"{Status} · Next: {NextStep}";
-    public string ProgressSummary => $"{PipelinePercent}% · {NextStep}";
-    public string SourceCoverageSummary => SourceSnapshotComplete
+    public string ProgressSummary => SourceUnavailable || AwaitingSource ? Status : $"{PipelinePercent}% · {NextStep}";
+    public string SourceCoverageSummary => SourceUnavailable || AwaitingSource
+        ? $"Authenticated empty listing · checked {SourceCheckedAt}"
+        : SourceSnapshotComplete
         ? $"Last source check: {RetainedSourceCount:N0}/{KnownSourceCount:N0} blocks retained"
             + (SourceCheckDue ? " · refresh due" : "")
         : SourceCheckDue
@@ -1044,6 +1054,7 @@ public sealed record LibraryDay
         "resume_download" => "Verify & resume",
         "continue_local" => "Finish locally",
         "open_review" => "Open review",
+        "none" => "No work available",
         _ => "Continue",
     };
     public string StorageSummary => WorkingStorageBytes > 0
@@ -1104,6 +1115,12 @@ public sealed record LibraryFeedCoverage
     [JsonPropertyName("ready_day_count")]
     public int ReadyDayCount { get; init; }
 
+    [JsonPropertyName("source_unavailable_count")]
+    public int SourceUnavailableCount { get; init; }
+
+    [JsonPropertyName("awaiting_source_count")]
+    public int AwaitingSourceCount { get; init; }
+
     [JsonPropertyName("incomplete_day_count")]
     public int IncompleteDayCount { get; init; }
 
@@ -1161,9 +1178,10 @@ public sealed record LibraryFeedCoverage
         : Scheduled
             ? $"Scheduled {TargetStartDate} through {TargetEndDate} · {RetainedDayCount}/{TargetDayCount} days retained"
             : $"{RetainedDayCount} retained day{(RetainedDayCount == 1 ? "" : "s")} · no active target range";
-    public string WorkSummary => BacklogCount == 0
+    public string WorkSummary => (BacklogCount == 0
         ? Status
-        : $"{Status} · {LocalProcessingDayCount} local · {NetworkDayCount} source/network";
+        : $"{Status} · {LocalProcessingDayCount} local · {NetworkDayCount} source/network")
+        + $" · {ReadyDayCount} ready · {SourceUnavailableCount} no archive · {AwaitingSourceCount} waiting for source";
     public string SourceSummary => KnownSourceBlockCount > 0
         ? $"Last-known provider blocks: {RetainedSourceBlockCount:N0}/{KnownSourceBlockCount:N0} retained"
             + (MissingSourceBlockCount > 0
@@ -1172,7 +1190,9 @@ public sealed record LibraryFeedCoverage
             + (string.IsNullOrWhiteSpace(LastSourceCheckDisplay)
                 ? ""
                 : $" · checked {LastSourceCheckDisplay}")
-        : "No authenticated source-list snapshot is retained for this target range";
+        : SourceUnavailableCount + AwaitingSourceCount > 0
+            ? "Authenticated source listings contain no audio for these days"
+            : "No authenticated source-list snapshot is retained for this target range";
     private string LastSourceCheckDisplay =>
         DateTimeOffset.TryParse(LastSourceCheckAt, out var parsed)
             ? parsed.ToLocalTime().ToString("g")
@@ -1189,6 +1209,15 @@ internal sealed record LibrarySummary
 
     [JsonPropertyName("complete_count")]
     public int CompleteCount { get; init; }
+
+    [JsonPropertyName("source_unavailable_count")]
+    public int SourceUnavailableCount { get; init; }
+
+    [JsonPropertyName("awaiting_source_count")]
+    public int AwaitingSourceCount { get; init; }
+
+    [JsonPropertyName("local_processing_day_count")]
+    public int LocalProcessingDayCount { get; init; }
 
     [JsonPropertyName("attention_count")]
     public int AttentionCount { get; init; }

@@ -1,7 +1,7 @@
 import json
 import os
 import time
-from datetime import date
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -280,6 +280,98 @@ def test_current_day_source_snapshot_becomes_resume_candidate_when_stale(
     assert plan["days"][0]["needs_network"] is True
     assert plan["local_count"] == 1
     assert plan["network_count"] == 1
+
+
+def test_empty_archive_results_leave_backlog_without_claiming_review_coverage(tmp_path, monkeypatch):
+    import broadcastify_cli.library as library
+
+    today = date.today()
+    now = datetime.combine(today, datetime.min.time()).astimezone() + timedelta(hours=12)
+    original_snapshot = library._archive_source_snapshot
+    monkeypatch.setattr(library, "_archive_source_snapshot", lambda *args: original_snapshot(*args, now=now))
+    database = tmp_path / "analysis.sqlite3"
+    dates = [today - timedelta(days=offset) for offset in range(4)]
+    for offset, value in enumerate(dates):
+        directory = _day(tmp_path, "90001", value.isoformat())
+        if offset == 3:  # An empty local folder is not an authenticated result.
+            continue
+        assert remember_complete_archive_day(directory, "90001", value, [])
+        marker = directory / ".broadcastify-archive-complete.json"
+        payload = json.loads(marker.read_text())
+        payload["completed_at_unix"] = (now - timedelta(days=2) if offset == 2 else now).timestamp()
+        marker.write_text(json.dumps(payload))
+    schedule = [{"feed_id": "90001", "enabled": True, "lookback_days": 4}]
+    days = scan_local_library(tmp_path, database)
+    by_date = {row["archive_date"]: row for row in days}
+    unavailable = by_date[dates[1].isoformat()]
+    assert unavailable["source_unavailable"] and not unavailable["is_complete"]
+    assert not unavailable["can_open_review"] and not unavailable["needs_network"]
+    assert by_date[today.isoformat()]["awaiting_source"]
+    plan = build_library_resume_plan(days, {"available": True}, schedule)
+    assert {row["archive_date"] for row in plan["days"]} == {d.isoformat() for d in dates[2:]}
+    assert plan["feeds"][0]["backlog_count"] == 2
+    assert plan["feeds"][0]["source_unavailable_count"] == 1
+    assert plan["feeds"][0]["awaiting_source_count"] == 1
+    marker = tmp_path / "90001" / today.strftime("%Y%m%d") / ".broadcastify-archive-complete.json"
+    payload = json.loads(marker.read_text())
+    payload["completed_at_unix"] = (now - timedelta(minutes=31)).timestamp()
+    marker.write_text(json.dumps(payload))
+    # A live empty listing must re-enter acquisition when its refresh is due.
+    refreshed = scan_local_library(tmp_path, database)
+    scoped = build_library_resume_plan(refreshed, {"available": True}, requested_feed_id="90001",
+        requested_start_date=today, requested_end_date=today)
+    assert scoped["network_count"] == 1 and scoped["local_count"] == 0
+    # Bad evidence must never turn an unknown historical day into a resolved gap.
+    marker = tmp_path / "90001" / dates[1].strftime("%Y%m%d") / marker.name
+    payload = json.loads(marker.read_text())
+    payload["completed_at_unix"] = 0
+    marker.write_text(json.dumps(payload))
+    invalid = next(row for row in scan_local_library(tmp_path, database) if row["archive_date"] == dates[1].isoformat())
+    assert not invalid["source_unavailable"] and invalid["needs_network"]
+
+
+def test_finish_locally_combines_complete_sources_without_download(tmp_path, monkeypatch):
+    import wave
+    from broadcastify_cli.audio import find_ffmpeg
+
+    try:
+        find_ffmpeg()
+    except FileNotFoundError:
+        pytest.skip("FFmpeg is required for the real local-combine boundary")
+    archive_date = date(2026, 1, 1)
+    day = _day(tmp_path, "90001", archive_date.isoformat())
+    sources = []
+    for index in range(2):
+        source = day / f"202601010{index}00-{index + 1}-90001.mp3"
+        with wave.open(str(source), "wb") as audio:
+            audio.setparams((1, 2, 16000, 0, "NONE", "not compressed"))
+            audio.writeframes(b"\0\0" * 1600)
+        remember_archive_identity(day, "90001", archive_date, str(index), source)
+        sources.append(source)
+    assert remember_complete_archive_day(day, "90001", archive_date, ["0", "1"])
+    state = scan_local_library(tmp_path, tmp_path / "analysis.sqlite3")[0]
+    plan = build_library_resume_plan([state], {"available": False, "remaining": 0})
+    assert state["status"] == "Ready to combine"
+    assert plan["local_count"] == 1 and plan["network_count"] == 0
+    def no_network(*args, **kwargs):
+        raise AssertionError("Local completion must not contact a provider")
+    monkeypatch.setattr("requests.Session.request", no_network)
+    class Transcriber:
+        def __init__(self, **kwargs):
+            pass
+        def transcribe_file(self, audio, progress=None):
+            assert audio.is_file() and audio.stat().st_size > 0
+            manifest = json.loads(audio.with_suffix(".manifest.json").read_text())
+            assert len(manifest["sources"]) == 2
+            transcript = day / "transcripts" / f"{audio.stem}.json"
+            transcript.parent.mkdir(exist_ok=True)
+            transcript.write_text(json.dumps({"segments": [], "diarization_completed": True}))
+            return transcript
+    monkeypatch.setattr("broadcastify_cli.library.LocalTranscriber", Transcriber)
+    result = prepare_local_day(LocalProcessingRequest(feed_id="90001", archive_date=archive_date, output_dir=tmp_path))
+    assert result["operation"] == "transcribed"
+    assert all(source.exists() for source in sources)
+    assert scan_local_library(tmp_path, tmp_path / "analysis.sqlite3")[0]["has_combined"]
 
 
 def test_delete_feed_retries_a_transient_windows_directory_lock(
