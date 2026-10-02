@@ -60,6 +60,7 @@ RUN python3 -m venv /opt/radio-archive-venv \
         ".[analysis,portable-diarization]"
 
 ENV PATH="/opt/radio-archive-venv/bin:/app/build/bin:/app:${PATH}" \
+    LD_LIBRARY_PATH=/app \
     BROADCASTIFY_SOURCE_COMMIT="${SOURCE_COMMIT}" \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
