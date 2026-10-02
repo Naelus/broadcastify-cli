@@ -34,9 +34,16 @@ RUN apt-get update \
         tzdata \
     && rm -rf /var/lib/apt/lists/*
 
-# whisper.cpp's release binaries retain an absolute /app/build/bin RUNPATH.
-# Preserve that path while leaving llama.cpp's root /app libraries separate.
-COPY --from=whisper_runtime /app/build /app/build
+# The official Whisper image installs under /usr/local. Its ggml libraries
+# have the same names as llama.cpp's but a different ABI. Scope the loader
+# path to this executable and keep the historical configured CLI path valid.
+COPY --from=whisper_runtime /usr/local/bin/whisper-cli /opt/whisper/bin/whisper-cli
+COPY --from=whisper_runtime /usr/local/lib/ /opt/whisper/lib/
+RUN mkdir -p /app/build/bin \
+    && printf '%s\n' '#!/bin/sh' \
+       'export LD_LIBRARY_PATH="/opt/whisper/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"' \
+       'exec /opt/whisper/bin/whisper-cli "$@"' > /app/build/bin/whisper-cli \
+    && chmod 755 /app/build/bin/whisper-cli
 
 WORKDIR /opt/radio-archive
 COPY pyproject.toml README.md LICENSE ./
