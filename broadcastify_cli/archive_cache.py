@@ -7,7 +7,7 @@ import sqlite3
 import threading
 import time
 from collections.abc import Mapping, Sequence
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -396,6 +396,22 @@ def remember_complete_archive_day(
     return True
 
 
+def source_listing_check_due(
+    archive_date: date,
+    checked_at: datetime | None,
+    now: datetime,
+) -> bool:
+    """Keep recent listings rolling through the provider's publication lag."""
+    if checked_at is None or checked_at > now:
+        return True
+    checked_local = checked_at.astimezone(now.tzinfo)
+    if archive_date >= now.date() - timedelta(days=2):
+        return now - checked_at >= timedelta(minutes=30)
+    # A midnight check can still miss yesterday's final block. Older days
+    # need a listing sampled at least one full calendar day after they ended.
+    return checked_local.date() <= archive_date + timedelta(days=1)
+
+
 def complete_cached_archive_day(
     day_directory: str | Path,
     feed_id: str,
@@ -433,12 +449,11 @@ def complete_cached_archive_day(
             now = time.time()
             if not 0 < checked_at <= now:
                 return None
-            today = datetime.fromtimestamp(now).date()
-            if archive_date >= today:
-                if now - checked_at >= 30 * 60:
-                    return None
-            elif datetime.fromtimestamp(checked_at).date() <= archive_date:
-                # Yesterday's last live snapshot may omit its final tracks.
+            if source_listing_check_due(
+                archive_date,
+                datetime.fromtimestamp(checked_at).astimezone(),
+                datetime.fromtimestamp(now).astimezone(),
+            ):
                 return None
         except (OSError, OverflowError, TypeError, ValueError):
             return None

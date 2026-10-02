@@ -37,8 +37,11 @@ no unfinished work, and is not offered by Resume or counted as analyzed.
 The manual source-check action remains available. An empty folder, invalid
 completion record, or missing downloaded file is never sufficient evidence to
 dismiss a day. An empty listing captured before a day ended requires a final
-check. Today's empty listing is **Waiting for source audio** and becomes
-eligible for a new source check after 30 minutes. Existing retained evidence is
+check. Empty listings for today and the previous two days are **Waiting for source
+audio** and become eligible for a new source check after 30 minutes. These recent
+listings keep refreshing even after midnight, so delayed final blocks can be
+acquired. Older days need a final listing checked at least one full calendar day
+after they ended before their snapshot can be reused indefinitely. Existing retained evidence is
 never hidden just because a later listing is empty.
 
 When every listed raw block is retained but the combined recording is missing

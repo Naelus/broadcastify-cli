@@ -17,6 +17,7 @@ from .archive_cache import (
     cached_archives_for_ids,
     collapsed_archive_identity_count,
     complete_cached_archive_day,
+    source_listing_check_due,
 )
 from .audio import combine_mp3_files, combined_output_is_current
 from .portable_diarization import (
@@ -38,7 +39,6 @@ from .workfiles import (
 RAW_ARCHIVE_PATTERN = re.compile(r"^\d{12}-\d+-(\d+)\.mp3$", re.IGNORECASE)
 DAY_DIRECTORY_PATTERN = re.compile(r"^\d{8}$")
 PENDING_DELETE_PATTERN = re.compile(r"^\.deleting-\d+-[0-9a-f]{32}$")
-CURRENT_DAY_SOURCE_REFRESH = timedelta(minutes=30)
 DELETE_DETACH_RETRY_SECONDS = (0.0, 0.15, 0.3, 0.6, 1.0, 1.5)
 
 
@@ -1031,12 +1031,8 @@ def _archive_source_snapshot(
         current_local = current_local.astimezone()
     current_utc = current_local.astimezone(timezone.utc)
     checked_valid = checked_value is not None and checked_value <= current_utc
-    historical = archive_date < current_local.date()
-    final_check = checked_valid and checked_value.astimezone(current_local.tzinfo).date() > archive_date
-    source_check_due = (
-        not checked_valid or current_utc - checked_value >= CURRENT_DAY_SOURCE_REFRESH
-        if not historical else bool(valid and not final_check)
-    )
+    recent = archive_date >= current_local.date() - timedelta(days=2)
+    source_check_due = source_listing_check_due(archive_date, checked_value, current_local)
     empty_listing = bool(valid and checked_valid and not archive_ids)
     return {
         "known_source_count": len(archive_ids) if valid else 0,
@@ -1045,8 +1041,8 @@ def _archive_source_snapshot(
         "source_checked_at": checked_at,
         "source_snapshot_complete": bool(valid and retained == len(archive_ids)),
         "source_check_due": source_check_due,
-        "source_unavailable": bool(empty_listing and historical and final_check),
-        "awaiting_source": bool(empty_listing and not historical),
+        "source_unavailable": bool(empty_listing and not recent and not source_check_due),
+        "awaiting_source": bool(empty_listing and recent),
     }
 
 

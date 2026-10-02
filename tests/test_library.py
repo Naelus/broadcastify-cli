@@ -290,28 +290,28 @@ def test_empty_archive_results_leave_backlog_without_claiming_review_coverage(tm
     original_snapshot = library._archive_source_snapshot
     monkeypatch.setattr(library, "_archive_source_snapshot", lambda *args: original_snapshot(*args, now=now))
     database = tmp_path / "analysis.sqlite3"
-    dates = [today - timedelta(days=offset) for offset in range(4)]
+    dates = [today - timedelta(days=offset) for offset in range(6)]
     for offset, value in enumerate(dates):
         directory = _day(tmp_path, "90001", value.isoformat())
-        if offset == 3:  # An empty local folder is not an authenticated result.
+        if offset == 5:  # An empty local folder is not an authenticated result.
             continue
         assert remember_complete_archive_day(directory, "90001", value, [])
         marker = directory / ".broadcastify-archive-complete.json"
         payload = json.loads(marker.read_text())
-        payload["completed_at_unix"] = (now - timedelta(days=2) if offset == 2 else now).timestamp()
+        payload["completed_at_unix"] = (now - timedelta(days=4) if offset == 4 else now).timestamp()
         marker.write_text(json.dumps(payload))
-    schedule = [{"feed_id": "90001", "enabled": True, "lookback_days": 4}]
+    schedule = [{"feed_id": "90001", "enabled": True, "lookback_days": 6}]
     days = scan_local_library(tmp_path, database)
     by_date = {row["archive_date"]: row for row in days}
-    unavailable = by_date[dates[1].isoformat()]
+    unavailable = by_date[dates[3].isoformat()]
     assert unavailable["source_unavailable"] and not unavailable["is_complete"]
     assert not unavailable["can_open_review"] and not unavailable["needs_network"]
     assert by_date[today.isoformat()]["awaiting_source"]
     plan = build_library_resume_plan(days, {"available": True}, schedule)
-    assert {row["archive_date"] for row in plan["days"]} == {d.isoformat() for d in dates[2:]}
+    assert {row["archive_date"] for row in plan["days"]} == {d.isoformat() for d in dates[4:]}
     assert plan["feeds"][0]["backlog_count"] == 2
     assert plan["feeds"][0]["source_unavailable_count"] == 1
-    assert plan["feeds"][0]["awaiting_source_count"] == 1
+    assert plan["feeds"][0]["awaiting_source_count"] == 3
     marker = tmp_path / "90001" / today.strftime("%Y%m%d") / ".broadcastify-archive-complete.json"
     payload = json.loads(marker.read_text())
     payload["completed_at_unix"] = (now - timedelta(minutes=31)).timestamp()
@@ -322,11 +322,11 @@ def test_empty_archive_results_leave_backlog_without_claiming_review_coverage(tm
         requested_start_date=today, requested_end_date=today)
     assert scoped["network_count"] == 1 and scoped["local_count"] == 0
     # Bad evidence must never turn an unknown historical day into a resolved gap.
-    marker = tmp_path / "90001" / dates[1].strftime("%Y%m%d") / marker.name
+    marker = tmp_path / "90001" / dates[3].strftime("%Y%m%d") / marker.name
     payload = json.loads(marker.read_text())
     payload["completed_at_unix"] = 0
     marker.write_text(json.dumps(payload))
-    invalid = next(row for row in scan_local_library(tmp_path, database) if row["archive_date"] == dates[1].isoformat())
+    invalid = next(row for row in scan_local_library(tmp_path, database) if row["archive_date"] == dates[3].isoformat())
     assert not invalid["source_unavailable"] and invalid["needs_network"]
 
 

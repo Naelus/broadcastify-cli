@@ -515,6 +515,39 @@ def test_scheduled_acquisition_reuses_sources_and_refreshes_only_due_listings(
         assert second["completed_days"] == 4
         assert listings == authentications == []
 
+        # A listing sampled after midnight is still provisional: the provider
+        # can publish yesterday's final block after that first check.
+        yesterday = days[1]
+        day_dir = tmp_path / feed_id / yesterday.strftime("%Y%m%d")
+        marker = day_dir / ".broadcastify-archive-complete.json"
+        payload = json.loads(marker.read_text())
+        payload["completed_at_unix"] = (datetime.now() - timedelta(minutes=31)).timestamp()
+        marker.write_text(json.dumps(payload))
+        downloaded = []
+        original_download = client.download_archive
+
+        def late_listing(_feed_id, archive_date):
+            listings.append(archive_date)
+            assert archive_date == yesterday
+            return ["provider-id", "late-block"]
+
+        def late_download(feed, archive_date, archive_id, directory, *args, **kwargs):
+            if archive_id == "provider-id":
+                return original_download(feed, archive_date, archive_id, directory, *args, **kwargs)
+            assert archive_id == "late-block"
+            source = directory / f"{archive_date:%Y%m%d}2330-2-{feed}.mp3"
+            source.write_bytes(b"late published source")
+            remember_archive_identity(directory, feed, archive_date, archive_id, source)
+            downloaded.append(source)
+            return source
+
+        monkeypatch.setattr(client, "get_archive_ids", late_listing)
+        monkeypatch.setattr(client, "download_archive", late_download)
+        third = JobRunner(request, client=client).run()
+        assert third["completed_days"] == 4
+        assert listings == [yesterday]
+        assert len(downloaded) == 1 and downloaded[0].read_bytes() == b"late published source"
+
 
 def test_lan_source_reuse_is_interleaved_with_each_backlog_day(
     tmp_path: Path,
