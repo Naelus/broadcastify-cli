@@ -524,6 +524,8 @@ class JobRecord:
     error: str = ""
     cancel_requested: bool = False
     process: subprocess.Popen[str] | None = field(default=None, repr=False)
+    thread: threading.Thread | None = field(default=None, repr=False)
+    event_count: int = 0
 
     def snapshot(self) -> dict[str, Any]:
         return {
@@ -605,6 +607,7 @@ class JobManager:
         )
         self._jobs: dict[str, JobRecord] = {}
         self._lock = threading.RLock()
+        self._closing = False
 
     def start(self, command: str, payload: dict[str, Any]) -> dict[str, Any]:
         request_payload = dict(payload)
@@ -632,6 +635,8 @@ class JobManager:
         )
         arguments, stdin_payload = self._worker_request(command, request_payload)
         with self._lock:
+            if self._closing:
+                raise WebRequestError(HTTPStatus.SERVICE_UNAVAILABLE, "The app is shutting down.")
             if any(job.status in {"queued", "running", "canceling"} for job in self._jobs.values()):
                 raise WebRequestError(
                     HTTPStatus.CONFLICT,
@@ -644,13 +649,28 @@ class JobManager:
                 account_profile_id=account_profile_id,
             )
             self._jobs[job.id] = job
-        threading.Thread(
-            target=self._run,
-            args=(job, arguments, stdin_payload, account_profile_id),
-            name=f"radio-job-{job.id}",
-            daemon=True,
-        ).start()
+            # Register and start under the same lock so shutdown cannot miss a
+            # worker between accepting its job and creating its thread.
+            job.thread = threading.Thread(
+                target=self._run,
+                args=(job, arguments, stdin_payload, account_profile_id),
+                name=f"radio-job-{job.id}",
+                daemon=True,
+            )
+            job.thread.start()
         return job.snapshot()
+
+    def close(self) -> None:
+        with self._lock:
+            self._closing = True
+            jobs = list(self._jobs.values())
+        for job in jobs:
+            if job.status in {"queued", "running", "canceling"}:
+                self.cancel(job.id)
+        deadline = time.monotonic() + 15
+        for job in jobs:
+            if job.thread is not None:
+                job.thread.join(timeout=max(0, deadline - time.monotonic()))
 
     def status(self) -> dict[str, Any]:
         with self._lock:
@@ -694,6 +714,8 @@ class JobManager:
                 raise WebRequestError(HTTPStatus.NOT_FOUND, "That local job was not found.")
             if job.status not in {"queued", "running", "canceling"}:
                 return job.snapshot()
+            if job.cancel_requested:
+                return job.snapshot()
             job.cancel_requested = True
             job.status = "canceling"
             process = job.process
@@ -710,10 +732,16 @@ class JobManager:
                     pass
 
             def force_stop() -> None:
-                time.sleep(3)
-                if process.poll() is None:
+                try:
+                    process.wait(timeout=10)
+                except subprocess.TimeoutExpired:
                     try:
-                        process.kill()
+                        # Native model children share the worker's session on
+                        # Linux. Killing only Python leaves those children alive.
+                        if os.name == "nt":
+                            process.kill()
+                        else:
+                            os.killpg(process.pid, signal.SIGKILL)
                     except OSError:
                         pass
 
@@ -739,7 +767,8 @@ class JobManager:
                     list(result.get("stories") or []),
                 )
                 event = {**event, "result": result}
-            event = {**event, "event_index": len(job.events), "received_at": utc_now()}
+            event = {**event, "event_index": job.event_count, "received_at": utc_now()}
+            job.event_count += 1
             job.events.append(event)
             if len(job.events) > MAX_EVENTS:
                 job.events = job.events[-MAX_EVENTS:]
@@ -753,53 +782,64 @@ class JobManager:
         stdin_payload: dict[str, Any] | None,
         account_profile_id: str,
     ) -> None:
-        with self._lock:
-            job.status = "running"
-            job.started_at = utc_now()
-        environment = os.environ.copy()
-        environment["BROADCASTIFY_ANALYSIS_DB"] = str(self.database_path)
-        environment["BROADCASTIFY_SECURE_ANALYSIS_DB"] = str(
-            self.database_path
-        )
-        environment["BROADCASTIFY_LIBRARY_ROOT"] = str(self.output_dir)
-        environment["PYTHONIOENCODING"] = "utf-8"
-        environment["PYTHONUTF8"] = "1"
-        for name in (
-            "BROADCASTIFY_SECURE_USERNAME",
-            "BROADCASTIFY_SECURE_PASSWORD",
-            "BROADCASTIFY_ACCOUNT_PROFILE",
-            "BROADCASTIFY_COOKIE_PATH",
-        ):
-            environment.pop(name, None)
-        environment.update(
-            self.credential_store.worker_environment(account_profile_id)
-        )
-        environment["BROADCASTIFY_ACCOUNT_PROFILE"] = account_profile_id
-        environment["BROADCASTIFY_COOKIE_PATH"] = str(
-            _account_cookie_path(self.working_dir, account_profile_id)
-        )
-        environment.setdefault("BROADCASTIFY_GLOBAL_REQUEST_SPACING_SECONDS", "5")
-        creation_flags = 0
-        start_new_session = os.name != "nt"
-        if os.name == "nt":
-            creation_flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        process = None
         stderr_lines: list[str] = []
         try:
-            process = subprocess.Popen(
-                [sys.executable, "-m", "broadcastify_cli.worker", *arguments],
-                cwd=self.working_dir,
-                env=environment,
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                bufsize=1,
-                creationflags=creation_flags,
-                start_new_session=start_new_session,
-            )
             with self._lock:
+                if job.cancel_requested:
+                    job.status = "canceled"
+                    job.finished_at = utc_now()
+                    return
+                job.status = "running"
+                job.started_at = utc_now()
+            environment = os.environ.copy()
+            environment["BROADCASTIFY_ANALYSIS_DB"] = str(self.database_path)
+            environment["BROADCASTIFY_SECURE_ANALYSIS_DB"] = str(
+                self.database_path
+            )
+            environment["BROADCASTIFY_LIBRARY_ROOT"] = str(self.output_dir)
+            environment["PYTHONIOENCODING"] = "utf-8"
+            environment["PYTHONUTF8"] = "1"
+            for name in (
+                "BROADCASTIFY_SECURE_USERNAME",
+                "BROADCASTIFY_SECURE_PASSWORD",
+                "BROADCASTIFY_ACCOUNT_PROFILE",
+                "BROADCASTIFY_COOKIE_PATH",
+            ):
+                environment.pop(name, None)
+            environment.update(
+                self.credential_store.worker_environment(account_profile_id)
+            )
+            environment["BROADCASTIFY_ACCOUNT_PROFILE"] = account_profile_id
+            environment["BROADCASTIFY_COOKIE_PATH"] = str(
+                _account_cookie_path(self.working_dir, account_profile_id)
+            )
+            environment.setdefault("BROADCASTIFY_GLOBAL_REQUEST_SPACING_SECONDS", "5")
+            creation_flags = 0
+            start_new_session = os.name != "nt"
+            if os.name == "nt":
+                creation_flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+            # Cancel may arrive while resolving credentials. Keep the launch
+            # and process publication atomic with respect to cancellation.
+            with self._lock:
+                if job.cancel_requested:
+                    job.status = "canceled"
+                    job.finished_at = utc_now()
+                    return
+                process = subprocess.Popen(
+                    [sys.executable, "-m", "broadcastify_cli.worker", *arguments],
+                    cwd=self.working_dir,
+                    env=environment,
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    bufsize=1,
+                    creationflags=creation_flags,
+                    start_new_session=start_new_session,
+                )
                 job.process = process
 
             def read_stderr() -> None:
@@ -852,11 +892,28 @@ class JobManager:
                     )
                 job.finished_at = utc_now()
                 job.process = None
-        except Exception as exc:  # pragma: no cover - defensive process boundary
+        except Exception as exc:
+            # A broken stdin/stdout pipe must not release the single-job slot
+            # while the worker (or its native model child) is still running.
+            if process is not None and process.poll() is None:
+                try:
+                    if os.name == "nt":
+                        process.kill()
+                    else:
+                        os.killpg(process.pid, signal.SIGKILL)
+                    process.wait(timeout=5)
+                except (OSError, subprocess.TimeoutExpired):
+                    pass
             with self._lock:
                 job.status = "canceled" if job.cancel_requested else "failed"
                 job.error = str(exc)
                 job.finished_at = utc_now()
+        finally:
+            if process is not None:
+                for pipe in (process.stdin, process.stdout, process.stderr):
+                    if pipe is not None:
+                        pipe.close()
+            with self._lock:
                 job.process = None
 
     def _worker_request(
@@ -2937,6 +2994,10 @@ def create_server(
 
         def server_close(self) -> None:
             state.scheduler.close()
+            # A follower owns no remote process; stopping its UI must not
+            # cancel work on the Windows master.
+            if isinstance(state.jobs, JobManager):
+                state.jobs.close()
             state.lan_reconciler.close()
             responder = getattr(self, "lan_discovery", None)
             if responder is not None:
@@ -3041,12 +3102,24 @@ def run_web_app(
         )
     if open_browser:
         webbrowser.open(url)
+    previous_sigterm = None
+    if threading.current_thread() is threading.main_thread():
+        previous_sigterm = signal.getsignal(signal.SIGTERM)
+
+        def stop_service(_signum: int, _frame: Any) -> None:
+            raise KeyboardInterrupt
+
+        signal.signal(signal.SIGTERM, stop_service)
     try:
         server.serve_forever(poll_interval=0.25)
     except KeyboardInterrupt:
         pass
     finally:
-        server.server_close()
+        try:
+            server.server_close()
+        finally:
+            if previous_sigterm is not None:
+                signal.signal(signal.SIGTERM, previous_sigterm)
     return 0
 
 

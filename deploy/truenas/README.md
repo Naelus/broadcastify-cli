@@ -2,10 +2,15 @@
 
 ## Release image
 
-The `TrueNAS container release` GitHub Actions workflow packages a selected
-committed source ref for `linux/amd64`. The workflow runs the full offline
-Python regression suite before building, embeds the exact 40-character source
-commit in the OCI metadata and runtime environment, and publishes both an
+The `TrueNAS container release` GitHub Actions workflow runs for every `v*`
+release tag and can also package a selected committed source ref manually for
+`linux/amd64`. It runs the full offline Python regression suite with FFmpeg,
+scans application files for private data, and embeds the exact 40-character source
+commit in the OCI metadata and runtime environment. Before publishing, it boots
+the actual image without network access, as an unprivileged user with a read-only
+root filesystem and a temporary data mount. The check exercises protected HTTP
+actions, a real diagnostics worker, native runtime loading, SIGTERM shutdown,
+and retained SQLite/audio integrity. It publishes both an
 immutable `VERSION-SHORTCOMMIT` tag and the corresponding version tag to:
 
 ```text
@@ -16,6 +21,11 @@ Use the immutable tag in the managed TrueNAS custom app. Update the existing
 app's image only; retain its compose settings and the `/data` host mount so
 archives, transcripts, account sessions, quotas, schedules, and checkpoints
 survive the deployment.
+
+Publishing a repository release makes the image available; it does not change
+the image selected by an existing TrueNAS App. Select the new immutable tag in
+that App and verify its healthy state and About/source commit after redeploying.
+Published version tags cannot be replaced by rerunning the workflow.
 
 Keep `pull_policy: missing` with that immutable tag. TrueNAS will fetch the
 newly selected release when it is not already local, then reuse the exact local
@@ -79,7 +89,8 @@ The image combines the official Vulkan builds of whisper.cpp and llama.cpp
 with the Python Web/worker package and the portable sherpa-onnx CPU speaker
 preview. Community-1 and faster-whisper are intentionally not baked into this
 NAS image; their much larger Python/Torch stack remains an optional future
-variant. Pin the two base-image digests for a reproducible production build.
+variant. The Dockerfile pins both official base-image digests; changing those
+pins requires the same packaged-runtime checks as an application change.
 
 The Compose definition advertises the exact installed pipeline as the Web
 app's Automatic preset: Base English Q5_1 through whisper.cpp/Vulkan with the
@@ -106,6 +117,8 @@ through **Apps → Discover Apps → more menu → Install via YAML**. Use:
 - the host `render` group ID and `/dev/dri/renderD128` for AMD Vulkan;
 - one private IP assigned to the TrueNAS host;
 - an unused host port;
+- the master's IANA timezone (`America/Chicago` for this deployment) in
+  `APP_TIMEZONE`, so date boundaries and schedules agree across nodes;
 - the absolute dataset mount path.
 
 The example uses TrueNAS-supported host networking so one-hop UDP

@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
 
-ARG LLAMA_IMAGE=ghcr.io/ggml-org/llama.cpp:server-vulkan
-ARG WHISPER_IMAGE=ghcr.io/ggml-org/whisper.cpp:main-vulkan
+ARG LLAMA_IMAGE=ghcr.io/ggml-org/llama.cpp:server-vulkan@sha256:ffa3e6a781e3cffbd5975be4b9062854689b3603165366e33358f88270da2c73
+ARG WHISPER_IMAGE=ghcr.io/ggml-org/whisper.cpp:main-vulkan@sha256:d991b7cec9528a483202c50c4c367e58a6b7c3a69946d9d963355a83adb0a36a
 
 FROM ${WHISPER_IMAGE} AS whisper_runtime
 FROM ${LLAMA_IMAGE}
@@ -31,6 +31,7 @@ RUN apt-get update \
         libgomp1 \
         python3-pip \
         python3-venv \
+        tzdata \
     && rm -rf /var/lib/apt/lists/*
 
 # whisper.cpp's release binaries retain an absolute /app/build/bin RUNPATH.

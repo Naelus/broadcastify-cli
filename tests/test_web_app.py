@@ -1742,3 +1742,92 @@ def test_web_area_story_packages_use_safe_media_urls_without_local_paths(
     assert "source_audio_path" not in reference
     assert "Jordan Example" in stories[0]["incident_references"][0]["quote"]
     assert "clip_path" in stories[0]["incident_references"][0]
+
+
+def test_web_cancel_during_credential_load_never_launches_worker(tmp_path, monkeypatch):
+    from broadcastify_cli.web_app import JobRecord
+
+    entered = threading.Event()
+    release = threading.Event()
+    manager = JobManager(tmp_path, tmp_path / "analysis.sqlite3", tmp_path)
+
+    def credentials(_profile):
+        entered.set()
+        assert release.wait(3)
+        return {}
+
+    monkeypatch.setattr(manager.credential_store, "worker_environment", credentials)
+    monkeypatch.setattr("broadcastify_cli.web_app.subprocess.Popen", lambda *a, **k: pytest.fail("Canceled job launched"))
+    job = JobRecord("canceled-launch", "diagnostics")
+    manager._jobs[job.id] = job
+    job.thread = threading.Thread(target=manager._run, args=(job, ["diagnostics"], None, "default"))
+    job.thread.start()
+    try:
+        assert entered.wait(3)
+        manager.cancel(job.id)
+    finally:
+        release.set()
+        manager.close()
+    assert manager.get(job.id)["status"] == "canceled"
+    assert not job.thread.is_alive()
+
+    # Credential failures must release the active-job slot as well.
+    def unavailable(_profile):
+        raise OSError("Credential store is unavailable")
+    monkeypatch.setattr(manager.credential_store, "worker_environment", unavailable)
+    failed = JobRecord("failed-credentials", "diagnostics")
+    manager._jobs[failed.id] = failed
+    manager._run(failed, ["diagnostics"], None, "default")
+    assert manager.get(failed.id)["status"] == "failed"
+    assert manager.status()["active"] is None
+
+
+def test_web_shutdown_reaps_worker_after_retained_checkpoint(tmp_path, monkeypatch):
+    import subprocess
+    import sys
+    from broadcastify_cli.web_app import JobRecord
+
+    checkpoint = tmp_path / "checkpoint.txt"
+    # Use a real isolated process, with no model or network dependency. Its
+    # checkpoint proves the manager delivered a graceful stop before reaping it.
+    program = r"""
+import json, signal, sys, time
+from pathlib import Path
+def stop(*args):
+    Path(sys.argv[1]).write_text('retained checkpoint')
+    raise SystemExit(0)
+signal.signal(signal.SIGINT, stop)
+if hasattr(signal, 'SIGBREAK'):
+    signal.signal(signal.SIGBREAK, stop)
+print(json.dumps({'type':'stage','message':'ready'}), flush=True)
+while True:
+    time.sleep(0.01)
+"""
+    real_popen = subprocess.Popen
+    processes = []
+    def launch(_args, **kwargs):
+        process = real_popen([sys.executable, "-u", "-c", program, str(checkpoint)], **kwargs)
+        processes.append(process)
+        return process
+    monkeypatch.setattr("broadcastify_cli.web_app.subprocess.Popen", launch)
+    manager = JobManager(tmp_path, tmp_path / "analysis.sqlite3", tmp_path)
+    ready = threading.Event()
+    append = manager._append
+    def observe(job, event):
+        append(job, event)
+        ready.set()
+    monkeypatch.setattr(manager, "_append", observe)
+    job = JobRecord("shutdown", "diagnostics")
+    manager._jobs[job.id] = job
+    job.thread = threading.Thread(target=manager._run, args=(job, ["diagnostics"], None, "default"))
+    job.thread.start()
+    try:
+        assert ready.wait(5)
+    finally:
+        manager.close()
+    assert checkpoint.read_text() == "retained checkpoint"
+    assert processes[0].poll() == 0
+    assert manager.get(job.id)["status"] == "canceled"
+    assert not job.thread.is_alive()
+    with pytest.raises(WebRequestError, match="shutting down"):
+        manager.start("diagnostics", {})

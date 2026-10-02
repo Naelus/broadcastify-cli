@@ -394,7 +394,10 @@ def install_service(
     if manage_systemd:
         _systemctl("daemon-reload")
         if start:
-            _systemctl("enable", "--now", SERVICE_NAME)
+            _systemctl("enable", SERVICE_NAME)
+            # enable --now leaves an already-running service on its old
+            # interpreter and storage paths after a forced reconfiguration.
+            _systemctl("restart", SERVICE_NAME)
         else:
             _systemctl("enable", SERVICE_NAME)
     return config_path, unit_path

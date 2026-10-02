@@ -1,6 +1,9 @@
 name: TrueNAS container release
 
 on:
+  push:
+    tags:
+      - "v*"
   workflow_dispatch:
     inputs:
       source_ref:
@@ -13,9 +16,14 @@ permissions:
   contents: read
   packages: write
 
+concurrency:
+  group: truenas-release
+  cancel-in-progress: false
+
 jobs:
   verify:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     outputs:
       commit: ${{ steps.release.outputs.commit }}
       image: ${{ steps.release.outputs.image }}
@@ -25,7 +33,7 @@ jobs:
       - name: Check out committed source
         uses: actions/checkout@v6
         with:
-          ref: ${{ inputs.source_ref }}
+          ref: ${{ inputs.source_ref || github.ref }}
           fetch-depth: 0
 
       - name: Resolve immutable release identity
@@ -37,6 +45,9 @@ jobs:
           test "${#commit}" -eq 40
           test -z "$(git status --porcelain --untracked-files=no)"
           version="$(python3 -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+          if [ "${GITHUB_REF_TYPE}" = tag ]; then
+            test "${GITHUB_REF_NAME}" = "v${version}"
+          fi
           image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/radio-archive-intelligence"
           tag="${version}-${commit:0:7}"
           printf 'commit=%s\n' "$commit" >> "$GITHUB_OUTPUT"
@@ -50,14 +61,21 @@ jobs:
           python-version: "3.12.10"
 
       - name: Install offline regression dependencies
-        run: python -m pip install --disable-pip-version-check -e ".[dev]"
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+          python -m pip install --disable-pip-version-check -e ".[dev]"
 
       - name: Run full offline regression suite
         run: python -m pytest -q
 
+      - name: Scan application files for secrets and private data
+        run: python scripts/scan_public_release.py --root broadcastify_cli
+
   publish:
     needs: verify
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - name: Check out the verified commit
         uses: actions/checkout@v6
@@ -74,13 +92,14 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
-      - name: Build and publish the verified TrueNAS image
+      - name: Build the TrueNAS image for verification
         uses: docker/build-push-action@v7
         with:
           context: .
           file: deploy/truenas/Dockerfile
           platforms: linux/amd64
-          push: true
+          load: true
+          push: false
           build-args: |
             SOURCE_COMMIT=${{ needs.verify.outputs.commit }}
           labels: |
@@ -92,6 +111,30 @@ jobs:
             ${{ needs.verify.outputs.image }}:${{ needs.verify.outputs.version }}
           cache-from: type=gha,scope=truenas-amd64
           cache-to: type=gha,mode=max,scope=truenas-amd64
+
+      - name: Verify packaged runtime and retained-data lifecycle
+        env:
+          RELEASE_IMAGE: ${{ needs.verify.outputs.image }}:${{ needs.verify.outputs.tag }}
+          SOURCE_COMMIT: ${{ needs.verify.outputs.commit }}
+        run: python3 scripts/check_container_release.py "$RELEASE_IMAGE" "$SOURCE_COMMIT"
+
+      - name: Publish verified image
+        env:
+          RELEASE_IMAGE: ${{ needs.verify.outputs.image }}
+          RELEASE_TAG: ${{ needs.verify.outputs.tag }}
+          RELEASE_VERSION: ${{ needs.verify.outputs.version }}
+          SOURCE_COMMIT: ${{ needs.verify.outputs.commit }}
+        run: |
+          # Version tags stay immutable across manual workflow reruns.
+          if docker manifest inspect "$RELEASE_IMAGE:$RELEASE_VERSION" >/dev/null 2>&1; then
+            docker pull "$RELEASE_IMAGE:$RELEASE_VERSION"
+            existing="$(docker inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$RELEASE_IMAGE:$RELEASE_VERSION")"
+            test "$existing" = "$SOURCE_COMMIT"
+            echo "This source version is already published; preserving its image."
+            exit 0
+          fi
+          docker push "$RELEASE_IMAGE:$RELEASE_TAG"
+          docker push "$RELEASE_IMAGE:$RELEASE_VERSION"
 
       - name: Record immutable image reference
         run: |

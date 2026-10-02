@@ -207,6 +207,26 @@ if (Test-Path -LiteralPath $stageRoot) {
 }
 New-Item -ItemType Directory -Force -Path $application, $output, $cache | Out-Null
 
+$ffmpegArchive = Get-VerifiedDownload `
+    -Uri $ffmpegUrl `
+    -Destination (Join-Path $cache "ffmpeg-$ffmpegVersion-essentials_build.zip") `
+    -Sha256 $ffmpegSha256
+$ffmpegExtract = Join-Path $stageRoot "ffmpeg"
+New-Item -ItemType Directory -Force -Path $ffmpegExtract, $toolsRoot | Out-Null
+Expand-Archive -LiteralPath $ffmpegArchive -DestinationPath $ffmpegExtract -Force
+$ffmpeg = Get-ChildItem -LiteralPath $ffmpegExtract -Filter ffmpeg.exe -Recurse -File |
+    Select-Object -First 1
+$ffprobe = Get-ChildItem -LiteralPath $ffmpegExtract -Filter ffprobe.exe -Recurse -File |
+    Select-Object -First 1
+if (-not $ffmpeg -or -not $ffprobe) {
+    throw "The verified FFmpeg archive did not contain ffmpeg.exe and ffprobe.exe."
+}
+Copy-Item -LiteralPath $ffmpeg.FullName -Destination (Join-Path $toolsRoot "ffmpeg.exe")
+Copy-Item -LiteralPath $ffprobe.FullName -Destination (Join-Path $toolsRoot "ffprobe.exe")
+
+$env:FFMPEG_PATH = $ffmpeg.FullName
+$env:FFPROBE_PATH = $ffprobe.FullName
+
 $bundleValue = if ($BundleLocalEnv) { "true" } else { "false" }
 & dotnet clean $project -c Release
 if ($LASTEXITCODE -ne 0) {
@@ -493,22 +513,6 @@ $managedRuntimeManifest | ConvertTo-Json -Depth 8 |
         Join-Path $bootstrapRoot "managed-runtime.json"
     ) -Encoding UTF8
 
-$ffmpegArchive = Get-VerifiedDownload `
-    -Uri $ffmpegUrl `
-    -Destination (Join-Path $cache "ffmpeg-$ffmpegVersion-essentials_build.zip") `
-    -Sha256 $ffmpegSha256
-$ffmpegExtract = Join-Path $stageRoot "ffmpeg"
-New-Item -ItemType Directory -Force -Path $ffmpegExtract, $toolsRoot | Out-Null
-Expand-Archive -LiteralPath $ffmpegArchive -DestinationPath $ffmpegExtract -Force
-$ffmpeg = Get-ChildItem -LiteralPath $ffmpegExtract -Filter ffmpeg.exe -Recurse -File |
-    Select-Object -First 1
-$ffprobe = Get-ChildItem -LiteralPath $ffmpegExtract -Filter ffprobe.exe -Recurse -File |
-    Select-Object -First 1
-if (-not $ffmpeg -or -not $ffprobe) {
-    throw "The verified FFmpeg archive did not contain ffmpeg.exe and ffprobe.exe."
-}
-Copy-Item -LiteralPath $ffmpeg.FullName -Destination (Join-Path $toolsRoot "ffmpeg.exe")
-Copy-Item -LiteralPath $ffprobe.FullName -Destination (Join-Path $toolsRoot "ffprobe.exe")
 
 Copy-Item -LiteralPath (Join-Path $repositoryRoot "LICENSE") -Destination $application
 Copy-Item -LiteralPath (

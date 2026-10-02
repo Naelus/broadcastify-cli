@@ -334,9 +334,7 @@ def test_finish_locally_combines_complete_sources_without_download(tmp_path, mon
     import wave
     from broadcastify_cli.audio import find_ffmpeg
 
-    try:
-        find_ffmpeg()
-    except FileNotFoundError:
+    if not find_ffmpeg():
         pytest.skip("FFmpeg is required for the real local-combine boundary")
     archive_date = date(2026, 1, 1)
     day = _day(tmp_path, "90001", archive_date.isoformat())
