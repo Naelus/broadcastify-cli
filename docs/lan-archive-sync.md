@@ -19,6 +19,15 @@ the original blocks, but it does not publish competing model results. After the
 master finishes a model result, followers may pull that exact Windows-authored
 artifact set.
 
+Archive acquisition has priority over local model setup. A worker first secures
+all available days in its requested range, then loads transcription models.
+Desktop Resume all drains the selected download queue before local processing;
+scheduled runs also give every saved catch-up range an acquisition turn before
+model work. While local work runs, a sequential producer rechecks queued dates
+and rolling allowance each minute. Exhausted accounts hand off to the next
+eligible profile, and third-and-later accounts remain reserved for today and the
+previous two days. No allowance bypass or concurrent provider requests are used.
+
 Master loss never causes automatic promotion. Followers keep their retained
 files usable and pause new master-owned work. Promoting another machine is an
 explicit recovery action so a transient network fault cannot create two

@@ -77,51 +77,6 @@ class JobRunner:
                         "message": f"The Windows master request is pending: {exc}",
                     }
                 )
-        transcriber = None
-        if self.request.transcribe and not follower:
-            next_stage = "retained processing" if self.request.local_only else "archive acquisition"
-            self.emit(
-                {
-                    "type": "log",
-                    "message": (
-                        f"Loading local model {self.request.model} before {next_stage}..."
-                    ),
-                }
-            )
-            transcriber = LocalTranscriber(
-                model_name=self.request.model,
-                asr_engine=self.request.asr_engine,
-                device=self.request.device,
-                device_index=self.request.device_index,
-                compute_type=self.request.compute_type,
-                asr_model_path=self.request.asr_model_path,
-                diarization_engine=self.request.diarization_engine,
-                diarization_device=self.request.diarization_device,
-                diarize=self.request.diarize,
-                huggingface_token=(
-                    self.request.huggingface_token
-                    or os.getenv("HUGGINGFACE_TOKEN")
-                    or os.getenv("HF_TOKEN")
-                ),
-                batch_size=self.request.batch_size,
-                min_speakers=self.request.min_speakers,
-                max_speakers=self.request.max_speakers,
-            )
-            self.emit(
-                {
-                    "type": "log",
-                    "message": (
-                        "Transcription: "
-                        f"{getattr(transcriber, 'backend_description', f'{transcriber.device}:{transcriber.device_index} ({transcriber.compute_type})')}. "
-                        "Diarization: "
-                        f"{getattr(transcriber, 'diarization_engine', 'community-1')} "
-                        f"on {getattr(transcriber, 'diarization_device', 'auto')}."
-                    ),
-                }
-            )
-        processing_fingerprint = str(
-            getattr(transcriber, "processing_fingerprint", "") or ""
-        )
         feed_reconciliation = LanFeedSyncResult(enabled=False)
         lan_results: dict[str, LanSyncResult] = {}
         lan_transcript_results: dict[str, LanTranscriptSyncResult] = {}
@@ -588,6 +543,52 @@ class JobRunner:
                         ),
                     }
                 )
+
+        # Secure every available source day before model setup can delay or fail.
+        transcriber = None
+        if self.request.transcribe and not follower and any(files for _, files in downloaded_days):
+            self.emit(
+                {
+                    "type": "log",
+                    "message": (
+                        f"Archive acquisition is checkpointed; loading local model {self.request.model}..."
+                    ),
+                }
+            )
+            transcriber = LocalTranscriber(
+                model_name=self.request.model,
+                asr_engine=self.request.asr_engine,
+                device=self.request.device,
+                device_index=self.request.device_index,
+                compute_type=self.request.compute_type,
+                asr_model_path=self.request.asr_model_path,
+                diarization_engine=self.request.diarization_engine,
+                diarization_device=self.request.diarization_device,
+                diarize=self.request.diarize,
+                huggingface_token=(
+                    self.request.huggingface_token
+                    or os.getenv("HUGGINGFACE_TOKEN")
+                    or os.getenv("HF_TOKEN")
+                ),
+                batch_size=self.request.batch_size,
+                min_speakers=self.request.min_speakers,
+                max_speakers=self.request.max_speakers,
+            )
+            self.emit(
+                {
+                    "type": "log",
+                    "message": (
+                        "Transcription: "
+                        f"{getattr(transcriber, 'backend_description', f'{transcriber.device}:{transcriber.device_index} ({transcriber.compute_type})')}. "
+                        "Diarization: "
+                        f"{getattr(transcriber, 'diarization_engine', 'community-1')} "
+                        f"on {getattr(transcriber, 'diarization_device', 'auto')}."
+                    ),
+                }
+            )
+        processing_fingerprint = str(
+            getattr(transcriber, "processing_fingerprint", "") or ""
+        )
 
         day_results: list[dict[str, Any]] = []
         pending_processing_days: list[str] = []

@@ -12,7 +12,6 @@ from broadcastify_cli.models import JobRequest
 from broadcastify_cli.lan_sync import (
     LanDownloadTurn,
     LanFeedSyncResult,
-    LanProcessingTurn,
     LanSyncResult,
     LanTranscriptSyncResult,
 )
@@ -79,7 +78,7 @@ def test_combined_audio_is_created_before_one_transcription_pass(
     )
     JobRunner(request, client=FakeClient(source_files, calls)).run()
 
-    assert calls.index("load_model") < calls.index("download")
+    assert calls.index("download") < calls.index("load_model")
     assert calls.index("combine") < calls.index("transcribe")
     assert calls.count("transcribe") == 1
     assert combined_feed_names == ["Example Public Safety"]
@@ -160,13 +159,14 @@ def test_scheduled_processing_limit_queues_remaining_local_days(
         "2026-07-10",
     ]
     assert result["missing_days"] == []
+    assert all(calls.index(value) < calls.index("load") for value in calls if value.startswith("download:"))
     assert any(
         "return to archive acquisition" in str(event.get("message") or "")
         for event in events
     )
 
 
-def test_local_audio_failure_happens_before_archive_requests(
+def test_model_failure_keeps_already_acquired_audio(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -190,13 +190,16 @@ def test_local_audio_failure_happens_before_archive_requests(
     )
 
     try:
-        JobRunner(request, client=FakeClient([], calls)).run()
+        source = tmp_path / "retained.mp3"
+        source.write_bytes(b"retained audio")
+        JobRunner(request, client=FakeClient([source], calls)).run()
     except RuntimeError as exc:
         assert str(exc) == "audio runtime missing"
     else:
         raise AssertionError("The local audio preflight should have failed.")
 
-    assert calls == ["load_model"]
+    assert calls == ["authenticate", "download", "load_model"]
+    assert source.read_bytes() == b"retained audio"
 
 
 def test_quota_stops_new_requests_but_keeps_complete_cached_days(tmp_path: Path) -> None:
@@ -866,254 +869,7 @@ def test_lan_queue_quota_result_uses_local_next_safe_delay(
     assert result["download_limited"] is True
 
 
-def test_job_claims_and_publishes_model_specific_processing_turn(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    archive_date = date(2026, 7, 12)
-    calls: list[str] = []
-    fingerprint = "d" * 64
-    day = tmp_path / "91059" / "20260712"
-    day.mkdir(parents=True)
-    source = day / "202607120000-123456-91059.mp3"
-    source.write_bytes(b"source")
-    combined = day / "combined_91059_20260712.mp3"
-
-    class ProcessingTranscriber:
-        device = "cpu"
-        device_index = 0
-        compute_type = "float32"
-        processing_fingerprint = fingerprint
-
-        def __init__(self, **_kwargs: object) -> None:
-            calls.append("load")
-
-        def current_transcripts(self, _inputs: list[Path]) -> list[Path]:
-            return []
-
-        def transcribe_files(
-            self,
-            _inputs: list[Path],
-            **_kwargs: object,
-        ) -> list[Path]:
-            calls.append("transcribe")
-            transcript = day / "transcripts" / f"{combined.stem}.json"
-            transcript.parent.mkdir()
-            transcript.write_text("{}", encoding="utf-8")
-            return [transcript]
-
-    class Heartbeat:
-        warnings: tuple[str, ...] = ()
-
-        def __enter__(self) -> "Heartbeat":
-            calls.append("heartbeat:start")
-            return self
-
-        def __exit__(self, *_args: object) -> None:
-            calls.append("heartbeat:stop")
-
-        def assert_active(self) -> None:
-            calls.append("heartbeat:active")
-
-    class ProcessingLan:
-        enabled = True
-
-        def sync_feed(self, *_args: object, **_kwargs: object) -> LanFeedSyncResult:
-            return LanFeedSyncResult(enabled=True)
-
-        def sync_day(self, *_args: object, **_kwargs: object) -> LanSyncResult:
-            return LanSyncResult(enabled=True)
-
-        def wait_for_download_turn(
-            self,
-            *_args: object,
-            **_kwargs: object,
-        ) -> LanDownloadTurn:
-            return LanDownloadTurn(role="uncoordinated")
-
-        def sync_transcripts(
-            self,
-            *_args: object,
-            **_kwargs: object,
-        ) -> LanTranscriptSyncResult:
-            return LanTranscriptSyncResult(enabled=True)
-
-        def claim_processing_turn(
-            self,
-            *_args: object,
-            **_kwargs: object,
-        ) -> LanProcessingTurn:
-            calls.append("claim:processing")
-            return LanProcessingTurn(
-                role="leader",
-                feed_id="91059",
-                archive_date=archive_date.isoformat(),
-                processing_fingerprint=fingerprint,
-                coordinator_url="http://127.0.0.1:8765",
-                lease_token="processing_lease_token_long_enough",
-                lease_seconds=90.0,
-            )
-
-        def maintain_processing_lease(
-            self,
-            _turn: LanProcessingTurn,
-        ) -> Heartbeat:
-            return Heartbeat()
-
-        def finish_processing_turn(
-            self,
-            _turn: LanProcessingTurn,
-            *,
-            outcome: str,
-            artifact_count: int = 0,
-        ) -> str:
-            calls.append(f"finish:processing:{outcome}:{artifact_count}")
-            return ""
-
-    class Client:
-        def authenticate(self) -> None:
-            calls.append("authenticate")
-
-        def download_day(self, *_args: object, **_kwargs: object) -> list[Path]:
-            calls.append("download")
-            return [source]
-
-    def fake_combine(*_args: object, **_kwargs: object) -> Path:
-        combined.write_bytes(b"combined")
-        return combined
-
-    class ArtifactCatalog:
-        def __init__(self, *_args: object, **_kwargs: object) -> None:
-            pass
-
-        def transcript_inventory(self, *_args: object, **_kwargs: object) -> list[int]:
-            return [1, 2, 3, 4]
-
-    monkeypatch.setattr("broadcastify_cli.jobs.LocalTranscriber", ProcessingTranscriber)
-    monkeypatch.setattr("broadcastify_cli.jobs.combine_mp3_files", fake_combine)
-    monkeypatch.setattr("broadcastify_cli.jobs.LanArchiveCatalog", ArtifactCatalog)
-    request = JobRequest(
-        feed_id="91059",
-        start_date=archive_date,
-        end_date=archive_date,
-        output_dir=tmp_path,
-        combine=True,
-        transcribe=True,
-        lan_sync_enabled=True,
-    )
-
-    result = JobRunner(
-        request,
-        client=Client(),  # type: ignore[arg-type]
-        lan_sync=ProcessingLan(),  # type: ignore[arg-type]
-    ).run()
-
-    assert calls == ["load", "authenticate", "download", "transcribe"]
-    assert result["pending_processing_days"] == []
-    assert result["lan_sync"]["processing_queue"]["uncoordinated"] == 1
-
-
-def test_job_defers_duplicate_model_day_and_keeps_it_resumable(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    archive_date = date(2026, 7, 13)
-    fingerprint = "e" * 64
-    calls: list[str] = []
-    day = tmp_path / "91059" / "20260713"
-    day.mkdir(parents=True)
-    source = day / "202607130000-123457-91059.mp3"
-    source.write_bytes(b"source")
-
-    class DeferredTranscriber:
-        device = "cpu"
-        device_index = 0
-        compute_type = "float32"
-        processing_fingerprint = fingerprint
-
-        def __init__(self, **_kwargs: object) -> None:
-            calls.append("load")
-
-        def current_transcripts(self, _inputs: list[Path]) -> list[Path]:
-            return []
-
-        def transcribe_files(self, *_args: object, **_kwargs: object) -> list[Path]:
-            calls.append("transcribe")
-            transcript = day / "transcripts" / f"{source.stem}.json"
-            transcript.parent.mkdir()
-            transcript.write_text("{}", encoding="utf-8")
-            return [transcript]
-
-    class DeferredLan:
-        enabled = True
-
-        def sync_feed(self, *_args: object, **_kwargs: object) -> LanFeedSyncResult:
-            return LanFeedSyncResult(enabled=True)
-
-        def sync_day(self, *_args: object, **_kwargs: object) -> LanSyncResult:
-            return LanSyncResult(enabled=True)
-
-        def wait_for_download_turn(
-            self,
-            *_args: object,
-            **_kwargs: object,
-        ) -> LanDownloadTurn:
-            return LanDownloadTurn(role="uncoordinated")
-
-        def sync_transcripts(
-            self,
-            *_args: object,
-            **_kwargs: object,
-        ) -> LanTranscriptSyncResult:
-            calls.append("reconcile")
-            return LanTranscriptSyncResult(enabled=True)
-
-        def claim_processing_turn(
-            self,
-            *_args: object,
-            **_kwargs: object,
-        ) -> LanProcessingTurn:
-            calls.append("claim:deferred")
-            return LanProcessingTurn(
-                role="deferred",
-                feed_id="91059",
-                archive_date=archive_date.isoformat(),
-                processing_fingerprint=fingerprint,
-                coordinator_url="http://127.0.0.1:8765",
-                owner_node_id="peer_node",
-            )
-
-    class Client:
-        def authenticate(self) -> None:
-            calls.append("authenticate")
-
-        def download_day(self, *_args: object, **_kwargs: object) -> list[Path]:
-            calls.append("download")
-            return [source]
-
-    monkeypatch.setattr("broadcastify_cli.jobs.LocalTranscriber", DeferredTranscriber)
-    request = JobRequest(
-        feed_id="91059",
-        start_date=archive_date,
-        end_date=archive_date,
-        output_dir=tmp_path,
-        transcribe=True,
-        lan_sync_enabled=True,
-    )
-
-    result = JobRunner(
-        request,
-        client=Client(),  # type: ignore[arg-type]
-        lan_sync=DeferredLan(),  # type: ignore[arg-type]
-    ).run()
-
-    assert result["pending_processing_days"] == []
-    assert result["missing_days"] == []
-    assert result["lan_sync"]["processing_queue"]["uncoordinated"] == 1
-    assert calls == ["load", "authenticate", "download", "transcribe"]
-
-
-def test_job_reuses_a_reconciled_variant_transcript_without_running_model(
+def test_master_uses_its_own_transcript_instead_of_follower_variant(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -1210,4 +966,4 @@ def test_job_reuses_a_reconciled_variant_transcript_without_running_model(
     assert result["days"][0]["transcripts"] != [str(variant)]
     assert result["pending_processing_days"] == []
     assert result["lan_sync"]["processing_queue"]["uncoordinated"] == 1
-    assert calls == ["load", "authenticate", "download", "transcribe"]
+    assert calls == ["authenticate", "download", "load", "transcribe"]

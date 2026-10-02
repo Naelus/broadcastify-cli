@@ -1039,8 +1039,8 @@ function renderDayDetail(activeTab = "incidents") {
   if (!detail) return;
   const day = detail.state;
   const master = masterDayProgress(day);
-  const primaryLabel = day.primary_action === "open_review" ? "Review evidence" : day.next_step;
-  const actionDisabled = day.primary_action === "none" ? "disabled" : "";
+  const primaryLabel = master?.is_complete ? "Complete on Windows" : day.primary_action === "open_review" ? "Review evidence" : day.next_step;
+  const actionDisabled = master?.is_complete || day.primary_action === "none" ? "disabled" : "";
   byId("dayDetail").innerHTML = `
     <div class="detail-head"><div><h2>${html(day.feed_name)}</h2><p>Feed ${html(day.feed_id)} · ${html(day.archive_date)} · ${dayStorage(day)}</p></div>
       <div class="button-row">${day.speaker_upgrade_available ? '<button class="button secondary" data-action="upgrade-speakers" title="Replace fast preview labels with Community-1 without repeating transcription.">Improve speakers</button>' : ""}

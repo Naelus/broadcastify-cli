@@ -4119,88 +4119,41 @@ public sealed partial class MainWindow : Window
         JobProgress.IsIndeterminate = false;
         JobProgress.Maximum = Math.Max(1, selectedDays.Count);
         JobProgress.Value = 0;
+        using var acquisitionCancellation = CancellationTokenSource.CreateLinkedTokenSource(pipeline.Token);
+        Task acquisition = Task.CompletedTask;
         try
         {
-            foreach (var day in selectedDays)
+            if (selection.IncludeNetwork)
+            {
+                AppendLog("Securing all selected source days before starting local model work.");
+                pausedForQuota = await AcquireLibraryDaysAsync(selectedDays, pipeline.Token);
+                // Newly available rolling slots must not wait for a long model pass.
+                acquisition = ContinueScheduledAcquisitionAsync(
+                    acquisitionCancellation.Token, selectedDays);
+            }
+            var retained = await worker.ListLibraryAsync(PersistedOutputDirectory(), pipeline.Token);
+            foreach (var selected in selectedDays)
             {
                 pipeline.Token.ThrowIfCancellationRequested();
-                if (!DateTime.TryParse(day.ArchiveDate, out var archiveDate))
+                var day = retained.Days.FirstOrDefault(value =>
+                    value.FeedId == selected.FeedId && value.ArchiveDate == selected.ArchiveDate);
+                if (day is null || (day.RawFileCount == 0 && !day.HasCombined))
                 {
-                    throw new InvalidOperationException(
-                        $"Could not parse library date {day.ArchiveDate}.");
+                    continue;
                 }
-                var useNetwork = day.NeedsNetwork && selection.IncludeNetwork;
-                StatusText.Text =
-                    $"Resuming {attempted + 1:N0}/{selectedDays.Count:N0}: "
-                    + $"{day.FeedName} · {day.ArchiveDate}";
-                AppendLog(
-                    $"Resume all: {day.FeedName} on {day.ArchiveDate} "
-                    + (useNetwork ? "(guarded archive coverage)." : "(local only)."));
-                var workDay = useNetwork
-                    ? day
-                    : day with { NeedsNetwork = false, SourceCheckDue = false };
-                JobRunResult? result;
-                if (useNetwork)
+                if (selection.IncludeLocal && !day.IsComplete)
                 {
-                    var accountRun = await ContinueLibraryDayAcrossAccountsAsync(
-                        workDay,
-                        archiveDate.Date,
-                        minimumSpeakers,
-                        maximumSpeakers,
-                        pipeline.Token);
-                    result = accountRun.Result;
-                    if (accountRun.WaitingForQuota)
-                    {
-                        pausedForQuota = true;
-                        if (result is null
-                            && selection.IncludeLocal
-                            && day.NeedsLocalProcessing)
-                        {
-                            AppendLog(
-                                $"Every eligible account is waiting for {day.FeedName} on "
-                                + $"{day.ArchiveDate}; finishing its retained local stages now.");
-                            result = await ContinueLibraryDayWorkAsync(
-                                day with
-                                {
-                                    NeedsNetwork = false,
-                                    SourceCheckDue = false,
-                                },
-                                archiveDate.Date,
-                                minimumSpeakers,
-                                maximumSpeakers,
-                                forceAllStages: true,
-                                cancellationToken: pipeline.Token);
-                        }
-                        else if (result is null)
-                        {
-                            AppendLog(
-                                "Catch-up paused before the next network day because all "
-                                + "authorized account ledgers are waiting for a safe request slot.");
-                            break;
-                        }
-                    }
-                }
-                else
-                {
-                    result = await ContinueLibraryDayWorkAsync(
-                        workDay,
-                        archiveDate.Date,
+                    StatusText.Text = $"Processing retained audio: {day.FeedName} · {day.ArchiveDate}";
+                    await ContinueLibraryDayWorkAsync(
+                        day with { NeedsNetwork = false, SourceCheckDue = false },
+                        DateTime.Parse(day.ArchiveDate).Date,
                         minimumSpeakers,
                         maximumSpeakers,
                         forceAllStages: true,
                         cancellationToken: pipeline.Token);
                 }
                 attempted++;
-                JobProgress.Maximum = Math.Max(1, selectedDays.Count);
                 JobProgress.Value = attempted;
-                if (result?.DownloadLimited == true)
-                {
-                    pausedForQuota = true;
-                    AppendLog(
-                        "Catch-up stopped after every eligible account reached its "
-                        + "rolling request boundary; retained progress will be reused.");
-                    break;
-                }
             }
         }
         catch (OperationCanceledException)
@@ -4214,6 +4167,8 @@ public sealed partial class MainWindow : Window
         }
         finally
         {
+            acquisitionCancellation.Cancel();
+            await acquisition;
             pipeline.Dispose();
             if (ReferenceEquals(_pipelineCancellation, pipeline))
             {
@@ -5563,7 +5518,8 @@ public sealed partial class MainWindow : Window
             DateTime archiveDate,
             int? minimumSpeakers,
             int? maximumSpeakers,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken,
+            bool acquisitionOnly = false)
     {
         if (_worker is null)
         {
@@ -5584,7 +5540,8 @@ public sealed partial class MainWindow : Window
             }
         }
         var eligible = statuses
-            .Where(value => value.Available)
+            .Where(value => value.Available
+                && (!value.CurrentOnly || archiveDate.Date >= DateTime.Today.AddDays(-2)))
             .OrderByDescending(value => value.Remaining)
             .ThenBy(value => value.AccountProfileId, StringComparer.OrdinalIgnoreCase)
             .ToList();
@@ -5608,6 +5565,7 @@ public sealed partial class MainWindow : Window
                     minimumSpeakers,
                     maximumSpeakers,
                     forceAllStages: true,
+                    acquisitionOnly: acquisitionOnly,
                     accountProfileId: status.AccountProfileId,
                     cancellationToken: cancellationToken);
                 if (lastResult?.DownloadLimited != true)
@@ -5643,6 +5601,7 @@ public sealed partial class MainWindow : Window
         string? diarizationEngineOverride = null,
         bool forceSourceCheck = false,
         bool forceAllStages = false,
+        bool acquisitionOnly = false,
         string accountProfileId = "default",
         CancellationToken cancellationToken = default)
     {
@@ -5677,11 +5636,24 @@ public sealed partial class MainWindow : Window
                     DownloadJobs = 1,
                 };
             }
+            if (acquisitionOnly)
+            {
+                request = request with
+                {
+                    Combine = false,
+                    Transcribe = false,
+                    Diarize = false,
+                    DownloadJobs = 1,
+                    ReuseCompletedSources = true,
+                    KeepOriginals = true,
+                };
+            }
             return await RunAndAnalyzeJobAsync(
                 request,
                 cancellationToken,
-                forceAllStages ? true : null,
-                accountProfileId);
+                acquisitionOnly ? false : forceAllStages ? true : null,
+                accountProfileId,
+                acquisitionOnly ? HandleAcquisitionMessage : null);
         }
 
         await _worker.ContinueLocalDayAsync(
@@ -6496,8 +6468,7 @@ public sealed partial class MainWindow : Window
         string Message)> RunScheduledJobAcrossAccountsAsync(
         FeedSchedule schedule,
         CancellationToken cancellationToken,
-        bool currentCoverageOnly = false,
-        bool acquisitionOnly = false)
+        bool currentCoverageOnly = false)
     {
         if (_worker is null)
         {
@@ -6529,7 +6500,7 @@ public sealed partial class MainWindow : Window
                 };
                 AppendLog($"Current coverage: {recent.FeedName} — today and the previous two days.");
                 await RunScheduledJobAcrossAccountsAsync(
-                    current, cancellationToken, currentCoverageOnly: true, acquisitionOnly: acquisitionOnly);
+                    current, cancellationToken, currentCoverageOnly: true);
             }
         }
         var automatic = string.Equals(
@@ -6594,7 +6565,7 @@ public sealed partial class MainWindow : Window
                     cancellationToken,
                     false,
                     status.AccountProfileId,
-                    acquisitionOnly ? HandleAcquisitionMessage : HandleWorkerMessage);
+                    HandleWorkerMessage);
                 processingProfileId = status.AccountProfileId;
                 if (lastResult?.DownloadLimited != true)
                 {
@@ -6629,7 +6600,7 @@ public sealed partial class MainWindow : Window
                     + "trying the next authorized profile without discarding retained work.");
             }
         }
-        if (currentCoverageOnly || acquisitionOnly)
+        if (currentCoverageOnly)
         {
             return (lastResult, lastResult?.DownloadLimited ?? eligible.Count == 0, "",
                 "Current coverage acquisition pass finished; retained processing remains queued.");
@@ -6637,6 +6608,8 @@ public sealed partial class MainWindow : Window
         if (lastResult is not null || eligible.Count == 0)
         {
             processingProfileId ??= profileIds[0];
+            // Give all saved queues an acquisition turn before model work.
+            await AcquireQueuedLibraryAsync(cancellationToken);
             AppendLog(
                 "Processing retained audio locally; a separate sequential acquisition pass "
                 + "will keep checking available account allowance while model work continues.");
@@ -6696,54 +6669,69 @@ public sealed partial class MainWindow : Window
         return (lastResult, true, nextRequestAt, message);
     }
 
-    private async Task ContinueScheduledAcquisitionAsync(CancellationToken cancellationToken)
+    private async Task<bool> AcquireLibraryDaysAsync(
+        IEnumerable<LibraryDay> days, CancellationToken cancellationToken)
     {
-        var acquisitionFeedIds = new HashSet<string>(StringComparer.Ordinal);
+        var waitingForQuota = false;
+        foreach (var day in days.Where(value => value.NeedsNetwork)
+            .OrderByDescending(value => value.ArchiveDate, StringComparer.Ordinal)
+            .ThenBy(value => value.FeedId, StringComparer.Ordinal))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var archiveDate = DateTime.Parse(day.ArchiveDate).Date;
+            var run = await ContinueLibraryDayAcrossAccountsAsync(
+                day, archiveDate, null, null, cancellationToken, acquisitionOnly: true);
+            waitingForQuota |= run.WaitingForQuota;
+            // Recent dates already had their reserved profiles' turn. Once
+            // historical profiles are exhausted, preserve the rest for resume.
+            if (run.WaitingForQuota && archiveDate < DateTime.Today.AddDays(-2))
+            {
+                break;
+            }
+        }
+        return waitingForQuota;
+    }
+
+    private async Task AcquireQueuedLibraryAsync(
+        CancellationToken cancellationToken, IReadOnlyList<LibraryDay>? selectedDays = null)
+    {
+        if (_worker is null || _libraryMutationBusy)
+        {
+            return;
+        }
+        var plan = await _worker.GetLibraryResumePlanAsync(PersistedOutputDirectory(), cancellationToken);
+        var queuedFeeds = plan.Feeds.Where(value => value.Scheduled || value.CatchUpSaved)
+            .Select(value => value.FeedId).ToHashSet(StringComparer.Ordinal);
+        var selected = (selectedDays ?? []).Select(value => (value.FeedId, value.ArchiveDate)).ToHashSet();
+        var days = plan.Days.Where(value => queuedFeeds.Contains(value.FeedId)
+            || selected.Contains((value.FeedId, value.ArchiveDate))).ToList();
+        var addedFeeds = days.Select(value => value.FeedId).Distinct()
+            .Where(value => _activePipelineFeedIds.Add(value)).ToList();
+        UpdateCommandAvailability();
+        try
+        {
+            await AcquireLibraryDaysAsync(days, cancellationToken);
+        }
+        finally
+        {
+            _activePipelineFeedIds.ExceptWith(addedFeeds);
+            if (!_windowClosed)
+            {
+                UpdateCommandAvailability();
+            }
+        }
+    }
+
+    private async Task ContinueScheduledAcquisitionAsync(
+        CancellationToken cancellationToken, IReadOnlyList<LibraryDay>? selectedDays = null)
+    {
         try
         {
             while (!cancellationToken.IsCancellationRequested && _worker is not null)
             {
                 try
                 {
-                    var followed = await _worker.ListFeedSchedulesAsync(cancellationToken);
-                    // Each pass also checks other followed feeds' recent coverage.
-                    foreach (var feed in followed.Where(value => value.Enabled))
-                    {
-                        if (_activePipelineFeedIds.Add(feed.FeedId))
-                        {
-                            acquisitionFeedIds.Add(feed.FeedId);
-                        }
-                    }
-                    UpdateCommandAvailability();
-                    foreach (var feed in followed.Where(value => value.Enabled))
-                    {
-                        cancellationToken.ThrowIfCancellationRequested();
-                        if (_libraryMutationBusy)
-                        {
-                            break;
-                        }
-                        var today = DateTime.Today;
-                        var start = today.AddDays(1 - Math.Max(1, feed.LookbackDays));
-                        if (DateTime.TryParse(feed.BackfillStartDate, out var backfill) && backfill.Date < start)
-                        {
-                            start = backfill.Date;
-                        }
-                        var request = feed with
-                        {
-                            Job = feed.Job with
-                            {
-                                FeedId = feed.FeedId,
-                                FeedName = feed.FeedName,
-                                StartDate = start.ToString("yyyy-MM-dd"),
-                                EndDate = today.ToString("yyyy-MM-dd"),
-                                OutputDirectory = PersistedOutputDirectory(),
-                            },
-                        };
-                        // LocalOnly on the model worker makes this the only website producer.
-                        // The existing acquisition path retains current-day priority and account reserves.
-                        await RunScheduledJobAcrossAccountsAsync(
-                            request, cancellationToken, acquisitionOnly: true);
-                    }
+                    await AcquireQueuedLibraryAsync(cancellationToken, selectedDays);
                     await RefreshArchiveQuotaStatusAsync();
                 }
                 catch (Exception exception) when (exception is not OperationCanceledException)
@@ -6755,15 +6743,7 @@ public sealed partial class MainWindow : Window
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            // Normal completion/close cancels only this acquisition pass, preserving retained files.
-        }
-        finally
-        {
-            _activePipelineFeedIds.ExceptWith(acquisitionFeedIds);
-            if (!_windowClosed)
-            {
-                UpdateCommandAvailability();
-            }
+            // Checkpoint the producer before another foreground acquisition turn.
         }
     }
 
