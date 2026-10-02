@@ -9,7 +9,7 @@ from typing import Any, Iterable
 
 
 PIPELINE_SYNC_DATABASE = ".broadcastify-pipeline-sync.sqlite3"
-PIPELINE_SYNC_SCHEMA_VERSION = 1
+PIPELINE_SYNC_SCHEMA_VERSION = 2
 PIPELINE_EVENT_KINDS = {"source", "result"}
 PIPELINE_ROLES = {"master", "follower"}
 
@@ -73,6 +73,15 @@ class PipelineSyncStore:
                 sequence INTEGER NOT NULL,
                 updated_at TEXT NOT NULL,
                 PRIMARY KEY(peer_url, peer_node_id)
+            );
+            CREATE TABLE IF NOT EXISTS pending_events (
+                peer_url TEXT NOT NULL,
+                peer_node_id TEXT NOT NULL,
+                sequence INTEGER NOT NULL,
+                event_key TEXT NOT NULL,
+                event_json TEXT NOT NULL,
+                attempted_at TEXT NOT NULL,
+                PRIMARY KEY(peer_url, peer_node_id, event_key)
             );
             CREATE TABLE IF NOT EXISTS requests (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -310,6 +319,53 @@ class PipelineSyncStore:
             (str(peer_url), str(peer_node_id), max(0, int(sequence)), _utc_now()),
         )
         self.connection.commit()
+
+    def pending_events(
+        self, peer_url: str, peer_node_id: str, *, limit: int
+    ) -> list[dict[str, Any]]:
+        rows = self.connection.execute(
+            """
+            SELECT event_json FROM pending_events
+            WHERE peer_url=? AND peer_node_id=?
+            ORDER BY attempted_at, sequence LIMIT ?
+            """,
+            (peer_url, peer_node_id, max(0, int(limit))),
+        ).fetchall()
+        return [json.loads(row["event_json"]) for row in rows]
+
+    def finish_event(
+        self, peer_url: str, peer_node_id: str, event: dict[str, Any], *, retry: bool
+    ) -> None:
+        """Persist retry ownership before advancing the peer's journal cursor."""
+
+        sequence = int(event["sequence"])
+        event_key = json.dumps([
+            event["kind"], event["feed_id"], event["archive_date"],
+            event.get("processing_fingerprint", ""),
+        ])
+        if retry:
+            self.connection.execute(
+                """
+                INSERT INTO pending_events VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(peer_url, peer_node_id, event_key) DO UPDATE SET
+                    sequence=excluded.sequence,
+                    event_json=excluded.event_json,
+                    attempted_at=excluded.attempted_at
+                """,
+                (peer_url, peer_node_id, sequence, event_key, json.dumps(event),
+                 datetime.now(timezone.utc).isoformat(timespec="microseconds")),
+            )
+        else:
+            self.connection.execute(
+                """
+                DELETE FROM pending_events
+                WHERE peer_url=? AND peer_node_id=? AND event_key=? AND sequence<=?
+                """,
+                (peer_url, peer_node_id, event_key, sequence),
+            )
+        # save_cursor commits both changes together. A restart must never lose
+        # a failed transfer after its sequence has been acknowledged.
+        self.save_cursor(peer_url, peer_node_id, sequence)
 
     def request(
         self,

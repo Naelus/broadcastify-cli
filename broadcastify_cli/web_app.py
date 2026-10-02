@@ -2190,6 +2190,10 @@ def create_server(
                     HTTPStatus.OK,
                     {
                         **library,
+                        "authoritative_progress": (
+                            authoritative_library.get("progress")
+                            if authoritative_library is not None else None
+                        ),
                         "profiles": profiles,
                         "area_runs": area_runs,
                         "schedules": schedules,

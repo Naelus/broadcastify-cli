@@ -1250,6 +1250,9 @@ def test_follower_web_relays_selected_feed_work_and_saved_intent_to_windows_mast
     master_database = master_root / "broadcastify-analysis.sqlite3"
     master_working = tmp_path / "windows-data"
     master_working.mkdir()
+    master_day = master_root / "90002" / "20260701"
+    master_day.mkdir(parents=True)
+    (master_day / "202607010000-1-90002.mp3").write_bytes(b"retained source")
     with PipelineSyncStore(master_root) as pipeline:
         pipeline.record_source("90002", date(2026, 7, 1))
         pipeline.record_source("90002", date(2026, 7, 31))
@@ -1349,6 +1352,14 @@ def test_follower_web_relays_selected_feed_work_and_saved_intent_to_windows_mast
         assert response.status == 200
         assert bootstrap["runtime"]["lan_sync"]["remote_master_jobs"] is True
         assert bootstrap["runtime"]["lan_sync"]["remote_master_connected"] is True
+        assert bootstrap["days"] == []
+        progress = bootstrap["authoritative_progress"]
+        assert len(progress) == 1
+        assert progress[0]["feed_id"] == "90002"
+        assert progress[0]["archive_date"] == "2026-07-01"
+        assert progress[0]["is_complete"] is False
+        assert progress[0]["next_step"]
+        assert str(master_root) not in json.dumps(progress)
         assert bootstrap["authoritative_feed_spans"] == [
             {
                 "feed_id": "90002",

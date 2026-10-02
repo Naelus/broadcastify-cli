@@ -357,7 +357,7 @@ def test_follower_pulls_completed_source_and_master_authored_result_delta(
         thread.join(timeout=3)
 
 
-def test_follower_retries_empty_result_and_receives_republication(
+def test_follower_retries_unavailable_result_without_blocking_newer_work(
     tmp_path: Path,
 ) -> None:
     master_root = tmp_path / "master"
@@ -371,6 +371,10 @@ def test_follower_retries_empty_result_and_receives_republication(
             archive_date,
             fingerprint,
         )
+    next_date = archive_date + timedelta(days=1)
+    _retained_transcribed_feed_day(master_root, feed_id, next_date, fingerprint)
+    with PipelineSyncStore(master_root) as journal:
+        journal.record_result(feed_id, next_date, fingerprint)
     master = create_lan_node_server(
         master_root,
         host="127.0.0.1",
@@ -393,7 +397,9 @@ def test_follower_retries_empty_result_and_receives_republication(
         first = client.sync_changes(follower_root)
         assert first.failures
         assert "not available yet" in first.failures[0]
-        assert first.result_events == 0
+        assert first.result_events == 1
+        assert first.transcript_artifacts_copied == 4
+        assert (follower_root / feed_id / next_date.strftime("%Y%m%d") / "transcripts").is_dir()
 
         _retained_transcribed_feed_day(
             master_root,
@@ -401,18 +407,23 @@ def test_follower_retries_empty_result_and_receives_republication(
             archive_date,
             fingerprint,
         )
-        with PipelineSyncStore(master_root) as journal:
-            second_sequence = journal.record_result(
-                feed_id,
-                archive_date,
-                fingerprint,
-            )
-        assert second_sequence > first_sequence
-
+        # A fresh client must recover the durable retry even without another
+        # publication. The first pass has already moved beyond this sequence.
+        client = LanArchiveSyncClient(
+            enabled=True, peer_urls=(), discovery_enabled=False,
+            role="follower", master_url=master_url,
+        )
         second = client.sync_changes(follower_root)
         assert second.failures == ()
         assert second.result_events == 1
         assert second.transcript_artifacts_copied == 4
+        assert client.sync_changes(follower_root).events_considered == 0
+        with PipelineSyncStore(master_root) as journal:
+            assert journal.record_result(feed_id, archive_date, fingerprint) > first_sequence
+        republished = client.sync_changes(follower_root)
+        assert republished.failures == ()
+        assert republished.result_events == 1
+        assert republished.transcript_artifacts_copied == 0
     finally:
         master.shutdown()
         master.server_close()

@@ -37,6 +37,7 @@ from .quota import (
     normalize_archive_request_id,
 )
 from .pipeline_sync import PipelineSyncStore, normalize_pipeline_role
+from .library import scan_local_library
 from .storage import AnalysisStore
 from .web_app import (
     JobManager,
@@ -297,6 +298,16 @@ def create_lan_node_server(
                     if feed_name:
                         current["feed_name"] = feed_name[:200]
                 library = {
+                    # Only progress crosses this boundary; local evidence paths
+                    # and analysis databases remain on their owning machine.
+                    "progress": [
+                        {key: day.get(key) for key in (
+                            "feed_id", "archive_date", "status", "next_step",
+                            "pipeline_percent", "is_complete", "source_check_due",
+                            "source_unavailable", "awaiting_source",
+                        )}
+                        for day in scan_local_library(catalog.output_dir, relay_database_path)
+                    ],
                     "feed_spans": [spans[key] for key in sorted(spans)],
                     "schedules": schedules,
                     "catchups": catchups,

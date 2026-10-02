@@ -3245,16 +3245,34 @@ class LanArchiveSyncClient:
                     info = self._peer_info(peer)
                     node_id = str(info["node_id"])
                     after = store.cursor(peer, node_id)
-                    payload = self._pipeline_changes(peer, after, remaining)
+                    # Reserve space for new work even when old artifacts remain
+                    # unavailable. Rotate bounded retries across passes so one
+                    # legacy or damaged result cannot stall the entire replica.
+                    pending = store.pending_events(
+                        peer, node_id, limit=remaining // 2
+                    )
+                    payload = self._pipeline_changes(peer, after, remaining - len(pending))
+                    if not payload["events"] and not pending:
+                        pending = store.pending_events(peer, node_id, limit=remaining)
                     reached += 1
                 except (LanSyncError, requests.RequestException, ValueError) as exc:
                     failures.append(f"{peer}: {exc}")
                     continue
-                for raw_event in payload["events"]:
+                new_keys = {
+                    (event["kind"], event["feed_id"], event["archive_date"],
+                     event.get("processing_fingerprint", ""))
+                    for event in payload["events"]
+                }
+                pending = [event for event in pending if (
+                    event["kind"], event["feed_id"], event["archive_date"],
+                    event.get("processing_fingerprint", "")
+                ) not in new_keys]
+                for raw_event in [*payload["events"], *pending]:
                     sequence = int(raw_event["sequence"])
                     kind = str(raw_event["kind"])
                     feed_id = str(raw_event["feed_id"])
                     archive_date = date.fromisoformat(str(raw_event["archive_date"]))
+                    retry = False
                     try:
                         if kind == "source":
                             result = self.sync_day(
@@ -3286,12 +3304,8 @@ class LanArchiveSyncClient:
                                     "The changed master result was not completely verified."
                                 )
                             if not result.artifacts_available:
-                                # The event may become visible just before its
-                                # hash-bound inventory. Keep the cursor here so
-                                # the next delta pass retries it. A later
-                                # record_result replaces this journal row with
-                                # a newer sequence, so superseded empty events
-                                # cannot permanently block the follower.
+                                # Never accept an unverifiable result. Retain a
+                                # durable retry while allowing newer work past it.
                                 raise LanSyncError(
                                     "The changed master result is not available yet."
                                 )
@@ -3307,8 +3321,8 @@ class LanArchiveSyncClient:
                         ValueError,
                     ) as exc:
                         failures.append(f"{peer} / event {sequence}: {exc}")
-                        break
-                    store.save_cursor(peer, node_id, sequence)
+                        retry = True
+                    store.finish_event(peer, node_id, raw_event, retry=retry)
                     remaining -= 1
                     if remaining <= 0:
                         break

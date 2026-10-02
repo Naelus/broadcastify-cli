@@ -31,6 +31,14 @@ the local pipeline journal. Each consumer stores a durable cursor for the peer
 node ID and requests only later events. A bounded pass processes at most one
 page and resumes from its cursor after interruption.
 
+An unavailable or unverifiable event is saved in the same journal transaction
+that advances the cursor. Bounded retries rotate alongside newer events, so an
+old transcript without transfer metadata cannot block all later results.
+Retries survive restarts; unverified artifacts are never accepted as complete.
+The browser shows Windows master progress separately from the NAS's retained
+copy. Analysis remains on Windows, so missing NAS analysis is not itself an
+unfinished master job.
+
 This replaces the old behavior that enumerated every retained day and model
 fingerprint every five minutes. Windows jobs check only their requested dates;
 the Windows master does not run a background follower pull. An optional

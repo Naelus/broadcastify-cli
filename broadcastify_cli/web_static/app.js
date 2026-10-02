@@ -928,13 +928,23 @@ function renderArchiveQuota() {
 
 function renderMetrics() {
   const summary = state.bootstrap.summary || {};
+  const progress = state.bootstrap.authoritative_progress;
+  const master = Array.isArray(progress);
   const metrics = [
     ["Feeds", summary.feed_count || 0],
     ["Local days", summary.day_count || 0],
-    ["Need a next step", summary.attention_count || 0],
-    ["Ready to review", summary.complete_count || 0],
+    [master ? "Master needs work" : "Need a next step", master ? progress.filter(dayNeedsWork).length : summary.attention_count || 0],
+    [master ? "Master complete" : "Ready to review", master ? progress.filter(day => day.is_complete).length : summary.complete_count || 0],
   ];
   byId("libraryMetrics").innerHTML = metrics.map(([label, value]) => `<div class="metric-card"><span>${html(label)}</span><strong>${html(value)}</strong></div>`).join("");
+}
+
+function dayNeedsWork(day) {
+  return day.source_check_due || (!day.is_complete && !day.source_unavailable && !day.awaiting_source);
+}
+
+function masterDayProgress(day) {
+  return state.bootstrap.authoritative_progress?.find(value => value.feed_id === day.feed_id && value.archive_date === day.archive_date);
 }
 
 function filteredDays() {
@@ -942,7 +952,8 @@ function filteredDays() {
   const filter = byId("libraryFilter").value;
   return state.bootstrap.days.filter((day) => {
     const matchesSearch = !search || `${day.feed_name} ${day.feed_id} ${day.archive_date} ${day.status}`.toLowerCase().includes(search);
-    const matchesFilter = filter === "all" || (filter === "complete" ? day.is_complete : day.source_check_due || (!day.is_complete && !day.source_unavailable && !day.awaiting_source));
+    const progress = masterDayProgress(day) || day;
+    const matchesFilter = filter === "all" || (filter === "complete" ? progress.is_complete : dayNeedsWork(progress));
     return matchesSearch && matchesFilter;
   });
 }
@@ -954,11 +965,13 @@ function renderLibrary() {
     return;
   }
   byId("dayList").innerHTML = days.map((day) => {
+    const master = masterDayProgress(day);
+    const progress = master || day;
     const selected = state.selectedDay && state.selectedDay.feed_id === day.feed_id && state.selectedDay.archive_date === day.archive_date;
     return `<button class="day-row${selected ? " selected" : ""}" role="option" aria-selected="${selected}" data-feed-id="${html(day.feed_id)}" data-date="${html(day.archive_date)}">
-      <strong>${html(day.feed_name)}</strong><span class="status-chip${day.is_complete ? " ready" : ""}">${html(day.status)}</span>
+      <strong>${html(day.feed_name)}</strong><span class="status-chip${progress.is_complete ? " ready" : ""}">${master ? "Master: " : ""}${html(progress.status)}</span>
       <span class="date">${html(day.archive_date)} · ${dayStorage(day)}</span>
-      <span class="next">${html(day.pipeline_percent)}% · Next: ${html(day.next_step)}</span>
+      <span class="next">${html(progress.pipeline_percent)}% · Next: ${html(progress.next_step)}</span>
     </button>`;
   }).join("");
 }
@@ -1025,6 +1038,7 @@ function renderDayDetail(activeTab = "incidents") {
   const detail = state.selectedDayDetail;
   if (!detail) return;
   const day = detail.state;
+  const master = masterDayProgress(day);
   const primaryLabel = day.primary_action === "open_review" ? "Review evidence" : day.next_step;
   const actionDisabled = day.primary_action === "none" ? "disabled" : "";
   byId("dayDetail").innerHTML = `
@@ -1032,6 +1046,7 @@ function renderDayDetail(activeTab = "incidents") {
       <div class="button-row">${day.speaker_upgrade_available ? '<button class="button secondary" data-action="upgrade-speakers" title="Replace fast preview labels with Community-1 without repeating transcription.">Improve speakers</button>' : ""}
       <button class="button ${day.is_complete ? "secondary" : "primary"}" data-action="primary-day" ${actionDisabled}>${html(primaryLabel)}</button></div></div>
     <div class="notice ${day.is_complete ? "success" : day.needs_network || day.has_stale_combined || day.has_stale_transcript || day.has_stale_analysis ? "warning" : "success"}"><strong>${html(day.status)}</strong><span>${html(day.status_detail)}. Next: ${html(day.next_step)}.</span></div>
+    ${master ? `<div class="notice success"><strong>Windows master: ${html(master.status)}</strong><span>Next: ${html(master.next_step)}. The stages below describe this NAS copy. Event analysis stays on Windows and is not copied to the NAS.</span></div>` : ""}
     <div class="pipeline">${stageCards(day)}</div>
     ${detail.audio_url ? `<div class="audio-block"><audio id="dayAudio" controls preload="metadata" src="${html(detail.audio_url)}"></audio><small>Retained continuous recording. Incident play buttons jump to the cited time without contacting Broadcastify.</small></div>` : ""}
     ${day.has_stale_transcript ? '<div class="notice warning"><strong>Transcript update required</strong><span>The combined recording changed. The previous transcript and its derived incidents are preserved locally but hidden until local processing updates them.</span></div>' : ""}
