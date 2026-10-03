@@ -27,8 +27,8 @@ model work. While local work runs, a sequential producer rechecks queued dates
 and rolling allowance each minute. Exhausted accounts hand off to the next
 eligible profile, and third-and-later accounts remain reserved for today and the
 previous two days. No allowance bypass or concurrent provider requests are used.
-Manual Desktop archive and retained-day processing also keep this producer
-active. Nested model operations share the existing producer; explicitly choosing
+Manual Desktop archive, retained-day processing, and standalone analysis also
+keep this producer active. Nested model operations share the existing producer; explicitly choosing
 local-only Resume all does not start it. A successful local processing pass does
 not clear an earlier quota deferral from the acquisition pass.
 

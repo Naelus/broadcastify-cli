@@ -7662,8 +7662,15 @@ public sealed partial class MainWindow : Window
         _operationCancellation = new CancellationTokenSource();
         SetBusy(true, $"Analyzing {day.ArchiveDate}…", jobRunning: true);
         JobProgress.IsIndeterminate = true;
+        using var acquisitionCancellation = CancellationTokenSource.CreateLinkedTokenSource(_operationCancellation.Token);
+        Task acquisition = Task.CompletedTask;
         try
         {
+            if (!_queuedAcquisitionRunning)
+            {
+                await AcquireQueuedLibraryAsync(_operationCancellation.Token);
+                acquisition = ContinueScheduledAcquisitionAsync(acquisitionCancellation.Token);
+            }
             var report = await _worker.AnalyzeDayAsync(
                 ApplyAnalysisProvider(new AnalysisRequest
                 {
@@ -7692,6 +7699,8 @@ public sealed partial class MainWindow : Window
         }
         finally
         {
+            acquisitionCancellation.Cancel();
+            await acquisition;
             _operationCancellation.Dispose();
             _operationCancellation = null;
             JobProgress.IsIndeterminate = false;
