@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import os
+import re
 from collections.abc import Callable
 from datetime import date
 from pathlib import Path
@@ -853,12 +855,27 @@ class JobRunner:
                 }
             )
             if transcripts and processing_fingerprint:
-                with PipelineSyncStore(self.request.output_dir) as journal:
-                    journal.record_result(
-                        self.request.feed_id,
-                        archive_date,
-                        processing_fingerprint,
-                    )
+                # Legacy local caches remain usable, but cannot be advertised
+                # under today's model identity without their original hashes.
+                # The LAN catalog verifies the actual bytes before transfer.
+                for transcript in transcripts:
+                    try:
+                        metadata = json.loads(Path(transcript).read_text(encoding="utf-8"))
+                    except (OSError, ValueError):
+                        break
+                    if not isinstance(metadata, dict) or (
+                        metadata.get("processing_fingerprint") != processing_fingerprint
+                        or any(not re.fullmatch(r"[0-9a-f]{64}", str(metadata.get(key) or ""))
+                               for key in ("audio_sha256", "rendered_text_sha256"))
+                    ):
+                        break
+                else:
+                    with PipelineSyncStore(self.request.output_dir) as journal:
+                        journal.record_result(
+                            self.request.feed_id,
+                            archive_date,
+                            processing_fingerprint,
+                        )
 
         # A peer may finish while this node processes another day. Pull those
         # artifacts once more without waiting; anything still active remains a

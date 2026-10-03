@@ -65,6 +65,7 @@ public sealed partial class MainWindow : Window
     private FeedSearchResult? _selectedFeed;
     private CancellationTokenSource? _operationCancellation;
     private CancellationTokenSource? _pipelineCancellation;
+    private bool _queuedAcquisitionRunning;
     private CancellationTokenSource? _questionCancellation;
     private bool _exclusiveBusy;
     private bool _exclusiveJobRunning;
@@ -4150,6 +4151,7 @@ public sealed partial class MainWindow : Window
                         minimumSpeakers,
                         maximumSpeakers,
                         forceAllStages: true,
+                        allowQueuedAcquisition: selection.IncludeNetwork,
                         cancellationToken: pipeline.Token);
                 }
                 attempted++;
@@ -5602,6 +5604,7 @@ public sealed partial class MainWindow : Window
         bool forceSourceCheck = false,
         bool forceAllStages = false,
         bool acquisitionOnly = false,
+        bool allowQueuedAcquisition = true,
         string accountProfileId = "default",
         CancellationToken cancellationToken = default)
     {
@@ -5656,61 +5659,76 @@ public sealed partial class MainWindow : Window
                 acquisitionOnly ? HandleAcquisitionMessage : null);
         }
 
-        await _worker.ContinueLocalDayAsync(
-            ApplyAnalysisProvider(new LocalProcessingRequest
-            {
-                FeedId = day.FeedId,
-                ArchiveDate = day.ArchiveDate,
-                OutputDirectory = PersistedOutputDirectory(),
-                Model = SelectedComboValue(ModelComboBox, "turbo"),
-                AsrEngine = SelectedComboValue(AsrEngineComboBox, "auto"),
-                Device = SelectedComboValue(DeviceComboBox, "auto"),
-                DeviceIndex = RequiredInteger(GpuIndexBox.Value, 0),
-                AsrModelPath = string.IsNullOrWhiteSpace(AsrModelPathBox.Text)
-                    ? null
-                    : AsrModelPathBox.Text.Trim(),
-                DiarizationEngine = diarizationEngineOverride
-                    ?? SelectedComboValue(DiarizationEngineComboBox, "community-1"),
-                DiarizationDevice = SelectedComboValue(
-                    DiarizationDeviceComboBox, "auto"),
-                BatchSize = RequiredInteger(BatchSizeBox.Value, 8),
-                Diarize = true,
-                // Keep model analysis as a separate process so archive chat can
-                // use the shared local model while ASR/diarization is running.
-                Analyze = false,
-                MinimumSpeakers = minimumSpeakers,
-                MaximumSpeakers = maximumSpeakers,
-                HuggingFaceToken = CurrentHuggingFaceToken(),
-            }),
-            HandleWorkerMessage,
-            cancellationToken);
-        AppendLog(
-            $"Waiting for the shared analysis slot for {day.FeedName} on {day.ArchiveDate}; archive chat and this pipeline will not load competing local models.");
-        await _analysisOperationGate.WaitAsync(cancellationToken);
-        DayReport? report;
+        using var acquisitionCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        Task acquisition = Task.CompletedTask;
         try
         {
-            report = await _worker.AnalyzeDayAsync(
-                ApplyAnalysisProvider(new AnalysisRequest
+            if (allowQueuedAcquisition && !_queuedAcquisitionRunning)
+            {
+                await AcquireQueuedLibraryAsync(cancellationToken);
+                acquisition = ContinueScheduledAcquisitionAsync(acquisitionCancellation.Token);
+            }
+            await _worker.ContinueLocalDayAsync(
+                ApplyAnalysisProvider(new LocalProcessingRequest
                 {
                     FeedId = day.FeedId,
                     ArchiveDate = day.ArchiveDate,
                     OutputDirectory = PersistedOutputDirectory(),
+                    Model = SelectedComboValue(ModelComboBox, "turbo"),
+                    AsrEngine = SelectedComboValue(AsrEngineComboBox, "auto"),
+                    Device = SelectedComboValue(DeviceComboBox, "auto"),
+                    DeviceIndex = RequiredInteger(GpuIndexBox.Value, 0),
+                    AsrModelPath = string.IsNullOrWhiteSpace(AsrModelPathBox.Text)
+                        ? null
+                        : AsrModelPathBox.Text.Trim(),
+                    DiarizationEngine = diarizationEngineOverride
+                        ?? SelectedComboValue(DiarizationEngineComboBox, "community-1"),
+                    DiarizationDevice = SelectedComboValue(
+                        DiarizationDeviceComboBox, "auto"),
+                    BatchSize = RequiredInteger(BatchSizeBox.Value, 8),
+                    Diarize = true,
+                    // Keep model analysis as a separate process so archive chat can
+                    // use the shared local model while ASR/diarization is running.
+                    Analyze = false,
+                    MinimumSpeakers = minimumSpeakers,
+                    MaximumSpeakers = maximumSpeakers,
+                    HuggingFaceToken = CurrentHuggingFaceToken(),
                 }),
                 HandleWorkerMessage,
                 cancellationToken);
+            AppendLog(
+                $"Waiting for the shared analysis slot for {day.FeedName} on {day.ArchiveDate}; archive chat and this pipeline will not load competing local models.");
+            await _analysisOperationGate.WaitAsync(cancellationToken);
+            DayReport? report;
+            try
+            {
+                report = await _worker.AnalyzeDayAsync(
+                    ApplyAnalysisProvider(new AnalysisRequest
+                    {
+                        FeedId = day.FeedId,
+                        ArchiveDate = day.ArchiveDate,
+                        OutputDirectory = PersistedOutputDirectory(),
+                    }),
+                    HandleWorkerMessage,
+                    cancellationToken);
+            }
+            finally
+            {
+                _analysisOperationGate.Release();
+            }
+            SelectReviewFeed(day.FeedId, clearChatWhenChanged: false);
+            if (report is not null)
+            {
+                ApplyReport(report);
+            }
+            await RefreshAnalysisDaysAsync();
+            return null;
         }
         finally
         {
-            _analysisOperationGate.Release();
+            acquisitionCancellation.Cancel();
+            await acquisition;
         }
-        SelectReviewFeed(day.FeedId, clearChatWhenChanged: false);
-        if (report is not null)
-        {
-            ApplyReport(report);
-        }
-        await RefreshAnalysisDaysAsync();
-        return null;
     }
 
     private async void BrowsePythonRuntime_Click(
@@ -6607,9 +6625,11 @@ public sealed partial class MainWindow : Window
         }
         if (lastResult is not null || eligible.Count == 0)
         {
+            // A local-only result cannot clear an unfinished acquisition pass.
+            var acquisitionLimited = lastResult?.DownloadLimited == true;
             processingProfileId ??= profileIds[0];
             // Give all saved queues an acquisition turn before model work.
-            await AcquireQueuedLibraryAsync(cancellationToken);
+            acquisitionLimited |= await AcquireQueuedLibraryAsync(cancellationToken);
             AppendLog(
                 "Processing retained audio locally; a separate sequential acquisition pass "
                 + "will keep checking available account allowance while model work continues.");
@@ -6629,7 +6649,7 @@ public sealed partial class MainWindow : Window
                 acquisitionCancellation.Cancel();
                 await acquisition;
             }
-            if (lastResult?.DownloadLimited != true)
+            if (!acquisitionLimited && lastResult?.DownloadLimited != true)
             {
                 return (
                     lastResult,
@@ -6692,12 +6712,12 @@ public sealed partial class MainWindow : Window
         return waitingForQuota;
     }
 
-    private async Task AcquireQueuedLibraryAsync(
+    private async Task<bool> AcquireQueuedLibraryAsync(
         CancellationToken cancellationToken, IReadOnlyList<LibraryDay>? selectedDays = null)
     {
         if (_worker is null || _libraryMutationBusy)
         {
-            return;
+            return false;
         }
         var plan = await _worker.GetLibraryResumePlanAsync(PersistedOutputDirectory(), cancellationToken);
         var queuedFeeds = plan.Feeds.Where(value => value.Scheduled || value.CatchUpSaved)
@@ -6710,7 +6730,7 @@ public sealed partial class MainWindow : Window
         UpdateCommandAvailability();
         try
         {
-            await AcquireLibraryDaysAsync(days, cancellationToken);
+            return await AcquireLibraryDaysAsync(days, cancellationToken);
         }
         finally
         {
@@ -6725,6 +6745,13 @@ public sealed partial class MainWindow : Window
     private async Task ContinueScheduledAcquisitionAsync(
         CancellationToken cancellationToken, IReadOnlyList<LibraryDay>? selectedDays = null)
     {
+        // Scheduled, manual, and resume workflows share one producer. Nested
+        // model operations must not start competing queue scans or workers.
+        if (_queuedAcquisitionRunning)
+        {
+            return;
+        }
+        _queuedAcquisitionRunning = true;
         try
         {
             while (!cancellationToken.IsCancellationRequested && _worker is not null)
@@ -6744,6 +6771,10 @@ public sealed partial class MainWindow : Window
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             // Checkpoint the producer before another foreground acquisition turn.
+        }
+        finally
+        {
+            _queuedAcquisitionRunning = false;
         }
     }
 
@@ -6824,17 +6855,32 @@ public sealed partial class MainWindow : Window
         // Make the local source-block node reachable before the worker decides
         // whether this PC can own the shared LAN acquisition lease.
         await ConfigureLanSharingAsync();
-        var jobResult = await _worker.RunJobAsync(
-            request,
-            onMessage ?? HandleWorkerMessage,
-            cancellationToken,
-            accountProfileId);
-        await AnalyzeCompletedJobAsync(
-            request,
-            jobResult,
-            cancellationToken,
-            analyzeOverride);
-        return jobResult;
+        using var acquisitionCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        Task acquisition = Task.CompletedTask;
+        try
+        {
+            if ((request.Combine || request.Transcribe) && !_queuedAcquisitionRunning)
+            {
+                await AcquireQueuedLibraryAsync(cancellationToken);
+                acquisition = ContinueScheduledAcquisitionAsync(acquisitionCancellation.Token);
+            }
+            var jobResult = await _worker.RunJobAsync(
+                request,
+                onMessage ?? HandleWorkerMessage,
+                cancellationToken,
+                accountProfileId);
+            await AnalyzeCompletedJobAsync(
+                request,
+                jobResult,
+                cancellationToken,
+                analyzeOverride);
+            return jobResult;
+        }
+        finally
+        {
+            acquisitionCancellation.Cancel();
+            await acquisition;
+        }
     }
 
     private async Task ReleaseMediaForArchiveMutationAsync(

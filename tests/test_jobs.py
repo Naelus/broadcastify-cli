@@ -1,6 +1,9 @@
 import json
+import hashlib
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
+
+import pytest
 
 from broadcastify_cli.jobs import JobRunner
 from broadcastify_cli.archive_cache import (
@@ -16,6 +19,7 @@ from broadcastify_cli.lan_sync import (
     LanTranscriptSyncResult,
 )
 from broadcastify_cli.quota import ArchiveRequestLedger
+from broadcastify_cli.pipeline_sync import PipelineSyncStore
 
 
 class FakeClient:
@@ -869,9 +873,11 @@ def test_lan_queue_quota_result_uses_local_next_safe_delay(
     assert result["download_limited"] is True
 
 
+@pytest.mark.parametrize("legacy", [True, False])
 def test_master_uses_its_own_transcript_instead_of_follower_variant(
     tmp_path: Path,
     monkeypatch,
+    legacy: bool,
 ) -> None:
     archive_date = date(2026, 7, 14)
     fingerprint = "f" * 64
@@ -907,7 +913,13 @@ def test_master_uses_its_own_transcript_instead_of_follower_variant(
             calls.append("transcribe")
             transcript = day / "transcripts" / f"{source.stem}.json"
             transcript.parent.mkdir(exist_ok=True)
-            transcript.write_text("{}", encoding="utf-8")
+            transcript.with_suffix(".txt").write_text("master transcript", encoding="utf-8")
+            metadata = {} if legacy else {
+                "processing_fingerprint": fingerprint,
+                "audio_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+                "rendered_text_sha256": hashlib.sha256(b"master transcript").hexdigest(),
+            }
+            transcript.write_text(json.dumps(metadata), encoding="utf-8")
             return [transcript]
 
     class VariantLan:
@@ -967,3 +979,8 @@ def test_master_uses_its_own_transcript_instead_of_follower_variant(
     assert result["pending_processing_days"] == []
     assert result["lan_sync"]["processing_queue"]["uncoordinated"] == 1
     assert calls == ["authenticate", "download", "load", "transcribe"]
+    # A usable legacy local transcript is not a verifiable LAN result. Publishing
+    # it under the current model would leave every follower retrying forever.
+    with PipelineSyncStore(tmp_path) as journal:
+        published = [event for event in journal.changes(0)["events"] if event["kind"] == "result"]
+        assert bool(published) is not legacy

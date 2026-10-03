@@ -27,6 +27,10 @@ model work. While local work runs, a sequential producer rechecks queued dates
 and rolling allowance each minute. Exhausted accounts hand off to the next
 eligible profile, and third-and-later accounts remain reserved for today and the
 previous two days. No allowance bypass or concurrent provider requests are used.
+Manual Desktop archive and retained-day processing also keep this producer
+active. Nested model operations share the existing producer; explicitly choosing
+local-only Resume all does not start it. A successful local processing pass does
+not clear an earlier quota deferral from the acquisition pass.
 
 Master loss never causes automatic promotion. Followers keep their retained
 files usable and pause new master-owned work. Promoting another machine is an
@@ -44,6 +48,8 @@ An unavailable or unverifiable event is saved in the same journal transaction
 that advances the cursor. Bounded retries rotate alongside newer events, so an
 old transcript without transfer metadata cannot block all later results.
 Retries survive restarts; unverified artifacts are never accepted as complete.
+Legacy transcripts without original model and content-hash metadata stay usable
+locally, but are not advertised as new verified LAN results.
 The browser shows Windows master progress separately from the NAS's retained
 copy. Analysis remains on Windows, so missing NAS analysis is not itself an
 unfinished master job.

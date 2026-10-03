@@ -1088,6 +1088,7 @@ class FeedScheduleCoordinator:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._active: tuple[str, dict[str, Any], set[str], str] | None = None
+        self._acquisition_limited = False
 
     def start(self) -> None:
         if self._thread is not None:
@@ -1188,10 +1189,14 @@ class FeedScheduleCoordinator:
                 result = event.get("result") if isinstance(event, dict) else {}
                 result = result if isinstance(result, dict) else {}
                 limited = bool(result.get("download_limited"))
+                if phase == "processing":
+                    # Local-only processing cannot prove that deferred source
+                    # requests succeeded during the preceding acquisition pass.
+                    limited = limited or self._acquisition_limited
                 incomplete = bool(result.get("missing_days")) or bool(
                     result.get("pending_processing_days")
                 )
-                if limited and automatic_pool:
+                if limited and automatic_pool and phase != "processing":
                     next_phase = (
                         "acquisition"
                         if self._uses_multi_account_acquisition(schedule)
@@ -1204,11 +1209,13 @@ class FeedScheduleCoordinator:
                     ):
                         return
                 if phase == "acquisition":
+                    self._acquisition_limited = limited
                     try:
                         job = self._start_schedule_job(
                             schedule,
                             set(),
                             account_profile_id=selected_profile_id,
+                            local_only=True,
                         )
                     except WebRequestError as exc:
                         with AnalysisStore(self.database_path) as store:
@@ -1288,6 +1295,7 @@ class FeedScheduleCoordinator:
             )
         if schedule is None:
             return
+        self._acquisition_limited = False
         split_acquisition = self._uses_multi_account_acquisition(schedule)
         try:
             job = self._start_schedule_job(
@@ -1325,6 +1333,7 @@ class FeedScheduleCoordinator:
         *,
         acquisition_only: bool = False,
         account_profile_id: str = "",
+        local_only: bool = False,
     ) -> dict[str, Any]:
         job_payload = dict(schedule["job"])
         analyze = bool(schedule["analyze"])
@@ -1343,6 +1352,7 @@ class FeedScheduleCoordinator:
             # account's rolling allowance is checked again between long local
             # inference runs. Explicit user-started jobs remain unbounded.
             job_payload["max_processing_days"] = 1
+            job_payload["local_only"] = local_only
         return self.jobs.start(
             "run-scheduled",
             {

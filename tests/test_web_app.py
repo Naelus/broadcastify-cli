@@ -180,9 +180,11 @@ def test_web_schedule_coordinator_claims_and_finishes_due_feed(
     assert result["last_run_date"] == date.today().isoformat()
 
 
+@pytest.mark.parametrize("exhausted", [False, True])
 def test_web_schedule_pool_hands_off_acquisition_before_model_work(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    exhausted: bool,
 ) -> None:
     database = tmp_path / "analysis.sqlite3"
     with AnalysisStore(database) as store:
@@ -218,6 +220,8 @@ def test_web_schedule_pool_hands_off_acquisition_before_model_work(
 
         def start(self, command: str, payload: dict[str, object]) -> dict[str, object]:
             assert command == "run-scheduled"
+            if payload.get("exclude_account_profile_ids") == ["default", "secondary"]:
+                raise WebRequestError(429, "No archive allowance remains.")
             self.started.append(json.loads(json.dumps(payload)))
             return {"id": f"scheduled-job-{len(self.started)}"}
 
@@ -236,7 +240,7 @@ def test_web_schedule_pool_hands_off_acquisition_before_model_work(
                     "account_profile_id": "secondary",
                     "result": {
                         "type": "scheduled_complete",
-                        "result": {"download_limited": False},
+                        "result": {"download_limited": exhausted},
                     },
                 },
                 "scheduled-job-3": {
@@ -282,9 +286,11 @@ def test_web_schedule_pool_hands_off_acquisition_before_model_work(
     assert processing["job"]["transcribe"] is True  # type: ignore[index]
     assert processing["job"]["diarize"] is True  # type: ignore[index]
     assert processing["job"]["max_processing_days"] == 1  # type: ignore[index]
+    assert processing["job"]["local_only"] is True  # type: ignore[index]
     with AnalysisStore(database) as store:
         result = store.list_feed_schedules()[0]
-    assert result["state"] == "complete"
+    assert result["state"] == ("waiting_quota" if exhausted else "complete")
+    assert bool(result["last_run_date"]) is not exhausted
 
 
 def test_web_schedule_coordinator_retries_deferred_missing_days(
