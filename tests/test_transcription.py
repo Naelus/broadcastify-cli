@@ -1,4 +1,5 @@
 import json
+import os
 import sys
 from contextlib import nullcontext
 from pathlib import Path
@@ -443,11 +444,13 @@ def test_repetition_collapse_is_not_saved_or_marked_current(tmp_path: Path) -> N
     assert not (transcript_dir / "radio.txt").exists()
 
 
-def test_rendered_transcript_hash_detects_interrupted_file_pair(
+def test_current_transcripts_rejects_incomplete_mismatched_or_interrupted_cache(
     tmp_path: Path,
 ) -> None:
     audio = tmp_path / "radio.wav"
+    second = tmp_path / "second.wav"
     audio.write_bytes(b"audio")
+    second.write_bytes(b"other audio")
 
     class FakeExternalAsr:
         @staticmethod
@@ -473,14 +476,33 @@ def test_rendered_transcript_hash_detects_interrupted_file_pair(
     transcriber.diarization_device = "none"
 
     transcript_path = transcriber.transcribe_file(audio)
+    assert transcriber.current_transcripts([audio, second]) == []
+    second_transcript = transcriber.transcribe_file(second)
+    assert transcriber.current_transcripts([second, audio]) == [transcript_path, second_transcript]
+
+    class UnexpectedAsr:
+        @staticmethod
+        def transcribe(*_args, **_kwargs):
+            raise AssertionError("Cache validation must not start model work")
+
+    transcriber._external_asr = UnexpectedAsr()
+    assert transcriber.transcribe_file(audio) == transcript_path
+    transcriber.model_name = "base"
+    assert transcriber.current_transcripts([audio, second]) == []
+    transcriber.model_name = "tiny"
+
+    # Same timestamps cannot make replaced audio belong to an old transcript.
+    previous_stat = second.stat()
+    second.write_bytes(b"changed audio")
+    os.utime(second, ns=(previous_stat.st_atime_ns, previous_stat.st_mtime_ns))
+    assert transcriber.current_transcripts([audio, second]) == []
+    second.write_bytes(b"other audio")
+    os.utime(second, ns=(previous_stat.st_atime_ns, previous_stat.st_mtime_ns))
+    assert transcriber.current_transcripts([audio, second]) == [transcript_path, second_transcript]
+
     text_path = transcript_path.with_suffix(".txt")
     text_path.write_text("partial replacement", encoding="utf-8")
-
-    assert not transcriber._existing_transcript_is_current(
-        audio,
-        transcript_path,
-        text_path,
-    )
+    assert transcriber.current_transcripts([audio, second]) == []
 
 
 def test_portable_speakers_do_not_replace_external_asr_timestamp_identity(
@@ -611,34 +633,6 @@ def test_diarization_turn_cache_is_parameter_and_audio_specific(tmp_path: Path) 
 
     transcriber.max_speakers = 9
     assert transcriber._load_diarization_cache(audio) is None
-
-
-def test_current_transcripts_requires_the_complete_model_matching_set(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    first = tmp_path / "first.mp3"
-    second = tmp_path / "second.mp3"
-    first.write_bytes(b"first")
-    second.write_bytes(b"second")
-    transcriber = object.__new__(LocalTranscriber)
-    monkeypatch.setattr(
-        transcriber,
-        "_existing_transcript_is_current",
-        lambda audio, _json, _text: audio != second,
-    )
-
-    assert transcriber.current_transcripts([first, second]) == []
-
-    monkeypatch.setattr(
-        transcriber,
-        "_existing_transcript_is_current",
-        lambda _audio, _json, _text: True,
-    )
-    assert transcriber.current_transcripts([second, first]) == [
-        tmp_path / "transcripts" / "first.json",
-        tmp_path / "transcripts" / "second.json",
-    ]
 
 
 def test_combined_source_signature_finds_hashed_append_boundary(

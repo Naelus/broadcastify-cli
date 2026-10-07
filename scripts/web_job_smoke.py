@@ -37,7 +37,8 @@ def _json_request(
         headers["Origin"] = origin
     if body is not None:
         headers["Content-Type"] = "application/json"
-        encoded = json.dumps(body, ensure_ascii=False)
+        # http.client treats string bodies as Latin-1; Web JSON is UTF-8.
+        encoded = json.dumps(body, ensure_ascii=False).encode("utf-8")
     connection.request(method, path, body=encoded, headers=headers)
     response = connection.getresponse()
     return response, response.read()

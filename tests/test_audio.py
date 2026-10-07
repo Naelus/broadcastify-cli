@@ -1,5 +1,11 @@
 import json
+import math
 import os
+import struct
+import subprocess
+import sys
+import wave
+from array import array
 from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
@@ -10,36 +16,66 @@ from broadcastify_cli.audio import (
     AudioCombineError,
     combine_mp3_files,
     extract_audio_clip,
+    find_ffmpeg,
     select_incident_context_window,
     select_incident_evidence_window,
 )
 
 
-def test_combiner_reencodes_with_continuous_timestamps(monkeypatch, tmp_path: Path) -> None:
+def test_combined_recording_and_evidence_clip_decode_the_right_audio(tmp_path: Path) -> None:
+    ffmpeg = find_ffmpeg()
+    assert ffmpeg, "The media verification gate requires FFmpeg and FFprobe."
     sources = [
         tmp_path / "202607120000-1-90001.mp3",
-        tmp_path / "202607120030-2-90001.mp3",
+        tmp_path / "202607120200-2-90001.mp3",
     ]
-    for source in sources:
-        source.write_bytes(b"audio")
-
-    captured: list[str] = []
-    concat_contents = ""
-
-    def fake_run(arguments: list[str], **_kwargs: object) -> SimpleNamespace:
-        nonlocal concat_contents
-        captured.extend(arguments)
-        concat_contents = Path(arguments[arguments.index("-i") + 1]).read_text(
-            encoding="utf-8"
+    # Distinct signals expose truncation, reversed blocks, and incorrect seeking.
+    # A real feed outage must not insert hours of silence into combined audio.
+    for source, frequency in zip(sources, (440, 880)):
+        pcm = source.with_suffix(".wav")
+        with wave.open(str(pcm), "wb") as writer:
+            writer.setparams((1, 2, 16_000, 0, "NONE", "not compressed"))
+            writer.writeframes(
+                b"".join(
+                    struct.pack(
+                        "<h", int(12_000 * math.sin(2 * math.pi * frequency * i / 16_000))
+                    )
+                    for i in range(32_000)
+                )
+            )
+        subprocess.run(
+            [ffmpeg, "-v", "error", "-i", str(pcm), "-c:a", "libmp3lame", "-y", str(source)],
+            check=True,
+            capture_output=True,
+            timeout=15,
         )
-        Path(arguments[-1]).write_bytes(b"combined")
-        return SimpleNamespace(returncode=0, stderr="")
+    retained_bytes = [source.read_bytes() for source in sources]
 
-    monkeypatch.setattr("broadcastify_cli.audio.find_ffmpeg", lambda: "ffmpeg")
-    monkeypatch.setattr(
-        "broadcastify_cli.audio._probe_audio_duration", lambda _source, _ffmpeg: 1_800.0
-    )
-    monkeypatch.setattr("broadcastify_cli.audio.subprocess.run", fake_run)
+    def decode(path: Path) -> array:
+        result = subprocess.run(
+            [
+                ffmpeg, "-v", "error", "-i", str(path),
+                "-f", "s16le", "-ar", "8000", "-ac", "1", "pipe:1",
+            ],
+            check=True,
+            capture_output=True,
+            timeout=15,
+        )
+        samples = array("h", result.stdout)
+        if sys.byteorder != "little":
+            samples.byteswap()
+        return samples
+
+    def signal_power(samples: array, frequency: int) -> float:
+        real = sum(
+            value * math.cos(2 * math.pi * frequency * i / 8000)
+            for i, value in enumerate(samples)
+        )
+        imaginary = sum(
+            value * math.sin(2 * math.pi * frequency * i / 8000)
+            for i, value in enumerate(samples)
+        )
+        return real * real + imaginary * imaginary
 
     output = combine_mp3_files(
         tmp_path,
@@ -49,17 +85,21 @@ def test_combiner_reencodes_with_continuous_timestamps(monkeypatch, tmp_path: Pa
     )
 
     assert output == tmp_path / "combined_90001_20260712.mp3"
-    assert "asetpts=N/SR/TB" in captured
-    assert "libmp3lame" in captured
-    assert "16000" in captured
-    assert "copy" not in captured
-    assert "outpoint 1800.000" in concat_contents
-    assert captured[-1] != str(output)
+    samples = decode(output)
+    assert len(samples) / 8000 == pytest.approx(4.0, abs=0.2)
+    first = samples[4000:8000]
+    last = samples[-8000:-4000]
+    assert signal_power(first, 440) > 10 * signal_power(first, 880)
+    assert signal_power(last, 880) > 10 * signal_power(last, 440)
+    assert [source.read_bytes() for source in sources] == retained_bytes
     assert not list(tmp_path.glob("*.part.mp3"))
 
     manifest = output.with_suffix(".manifest.json")
     assert manifest.exists()
-    assert '"combined_start_seconds": 1800.0' in manifest.read_text(encoding="utf-8")
+    timeline = json.loads(manifest.read_text(encoding="utf-8"))["sources"]
+    assert timeline[1]["combined_start_seconds"] == pytest.approx(2.0, abs=0.1)
+    assert timeline[1]["archive_start"].startswith("2026-07-12T02:00:00")
+    published = (output.stat().st_mtime_ns, output.read_bytes())
 
     second = combine_mp3_files(
         tmp_path,
@@ -69,10 +109,20 @@ def test_combiner_reencodes_with_continuous_timestamps(monkeypatch, tmp_path: Pa
         feed_name="Example City Public Safety",
     )
     assert second == output
-    assert captured.count("ffmpeg") == 1
+    assert (output.stat().st_mtime_ns, output.read_bytes()) == published
     assert json.loads(manifest.read_text(encoding="utf-8"))["feed_name"] == (
         "Example City Public Safety"
     )
+
+    clip = tmp_path / "evidence-clips" / "incident.mp3"
+    assert extract_audio_clip(output, clip, 2.6, 3.6) == clip
+    clip_samples = decode(clip)
+    assert len(clip_samples) / 8000 == pytest.approx(1.0, abs=0.08)
+    assert signal_power(clip_samples, 880) > 10 * signal_power(clip_samples, 440)
+    cached = (clip.stat().st_mtime_ns, clip.read_bytes())
+    assert extract_audio_clip(output, clip, 2.6, 3.6) == clip
+    assert (clip.stat().st_mtime_ns, clip.read_bytes()) == cached
+    assert not list(tmp_path.rglob("*.part.mp3"))
 
 
 def test_combiner_retries_atomic_publish_after_player_releases(
@@ -207,31 +257,6 @@ def test_combiner_manifest_counts_media_duration_across_feed_gaps(
     assert repaired == output
     assert repaired_manifest["sources"][2]["combined_start_seconds"] == 3_597.5
     assert combine_calls == 1
-
-
-def test_evidence_clip_is_timestamped_and_cached(monkeypatch, tmp_path: Path) -> None:
-    source = tmp_path / "combined.mp3"
-    output = tmp_path / "evidence-clips" / "incident.mp3"
-    source.write_bytes(b"source audio")
-    calls: list[list[str]] = []
-
-    def fake_run(arguments: list[str], **_kwargs: object) -> SimpleNamespace:
-        calls.append(arguments)
-        Path(arguments[-1]).write_bytes(b"clip")
-        return SimpleNamespace(returncode=0, stderr="")
-
-    monkeypatch.setattr("broadcastify_cli.audio.find_ffmpeg", lambda: "ffmpeg")
-    monkeypatch.setattr("broadcastify_cli.audio.subprocess.run", fake_run)
-
-    first = extract_audio_clip(source, output, 92.0, 128.0)
-    second = extract_audio_clip(source, output, 92.0, 128.0)
-
-    assert first == output
-    assert second == output
-    assert len(calls) == 1
-    assert calls[0][calls[0].index("-ss") + 1] == "92.000"
-    assert calls[0][calls[0].index("-t") + 1] == "36.000"
-    assert "libmp3lame" in calls[0]
 
 
 def test_incident_context_window_reaches_the_initial_dispatch_before_a_disposition() -> None:

@@ -90,6 +90,14 @@ preflight. User-visible About, navigation, scrolling, and docking outcomes are
 proven by the compiled native E2E below rather than by source-text assertions;
 installer data preservation is proven by the release lifecycle itself.
 
+The media gate executes FFmpeg and FFprobe on short synthetic recordings and
+decodes the resulting combined recording and evidence clip. It verifies the
+audio a user would actually hear, including source order, seeking, duration,
+retained originals, and cache reuse. These tools must be installed when running
+the full offline suite; missing media tools fail the gate instead of skipping
+verification. The Windows installer builder prepares its verified FFmpeg
+bundle before this gate, and the Linux release workflow installs FFmpeg first.
+
 After the offline suite passes and the native executable is compiled, every
 desktop build launches that just-built executable in an isolated test-data
 root. The app-owned E2E probe does not use desktop-control fallbacks,

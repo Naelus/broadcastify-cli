@@ -5,6 +5,38 @@ Tests were evaluated by the product failure they detect, the boundary they
 exercise, and whether existing coverage already proves the same outcome.
 Test authorship is not evidence of relevance.
 
+## October 2026 verification review
+
+Two mocked FFmpeg recipe tests are replaced by one real media workflow. It
+creates short, distinct recordings locally, decodes the combined output and
+evidence clip, and checks duration, source order, the cited signal, preserved
+originals, cached reuse, and the timeline across a feed outage. FFmpeg and
+FFprobe are required; this verification cannot silently skip. The installer
+already supplies its verified media tools before the native regression gate,
+and the Linux release workflow installs them before pytest.
+
+The mocked complete-transcript-set check is removed. Its interrupted-file-pair
+replacement now creates actual saved transcripts and verifies reuse, missing
+members, model changes, changed audio with unchanged timestamps, and partial
+text replacement through the public cache-selection method. Only the external
+ASR adapter is synthetic; cache decisions and artifact writes are real.
+
+The Web Unicode check now requires a completed subprocess job, the expected
+retained-file operation, unchanged audio/transcript bytes, and searchable
+Unicode evidence after reopening the database. It uses a Unicode library path,
+isolated settings and credentials, and a real loopback request. This exposed a
+Latin-1 request-body bug in `scripts/web_job_smoke.py`; JSON is now explicitly
+encoded as UTF-8. Merely observing the first progress message could not prove
+the job succeeded.
+
+Before accepting these checks, each passed against an isolated source copy,
+then rejected deliberately broken behavior: dropping the second recording,
+seeking a clip to the wrong call, accepting changed audio as current, hiding
+indexed search after new audio, and restoring the Latin-1 request bug. Fault
+injection never altered the active application's source or retained data. The
+suite has two fewer cases; this review adds no production subsystem or model
+downloads.
+
 ## Initial audit: removed coverage and its replacement
 
 | Removed tests | Reason and retained proof |
