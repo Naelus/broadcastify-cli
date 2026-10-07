@@ -1,5 +1,6 @@
 import json
 import hashlib
+import os
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
 
@@ -20,6 +21,8 @@ from broadcastify_cli.lan_sync import (
 )
 from broadcastify_cli.quota import ArchiveRequestLedger
 from broadcastify_cli.pipeline_sync import PipelineSyncStore
+from broadcastify_cli.asr import AsrResult, AsrSegment
+from broadcastify_cli.transcription import LocalTranscriber
 
 
 class FakeClient:
@@ -59,8 +62,9 @@ def test_combined_audio_is_created_before_one_transcription_pass(
         device_index = 0
         compute_type = "float16"
 
-        def __init__(self, **_kwargs: object) -> None:
-            calls.append("load_model")
+        def __init__(self, **kwargs: object) -> None:
+            if kwargs.get("load_models", True):
+                calls.append("load_model")
 
         def transcribe_files(self, files: list[Path], **_kwargs: object) -> list[Path]:
             calls.append("transcribe")
@@ -86,6 +90,80 @@ def test_combined_audio_is_created_before_one_transcription_pass(
     assert calls.index("combine") < calls.index("transcribe")
     assert calls.count("transcribe") == 1
     assert combined_feed_names == ["Example Public Safety"]
+
+
+def test_cached_jobs_load_no_models_and_process_only_changed_days(
+    monkeypatch, tmp_path: Path,
+) -> None:
+    loaded: list[str] = []
+    transcribed: list[Path] = []
+
+    class OfflineAsr:
+        backend = "OpenVINO CPU"
+
+        def __init__(self, **_kwargs: object) -> None:
+            loaded.append("model")
+
+        def transcribe(self, audio: Path, progress=None) -> AsrResult:
+            transcribed.append(audio)
+            return AsrResult(
+                text="Unit responding to the retained call.", duration=1.0,
+                segments=[AsrSegment(0.0, 1.0, "Unit responding to the retained call.")],
+                engine="openvino", backend=self.backend, metadata={"model": "tiny"},
+            )
+
+    monkeypatch.setattr("broadcastify_cli.transcription.OpenVinoWhisperAsr", OfflineAsr)
+    options = {"model_name": "tiny", "asr_engine": "openvino", "device": "cpu", "diarize": False}
+    seed = LocalTranscriber(**options)
+    sources: list[Path] = []
+    dates = [date(2026, 7, 1), date(2026, 7, 2)]
+    for day in dates:
+        directory = tmp_path / "90001" / day.strftime("%Y%m%d")
+        directory.mkdir(parents=True)
+        source = directory / f"{day:%Y%m%d}0000-123-90001.mp3"
+        source.write_bytes(b"audio-one")
+        remember_archive_identity(directory, "90001", day, "123", source)
+        assert remember_complete_archive_day(directory, "90001", day, ["123"])
+        seed.transcribe_file(source)
+        sources.append(source)
+    loaded.clear()
+    transcribed.clear()
+
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("A retained-only pass must not acquire audio")
+
+    request = JobRequest(
+        feed_id="90001", start_date=dates[0], end_date=dates[1], output_dir=tmp_path,
+        model="tiny", asr_engine="openvino", device="cpu", transcribe=True,
+        local_only=True, max_processing_days=1,
+    )
+    with BroadcastifyClient(cookie_path=tmp_path / "cookies.json") as client:
+        monkeypatch.setattr(client, "authenticate", forbidden)
+        monkeypatch.setattr(client, "download_day", forbidden)
+        runner = JobRunner(request, client=client)
+        cached = runner.run()
+        assert cached["pending_processing_days"] == []
+        assert all(day["transcripts"] for day in cached["days"])
+        assert loaded == [] and transcribed == []
+
+        # Hash validation, rather than timestamps, selects actual new model work.
+        for source in sources:
+            original = source.stat()
+            source.write_bytes(b"audio-two")
+            os.utime(source, ns=(original.st_atime_ns, original.st_mtime_ns))
+        changed = runner.run()
+        assert len(loaded) == 1
+        assert transcribed == [sources[1]]
+        assert changed["pending_processing_days"] == [dates[0].isoformat()]
+        resumed = runner.run()
+        assert len(loaded) == 2
+        assert transcribed == [sources[1], sources[0]]
+        assert resumed["pending_processing_days"] == []
+        runner.run()
+        assert len(loaded) == 2
+        assert LocalTranscriber(**options, load_models=False).current_transcripts(sources) == [
+            source.parent / "transcripts" / f"{source.stem}.json" for source in sources
+        ]
 
 
 def test_scheduled_processing_limit_queues_remaining_local_days(
@@ -122,8 +200,9 @@ def test_scheduled_processing_limit_queues_remaining_local_days(
         device_index = 0
         compute_type = "float32"
 
-        def __init__(self, **_kwargs: object) -> None:
-            calls.append("load")
+        def __init__(self, **kwargs: object) -> None:
+            if kwargs.get("load_models", True):
+                calls.append("load")
 
         def current_transcripts(self, _inputs: list[Path]) -> list[Path]:
             return []
@@ -177,9 +256,10 @@ def test_model_failure_keeps_already_acquired_audio(
     calls: list[str] = []
 
     class FailingTranscriber:
-        def __init__(self, **_kwargs: object) -> None:
-            calls.append("load_model")
-            raise RuntimeError("audio runtime missing")
+        def __init__(self, **kwargs: object) -> None:
+            if kwargs.get("load_models", True):
+                calls.append("load_model")
+                raise RuntimeError("audio runtime missing")
 
     monkeypatch.setattr(
         "broadcastify_cli.jobs.LocalTranscriber",
@@ -903,8 +983,9 @@ def test_master_uses_its_own_transcript_instead_of_follower_variant(
         compute_type = "float32"
         processing_fingerprint = fingerprint
 
-        def __init__(self, **_kwargs: object) -> None:
-            calls.append("load")
+        def __init__(self, **kwargs: object) -> None:
+            if kwargs.get("load_models", True):
+                calls.append("load")
 
         def current_transcripts(self, _inputs: list[Path]) -> list[Path]:
             return []

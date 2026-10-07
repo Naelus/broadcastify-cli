@@ -548,7 +548,34 @@ class JobRunner:
 
         # Secure every available source day before model setup can delay or fail.
         transcriber = None
+        cache_checker = None
+        transcription_options: dict[str, Any] = {}
         if self.request.transcribe and not follower and any(files for _, files in downloaded_days):
+            transcription_options = {
+                "model_name": self.request.model,
+                "asr_engine": self.request.asr_engine,
+                "device": self.request.device,
+                "device_index": self.request.device_index,
+                "compute_type": self.request.compute_type,
+                "asr_model_path": self.request.asr_model_path,
+                "diarization_engine": self.request.diarization_engine,
+                "diarization_device": self.request.diarization_device,
+                "diarize": self.request.diarize,
+                "huggingface_token": (
+                    self.request.huggingface_token
+                    or os.getenv("HUGGINGFACE_TOKEN")
+                    or os.getenv("HF_TOKEN")
+                ),
+                "batch_size": self.request.batch_size,
+                "min_speakers": self.request.min_speakers,
+                "max_speakers": self.request.max_speakers,
+            }
+            cache_checker = LocalTranscriber(**transcription_options, load_models=False)
+
+        def inference_transcriber() -> LocalTranscriber:
+            nonlocal transcriber
+            if transcriber is not None:
+                return transcriber
             self.emit(
                 {
                     "type": "log",
@@ -557,25 +584,7 @@ class JobRunner:
                     ),
                 }
             )
-            transcriber = LocalTranscriber(
-                model_name=self.request.model,
-                asr_engine=self.request.asr_engine,
-                device=self.request.device,
-                device_index=self.request.device_index,
-                compute_type=self.request.compute_type,
-                asr_model_path=self.request.asr_model_path,
-                diarization_engine=self.request.diarization_engine,
-                diarization_device=self.request.diarization_device,
-                diarize=self.request.diarize,
-                huggingface_token=(
-                    self.request.huggingface_token
-                    or os.getenv("HUGGINGFACE_TOKEN")
-                    or os.getenv("HF_TOKEN")
-                ),
-                batch_size=self.request.batch_size,
-                min_speakers=self.request.min_speakers,
-                max_speakers=self.request.max_speakers,
-            )
+            transcriber = LocalTranscriber(**transcription_options)
             self.emit(
                 {
                     "type": "log",
@@ -588,8 +597,10 @@ class JobRunner:
                     ),
                 }
             )
+            return transcriber
+
         processing_fingerprint = str(
-            getattr(transcriber, "processing_fingerprint", "") or ""
+            getattr(cache_checker, "processing_fingerprint", "") or ""
         )
 
         day_results: list[dict[str, Any]] = []
@@ -604,8 +615,8 @@ class JobRunner:
         processing_days_started = 0
 
         def matching_transcripts(inputs: list[Path]) -> list[Path]:
-            current = getattr(transcriber, "current_transcripts", None)
-            if transcriber is None or not callable(current):
+            current = getattr(cache_checker, "current_transcripts", None)
+            if not callable(current):
                 return []
             return list(current(inputs))
 
@@ -670,7 +681,7 @@ class JobRunner:
             # restarting independently in every source archive.
             transcription_inputs = [combined] if combined else audio_files
             transcripts: list[Path] = []
-            if transcriber and transcription_inputs:
+            if cache_checker and transcription_inputs:
                 transcripts = sync_matching_transcripts(
                     archive_date,
                     transcription_inputs,
@@ -752,6 +763,7 @@ class JobRunner:
                         )
                 elif not transcripts:
                     processing_days_started += 1
+                    transcriber = inference_transcriber()
                     self.emit(
                         {
                             "type": "stage",
@@ -880,7 +892,7 @@ class JobRunner:
         # A peer may finish while this node processes another day. Pull those
         # artifacts once more without waiting; anything still active remains a
         # durable scheduled retry instead of being duplicated here.
-        if transcriber and pending_processing_days:
+        if cache_checker and pending_processing_days:
             still_pending: list[str] = []
             by_date = {value["date"]: value for value in day_results}
             for day_label in pending_processing_days:
@@ -940,8 +952,8 @@ class JobRunner:
         if pending_processing_days:
             message = (
                 f"Archive acquisition completed; {len(pending_processing_days)} "
-                "model/day result(s) remain assigned to another LAN node and "
-                "will reconcile on the next scheduled pass."
+                "day(s) still need local model processing and "
+                "will continue on the next scheduled pass."
             )
         elif not download_limited:
             message = "All operations completed."

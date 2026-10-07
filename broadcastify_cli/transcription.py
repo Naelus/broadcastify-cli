@@ -638,6 +638,7 @@ class LocalTranscriber:
         min_speakers: int | None = None,
         max_speakers: int | None = None,
         load_asr: bool = True,
+        load_models: bool = True,
     ) -> None:
         configure_ffmpeg_runtime()
         self.model_name = model_name
@@ -652,6 +653,16 @@ class LocalTranscriber:
         self._external_asr = None
         self._batched = False
         self.device_index = device_index
+        self._diarization_pipeline = None
+        self._portable_diarizer = None
+        self._diarization_details: dict[str, object] = {}
+        if not load_models:
+            # Cache identity depends on requested settings and retained bytes,
+            # not an allocated GPU model or an installed inference runtime.
+            self.device = device
+            self.compute_type = compute_type
+            self.diarization_device = diarization_device
+            return
         torch = None
         if self.asr_engine == "faster-whisper" or (
             self.diarize
@@ -782,9 +793,6 @@ class LocalTranscriber:
                 else f"{self.asr_engine} {self.device}"
             )
 
-        self._diarization_pipeline = None
-        self._portable_diarizer = None
-        self._diarization_details: dict[str, object] = {}
         if self.diarize and self.diarization_engine == COMMUNITY_DIARIZATION_ENGINE:
             try:
                 warnings.filterwarnings(
@@ -936,6 +944,12 @@ class LocalTranscriber:
         if self.diarize and progress:
             progress(f"Preparing diarization for {audio_path.name}")
         turns = self._diarize(audio_path, progress=progress) if self.diarize else []
+        torch = getattr(self, "_torch", None)
+        if self.diarize and self.diarization_device == "cuda" and torch is not None:
+            # Speaker inference uses PyTorch, while CUDA Whisper uses its own
+            # allocator. Release unused speaker workspace before ASR competes
+            # for that VRAM; live model tensors remain allocated.
+            torch.cuda.empty_cache()
         words: list[TranscriptWord] = []
         fallback_segments: list[TranscriptSegment] = []
         language = "en"

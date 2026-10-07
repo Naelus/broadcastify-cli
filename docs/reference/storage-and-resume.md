@@ -136,6 +136,18 @@ Each expensive stage has an independent cache contract:
 
 A later stage cannot make an earlier stale stage look complete.
 
+Retained-job cache checks use only processing settings and file identities;
+they do not load ASR or speaker models. After acquisition and combination, the
+first genuinely stale day loads the selected models. Further stale days in
+that pass share those models, subject to the scheduled processing-day limit.
+An entirely current pass therefore does not allocate inference models, and a
+missing optional model runtime cannot prevent reuse of valid saved results.
+
+After CUDA speaker inference, unused PyTorch allocator workspace is released
+before ASR. This matters because CUDA Whisper uses a separate allocator;
+keeping idle speaker workspace can crowd out Whisper or other GPU work.
+Live model tensors and retained speaker results remain valid.
+
 ## Interruption behavior
 
 - Downloads use partial files and publish only completed MP3s.
