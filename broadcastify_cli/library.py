@@ -666,6 +666,7 @@ def build_archive_question_coverage(
     local_processing_dates: list[str] = []
     partial_audio_dates: list[str] = []
     missing_audio_dates: list[str] = []
+    evidence_update_dates: list[str] = []
     for requested_date in requested_dates:
         archive_value = requested_date.isoformat()
         state = states.get(archive_value)
@@ -680,20 +681,24 @@ def build_archive_question_coverage(
             state
             and (
                 state.get("has_combined")
+                or state.get("has_stale_combined")
                 or int(state.get("raw_file_count") or 0) > 0
             )
         )
         question_ready = bool(
             state
-            and state.get("has_transcript")
-            and state.get("has_imported_transcript")
+            and state.get("has_searchable_transcript", bool(
+                state.get("has_transcript") and state.get("has_imported_transcript")
+            ))
         )
         if has_audio:
             audio_dates.append(archive_value)
         if question_ready:
             question_ready_dates.append(archive_value)
-            if bool(state and state.get("has_analysis")):
+            if bool(state and state.get("has_searchable_analysis", state.get("has_analysis"))):
                 analyzed_dates.append(archive_value)
+            if state and state.get("evidence_update_pending"):
+                evidence_update_dates.append(archive_value)
         elif has_audio and not bool(state and state.get("needs_network")):
             local_processing_dates.append(archive_value)
         elif has_audio:
@@ -736,6 +741,12 @@ def build_archive_question_coverage(
             + describe_archive_date_ranges(missing_audio_dates)
             + "."
         )
+    if evidence_update_dates:
+        summary += (
+            " Search uses the last indexed transcript while newer audio or transcripts "
+            "are being processed for " + describe_archive_date_ranges(evidence_update_dates)
+            + "; answers may omit newer activity."
+        )
     return {
         "scope": "range",
         "feed_id": normalized_feed_id,
@@ -765,7 +776,9 @@ def build_archive_question_coverage(
         ),
         "unavailable_dates": unavailable_dates,
         "unavailable_ranges": compact_archive_date_ranges(unavailable_dates),
-        "complete_coverage": not unavailable_dates,
+        "evidence_update_dates": evidence_update_dates,
+        "evidence_update_ranges": compact_archive_date_ranges(evidence_update_dates),
+        "complete_coverage": not unavailable_dates and not evidence_update_dates,
         "summary": summary,
     }
 
@@ -1204,6 +1217,10 @@ def _state_for_day(
         and summary_transcript_sha256
         == str(stored.get("transcript_sha256") or "")
     )
+    has_searchable_transcript, has_searchable_analysis = indexed_evidence_status(stored)
+    evidence_update_pending = has_searchable_transcript and not (
+        has_transcript and stored_matches_transcript
+    )
     has_stale_analysis = bool(
         has_transcript and has_saved_analysis and not has_analysis
     )
@@ -1287,8 +1304,8 @@ def _state_for_day(
         action = "continue_local"
         status = "Transcript update required"
         status_detail = (
-            "Combined audio changed; the previous transcript is preserved but "
-            "hidden until local processing updates it"
+            "Combined audio changed; the indexed transcript remains searchable "
+            "while local processing updates it"
         )
     elif not has_transcript:
         next_step = "Transcribe locally"
@@ -1369,6 +1386,10 @@ def _state_for_day(
         "has_transcript": has_transcript,
         "has_stale_transcript": has_stale_transcript,
         "has_imported_transcript": stored_matches_transcript,
+        "has_searchable_transcript": has_searchable_transcript,
+        "has_searchable_analysis": has_searchable_analysis,
+        "indexed_segment_count": int(stored.get("segment_count") or 0) if has_searchable_transcript and stored else 0,
+        "evidence_update_pending": evidence_update_pending,
         "has_diarization": has_diarization,
         "diarization_engine": diarization_engine,
         "diarization_quality": (
@@ -1393,7 +1414,7 @@ def _state_for_day(
         "status_detail": status_detail,
         "next_step": next_step,
         "primary_action": action,
-        "can_open_review": has_analysis,
+        "can_open_review": has_searchable_analysis,
         "is_complete": has_diarization and has_analysis,
         "source_unavailable": source_unavailable,
         "awaiting_source": awaiting_source,
@@ -1477,6 +1498,19 @@ def scan_local_library(
     return sorted(results, key=lambda value: (value["archive_date"], value["feed_id"]), reverse=True)
 
 
+def indexed_evidence_status(stored: dict[str, Any] | None) -> tuple[bool, bool]:
+    """Readiness of the committed database revision, independent of new downloads."""
+
+    transcript = bool(stored and stored.get("transcript_sha256") and (
+        int(stored.get("segment_count") or 0) > 0
+        or int(stored.get("passage_count") or 0) > 0
+    ))
+    analysis = bool(transcript and stored and stored.get("has_summary")
+        and stored.get("summary_prompt_version") == PROMPT_VERSION
+        and stored.get("summary_transcript_sha256") == stored.get("transcript_sha256"))
+    return transcript, analysis
+
+
 def require_current_range_evidence(
     store: AnalysisStore,
     feed_ids: list[str],
@@ -1487,7 +1521,7 @@ def require_current_range_evidence(
     purpose: str,
     archive_dates: Sequence[str] | None = None,
 ) -> None:
-    """Block DB consumers when retained files have moved to a newer revision."""
+    """Require coherent indexed evidence; newer source files do not revoke it."""
 
     normalized = list(dict.fromkeys(str(value) for value in feed_ids if str(value)))
     allowed_dates = (
@@ -1540,22 +1574,8 @@ def require_current_range_evidence(
 
     stale: list[tuple[str, str]] = []
     for key in sorted(relevant):
-        # Validate only evidence this consumer can actually use, against the
-        # live files. No cross-request cache may hide a rewritten transcript.
-        state = _state_for_day(
-            store.path.parent, key[0], date.fromisoformat(key[1]), days.get(key), "",
-        )
-        current = bool(
-            state
-            and (
-                state["has_analysis"]
-                if require_analysis
-                else (
-                    state["has_transcript"]
-                    and state["has_imported_transcript"]
-                )
-            )
-        )
+        transcript, analysis = indexed_evidence_status(days.get(key))
+        current = analysis if require_analysis else transcript
         if not current:
             stale.append(key)
     if not stale:
@@ -1567,8 +1587,8 @@ def require_current_range_evidence(
     if len(stale) > 8:
         labels += f", and {len(stale) - 8} more"
     raise ValueError(
-        f"{purpose} is blocked because saved evidence is older than the "
-        f"retained files for {labels}. Finish those local days first; no "
+        f"{purpose} is blocked because indexed evidence needs an update for "
+        f"{labels}. Finish those local days first; no "
         "archive re-download is required."
     )
 

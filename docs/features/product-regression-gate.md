@@ -45,7 +45,8 @@ The feed-question workflow proves that:
   question-ready, local-processing, partial-audio/acquisition, and missing-audio
   days, including complete raw-only downloads as retained audio awaiting local
   processing and incomplete raw-only days as still needing acquisition;
-- a question uses only current retained transcripts and incidents;
+- a question uses one committed transcript/incident revision and remains usable
+  when a new source block arrives, with pending coverage explicitly reported;
 - deterministic category, repeated-location, weekday, and time-block pattern
   records are supplied as citeable evidence;
 - follow-up context is bounded and is not treated as evidence;

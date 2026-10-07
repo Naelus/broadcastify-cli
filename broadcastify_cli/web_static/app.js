@@ -1049,9 +1049,9 @@ function renderDayDetail(activeTab = "incidents") {
     ${master ? `<div class="notice success"><strong>Windows master: ${html(master.status)}</strong><span>Next: ${html(master.next_step)}. The stages below describe this NAS copy. Event analysis stays on Windows and is not copied to the NAS.</span></div>` : ""}
     <div class="pipeline">${stageCards(day)}</div>
     ${detail.audio_url ? `<div class="audio-block"><audio id="dayAudio" controls preload="metadata" src="${html(detail.audio_url)}"></audio><small>Retained continuous recording. Incident play buttons jump to the cited time without contacting Broadcastify.</small></div>` : ""}
-    ${day.has_stale_transcript ? '<div class="notice warning"><strong>Transcript update required</strong><span>The combined recording changed. The previous transcript and its derived incidents are preserved locally but hidden until local processing updates them.</span></div>' : ""}
-    ${day.has_stale_analysis ? '<div class="notice warning"><strong>Analysis update required</strong><span>Older incident claims are hidden. Finish this day to apply the current evidence rules using the retained transcript—no archive download is needed.</span></div>' : detail.summary ? `<div class="notice success"><strong>Daily brief</strong><span>${html(detail.summary)}</span></div>` : ""}
-    <div class="detail-tabs"><button class="detail-tab${activeTab === "incidents" ? " active" : ""}" data-detail-tab="incidents">Incidents (${detail.incidents.length})</button><button class="detail-tab${activeTab === "transcript" ? " active" : ""}" data-detail-tab="transcript">Transcript (${day.segment_count || state.transcript.total || 0})</button></div>
+    ${day.evidence_update_pending ? '<div class="notice warning"><strong>New audio is being processed</strong><span>Chat and transcript search use the last indexed transcript. Newer activity will appear after processing finishes; clips pause while the recording is updated.</span></div>' : ""}
+    ${day.has_stale_analysis && !day.has_searchable_analysis ? '<div class="notice warning"><strong>Analysis update required</strong><span>Older incident claims are hidden. Finish this day to apply the current evidence rules using the retained transcript—no archive download is needed.</span></div>' : detail.summary ? `<div class="notice success"><strong>Daily brief</strong><span>${html(detail.summary)}</span></div>` : ""}
+    <div class="detail-tabs"><button class="detail-tab${activeTab === "incidents" ? " active" : ""}" data-detail-tab="incidents">Incidents (${detail.incidents.length})</button><button class="detail-tab${activeTab === "transcript" ? " active" : ""}" data-detail-tab="transcript">Transcript (${day.indexed_segment_count || day.segment_count || state.transcript.total || 0})</button></div>
     <div class="detail-panel" id="detailPanel">${activeTab === "incidents" ? incidentMarkup(detail.incidents) : transcriptMarkup()}</div>`;
 }
 
@@ -1062,11 +1062,12 @@ function incidentMarkup(incidents) {
     return '<div class="empty-compact">No extracted incidents are saved for this day yet.</div>';
   }
   const ordered = incidents.slice().sort((a, b) => b.priority - a.priority || a.start_seconds - b.start_seconds);
+  const clipDisabled = state.selectedDayDetail?.audio_url ? "" : 'disabled title="The indexed text remains available while audio is updated."';
   const visible = state.incidentExpanded ? ordered : ordered.slice(0, 12);
   return `<div class="incident-list">${visible.map((item) => `<article class="incident-card">
     <div class="incident-title"><div><h3>${html(item.title)}</h3><div class="incident-meta">${clock(item.start_seconds)} · ${html(words(item.event_type))}${item.location ? ` · ${html(item.location)}` : ""} · ${Math.round(item.confidence * 100)}% extraction confidence · I${item.id}</div></div><span class="priority${item.priority >= 4 ? " high" : ""}">P${item.priority}</span></div>
     <p>${html(item.summary)}</p>${item.quote ? `<p class="quote">“${html(item.quote)}”</p>` : ""}
-    <div class="button-row"><button class="button secondary small" data-action="play-incident" data-start="${Number(item.start_seconds)}">Play cited time</button><button class="button secondary small" data-action="export-incident" data-incident-id="${item.id}">Prepare exact clip</button></div>
+    <div class="button-row"><button class="button secondary small" data-action="play-incident" data-start="${Number(item.start_seconds)}" ${clipDisabled}>Play cited time</button><button class="button secondary small" data-action="export-incident" data-incident-id="${item.id}" ${clipDisabled}>Prepare exact clip</button></div>
   </article>`).join("")}</div>${ordered.length > 12 ? `<button class="button secondary wide load-more" data-action="toggle-incidents">${state.incidentExpanded ? "Show highest-priority only" : `Show all ${ordered.length} incidents`}</button>` : ""}`;
 }
 
@@ -1086,10 +1087,7 @@ async function loadTranscript(append, query = state.transcript.query) {
 }
 
 function transcriptMarkup() {
-  const day = state.selectedDayDetail?.state;
-  const empty = day?.has_stale_transcript
-    ? "The previous transcript is preserved but hidden until this day is updated locally."
-    : "No transcript segments match this search.";
+  const empty = "No transcript segments match this search.";
   const content = state.transcript.segments.length ? state.transcript.segments.map((segment) => `<div class="transcript-row"><time>${clock(segment.start_seconds)}</time><span class="speaker">${html(segment.speaker || "Unknown speaker")}</span><p>${html(segment.text)}</p></div>`).join("") : `<div class="empty-compact">${html(empty)}</div>`;
   return `<div class="transcript-tools"><input id="transcriptSearch" type="search" value="${html(state.transcript.query)}" placeholder="Search this transcript"><button class="button secondary small" data-action="search-transcript">Search</button></div><div class="transcript-list">${content}</div>${state.transcript.hasMore ? '<button class="button secondary wide load-more" data-action="load-transcript">Load more transcript</button>' : ""}`;
 }

@@ -46,13 +46,26 @@ outcomes, and invented category rankings. Deterministic fallbacks remain
 available when the model fails those checks.
 
 Range questions combine structured incidents with retrieved transcript evidence
-and require E/I citations. Before Review, questions, weekly/area summaries, or
-clip export can use a saved row, the retained audio, transcript import hash,
-analysis hash, and prompt revision must still agree. Older rows remain
-recoverable but cannot be presented against newer retained audio. Missing or
-stale dates are reported explicitly. Saved weekly and area briefs also carry an
-exact source fingerprint and are hidden as stale when a current daily summary,
-incident set, or area profile changes.
+and require E/I citations. Chat, transcript search, and Review use the committed
+indexed transcript and its matching analysis, even when new downloads make the
+local processing pipeline incomplete. Coverage explicitly identifies dates with
+newer evidence pending and warns that answers may omit that activity. New audio
+does not clear the chat or change its selected feed and date range. Background
+list refreshes preserve that scope; explicit day selection still selects a day.
+
+Each question reads passages and incidents from one database snapshot, released
+before model work. Imported transcripts retain their original archive timeline,
+and the Q&A audit saves cited passage text and transcript hashes. For legacy
+imports without a saved timeline, pending updates use a labeled archive offset
+instead of a potentially replaced manifest. Embedding batches are checked against
+the current passage content so a concurrent import cannot reuse an old vector
+for a different passage. Quoted search text is treated as text, not query syntax.
+
+Clip playback and export require audio that matches the indexed evidence.
+Analysis using an older prompt version or mismatched indexed transcript remains
+hidden. Saved weekly and area briefs carry an exact source fingerprint and are
+hidden as stale when an indexed daily summary, incident set, or area profile
+changes.
 
 The native **Ask the archive** surface selects feeds by friendly name and keeps
 a bounded recent conversation so follow-up phrases can refer to the prior turn.
@@ -63,7 +76,7 @@ Its month picker maps a past month to its complete calendar range and maps the
 current month through today. An entire-feed action selects the earliest through
 latest locally retained day while ignoring zero-file schedule placeholders and
 keeping genuine internal gaps explicit. A local
-coverage check distinguishes retained audio, question-ready current transcripts,
+coverage check distinguishes retained audio, question-ready indexed transcripts,
 days still needing local processing, partial-audio days that still need archive
 acquisition, and dates with no retained audio. Original
 downloaded source blocks count as retained audio before daily combination, so a

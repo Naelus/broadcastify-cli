@@ -1560,7 +1560,7 @@ def _day_payload(state: WebAppState, feed_id: str, archive_date: date) -> dict[s
     day_state = _local_day_state(state, feed_id, archive_date)
     summary = ""
     incidents: list[dict[str, Any]] = []
-    if day_state["has_analysis"]:
+    if day_state["has_searchable_analysis"]:
         with AnalysisStore(state.database_path) as store:
             stored_day = store.get_day(feed_id, archive_date)
             if stored_day is not None:
@@ -1571,6 +1571,7 @@ def _day_payload(state: WebAppState, feed_id: str, archive_date: date) -> dict[s
                     stored_summary
                     and str(stored_summary["prompt_version"])
                     == PROMPT_VERSION
+                    and stored_summary["transcript_sha256"] == stored_day["transcript_sha256"]
                 )
                 summary = (
                     str(stored_summary["summary"])
@@ -1579,7 +1580,8 @@ def _day_payload(state: WebAppState, feed_id: str, archive_date: date) -> dict[s
                 )
                 if analysis_current:
                     incidents = [
-                        _compact_incident(value)
+                        _compact_incident({**value, "manifest_path": None}
+                            if day_state["evidence_update_pending"] else value)
                         for value in store.get_incidents(
                             feed_id,
                             archive_date,
@@ -1591,7 +1593,7 @@ def _day_payload(state: WebAppState, feed_id: str, archive_date: date) -> dict[s
         "state": day_state,
         "summary": summary,
         "incidents": incidents,
-        "audio_url": _media_url(state, day_state.get("combined_path")),
+        "audio_url": _media_url(state, day_state.get("combined_path")) if day_state["has_imported_transcript"] else "",
     }
 
 
@@ -1604,7 +1606,7 @@ def _transcript_payload(
     query: str,
 ) -> dict[str, Any]:
     day = _local_day_state(state, feed_id, archive_date)
-    if not day["has_transcript"]:
+    if not day["has_transcript"] and not day["has_searchable_transcript"]:
         return {
             "segments": [],
             "offset": offset,
@@ -1613,12 +1615,12 @@ def _transcript_payload(
             "has_more": False,
         }
     segments: list[dict[str, Any]] = []
-    if day["has_imported_transcript"]:
+    if day["has_searchable_transcript"]:
         with AnalysisStore(state.database_path) as store:
             stored_day = store.get_day(feed_id, archive_date)
             if stored_day is not None:
                 segments = store.get_segments(int(stored_day["id"]))
-    if not segments:
+    if not segments and day["has_transcript"]:
         transcript_path = Path(str(day.get("transcript_path") or ""))
         if transcript_path.is_file():
             try:

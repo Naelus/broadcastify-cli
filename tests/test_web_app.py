@@ -934,7 +934,7 @@ def test_loopback_web_app_hides_stale_daily_claims(tmp_path: Path) -> None:
         thread.join(timeout=3)
 
 
-def test_loopback_web_app_hides_results_for_refreshed_combined_audio(
+def test_loopback_web_app_keeps_indexed_search_after_audio_refresh(
     tmp_path: Path,
 ) -> None:
     output = tmp_path / "archives"
@@ -974,8 +974,10 @@ def test_loopback_web_app_hides_results_for_refreshed_combined_audio(
         )
         detail = json.loads(body)
         assert response.status == 200
-        assert detail["summary"] == ""
-        assert detail["incidents"] == []
+        assert detail["summary"] == "One retained dispatch call."
+        assert len(detail["incidents"]) == 1
+        assert detail["audio_url"] == ""
+        assert detail["state"]["evidence_update_pending"] is True
 
         response, body = _request(
             connection,
@@ -985,8 +987,8 @@ def test_loopback_web_app_hides_results_for_refreshed_combined_audio(
         )
         transcript = json.loads(body)
         assert response.status == 200
-        assert transcript["segments"] == []
-        assert transcript["total"] == 0
+        assert transcript["segments"][0]["text"] == "Unit responding to the retained call."
+        assert transcript["total"] == 1
     finally:
         connection.close()
         server.shutdown()
@@ -994,7 +996,7 @@ def test_loopback_web_app_hides_results_for_refreshed_combined_audio(
         thread.join(timeout=3)
 
 
-def test_loopback_web_app_reads_current_file_when_import_revision_is_older(
+def test_loopback_web_app_search_switches_revision_only_after_import(
     tmp_path: Path,
 ) -> None:
     output = tmp_path / "archives"
@@ -1053,7 +1055,14 @@ def test_loopback_web_app_reads_current_file_when_import_revision_is_older(
         payload = json.loads(body)
         assert response.status == 200
         assert payload["total"] == 1
-        assert payload["segments"][0]["text"] == "Current file text."
+        assert payload["segments"][0]["text"] == "Unit responding to the retained call."
+        with AnalysisStore(database) as store:
+            store.import_transcript("90001", date(2026, 7, 12), transcript_path,
+                                    output / "90001" / "20260712" / "combined_90001_20260712.mp3")
+        response, body = _request(connection, "GET",
+            "/api/transcript?feed_id=90001&date=2026-07-12", cookie=cookie)
+        assert response.status == 200
+        assert json.loads(body)["segments"][0]["text"] == "Current file text."
     finally:
         connection.close()
         server.shutdown()

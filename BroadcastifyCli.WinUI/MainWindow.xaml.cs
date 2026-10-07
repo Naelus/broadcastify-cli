@@ -55,6 +55,9 @@ public sealed partial class MainWindow : Window
     private readonly ObservableCollection<AreaProfile> _areaProfiles = [];
     private readonly ObservableCollection<AreaStory> _areaStories = [];
     private readonly ObservableCollection<AnalysisDay> _analysisDays = [];
+    private bool _refreshingAnalysisDays;
+    private int _analysisRefreshVersion;
+    private bool _preparingQuestion;
     private readonly ObservableCollection<IncidentRecord> _visibleIncidents = [];
     private readonly ObservableCollection<LibraryDay> _libraryDays = [];
     private readonly ObservableCollection<LibraryDay> _visibleLibraryDays = [];
@@ -4615,7 +4618,7 @@ public sealed partial class MainWindow : Window
             LibraryList.SelectedItem = null;
             ShowLibraryDetails(null);
         }
-        SelectReviewFeed(feed.FeedId, clearChatWhenChanged: false);
+        SelectReviewFeed(feed.FeedId);
         await RefreshAnalysisDaysAsync();
     }
 
@@ -5716,10 +5719,9 @@ public sealed partial class MainWindow : Window
             {
                 _analysisOperationGate.Release();
             }
-            SelectReviewFeed(day.FeedId, clearChatWhenChanged: false);
             if (report is not null)
             {
-                ApplyReport(report);
+                ApplyBackgroundReport(report);
             }
             await RefreshAnalysisDaysAsync();
             return null;
@@ -7065,10 +7067,9 @@ public sealed partial class MainWindow : Window
         {
             AppendLog("No completed transcripts were available for analysis.");
         }
-        SelectReviewFeed(request.FeedId, clearChatWhenChanged: false);
         if (latestReport is not null)
         {
-            ApplyReport(latestReport);
+            ApplyBackgroundReport(latestReport);
         }
         await RefreshAnalysisDaysAsync();
     }
@@ -7308,34 +7309,53 @@ public sealed partial class MainWindow : Window
         {
             return;
         }
+        var feedId = AnalysisFeedBox.Text.Trim();
+        var refreshVersion = ++_analysisRefreshVersion;
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         var days = await _worker.ListAnalysisDaysAsync(
-            string.IsNullOrWhiteSpace(AnalysisFeedBox.Text) ? null : AnalysisFeedBox.Text.Trim(),
-            cancellation.Token);
-        _analysisDays.Clear();
-        foreach (var day in days)
+            string.IsNullOrWhiteSpace(feedId) ? null : feedId, cancellation.Token);
+        if (refreshVersion != _analysisRefreshVersion
+            || !string.Equals(feedId, AnalysisFeedBox.Text.Trim(), StringComparison.Ordinal))
         {
-            _analysisDays.Add(day);
+            return;
         }
-        if (_analysisDays.Count > 0)
+        // Rebuilding the list is background maintenance, not a new chat scope.
+        _refreshingAnalysisDays = true;
+        try
         {
-            var preferred = _analysisDays.FirstOrDefault(value =>
-                string.Equals(value.FeedId, _lastReviewFeedId, StringComparison.Ordinal)
-                && string.Equals(value.ArchiveDate, _lastReviewDate, StringComparison.Ordinal));
-            AnalysisDaysList.SelectedItem = preferred ?? _analysisDays[0];
+            _analysisDays.Clear();
+            foreach (var day in days)
+            {
+                _analysisDays.Add(day);
+            }
+            if (_analysisDays.Count > 0)
+            {
+                var preferred = _analysisDays.FirstOrDefault(value =>
+                    string.Equals(value.FeedId, _lastReviewFeedId, StringComparison.Ordinal)
+                    && string.Equals(value.ArchiveDate, _lastReviewDate, StringComparison.Ordinal));
+                AnalysisDaysList.SelectedItem = preferred ?? _analysisDays[0];
+            }
+            else
+            {
+                _currentReport = null;
+                _visibleIncidents.Clear();
+                SummaryText.Text = "No indexed days were found for this feed.";
+            }
         }
-        else
+        finally
         {
-            _currentReport = null;
-            _visibleIncidents.Clear();
-            SummaryText.Text = "No analyzed days were found for this feed.";
+            _refreshingAnalysisDays = false;
+        }
+        if (AnalysisDaysList.SelectedItem is AnalysisDay selected)
+        {
+            await LoadDayReportAsync(selected);
         }
         AppendLog($"Loaded {days.Count} saved analysis day(s).");
     }
 
     private async void AnalysisDays_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (AnalysisDaysList.SelectedItem is AnalysisDay day)
+        if (!_refreshingAnalysisDays && AnalysisDaysList.SelectedItem is AnalysisDay day)
         {
             _lastReviewFeedId = day.FeedId;
             _lastReviewDate = day.ArchiveDate;
@@ -7361,7 +7381,10 @@ public sealed partial class MainWindow : Window
             using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(30));
             var report = await _worker.GetDayReportAsync(
                 day.FeedId, day.ArchiveDate, cancellation.Token);
-            if (report is not null)
+            if (report is not null
+                && AnalysisDaysList.SelectedItem is AnalysisDay selected
+                && selected.FeedId == day.FeedId && selected.ArchiveDate == day.ArchiveDate
+                && AnalysisFeedBox.Text.Trim() == day.FeedId)
             {
                 ApplyReport(report);
             }
@@ -7372,13 +7395,36 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    private void ApplyBackgroundReport(DayReport report)
+    {
+        // Completing a background day must not move an active chat to another
+        // feed or reset its date range through a different day selection.
+        if (string.IsNullOrWhiteSpace(AnalysisFeedBox.Text))
+        {
+            SelectReviewFeed(report.FeedId, clearChatWhenChanged: false);
+        }
+        if (!string.Equals(AnalysisFeedBox.Text.Trim(), report.FeedId, StringComparison.Ordinal)
+            || (_currentReport is not null
+                && !string.Equals(_currentReport.ArchiveDate, report.ArchiveDate, StringComparison.Ordinal)))
+        {
+            return;
+        }
+        ApplyReport(report);
+    }
+
     private void ApplyReport(DayReport report)
     {
         _incidentMediaPlayer.Pause();
         _incidentMediaPlayer.Source = null;
         _pendingIncidentClip = null;
         _currentReport = report;
-        if (report.AnalysisUpdateRequired)
+        if (report.EvidenceUpdatePending && report.IndexedAnalysisAvailable)
+        {
+            PlaybackStatusText.Text =
+                "This brief uses the indexed transcript; newer audio is being processed. Chat and transcript search remain available.";
+            SummaryText.Text = report.Summary;
+        }
+        else if (report.AnalysisUpdateRequired)
         {
             PlaybackStatusText.Text =
                 "Saved incident claims are hidden until the retained transcript is reanalyzed.";
@@ -7883,7 +7929,7 @@ public sealed partial class MainWindow : Window
 
     private async void Ask_Click(object sender, RoutedEventArgs e)
     {
-        if (_worker is null || _questionCancellation is not null)
+        if (_worker is null || _questionCancellation is not null || _preparingQuestion)
         {
             return;
         }
@@ -7901,7 +7947,22 @@ public sealed partial class MainWindow : Window
             await ShowMessageAsync("Invalid date range", "Start date must be on or before end date.");
             return;
         }
-        var coverage = await RefreshQuestionCoverageAsync();
+        ArchiveQuestionCoverage? coverage;
+        _preparingQuestion = true;
+        try
+        {
+            coverage = await RefreshQuestionCoverageAsync();
+        }
+        finally
+        {
+            _preparingQuestion = false;
+        }
+        if (feedId != AnalysisFeedBox.Text.Trim()
+            || startDate != QuestionStartDatePicker.Date.Date
+            || endDate != QuestionEndDatePicker.Date.Date)
+        {
+            return;
+        }
         if (coverage is null)
         {
             return;
@@ -7910,7 +7971,7 @@ public sealed partial class MainWindow : Window
         {
             await ShowMessageAsync(
                 "No question-ready days",
-                "This range has no current retained transcripts. Finish local processing for at least one downloaded day, then ask again.");
+                "This range has no indexed transcripts yet. Finish local processing for at least one downloaded day, then ask again.");
             return;
         }
 
@@ -7956,6 +8017,11 @@ public sealed partial class MainWindow : Window
                 }),
                 HandleQuestionWorkerMessage,
                 questionCancellation.Token);
+            questionCancellation.Token.ThrowIfCancellationRequested();
+            if (feedId != AnalysisFeedBox.Text.Trim())
+            {
+                return;
+            }
             _archiveChatMessages.Add(answer is null
                 ? new ArchiveChatMessage
                 {

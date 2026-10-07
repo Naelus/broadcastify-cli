@@ -171,6 +171,42 @@ public sealed partial class MainWindow
                     && LibraryDetailInfoBar.Title == "No archive available"
                     && LibraryBacklogSummaryText.Text.Contains("1 day(s) have no archive available"),
                 "An unavailable archive still offered processing or lacked a separate explanation.");
+            var transcriptPath = Path.Combine(dayDirectory, "transcripts", "combined_999992_20260101.json");
+            Directory.CreateDirectory(Path.GetDirectoryName(transcriptPath)!);
+            await File.WriteAllTextAsync(transcriptPath,
+                "{\"segments\":[{\"start\":0,\"end\":1,\"text\":\"Retained dispatch.\"}]}");
+            var importInfo = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = _worker.IsBundledRuntime ? WorkerClient.BundledPythonPath
+                    : Path.Combine(_worker.RepositoryRoot, ".venv", "Scripts", "python.exe"),
+                WorkingDirectory = _worker.RepositoryRoot,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            };
+            foreach (var argument in new[] { "-c",
+                "import sys; from datetime import date; from broadcastify_cli.storage import AnalysisStore; "
+                    + "s=AnalysisStore(sys.argv[1]); s.import_transcript('999992',date(2026,1,1),sys.argv[2],sys.argv[3]); s.close()",
+                Path.Combine(libraryRoot, "broadcastify-analysis.sqlite3"), transcriptPath, audioPath })
+            {
+                importInfo.ArgumentList.Add(argument);
+            }
+            using var importProcess = System.Diagnostics.Process.Start(importInfo)
+                ?? throw new InvalidOperationException("Could not import isolated chat evidence.");
+            await importProcess.WaitForExitAsync();
+            Require(importProcess.ExitCode == 0, "The isolated evidence import failed.");
+            AnalysisFeedBox.Text = "999992";
+            var chatStart = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+            var chatEnd = chatStart.AddDays(6);
+            QuestionStartDatePicker.Date = chatStart;
+            QuestionEndDatePicker.Date = chatEnd;
+            _archiveChatMessages.Add(new ArchiveChatMessage { Role = "user", Content = "Retain this scope." });
+            await RefreshAnalysisDaysAsync();
+            ApplyBackgroundReport(new DayReport { FeedId = "999993", ArchiveDate = "2026-01-02" });
+            Require(AnalysisDaysList.SelectedItem is AnalysisDay
+                    && AnalysisFeedBox.Text == "999992"
+                    && QuestionStartDatePicker.Date == chatStart && QuestionEndDatePicker.Date == chatEnd
+                    && _archiveChatMessages.Count == 1,
+                "Background evidence progress changed the active chat feed, range, or history.");
             _pipelineCancellation = pipeline;
             return new Dictionary<string, object?>
             {
@@ -179,6 +215,7 @@ public sealed partial class MainWindow
                 ["active_pipeline_refresh"] = true,
                 ["playback_preserved"] = true,
                 ["unavailable_excluded_from_backlog"] = true,
+                ["chat_scope_preserved"] = true,
             };
         }
         finally

@@ -1654,6 +1654,12 @@ public sealed record DayReport
 
     [JsonPropertyName("analysis_update_required")]
     public bool AnalysisUpdateRequired { get; init; }
+
+    [JsonPropertyName("indexed_analysis_available")]
+    public bool IndexedAnalysisAvailable { get; init; }
+
+    [JsonPropertyName("evidence_update_pending")]
+    public bool EvidenceUpdatePending { get; init; }
 }
 
 internal sealed record AnalysisRequest : AnalysisProviderRequest

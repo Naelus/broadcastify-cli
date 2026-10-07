@@ -11,7 +11,6 @@ import sys
 import time
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
-from functools import lru_cache
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
@@ -796,7 +795,6 @@ def format_offset(seconds: float) -> str:
     return f"{prefix}{hours:02d}:{minutes:02d}:{whole_seconds:02d}"
 
 
-@lru_cache(maxsize=64)
 def _manifest_timeline(manifest_path: str) -> tuple[tuple[float, datetime], ...]:
     try:
         payload = json.loads(Path(manifest_path).read_text(encoding="utf-8"))
@@ -832,7 +830,18 @@ def archive_datetime_for_offset(
 
 
 def format_archive_time(record: dict[str, Any], seconds: float) -> str:
-    wall_time = archive_datetime_for_offset(record.get("manifest_path"), seconds)
+    try:
+        metadata = json.loads(record.get("metadata_json") or "{}")
+        timeline = metadata.get("archive_timeline")
+        candidates = sorted(
+            (float(value["combined_start_seconds"]), datetime.fromisoformat(str(value["archive_start"])))
+            for value in (timeline or []) if float(value["combined_start_seconds"]) <= seconds
+        )
+        wall_time = (candidates[-1][1] + timedelta(seconds=seconds - candidates[-1][0])) if candidates else None
+    except (TypeError, ValueError, KeyError):
+        timeline, wall_time = [], None
+    if timeline is None:
+        wall_time = archive_datetime_for_offset(record.get("manifest_path"), seconds)
     if wall_time is not None:
         return wall_time.isoformat(sep=" ", timespec="seconds")
     archive_date = record.get("archive_date")
@@ -3090,97 +3099,112 @@ class RangeQuestionAnswerer:
             200,
             max(final_limit * 4, len(question_ready_dates) * 4),
         )
-        if self.indexer is not None:
-            evidence = self.indexer.search(
+        # Release the read transaction before model work or Q&A writes.
+        with self.store.read_snapshot():
+            if self.indexer is not None:
+                evidence = self.indexer.search(
+                    feed_id,
+                    start_date,
+                    end_date,
+                    retrieval_query,
+                    limit=candidate_limit,
+                    archive_dates=allowed_evidence_dates,
+                )
+            else:
+                evidence = self.store.search_passages(
+                    feed_id,
+                    start_date,
+                    end_date,
+                    retrieval_query,
+                    limit=candidate_limit,
+                    archive_dates=allowed_evidence_dates,
+                )
+            if not evidence:
+                evidence = self.store.search_passages(
+                    feed_id, start_date, end_date, retrieval_query,
+                    limit=candidate_limit, archive_dates=allowed_evidence_dates,
+                )
+            if coverage is not None and len(question_ready_dates) > 1:
+                diverse: list[dict[str, Any]] = []
+                overflow: list[dict[str, Any]] = []
+                per_day: dict[str, int] = {}
+                for value in evidence:
+                    archive_value = str(value.get("archive_date") or "")
+                    if per_day.get(archive_value, 0) < 2:
+                        diverse.append(value)
+                        per_day[archive_value] = per_day.get(archive_value, 0) + 1
+                    else:
+                        overflow.append(value)
+                evidence = (diverse + overflow)[:final_limit]
+            else:
+                evidence = evidence[:final_limit]
+            incidents = self.store.get_incidents(
                 feed_id,
                 start_date,
                 end_date,
-                retrieval_query,
-                limit=candidate_limit,
-                archive_dates=allowed_evidence_dates,
+                prompt_version=PROMPT_VERSION,
+                archive_dates=allowed_incident_dates,
             )
-        else:
-            evidence = self.store.search_passages(
-                feed_id,
-                start_date,
-                end_date,
-                retrieval_query,
-                limit=candidate_limit,
-                archive_dates=allowed_evidence_dates,
-            )
-        if coverage is not None and len(question_ready_dates) > 1:
-            diverse: list[dict[str, Any]] = []
-            overflow: list[dict[str, Any]] = []
-            per_day: dict[str, int] = {}
-            for value in evidence:
-                archive_value = str(value.get("archive_date") or "")
-                if per_day.get(archive_value, 0) < 2:
-                    diverse.append(value)
-                    per_day[archive_value] = per_day.get(archive_value, 0) + 1
-                else:
-                    overflow.append(value)
-            evidence = (diverse + overflow)[:final_limit]
-        else:
-            evidence = evidence[:final_limit]
-        incidents = self.store.get_incidents(
-            feed_id,
-            start_date,
-            end_date,
-            prompt_version=PROMPT_VERSION,
-            archive_dates=allowed_incident_dates,
-        )
-        pattern_lines, pattern_records = _range_pattern_evidence(incidents)
-        evidence_lines = []
-        evidence_records = []
-        time_references: dict[str, dict[str, str]] = {}
-        for index, value in enumerate(evidence, start=1):
-            evidence_id = f"E{index}"
-            archive_time = format_archive_time(
-                value, float(value["start_seconds"])
-            )
-            evidence_lines.append(
-                f"{evidence_id} "
-                f"[{archive_time} to "
-                f"{format_archive_time(value, float(value['end_seconds']))}]\n{value['text']}"
-            )
-            evidence_records.append(
-                {
-                    "evidence_id": evidence_id,
-                    "passage_id": int(value["id"]),
-                    "archive_date": value["archive_date"],
-                    "start_seconds": float(value["start_seconds"]),
-                    "end_seconds": float(value["end_seconds"]),
-                    "archive_time": archive_time,
-                }
-            )
-            time_references[evidence_id] = {
-                "archive_time": archive_time,
-                "label": "retrieved transcript evidence",
-            }
-        for value in incidents:
-            incident_id = f"I{int(value['id'])}"
-            time_references[incident_id] = {
-                "archive_time": format_archive_time(
+            # Legacy imports have no stored timeline. Do not map their offsets
+            # through a manifest that newer audio may have replaced.
+            pending_dates = set(coverage_value.get("evidence_update_dates", []))
+            for record in [*evidence, *incidents]:
+                if record.get("archive_date") in pending_dates:
+                    record["manifest_path"] = None
+            pattern_lines, pattern_records = _range_pattern_evidence(incidents)
+            evidence_lines = []
+            evidence_records = []
+            time_references: dict[str, dict[str, str]] = {}
+            for index, value in enumerate(evidence, start=1):
+                evidence_id = f"E{index}"
+                archive_time = format_archive_time(
                     value, float(value["start_seconds"])
+                )
+                evidence_lines.append(
+                    f"{evidence_id} "
+                    f"[{archive_time} to "
+                    f"{format_archive_time(value, float(value['end_seconds']))}]\n{value['text']}"
+                )
+                evidence_records.append(
+                    {
+                        "evidence_id": evidence_id,
+                        "passage_id": int(value["id"]),
+                        "archive_date": value["archive_date"],
+                        "start_seconds": float(value["start_seconds"]),
+                        "end_seconds": float(value["end_seconds"]),
+                        "archive_time": archive_time,
+                        "text": value["text"],
+                        "transcript_sha256": value.get("transcript_sha256"),
+                    }
+                )
+                time_references[evidence_id] = {
+                    "archive_time": archive_time,
+                    "label": "retrieved transcript evidence",
+                }
+            for value in incidents:
+                incident_id = f"I{int(value['id'])}"
+                time_references[incident_id] = {
+                    "archive_time": format_archive_time(
+                        value, float(value["start_seconds"])
+                    ),
+                    "label": str(value.get("event_type") or "reported event").replace(
+                        "_", " "
+                    ),
+                }
+            representative_incidents = sorted(
+                incidents,
+                key=lambda value: (
+                    -int(value.get("priority") or 0),
+                    str(value.get("archive_date") or ""),
+                    float(value.get("start_seconds") or 0.0),
                 ),
-                "label": str(value.get("event_type") or "reported event").replace(
-                    "_", " "
-                ),
-            }
-        representative_incidents = sorted(
-            incidents,
-            key=lambda value: (
-                -int(value.get("priority") or 0),
-                str(value.get("archive_date") or ""),
-                float(value.get("start_seconds") or 0.0),
-            ),
-        )[:100]
-        incident_lines = [
-            f"I{value['id']} "
-            f"[{format_archive_time(value, float(value['start_seconds']))}] "
-            f"{value['event_type']}: {value['summary']}"
-            for value in representative_incidents
-        ]
+            )[:100]
+            incident_lines = [
+                f"I{value['id']} "
+                f"[{format_archive_time(value, float(value['start_seconds']))}] "
+                f"{value['event_type']}: {value['summary']}"
+                for value in representative_incidents
+            ]
         conversation_lines = [
             f"{value['role'].upper()}: {value['content']}"
             for value in conversation
@@ -3291,6 +3315,12 @@ class RangeQuestionAnswerer:
                 "Partial retained coverage: no question-ready transcript for "
                 + unavailable_range_text
                 + ".",
+            )
+        if coverage_value.get("evidence_update_dates"):
+            limitations.append(
+                "Answers use the last indexed transcript while newer evidence is being processed for "
+                + _coverage_ranges_text(coverage_value, "evidence_update_ranges", "evidence_update_dates")
+                + "; newer activity may be missing."
             )
         return {
             "answer": answer,

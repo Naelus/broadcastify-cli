@@ -139,6 +139,57 @@ def test_range_question_withholds_mixed_cited_and_uncited_events(
     ]
 
 
+
+def test_question_keeps_one_revision_during_concurrent_import(tmp_path: Path) -> None:
+    """A download/import between retrieval reads must not mix cited revisions."""
+    archive_date = date(2026, 8, 5)
+    transcript = tmp_path / "transcript.json"
+    manifest = tmp_path / "combined.manifest.json"
+    database = tmp_path / "analysis.sqlite3"
+    transcript.write_text(json.dumps({"segments": [
+        {"start": 10, "end": 15, "text": "Original dispatch report."}
+    ]}), encoding="utf-8")
+    manifest.write_text(json.dumps({"sources": [
+        {"combined_start_seconds": 0, "archive_start": "2026-08-05T08:00:00-05:00"}
+    ]}), encoding="utf-8")
+    with AnalysisStore(database) as store, AnalysisStore(database) as importer:
+        imported = store.import_transcript("90001", archive_date, transcript, manifest_path=manifest)
+        store.replace_incidents(imported.day_id, [{
+            "fingerprint": "original-dispatch", "event_type": "other", "title": "Original dispatch", "summary": "Original dispatch report.",
+            "start_seconds": 10, "end_seconds": 15, "priority": 1, "confidence": 0.8,
+            "evidence": [], "attributes": {},
+        }], model="offline", prompt_version=PROMPT_VERSION)
+
+        class ImportDuringSearch:
+            def search(self, *args, **kwargs):
+                passages = store.get_passages("90001", archive_date, archive_date)
+                transcript.write_text(json.dumps({"segments": [
+                    {"start": 20, "end": 25, "text": "New dispatch report."}
+                ]}), encoding="utf-8")
+                manifest.write_text(json.dumps({"sources": [
+                    {"combined_start_seconds": 0, "archive_start": "2026-08-05T12:00:00-05:00"}
+                ]}), encoding="utf-8")
+                importer.import_transcript("90001", archive_date, transcript, manifest_path=manifest)
+                return passages
+
+        class SnapshotClient:
+            model = "offline"
+            def chat_json(self, **kwargs):
+                assert "Original dispatch report." in kwargs["user"]
+                assert "New dispatch report." not in kwargs["user"]
+                assert "I1 [2026-08-05 08:00:10-05:00]" in kwargs["user"]
+                assert "E1 [2026-08-05 08:00:10-05:00" in kwargs["user"]
+                assert not store.connection.in_transaction
+                return {"answer": "The original dispatch report is retained [E1].", "limitations": []}
+
+        result = RangeQuestionAnswerer(store, SnapshotClient(), ImportDuringSearch()).ask(
+            "90001", archive_date, archive_date, "dispatch")
+        assert result["retrieved"][0]["text"].endswith("Original dispatch report.")
+        assert store.get_passages("90001", archive_date, archive_date)[0]["text"].endswith("New dispatch report.")
+        saved = json.loads(store.connection.execute("SELECT evidence_json FROM qa_history").fetchone()[0])
+        assert saved[0]["text"].endswith("Original dispatch report.")
+        assert saved[0]["transcript_sha256"] == result["retrieved"][0]["transcript_sha256"]
+
 def test_managed_llama_cpu_device_disables_every_gpu_layer() -> None:
     assert LlamaServerProcess(device="cpu")._offload_arguments() == [
         "--device",

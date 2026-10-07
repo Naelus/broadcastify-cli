@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import sqlite3
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -69,6 +70,18 @@ class AnalysisStore:
         except Exception:
             self.connection.rollback()
             raise
+
+    @contextmanager
+    def read_snapshot(self) -> Iterator[None]:
+        """Read one committed revision while imports continue on another connection."""
+        owns_transaction = not self.connection.in_transaction
+        if owns_transaction:
+            self.connection.execute("BEGIN")
+        try:
+            yield
+        finally:
+            if owns_transaction:
+                self.connection.rollback()
 
     def _initialize(self) -> None:
         self.connection.executescript(
@@ -929,7 +942,7 @@ class AnalysisStore:
         transcript_hash = sha256_file(transcript)
         existing = self.connection.execute(
             """
-            SELECT id, transcript_sha256 FROM feed_days
+            SELECT id, transcript_sha256, audio_sha256 FROM feed_days
             WHERE feed_id=? AND archive_date=?
             """,
             (feed_id, archive_date.isoformat()),
@@ -944,6 +957,10 @@ class AnalysisStore:
                 else None
             )
             audio_hash = sha256_file(resolved_audio) if audio_value else None
+            # Relocation may refresh paths, but identical transcript bytes do
+            # not establish that newly combined audio matches their offsets.
+            if existing["audio_sha256"] and audio_hash != existing["audio_sha256"]:
+                audio_hash = None
             with self.transaction() as connection:
                 connection.execute(
                     """
@@ -994,6 +1011,19 @@ class AnalysisStore:
             for key in ("language", "language_probability", "compute_type")
             if payload.get(key) is not None
         }
+        # Preserve the timeline used by this transcript. A later combine may
+        # replace the manifest at the same path while this evidence is in use.
+        metadata["archive_timeline"] = []
+        if resolved_manifest is not None:
+            try:
+                sources = json.loads(resolved_manifest.read_text(encoding="utf-8")).get("sources", [])
+                metadata["archive_timeline"] = [
+                    {"archive_start": value["archive_start"],
+                     "combined_start_seconds": float(value["combined_start_seconds"])}
+                    for value in sources if value.get("archive_start")
+                ]
+            except (OSError, KeyError, TypeError, ValueError):
+                pass
         has_diarization = any(segment.get("speaker") for segment in segments)
         diarization_model = payload.get("diarization_model") if has_diarization else None
 
@@ -1403,7 +1433,7 @@ class AnalysisStore:
     ) -> list[dict[str, Any]]:
         rows = self.connection.execute(
             """
-            SELECT p.*, d.feed_id, d.archive_date, d.manifest_path
+            SELECT p.*, d.feed_id, d.archive_date, d.manifest_path, d.metadata_json, d.transcript_sha256
             FROM passages p JOIN feed_days d ON d.id=p.day_id
             WHERE d.feed_id=? AND d.archive_date BETWEEN ? AND ?
             ORDER BY d.archive_date, p.start_seconds
@@ -1422,7 +1452,8 @@ class AnalysisStore:
         *,
         archive_dates: Sequence[str] | None = None,
     ) -> list[dict[str, Any]]:
-        tokens = [token for token in query.replace("'", " ").split() if len(token) >= 2]
+        # Treat user punctuation as text, never as FTS query syntax.
+        tokens = re.findall(r"\w{2,}", query)
         if not tokens:
             return []
         allowed_dates = (
@@ -1442,7 +1473,7 @@ class AnalysisStore:
         match_query = " OR ".join(f'"{token}"' for token in tokens[:20])
         rows = self.connection.execute(
             f"""
-            SELECT p.*, d.feed_id, d.archive_date, d.manifest_path,
+            SELECT p.*, d.feed_id, d.archive_date, d.manifest_path, d.metadata_json, d.transcript_sha256,
                    bm25(passage_fts) AS rank
             FROM passage_fts
             JOIN passages p ON p.id=passage_fts.rowid
@@ -1655,7 +1686,7 @@ class AnalysisStore:
             f"""
             SELECT i.*, d.feed_id, d.archive_date, d.manifest_path,
                    d.audio_path, d.audio_sha256, d.transcript_sha256,
-                   d.has_diarization
+                   d.has_diarization, d.metadata_json
             FROM incidents i JOIN feed_days d ON d.id=i.day_id
             WHERE d.feed_id=? AND d.archive_date BETWEEN ? AND ?{prompt_clause}{date_clause}
             ORDER BY d.archive_date, i.start_seconds, i.priority DESC
@@ -2374,15 +2405,16 @@ class AnalysisStore:
     def passages_missing_embeddings(self, model: str) -> list[dict[str, Any]]:
         rows = self.connection.execute(
             """
-            SELECT p.* FROM passages p
+            SELECT p.*, e.text_sha256 AS embedding_sha256 FROM passages p
             LEFT JOIN embeddings e
               ON e.entity_type='passage' AND e.entity_id=p.id AND e.model=?
-            WHERE e.entity_id IS NULL
             ORDER BY p.id
             """,
             (model,),
         ).fetchall()
-        return [dict(row) for row in rows]
+        return [dict(row) for row in rows if row["embedding_sha256"] != hashlib.sha256(
+            f"passage: {row['text']}".encode("utf-8")
+        ).hexdigest()]
 
     def save_embeddings(
         self,
@@ -2391,6 +2423,15 @@ class AnalysisStore:
         model: str,
     ) -> None:
         with self.transaction() as connection:
+            current_values = []
+            for entity_id, text_hash, dimensions, vector in values:
+                if entity_type == "passage":
+                    passage = connection.execute("SELECT text FROM passages WHERE id=?", (entity_id,)).fetchone()
+                    if passage is None or hashlib.sha256(
+                        f"passage: {passage['text']}".encode("utf-8")
+                    ).hexdigest() != text_hash:
+                        continue
+                current_values.append((entity_type, entity_id, model, dimensions, text_hash, vector, utc_now()))
             connection.executemany(
                 """
                 INSERT INTO embeddings(
@@ -2403,10 +2444,7 @@ class AnalysisStore:
                     vector=excluded.vector,
                     created_at=excluded.created_at
                 """,
-                [
-                    (entity_type, entity_id, model, dimensions, text_hash, vector, utc_now())
-                    for entity_id, text_hash, dimensions, vector in values
-                ],
+                current_values,
             )
 
     def passage_embeddings(
@@ -2434,7 +2472,8 @@ class AnalysisStore:
         )
         rows = self.connection.execute(
             f"""
-            SELECT p.*, d.archive_date, d.manifest_path, e.dimensions, e.vector
+            SELECT p.*, d.archive_date, d.manifest_path, d.metadata_json, d.transcript_sha256,
+                   e.dimensions, e.vector, e.text_sha256
             FROM embeddings e
             JOIN passages p ON p.id=e.entity_id AND e.entity_type='passage'
             JOIN feed_days d ON d.id=p.day_id
@@ -2449,7 +2488,9 @@ class AnalysisStore:
                 *(allowed_dates or []),
             ),
         ).fetchall()
-        return [dict(row) for row in rows]
+        return [dict(row) for row in rows if row["text_sha256"] == hashlib.sha256(
+            f"passage: {row['text']}".encode("utf-8")
+        ).hexdigest()]
 
     def save_qa(
         self,

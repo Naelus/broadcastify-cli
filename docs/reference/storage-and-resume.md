@@ -212,7 +212,12 @@ Ownership-free partials from older releases remain visible as temporary storage
 because a read-oriented refresh cannot prove them abandoned. Active or
 unqueryable worker scratch files and reusable completed preparations are kept.
 The Library also stops showing a transcript as current when the combined
-recording has a newer modification identity.
+recording has a newer modification identity. This pipeline state does not revoke
+the committed database transcript: chat and transcript search keep using it with
+an update warning until the new transcript is imported. A transcript import
+atomically replaces that day's indexed passages and derived analysis; Q&A audit
+records retain their cited text and transcript revision. Playback/export remains
+blocked when audio no longer matches those citations.
 
 ## Moving and backing up a library
 

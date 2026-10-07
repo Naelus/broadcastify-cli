@@ -1441,9 +1441,10 @@ def analysis_days(feed_id: str | None) -> int:
         )
         if state:
             day["feed_name"] = str(state.get("feed_name") or "")
-            day["segment_count"] = int(state["segment_count"])
-            day["incident_count"] = int(state["incident_count"])
-            day["has_diarization"] = int(bool(state["has_diarization"]))
+            # The day list describes committed evidence, even while new audio
+            # makes the processing pipeline incomplete again.
+            if not state["has_searchable_analysis"]:
+                day["incident_count"] = 0
         if not str(day.get("feed_name") or "").strip():
             day["feed_name"] = f"Feed {day['feed_id']}"
     emit({"type": "analysis_days", "days": days})
@@ -1570,10 +1571,12 @@ def _day_report(store: AnalysisStore, feed_id: str, archive_date: date) -> dict[
             archive_date,
             prompt_version=PROMPT_VERSION,
         )
-        if analysis_current
+        if state["has_searchable_analysis"]
         else []
     )
     for stored in stored_incidents:
+        if state["evidence_update_pending"]:
+            stored["manifest_path"] = None
         evidence_start, evidence_end = select_incident_evidence_window(stored)
         quote_parts = []
         for raw in stored.get("evidence", []):
@@ -1619,12 +1622,14 @@ def _day_report(store: AnalysisStore, feed_id: str, archive_date: date) -> dict[
     return {
         "feed_id": feed_id,
         "archive_date": archive_date.isoformat(),
-        "summary": str(summary["summary"]) if summary and analysis_current else "",
+        "summary": str(summary["summary"]) if summary and state["has_searchable_analysis"] else "",
         "incidents": incidents,
-        "audio_path": str(state["combined_path"] or ""),
+        "audio_path": str(state["combined_path"] or "") if state["has_imported_transcript"] else "",
         "has_diarization": bool(state["has_diarization"]),
         "analysis_current": analysis_current,
         "analysis_update_required": bool(summary) and not analysis_current,
+        "indexed_analysis_available": bool(state["has_searchable_analysis"]),
+        "evidence_update_pending": bool(state["evidence_update_pending"]),
         "analysis_prompt_version": analysis_prompt_version,
         "expected_analysis_prompt_version": PROMPT_VERSION,
     }

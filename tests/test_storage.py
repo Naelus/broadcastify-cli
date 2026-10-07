@@ -1,4 +1,5 @@
 import json
+import hashlib
 from datetime import date
 from pathlib import Path
 
@@ -54,7 +55,7 @@ def test_import_is_idempotent_and_searchable(tmp_path: Path) -> None:
         )[0]["id"] == passage_id
 
         results = store.search_passages(
-            "90001", date(2026, 7, 12), date(2026, 7, 12), "shots fired"
+            "90001", date(2026, 7, 12), date(2026, 7, 12), '"shots fired" (Main)?'
         )
         assert len(results) == 1
         assert "Main and First" in results[0]["text"]
@@ -286,3 +287,25 @@ def test_area_profiles_are_persisted_and_updated(tmp_path: Path) -> None:
         assert store.list_area_profiles()[0]["zip_codes"] == ["75201"]
         assert store.list_area_profiles()[0]["coverage"]["mode"] == "zip-list"
         assert store.stats()["area_profiles"] == 1
+
+
+def test_embedding_batch_cannot_attach_old_text_to_reused_passage_id(tmp_path: Path) -> None:
+    transcript = tmp_path / "transcript.json"
+    make_transcript(transcript)
+    archive_date = date(2026, 7, 12)
+    with AnalysisStore(tmp_path / "analysis.sqlite3") as store:
+        store.import_transcript("90001", archive_date, transcript)
+        old = store.get_passages("90001", archive_date, archive_date)[0]
+        old_hash = hashlib.sha256(f"passage: {old['text']}".encode()).hexdigest()
+        transcript.write_text(transcript.read_text(encoding="utf-8").replace(
+            "Dispatch reports shots fired near Main and First.", "New unrelated dispatch text."), encoding="utf-8")
+        store.import_transcript("90001", archive_date, transcript)
+        current = store.get_passages("90001", archive_date, archive_date)[0]
+        assert current["id"] == old["id"]
+        store.save_embeddings("passage", [(old["id"], old_hash, 1, b"old-vector")], "offline")
+        assert store.passage_embeddings("90001", archive_date, archive_date, "offline") == []
+        assert len(store.passages_missing_embeddings("offline")) == 1
+        new_hash = hashlib.sha256(f"passage: {current['text']}".encode()).hexdigest()
+        store.save_embeddings("passage", [(current["id"], new_hash, 1, b"new-vector")], "offline")
+        assert len(store.passage_embeddings("90001", archive_date, archive_date, "offline")) == 1
+        assert store.passages_missing_embeddings("offline") == []

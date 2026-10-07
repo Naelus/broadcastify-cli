@@ -660,6 +660,8 @@ def test_month_and_entire_feed_hotspot_question_is_coverage_grounded(
         raw_source_date.isoformat(),
     ]
 
+    # A new source block must not revoke the two already indexed days.
+    _raw_source_only_day(library_root, feed_id, first_date)
     month = _run_worker(
         tmp_path,
         library_root,
@@ -674,6 +676,8 @@ def test_month_and_entire_feed_hotspot_question_is_coverage_grounded(
         "--end-date",
         "2026-07-31",
     )[-1]["coverage"]
+    assert month["evidence_update_dates"] == [first_date.isoformat()]
+    assert "last indexed transcript" in month["summary"]
     assert month["scope"] == "range"
     assert month["requested_day_count"] == 31
     assert month["question_ready_day_count"] == 2

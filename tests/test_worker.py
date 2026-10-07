@@ -906,7 +906,7 @@ def _analyzed_worker_day(
     return database, audio, transcript, archive_date, incident_id
 
 
-def test_day_report_hides_current_prompt_results_after_audio_refresh(
+def test_day_report_preserves_indexed_results_after_audio_refresh(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -932,13 +932,15 @@ def test_day_report_hides_current_prompt_results_after_audio_refresh(
     with AnalysisStore(database) as store:
         report = _day_report(store, "90001", archive_date)
 
-    assert report["summary"] == ""
-    assert report["incidents"] == []
+    assert report["summary"] == "Current summary."
+    assert len(report["incidents"]) == 1
+    assert report["evidence_update_pending"] is True
+    assert report["audio_path"] == ""
     assert report["analysis_current"] is False
     assert report["analysis_update_required"] is True
 
 
-def test_day_report_hides_database_results_after_transcript_rewrite(
+def test_day_report_preserves_indexed_results_until_transcript_import(
     tmp_path: Path,
 ) -> None:
     database, _audio, transcript, archive_date, _incident_id = (
@@ -963,13 +965,15 @@ def test_day_report_hides_database_results_after_transcript_rewrite(
     with AnalysisStore(database) as store:
         report = _day_report(store, "90001", archive_date)
 
-    assert report["summary"] == ""
-    assert report["incidents"] == []
+    assert report["summary"] == "Current summary."
+    assert len(report["incidents"]) == 1
+    assert report["evidence_update_pending"] is True
+    assert report["audio_path"] == ""
     assert report["analysis_current"] is False
     assert report["analysis_update_required"] is True
 
 
-def test_range_consumers_and_clip_reject_older_retained_revision(
+def test_indexed_range_evidence_remains_available_but_mismatched_clips_reject(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -1006,24 +1010,14 @@ def test_range_consumers_and_clip_reject_older_retained_revision(
     future = time.time() + 10
     os.utime(audio, (future, future))
     with AnalysisStore(database) as store:
-        with pytest.raises(ValueError, match="older than the retained files"):
-            require_current_range_evidence(
-                store,
-                ["90001"],
-                archive_date,
-                archive_date,
-                require_analysis=False,
-                purpose="Question answering",
-            )
-        with pytest.raises(ValueError, match="older than the retained files"):
-            require_current_range_evidence(
-                store,
-                ["90001"],
-                archive_date,
-                archive_date,
-                require_analysis=True,
-                purpose="Summary",
-            )
+        require_current_range_evidence(
+            store, ["90001"], archive_date, archive_date,
+            require_analysis=False, purpose="Question answering",
+        )
+        require_current_range_evidence(
+            store, ["90001"], archive_date, archive_date,
+            require_analysis=True, purpose="Summary",
+        )
         with pytest.raises(ValueError, match="older retained-evidence revision"):
             _incident_clip(store, incident_id)
     assert extracted is False
@@ -1052,8 +1046,8 @@ def test_analysis_day_list_uses_retained_revision_state(
     stale = emitted[-1]["days"][0]  # type: ignore[index]
     assert stale["analysis_current"] is False
     assert stale["analysis_update_required"] is True
-    assert stale["segment_count"] == 0
-    assert stale["incident_count"] == 0
+    assert stale["segment_count"] == 1
+    assert stale["incident_count"] == 1
 
 
 def test_native_saved_area_digest_requires_exact_current_source_fingerprint(
