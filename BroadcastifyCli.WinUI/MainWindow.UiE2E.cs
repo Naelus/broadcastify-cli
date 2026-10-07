@@ -178,7 +178,9 @@ public sealed partial class MainWindow
             var importInfo = new System.Diagnostics.ProcessStartInfo
             {
                 FileName = _worker.IsBundledRuntime ? WorkerClient.BundledPythonPath
-                    : Path.Combine(_worker.RepositoryRoot, ".venv", "Scripts", "python.exe"),
+                    : Environment.GetEnvironmentVariable("BROADCASTIFY_PYTHON")
+                        ?? (File.Exists(Path.Combine(_worker.RepositoryRoot, ".venv", "Scripts", "python.exe"))
+                            ? Path.Combine(_worker.RepositoryRoot, ".venv", "Scripts", "python.exe") : "python.exe"),
                 WorkingDirectory = _worker.RepositoryRoot,
                 UseShellExecute = false,
                 CreateNoWindow = true,
