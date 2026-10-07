@@ -1514,7 +1514,7 @@ public sealed record AnalysisDay
     public string ArchiveDate { get; init; } = "";
 
     [JsonPropertyName("duration_seconds")]
-    public double DurationSeconds { get; init; }
+    public double? DurationSeconds { get; init; }
 
     [JsonPropertyName("segment_count")]
     public int SegmentCount { get; init; }
@@ -1540,10 +1540,13 @@ public sealed record AnalysisDay
     [JsonPropertyName("has_diarization")]
     public int HasDiarizationValue { get; init; }
 
+    public string DurationSummary => DurationSeconds is double duration
+        ? $"{duration / 3600:0.0} hours" : "duration unknown";
+
     public string FeedAndDate => $"{(string.IsNullOrWhiteSpace(FeedName) ? $"Feed {FeedId}" : FeedName)} · {ArchiveDate}";
     public string ProcessingSummary => TranscriptImportRequired
-        ? $"Current transcript awaits database import · saved analysis hidden · {DurationSeconds / 3600:0.0} hours"
-        : $"{SegmentCount:N0} segments · {IncidentCount:N0} incidents · {DurationSeconds / 3600:0.0} hours"
+        ? $"Current transcript awaits database import · saved analysis hidden · {DurationSummary}"
+        : $"{SegmentCount:N0} segments · {IncidentCount:N0} incidents · {DurationSummary}"
           + (AnalysisUpdateRequired ? " · analysis update required" : "");
     public string SpeakerSummary => HasDiarizationValue != 0
         ? $"Diarized · {SpeakerCount} transcript clusters"

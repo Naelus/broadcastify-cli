@@ -204,7 +204,7 @@ public sealed partial class MainWindow
             ApplyBackgroundReport(new DayReport { FeedId = "999993", ArchiveDate = "2026-01-02" });
             Require(AnalysisDaysList.SelectedItem is AnalysisDay
                     && AnalysisFeedBox.Text == "999992"
-                    && QuestionStartDatePicker.Date == chatStart && QuestionEndDatePicker.Date == chatEnd
+                    && QuestionStartDatePicker.Date.Date == chatStart.Date && QuestionEndDatePicker.Date.Date == chatEnd.Date
                     && _archiveChatMessages.Count == 1,
                 "Background evidence progress changed the active chat feed, range, or history.");
             _pipelineCancellation = pipeline;
