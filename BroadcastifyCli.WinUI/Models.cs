@@ -1545,7 +1545,7 @@ public sealed record AnalysisDay
 
     public string FeedAndDate => $"{(string.IsNullOrWhiteSpace(FeedName) ? $"Feed {FeedId}" : FeedName)} · {ArchiveDate}";
     public string ProcessingSummary => TranscriptImportRequired
-        ? $"Current transcript awaits database import · saved analysis hidden · {DurationSummary}"
+        ? $"New transcript awaits import · indexed evidence remains searchable · {DurationSummary}"
         : $"{SegmentCount:N0} segments · {IncidentCount:N0} incidents · {DurationSummary}"
           + (AnalysisUpdateRequired ? " · analysis update required" : "");
     public string SpeakerSummary => HasDiarizationValue != 0

@@ -52,6 +52,7 @@ local processing pipeline incomplete. Coverage explicitly identifies dates with
 newer evidence pending and warns that answers may omit that activity. New audio
 does not clear the chat or change its selected feed and date range. Background
 list refreshes preserve that scope; explicit day selection still selects a day.
+Imported transcripts with no duration remain selectable and display duration unknown.
 
 Each question reads passages and incidents from one database snapshot, released
 before model work. Imported transcripts retain their original archive timeline,

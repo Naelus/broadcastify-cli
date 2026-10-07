@@ -206,7 +206,9 @@ public sealed partial class MainWindow
                     && AnalysisFeedBox.Text == "999992"
                     && QuestionStartDatePicker.Date.Date == chatStart.Date && QuestionEndDatePicker.Date.Date == chatEnd.Date
                     && _archiveChatMessages.Count == 1,
-                "Background evidence progress changed the active chat feed, range, or history.");
+                $"Background evidence progress changed chat: selected={AnalysisDaysList.SelectedItem is AnalysisDay}, "
+                    + $"feed={AnalysisFeedBox.Text}, range={QuestionStartDatePicker.Date:yyyy-MM-dd}..{QuestionEndDatePicker.Date:yyyy-MM-dd}, "
+                    + $"messages={_archiveChatMessages.Count}.");
             _pipelineCancellation = pipeline;
             return new Dictionary<string, object?>
             {
