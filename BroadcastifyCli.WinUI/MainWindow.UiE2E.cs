@@ -195,7 +195,7 @@ public sealed partial class MainWindow
             await importProcess.WaitForExitAsync();
             Require(importProcess.ExitCode == 0, "The isolated evidence import failed.");
             AnalysisFeedBox.Text = "999992";
-            var chatStart = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+            var chatStart = new DateTimeOffset(new DateTime(2026, 1, 1));
             var chatEnd = chatStart.AddDays(6);
             QuestionStartDatePicker.Date = chatStart;
             QuestionEndDatePicker.Date = chatEnd;

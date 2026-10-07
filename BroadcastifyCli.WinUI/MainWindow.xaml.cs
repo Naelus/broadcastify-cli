@@ -56,7 +56,6 @@ public sealed partial class MainWindow : Window
     private readonly ObservableCollection<AreaStory> _areaStories = [];
     private readonly ObservableCollection<AnalysisDay> _analysisDays = [];
     private bool _refreshingAnalysisDays;
-    private AnalysisDay? _backgroundAnalysisSelection;
     private int _analysisRefreshVersion;
     private bool _preparingQuestion;
     private readonly ObservableCollection<IncidentRecord> _visibleIncidents = [];
@@ -7334,8 +7333,7 @@ public sealed partial class MainWindow : Window
                 var preferred = _analysisDays.FirstOrDefault(value =>
                     string.Equals(value.FeedId, _lastReviewFeedId, StringComparison.Ordinal)
                     && string.Equals(value.ArchiveDate, _lastReviewDate, StringComparison.Ordinal));
-                _backgroundAnalysisSelection = preferred ?? _analysisDays[0];
-                AnalysisDaysList.SelectedItem = _backgroundAnalysisSelection;
+                AnalysisDaysList.SelectedItem = preferred ?? _analysisDays[0];
             }
             else
             {
@@ -7357,17 +7355,7 @@ public sealed partial class MainWindow : Window
 
     private async void AnalysisDays_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (AnalysisDaysList.SelectedItem is not AnalysisDay day)
-        {
-            return;
-        }
-        // WinUI may deliver selection after the collection refresh has ended.
-        if (_refreshingAnalysisDays || ReferenceEquals(day, _backgroundAnalysisSelection))
-        {
-            _backgroundAnalysisSelection = null;
-            return;
-        }
-        _backgroundAnalysisSelection = null;
+        if (!_refreshingAnalysisDays && AnalysisDaysList.SelectedItem is AnalysisDay day)
         {
             _lastReviewFeedId = day.FeedId;
             _lastReviewDate = day.ArchiveDate;
