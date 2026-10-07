@@ -37,6 +37,12 @@ injection never altered the active application's source or retained data. The
 suite has two fewer cases; this review adds no production subsystem or model
 downloads.
 
+Running the suite inside the deployed Linux image with a read-only source mount
+also exposed nine checks that depended on the default quota ledger in the
+checkout. A shared fixture now gives every test a temporary quota ledger;
+tests can still explicitly select their own ledger. This prevents incidental
+writes to a developer's ledger and makes read-only source verification valid.
+
 ## Initial audit: removed coverage and its replacement
 
 | Removed tests | Reason and retained proof |

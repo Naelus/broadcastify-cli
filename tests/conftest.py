@@ -2,8 +2,16 @@ from __future__ import annotations
 
 import socketserver
 from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
+
+
+@pytest.fixture(autouse=True)
+def isolated_quota_ledger(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    # Clients without an explicit ledger must never use the developer's ledger
+    # or require a writable application checkout in an offline verification run.
+    monkeypatch.setenv("BROADCASTIFY_QUOTA_LEDGER", str(tmp_path / "archive-quota.sqlite3"))
 
 
 @pytest.fixture
