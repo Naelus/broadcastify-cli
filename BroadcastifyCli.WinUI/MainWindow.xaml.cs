@@ -6432,19 +6432,7 @@ public sealed partial class MainWindow : Window
         {
             if (schedule is not null)
             {
-                var resumeAfterRestart = _windowClosed
-                    && !_scheduledCancellationRequestedByUser;
-                await _worker.FinishFeedScheduleAsync(
-                    new FeedScheduleFinishRequest
-                    {
-                        ScheduleId = schedule.Id,
-                        DueDate = schedule.DueDate,
-                        Status = resumeAfterRestart ? "deferred" : "canceled",
-                        Message = resumeAfterRestart
-                            ? "The app closed after checkpointing this scheduled run; resuming from retained work after restart."
-                            : "Scheduled run canceled.",
-                    },
-                    CancellationToken.None);
+                await FinishInterruptedFeedScheduleAsync(schedule);
             }
         }
         catch (Exception exception)
@@ -6479,6 +6467,28 @@ public sealed partial class MainWindow : Window
             _scheduledCancellationRequestedByUser = false;
             await RefreshFeedScheduleStatusAsync();
         }
+    }
+
+    private Task<FeedSchedule?> FinishInterruptedFeedScheduleAsync(FeedSchedule schedule)
+    {
+        // A timeout or interrupted worker is not a user's request to stop.
+        // Only the explicit Cancel action may suppress the rest of today's run.
+        var canceledByUser = _scheduledCancellationRequestedByUser;
+        var message = canceledByUser
+            ? "Scheduled run canceled by the user."
+            : _windowClosed
+                ? "The app closed after checkpointing this scheduled run; resuming from retained work after restart."
+                : "The scheduled worker was interrupted without a user cancellation; retrying retained work shortly.";
+        AppendLog($"Scheduled feed {schedule.FeedId}: {message}");
+        return _worker!.FinishFeedScheduleAsync(
+            new FeedScheduleFinishRequest
+            {
+                ScheduleId = schedule.Id,
+                DueDate = schedule.DueDate,
+                Status = canceledByUser ? "canceled" : "deferred",
+                Message = message,
+            },
+            CancellationToken.None);
     }
 
     private async Task<(
@@ -7079,6 +7089,7 @@ public sealed partial class MainWindow : Window
         if (_checkingFeedSchedule && _pipelineCancellation is not null)
         {
             _scheduledCancellationRequestedByUser = true;
+            AppendLog("The user requested cancellation of the active scheduled feed run.");
         }
         _pipelineCancellation?.Cancel();
         _operationCancellation?.Cancel();

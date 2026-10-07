@@ -177,7 +177,9 @@ Live model tensors and retained speaker results remain valid.
   collision-avoidance minute and resumes from retained work. Windows login
   startup runs this recovery before claiming scheduled work. A checkpointed
   Windows app close is also deferred and keeps the current due date eligible;
-  only the explicit in-app Cancel action finalizes that date. While every
+  only the explicit in-app Cancel action finalizes that date. Other worker
+  interruptions also defer retained work, even while the app remains open;
+  the activity log distinguishes those retries from explicit user stops. While every
   authorized profile is quota-paused, the schedule remains eligible for a
   five-minute retained-work pass; the ledger blocks provider traffic while LAN
   copies and local model work continue.

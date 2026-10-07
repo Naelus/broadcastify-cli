@@ -211,6 +211,57 @@ public sealed partial class MainWindow
                 $"Background evidence progress changed chat: selected={AnalysisDaysList.SelectedItem is AnalysisDay}, "
                     + $"feed={AnalysisFeedBox.Text}, range={QuestionStartDatePicker.Date:yyyy-MM-dd}..{QuestionEndDatePicker.Date:yyyy-MM-dd}, "
                     + $"messages={_archiveChatMessages.Count}.");
+            // Use the native cancellation handler and real worker/database boundary.
+            // Invoking an entire scheduled archive job here would require live acquisition.
+            foreach (var explicitCancel in new[] { false, true })
+            {
+                var feedId = explicitCancel ? "999998" : "999997";
+                var saved = await _worker.SaveFeedScheduleAsync(
+                    new FeedScheduleSaveRequest
+                    {
+                        FeedId = feedId,
+                        RunTimeLocal = "00:00",
+                        Analyze = false,
+                    }, CancellationToken.None)
+                    ?? throw new InvalidOperationException("Could not save an isolated schedule.");
+                using var scheduledStop = new CancellationTokenSource();
+                try
+                {
+                    var claimed = await _worker.ClaimDueFeedScheduleAsync(CancellationToken.None)
+                        ?? throw new InvalidOperationException("Could not claim the isolated schedule.");
+                    Require(claimed.Id == saved.Id, "The probe claimed an unrelated schedule.");
+                    _pipelineCancellation = scheduledStop;
+                    _checkingFeedSchedule = true;
+                    _scheduledCancellationRequestedByUser = false;
+                    if (explicitCancel)
+                    {
+                        Cancel_Click(CancelButton, new RoutedEventArgs());
+                        Require(scheduledStop.IsCancellationRequested,
+                            "The Cancel action did not stop the active scheduled token.");
+                    }
+                    await FinishInterruptedFeedScheduleAsync(claimed);
+                    var persisted = (await _worker.ListFeedSchedulesAsync(CancellationToken.None))
+                        .Single(value => value.Id == saved.Id);
+                    Require(persisted.Enabled
+                            && persisted.State == (explicitCancel ? "canceled" : "deferred")
+                            && persisted.LastRunDate == (explicitCancel ? claimed.DueDate : ""),
+                        "An interruption suppressed today's retry, or an explicit stop was ignored.");
+                    Require(await _worker.ClaimDueFeedScheduleAsync(CancellationToken.None) is null,
+                        "An interrupted schedule retried immediately instead of respecting backoff or Cancel.");
+                    if (!explicitCancel)
+                    {
+                        Require(DateTimeOffset.Parse(persisted.NextRunAt) <= DateTimeOffset.Now.AddMinutes(6),
+                            "A non-user interruption was deferred until tomorrow.");
+                    }
+                }
+                finally
+                {
+                    _checkingFeedSchedule = false;
+                    _scheduledCancellationRequestedByUser = false;
+                    _pipelineCancellation = null;
+                    await _worker.DeleteFeedScheduleAsync(saved.Id, CancellationToken.None);
+                }
+            }
             _pipelineCancellation = pipeline;
             return new Dictionary<string, object?>
             {
@@ -220,6 +271,7 @@ public sealed partial class MainWindow
                 ["playback_preserved"] = true,
                 ["unavailable_excluded_from_backlog"] = true,
                 ["chat_scope_preserved"] = true,
+                ["scheduled_interruption_recovery"] = true,
             };
         }
         finally
