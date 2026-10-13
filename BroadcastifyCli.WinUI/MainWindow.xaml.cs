@@ -1744,8 +1744,7 @@ public sealed partial class MainWindow : Window
         // need more than a nominal tablet width. Stack before either pane can
         // compress the active Review/Library controls beyond their content.
         var compact = width < 1_100 || _desktopDockManager?.IsDocked == true;
-        var shortCompact = compact
-            && WindowRoot.ActualHeight > 0
+        var shortCompact = WindowRoot.ActualHeight > 0
             && WindowRoot.ActualHeight < 820;
         if (_compactLayoutApplied == compact
             && _shortCompactLayoutApplied == shortCompact)
@@ -1980,7 +1979,7 @@ public sealed partial class MainWindow : Window
             Grid.SetRow(AreaStoryDetailBorder, 0);
             Grid.SetColumn(AreaStoryDetailBorder, 1);
             AreaStoriesContentGrid.RowSpacing = 10;
-            AreaSummaryScroll.MaxHeight = 150;
+            AreaSummaryScroll.MaxHeight = shortCompact ? 64 : 150;
 
             RuntimeControls.Orientation = Orientation.Horizontal;
             CredentialButtons.Orientation = Orientation.Horizontal;
