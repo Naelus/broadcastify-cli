@@ -211,6 +211,14 @@ class AnalysisStore:
                 )
             );
 
+            CREATE TABLE IF NOT EXISTS activity_seen (
+                day_id INTEGER NOT NULL REFERENCES feed_days(id) ON DELETE CASCADE,
+                fingerprint TEXT NOT NULL,
+                content_sha256 TEXT NOT NULL,
+                seen_at TEXT NOT NULL,
+                PRIMARY KEY(day_id, fingerprint)
+            );
+
             CREATE TABLE IF NOT EXISTS daily_summaries (
                 day_id INTEGER PRIMARY KEY REFERENCES feed_days(id) ON DELETE CASCADE,
                 summary TEXT NOT NULL,
@@ -942,7 +950,7 @@ class AnalysisStore:
         transcript_hash = sha256_file(transcript)
         existing = self.connection.execute(
             """
-            SELECT id, transcript_sha256, audio_sha256 FROM feed_days
+            SELECT * FROM feed_days
             WHERE feed_id=? AND archive_date=?
             """,
             (feed_id, archive_date.isoformat()),
@@ -1027,6 +1035,29 @@ class AnalysisStore:
         has_diarization = any(segment.get("speaker") for segment in segments)
         diarization_model = payload.get("diarization_model") if has_diarization else None
 
+        # Runtime/model metadata can change without changing a single cited
+        # word. Keep the index and analysis only when source audio, timing,
+        # speaker attribution, and the saved archive clock are all identical.
+        unchanged_evidence = bool(
+            existing is not None
+            and audio_hash
+            and audio_hash == existing["audio_sha256"]
+            and payload.get("duration") == existing["duration_seconds"]
+            and metadata["archive_timeline"]
+            == json.loads(existing["metadata_json"]).get("archive_timeline", [])
+            and sorted([
+                (index, float(value.get("start", 0.0)),
+                 float(value.get("end", value.get("start", 0.0))),
+                 value.get("speaker"), str(value.get("text") or "").strip())
+                for index, value in enumerate(segments)
+                if str(value.get("text") or "").strip()
+            ], key=lambda value: (value[1], value[0])) == [
+                (value["segment_index"], value["start_seconds"],
+                 value["end_seconds"], value["speaker"], value["text"])
+                for value in self.get_segments(int(existing["id"]))
+            ]
+        )
+
         with self.transaction() as connection:
             connection.execute(
                 """
@@ -1072,6 +1103,17 @@ class AnalysisStore:
                     (feed_id, archive_date.isoformat()),
                 ).fetchone()["id"]
             )
+            if unchanged_evidence:
+                connection.execute(
+                    "UPDATE daily_summaries SET transcript_sha256=? "
+                    "WHERE day_id=? AND transcript_sha256=?",
+                    (transcript_hash, day_id, existing["transcript_sha256"]),
+                )
+                return ImportedDay(
+                    day_id=day_id, feed_id=feed_id, archive_date=archive_date,
+                    segment_count=sum(1 for value in segments if str(value.get("text") or "").strip()),
+                    transcript_sha256=transcript_hash,
+                )
             connection.execute("DELETE FROM incidents WHERE day_id=?", (day_id,))
             connection.execute("DELETE FROM daily_summaries WHERE day_id=?", (day_id,))
             connection.execute("DELETE FROM transcript_segments WHERE day_id=?", (day_id,))
@@ -1191,6 +1233,7 @@ class AnalysisStore:
         *,
         start_date: date | None = None,
         end_date: date | None = None,
+        embedding_model: str | None = None,
     ) -> list[dict[str, Any]]:
         clauses: list[str] = []
         parameters: list[object] = []
@@ -1203,9 +1246,18 @@ class AnalysisStore:
                 clauses.append(clause)
                 parameters.append(value)
         where = "WHERE " + " AND ".join(clauses) if clauses else ""
+        # Passage edits replace their IDs and invalidate their embeddings.
+        # Count coverage without loading vectors or an embedding model.
+        embedding_count = "NULL"
+        if embedding_model is not None:
+            embedding_count = """(SELECT COUNT(*) FROM passages p
+                JOIN embeddings e ON e.entity_type='passage'
+                    AND e.entity_id=p.id AND e.model=? WHERE p.day_id=d.id)"""
+            parameters.insert(0, embedding_model)
         rows = self.connection.execute(
             f"""
             SELECT d.*,
+                   {embedding_count} AS indexed_passage_count,
                    (SELECT COUNT(*) FROM transcript_segments s WHERE s.day_id=d.id)
                        AS segment_count,
                    (SELECT COUNT(DISTINCT s.speaker) FROM transcript_segments s
@@ -1701,6 +1753,26 @@ class AnalysisStore:
             value["attributes"] = json.loads(value.pop("attributes_json"))
             values.append(value)
         return values
+
+    def activity_seen(self, feed_id: str, start_date: date, end_date: date) -> dict[tuple[int, str], str]:
+        rows = self.connection.execute(
+            """SELECT a.day_id, a.fingerprint, a.content_sha256
+               FROM activity_seen a JOIN feed_days d ON d.id=a.day_id
+               WHERE d.feed_id=? AND d.archive_date BETWEEN ? AND ?""",
+            (feed_id, start_date.isoformat(), end_date.isoformat()),
+        )
+        return {(int(row["day_id"]), str(row["fingerprint"])): str(row["content_sha256"]) for row in rows}
+
+    def mark_activity_seen(self, day_id: int, fingerprint: str, content_sha256: str) -> None:
+        # The caller validates the displayed revision while holding a write
+        # transaction. A bookmark must never acknowledge a newer unseen revision.
+        self.connection.execute(
+            """INSERT INTO activity_seen(day_id, fingerprint, content_sha256, seen_at)
+               VALUES (?, ?, ?, ?)
+               ON CONFLICT(day_id, fingerprint) DO UPDATE SET
+                   content_sha256=excluded.content_sha256, seen_at=excluded.seen_at""",
+            (day_id, fingerprint, content_sha256, utc_now()),
+        )
 
     def get_incident(self, incident_id: int) -> dict[str, Any] | None:
         row = self.connection.execute(

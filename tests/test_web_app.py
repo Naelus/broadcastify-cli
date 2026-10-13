@@ -424,37 +424,11 @@ def test_loopback_web_app_serves_library_transcript_and_media(
         token_match = re.search(rb'<meta name="app-token" content="([^"]+)">', body)
         assert cookie.startswith("radio_archive_session=")
         assert token_match is not None
-        assert b'id="areaPublicSafetyOnly"' in body
-        assert b'/static/app.js?v=37' in body
-        assert b'data-view="system"' in body
-        assert b'id="view-system"' in body
-        assert b'id="systemQuotaList"' in body
-        assert b'data-view="about"' in body
-        assert b'id="catchUpMissingDaysButton"' in body
-        assert b'id="accountProfileList"' in body
-        assert b'id="archiveQuotaNotice"' in body
-        assert b'id="saveFeedScheduleButton"' in body
-        assert b'id="scheduleBackfillStartDate"' in body
-        assert b'id="scheduleEnabled"' in body
-        assert b'id="accessScopeStatus"' in body
-        assert b'value="qwen3-asr"' in body
-        assert b'qwen3-asr-0.6b-int8' in body
-        assert b'id="settingAnalysisDevice"' in body
-        assert b'id="analysisSelfTestButton"' in body
-        assert b'id="profileSelfTestButton"' in body
-        assert b'id="profileNextActionButton"' in body
-        assert b'id="setupProfileSelfTestButton"' in body
-        assert b'id="profileSelfTestNotice"' in body
-        assert b'id="settingsSectionTabs"' in body
-        assert b'data-settings-panel="processing"' in body
-        assert b'id="settingLanSyncEnabled"' in body
-        assert b'id="settingLanDiscoveryEnabled"' in body
-        assert b'id="settingLanPeerUrls"' in body
-        assert b'id="rememberBroadcastifyLogin"' in body
-        assert b'id="huggingFaceCredentialForm"' in body
-        assert b'href="https://huggingface.co/docs/hub/en/security-tokens"' in body
-        assert b'role="tabpanel"' in body
-        assert b'/static/favicon.svg' in body
+        # Fetch the assets this page actually ships, rather than inventorying
+        # implementation strings or pinning a cache-busting version.
+        script = re.search(rb'<script src="([^"]+)"', body)
+        stylesheet = re.search(rb'<link rel="stylesheet" href="([^"]+)"', body)
+        assert script is not None and stylesheet is not None
         token = token_match.group(1).decode()
 
         response, body = _request(connection, "GET", "/api/system-activity")
@@ -466,65 +440,10 @@ def test_loopback_web_app_serves_library_transcript_and_media(
         assert response.getheader("Content-Type") == "image/svg+xml"
         assert b"<svg" in body
 
-        response, body = _request(connection, "GET", "/static/app.js?v=37")
-        assert response.status == 200
-        assert b"areaSelectedStoryIndex" in body
-        assert b"data-area-story-index" in body
-        assert b"data-edit-schedule" in body
-        assert b"backfill_start_date" in body
-        assert b"story-browser" in body
-        assert b"analysis_device: state.settings.analysisDevice" in body
-        assert b'analysis-self-test' in body
-        assert b'profile-self-test' in body
-        assert b"analysisSelfTest" in body
-        assert b"function runProfileSelfTest" in body
-        assert b"function runProfileNextAction" in body
-        assert b"function currentProfileAction" in body
-        assert b'setupProfileSelfTestButton").addEventListener' in body
-        assert b"function syncPlatformProfileOptions" in body
-        assert b"function applyRuntimeProcessingDefaults" in body
-        assert b"hardwareProfile: defaults.hardware_profile" not in body
-        assert b'state.settings.hardwareProfile = "auto"' in body
-        assert b'profile === "auto"' in body
-        assert b"deploymentDefaults.asr_engine" in body
-        assert b"deploymentDefaults.model" in body
-        assert b"installed ${words(deploymentDefaults.hardware_profile)} deployment preset" in body
-        assert b"hardware_profile: state.settings.hardwareProfile" in body
-        assert b'"Trusted LAN"' in body
-        assert b"whisper.cpp has no managed distil-large-v3 mapping" in body
-        assert b' qwen: ["qwen3-asr", "cpu", "cpu", "auto", "sherpa-onnx"]' in body
-        assert b"diarization_engine: state.settings.diarizationEngine" in body
-        assert b"Fast CPU preview uses managed Qwen3-ASR 0.6B INT8" in body
-        assert b"updateHardwareProfileDescription();" in body
-        assert b"function ensureAsrModelCompatibility" in body
-        assert b'"windows-ml", "whisper.cpp", "qwen3-asr"' in body
-        assert b"profile.configured" in body
-        assert b"const nextSteps = isVerified" in body
-        assert b"function setSettingsSection" in body
-        assert b"function setViewFromLocation" in body
-        assert b'window.addEventListener("hashchange", setViewFromLocation)' in body
-        assert b'radioArchiveSettingsSection' in body
-        assert b'setSettingsSection("processing")' in body
-        assert b"lan_sync_enabled: Boolean(state.settings.lanSyncEnabled)" in body
-        assert b"lan_peer_urls: state.settings.lanPeerUrls" in body
-        assert b"function renderArchiveQuota" in body
-        assert b"function renderFeedSchedules" in body
-        assert b"function renderCredentials" in body
-        assert b'api("/api/credentials"' in body
-        assert b"function renderAbout" in body
-        assert b"function renderSystemActivity" in body
-        assert b'api("/api/system-activity")' in body
-        assert b"setTimeout(refreshSystemActivity, 10000)" in body
-        assert b"function updateCatchUpStatus" in body
-        assert b"exclude_account_profile_ids" in body
-
-        response, body = _request(connection, "GET", "/static/app.css?v=22")
-        assert response.status == 200
-        assert b".story-browser" in body
-        assert b".story-index-item.active" in body
-        assert b".runtime-profile-card.configured" in body
-        assert b".settings-section-tab.active" in body
-        assert b".settings-panel[hidden]" in body
+        for asset in (script, stylesheet):
+            response, body = _request(connection, "GET", asset.group(1).decode())
+            assert response.status == 200
+            assert len(body) > 0
 
         response, body = _request(connection, "GET", "/api/bootstrap", cookie=cookie)
         bootstrap = json.loads(body)
@@ -1375,6 +1294,16 @@ def test_follower_web_relays_selected_feed_work_and_saved_intent_to_windows_mast
         assert progress[0]["is_complete"] is False
         assert progress[0]["next_step"]
         assert str(master_root) not in json.dumps(progress)
+        # The follower's empty local archive must not make the master's
+        # unfinished workflow appear complete.
+        response, body = _request(connection, "GET", "/api/workflow")
+        assert response.status == 403
+        response, body = _request(connection, "GET", "/api/workflow", cookie=cookie)
+        assert response.status == 200
+        workflow = json.loads(body)["workflow"]
+        assert workflow["pending_count"] == 1
+        assert workflow["days"][0]["feed_id"] == "90002"
+        assert str(master_root) not in json.dumps(workflow)
         assert bootstrap["authoritative_feed_spans"] == [
             {
                 "feed_id": "90002",

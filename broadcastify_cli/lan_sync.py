@@ -3127,6 +3127,20 @@ class LanArchiveSyncClient:
     def master_info(self) -> dict[str, Any]:
         return self._master_request("GET", "/api/lan/v1/info")
 
+    def master_activity(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+        from urllib.parse import urlencode
+
+        value = self._master_request("GET", "/api/lan/v1/activity?" + urlencode({
+            key: str(payload.get(key) or "") for key in ("feed_id", "start_date", "end_date")
+        }))
+        report = value.get("report")
+        if not isinstance(report, Mapping):
+            raise LanSyncError("The Windows master did not return its saved activity.")
+        return dict(report)
+
+    def acknowledge_master_activity(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+        return self._master_request("POST", "/api/lan/v1/activity/seen", payload)
+
     def save_master_schedule(self, payload: Mapping[str, Any]) -> dict[str, Any]:
         value = self._master_request(
             "POST",

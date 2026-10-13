@@ -1,4 +1,5 @@
 import json
+import hashlib
 import os
 import time
 from datetime import date, datetime, timedelta
@@ -6,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from broadcastify_cli.analysis import PROMPT_VERSION
+from broadcastify_cli.analysis import DEFAULT_EMBEDDING_MODEL, PROMPT_VERSION
 from broadcastify_cli.archive_cache import (
     remember_archive_identity,
     remember_complete_archive_day,
@@ -15,6 +16,7 @@ from broadcastify_cli.library import (
     LocalProcessingRequest,
     build_library_feed_coverage,
     build_library_resume_plan,
+    build_library_workflow,
     cleanup_pending_library_deletions,
     completed_library_catchup_feed_ids,
     delete_local_library_feed,
@@ -607,8 +609,25 @@ def test_library_discovers_partial_and_analyzed_days(tmp_path: Path) -> None:
     assert analyzed["feed_name"] == "Example City Public Safety"
     assert analyzed["has_diarization"] is True
     assert analyzed["has_analysis"] is True
+    assert analyzed["is_complete"] is False
+    assert analyzed["primary_action"] == "continue_local"
+    assert analyzed["has_searchable_analysis"] is True
+    workflow = build_library_workflow(states)
+    assert workflow["pending_count"] == 2
+    assert workflow["stage_counts"]["index"] == 2
+    assert any(day["feed_id"] == "90001" for day in build_library_resume_plan(states, {})["days"])
+    # Closing and reopening after an interrupted index must retain the work.
+    with AnalysisStore(database) as store:
+        passages = store.passages_missing_embeddings(DEFAULT_EMBEDDING_MODEL)
+        store.save_embeddings("passage", [
+            (p["id"], hashlib.sha256(f"passage: {p['text']}".encode()).hexdigest(), 1, b"\0" * 4)
+            for p in passages
+        ], DEFAULT_EMBEDDING_MODEL)
+    states = scan_local_library(tmp_path, database)
+    analyzed = next(value for value in states if value["feed_id"] == "90001")
     assert analyzed["is_complete"] is True
     assert analyzed["primary_action"] == "open_review"
+    assert build_library_workflow(states)["pending_count"] == 1
 
     incomplete = next(value for value in states if value["feed_id"] == "90003")
     assert incomplete["feed_name"] == "Example County Public Safety"

@@ -37,8 +37,9 @@ from .quota import (
     normalize_archive_request_id,
 )
 from .pipeline_sync import PipelineSyncStore, normalize_pipeline_role
-from .library import scan_local_library
+from .library import build_library_workflow, scan_local_library
 from .storage import AnalysisStore
+from .activity import acknowledge_activity, activity_report
 from .web_app import (
     JobManager,
     WebRequestError,
@@ -263,6 +264,14 @@ def create_lan_node_server(
                 )
                 return
             self._authorize()
+            if parsed.path == "/api/lan/v1/activity":
+                if job_manager is None:
+                    raise FileNotFoundError
+                query = parse_qs(parsed.query)
+                payload = {key: str((query.get(key) or [""])[0]) for key in ("feed_id", "start_date", "end_date")}
+                report = activity_report(relay_database_path, catalog.output_dir, payload)
+                self._json(HTTPStatus.OK, {"protocol": LAN_PROTOCOL, "report": report})
+                return
             if parsed.path == "/api/lan/v1/library":
                 if job_manager is None:
                     raise FileNotFoundError
@@ -297,7 +306,9 @@ def create_lan_node_server(
                     feed_name = str(raw.get("feed_name") or "").strip()
                     if feed_name:
                         current["feed_name"] = feed_name[:200]
+                days = scan_local_library(catalog.output_dir, relay_database_path)
                 library = {
+                    "workflow": build_library_workflow(days, schedules, catchups),
                     # Only progress crosses this boundary; local evidence paths
                     # and analysis databases remain on their owning machine.
                     "progress": [
@@ -306,7 +317,7 @@ def create_lan_node_server(
                             "pipeline_percent", "is_complete", "source_check_due",
                             "source_unavailable", "awaiting_source",
                         )}
-                        for day in scan_local_library(catalog.output_dir, relay_database_path)
+                        for day in days
                     ],
                     "feed_spans": [spans[key] for key in sorted(spans)],
                     "schedules": schedules,
@@ -556,6 +567,12 @@ def create_lan_node_server(
             raise FileNotFoundError
 
         def _post(self) -> None:
+            if urlparse(self.path).path == "/api/lan/v1/activity/seen":
+                if job_manager is None:
+                    raise FileNotFoundError
+                result = acknowledge_activity(relay_database_path, catalog.output_dir, self._body())
+                self._json(HTTPStatus.OK, {"protocol": LAN_PROTOCOL, **result})
+                return
             parsed = urlparse(self.path)
             if parsed.path == "/api/lan/v1/jobs":
                 if job_manager is None:

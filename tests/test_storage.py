@@ -60,6 +60,27 @@ def test_import_is_idempotent_and_searchable(tmp_path: Path) -> None:
         assert len(results) == 1
         assert "Main and First" in results[0]["text"]
 
+        passage = results[0]
+        text_hash = hashlib.sha256(f"passage: {passage['text']}".encode()).hexdigest()
+        store.save_embeddings("passage", [(passage_id, text_hash, 1, b"\0\0\0\0")], "test-vector")
+        store.save_daily_summary(first.day_id, "A cited retained report.", [], "test-model", "test-prompt", first.transcript_sha256)
+        payload = json.loads(transcript.read_text(encoding="utf-8"))
+        payload["asr_backend"] = "Updated inference runtime; same recognized words"
+        transcript.write_text(json.dumps(payload), encoding="utf-8")
+        metadata_only = store.import_transcript("90001", date(2026, 7, 12), transcript, audio)
+        assert metadata_only.transcript_sha256 != first.transcript_sha256
+        assert store.get_daily_summary(first.day_id, "test-model", "test-prompt", metadata_only.transcript_sha256) is not None
+        assert store.passages_missing_embeddings("test-vector") == []
+        assert store.search_passages("90001", date(2026, 7, 12), date(2026, 7, 12), "shots")
+
+        # A real wording correction must still invalidate derived model results.
+        payload["segments"][0]["text"] = "Dispatch corrected the report: fireworks, no shots fired."
+        transcript.write_text(json.dumps(payload), encoding="utf-8")
+        corrected = store.import_transcript("90001", date(2026, 7, 12), transcript, audio)
+        assert store.get_latest_daily_summary(corrected.day_id) is None
+        assert store.passages_missing_embeddings("test-vector")
+        assert "fireworks" in store.search_passages("90001", date(2026, 7, 12), date(2026, 7, 12), "fireworks")[0]["text"]
+
 
 def test_idempotent_import_refreshes_paths_after_library_move(
     tmp_path: Path,

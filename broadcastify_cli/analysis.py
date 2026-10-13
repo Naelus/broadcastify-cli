@@ -1532,11 +1532,13 @@ class IncidentAnalyzer:
         client: AnalysisClient,
         prompt_version: str = PROMPT_VERSION,
         progress: Callable[[str], None] | None = None,
+        on_progress: Callable[[dict[str, Any]], None] | None = None,
     ) -> None:
         self.store = store
         self.client = client
         self.prompt_version = prompt_version
         self.progress = progress or (lambda _message: None)
+        self.on_progress = on_progress or (lambda _value: None)
 
     @staticmethod
     def _subdivide_window(
@@ -1717,6 +1719,30 @@ class IncidentAnalyzer:
                         checkpoint_prompt_version,
                     )
                 reused_checkpoint_prefix = False
+                extraction_started = time.monotonic()
+                measured_windows: list[float] = []
+                reused_windows = 0
+
+                def report_windows(completed: int) -> None:
+                    # Count saved checkpoints, not a window merely started. Cache
+                    # hits never enter the measured inference rate.
+                    remaining = len(windows) - completed
+                    estimate = (
+                        sum(measured_windows) / len(measured_windows) * remaining
+                        if len(measured_windows) >= 2 and remaining else None
+                    )
+                    self.on_progress({
+                        "type": "progress", "stage": "analysis_windows",
+                        "feed_id": feed_id, "archive_date": archive_date.isoformat(),
+                        "current": completed, "total": len(windows), "unit": "windows saved",
+                        "elapsed_seconds": time.monotonic() - extraction_started,
+                        "emitted_at_unix": time.time(),
+                        "estimated_remaining_seconds": estimate,
+                        "reused_windows": reused_windows,
+                        "message": f"Feed {feed_id} · {archive_date}: {completed}/{len(windows)} analysis windows saved",
+                    })
+
+                report_windows(0)
                 for index, window in enumerate(windows, start=1):
                     prompt_text = window.prompt_text()
                     window_fingerprint = hashlib.sha256(
@@ -1756,12 +1782,16 @@ class IncidentAnalyzer:
                             checkpoint,
                         )
                         extracted.extend(checkpoint)
+                        reused_windows += 1
+                        report_windows(index)
                         continue
                     self.progress(
                         f"Analyzing {archive_date} window {index}/{len(windows)} "
                         f"({format_offset(window.start_seconds)}-"
                         f"{format_offset(window.end_seconds)})"
                     )
+                    report_windows(index - 1)
+                    window_started = time.monotonic()
                     checkpoint_incidents = self._extract_window_incidents(
                         feed_id,
                         archive_date,
@@ -1780,6 +1810,8 @@ class IncidentAnalyzer:
                         checkpoint_incidents,
                     )
                     extracted.extend(checkpoint_incidents)
+                    measured_windows.append(time.monotonic() - window_started)
+                    report_windows(index)
 
             critical_fallbacks = (
                 self._critical_phrase_incidents(
@@ -1805,6 +1837,13 @@ class IncidentAnalyzer:
             )
 
         cached_summary = None if force or force_summary else existing_summary
+        self.on_progress({
+            "type": "progress", "stage": "analysis_summary",
+            "feed_id": feed_id, "archive_date": archive_date.isoformat(),
+            "current": 0, "total": 0,
+            "elapsed_seconds": 0, "emitted_at_unix": time.time(),
+            "message": f"Feed {feed_id} · {archive_date}: {'loading saved' if cached_summary is not None else 'writing'} daily summary",
+        })
         summary = (
             str(cached_summary["summary"])
             if cached_summary is not None

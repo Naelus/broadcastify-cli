@@ -756,6 +756,38 @@
                                         <MediaPlayerElement x:Name="IncidentPlayer" Grid.Row="4" Height="72" AreTransportControlsEnabled="True" />
                                     </Grid>
                                 </TabViewItem>
+                                <TabViewItem x:Name="WhatChangedTab" Header="What changed" IsClosable="False">
+                                    <ScrollViewer Padding="8">
+                                    <StackPanel Spacing="10">
+                                        <StackPanel Spacing="6">
+                                            <TextBlock Text="Catch up on new and updated saved incidents" Style="{StaticResource SubtitleTextBlockStyle}" TextWrapping="Wrap" />
+                                            <TextBlock Text="Uses saved analysis for the feed selected on the left. No models run. Opening the view leaves records unread; marking this batch caught up remembers only the revisions shown here." TextWrapping="Wrap" />
+                                        </StackPanel>
+                                        <StackPanel Spacing="8">
+                                            <DatePicker x:Name="ActivityStartPicker" Header="From" DateChanged="ActivityScope_Changed" />
+                                            <DatePicker x:Name="ActivityEndPicker" Header="Through" DateChanged="ActivityScope_Changed" />
+                                            <Button x:Name="RefreshActivityButton" Content="Refresh what changed" Click="RefreshActivity_Click" />
+                                            <Button x:Name="MarkActivityButton" Content="Mark this batch caught up" IsEnabled="False" Click="MarkActivity_Click" />
+                                        </StackPanel>
+                                        <TextBlock x:Name="ActivityCoverageText" Text="Choose a feed and refresh. Missing analysis is not evidence of no activity." TextWrapping="Wrap" IsTextSelectionEnabled="True" />
+                                        <ListView x:Name="ActivityIncidentList" MinHeight="160" MaxHeight="600" SelectionMode="None">
+                                            <ListView.ItemTemplate>
+                                                <DataTemplate x:DataType="local:IncidentRecord">
+                                                    <StackPanel Padding="8" Spacing="4">
+                                                        <TextBlock Text="{x:Bind ActivityLabel}" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" TextWrapping="Wrap" />
+                                                        <TextBlock Text="{x:Bind Title}" Style="{StaticResource BodyStrongTextBlockStyle}" TextWrapping="Wrap" />
+                                                        <TextBlock Text="{x:Bind TimeAndLocation}" TextWrapping="Wrap" />
+                                                        <TextBlock Text="{x:Bind TypeAndPriority}" />
+                                                        <TextBlock Text="{x:Bind Summary}" TextWrapping="Wrap" />
+                                                        <TextBlock Text="{x:Bind EvidenceQuoteDisplay}" FontStyle="Italic" TextWrapping="Wrap" IsTextSelectionEnabled="True" />
+                                                        <Button Content="Review cited day and exact clips" Click="ReviewActivityIncident_Click" />
+                                                    </StackPanel>
+                                                </DataTemplate>
+                                            </ListView.ItemTemplate>
+                                        </ListView>
+                                    </StackPanel>
+                                    </ScrollViewer>
+                                </TabViewItem>
                                 <TabViewItem x:Name="WeeklyBriefTab" Header="Weekly brief" IsClosable="False">
                                     <ScrollViewer x:Name="WeeklyBriefScroll" Padding="8">
                                         <StackPanel Spacing="14" MaxWidth="900" HorizontalAlignment="Left">
@@ -1626,13 +1658,26 @@
                     <!-- Persistent task status -->
                     <Border Grid.Row="1" Padding="18,9" BorderThickness="0,1,0,0" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
                             Background="{ThemeResource LayerFillColorDefaultBrush}">
+                        <StackPanel Spacing="6">
+                            <TextBlock x:Name="PreviewModeText" Visibility="Collapsed" FontWeight="SemiBold" TextWrapping="Wrap"
+                                       Text="PRE-RELEASE PREVIEW · Isolated sample data · Downloads and model jobs disabled" />
+                            <TextBlock x:Name="WorkflowSummaryText" Text="Checking the full catch-up queue…" FontWeight="SemiBold" TextWrapping="Wrap" />
+                            <TextBlock x:Name="WorkflowStagesText" FontSize="12" TextWrapping="Wrap" />
+                            <TextBlock x:Name="WorkflowFinishText" FontSize="12" TextWrapping="Wrap"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                         <Grid x:Name="PersistentStatusGrid" ColumnSpacing="12" RowSpacing="6">
                             <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="260" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                            <TextBlock x:Name="StatusText" Text="Ready" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                            <StackPanel VerticalAlignment="Center" Spacing="3">
+                                <TextBlock Text="Current step" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                <TextBlock x:Name="StatusText" Text="Ready" TextWrapping="Wrap" MaxLines="2" />
+                                <TextBlock x:Name="JobTimingText" TextWrapping="Wrap" MaxLines="3" FontSize="12"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                            </StackPanel>
                             <ProgressBar x:Name="JobProgress" Grid.Column="1" Minimum="0" Maximum="100" Value="0" VerticalAlignment="Center" />
                             <Button x:Name="CancelButton" Grid.Column="2" Content="Cancel" IsEnabled="False" Click="Cancel_Click" />
                         </Grid>
+                        </StackPanel>
                     </Border>
                 </Grid>
             </NavigationView.Content>

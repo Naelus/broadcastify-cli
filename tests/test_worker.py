@@ -59,6 +59,7 @@ def test_run_scheduled_job_analyzes_only_changed_transcripts(
     result_days = [
         {"date": "2026-08-01", "transcripts": ["current.json"]},
         {"date": "2026-08-02", "transcripts": ["new.json"]},
+        {"date": "2026-08-03", "transcripts": ["index-interrupted.json"]},
     ]
     events: list[dict[str, object]] = []
     analyzed: list[str] = []
@@ -91,12 +92,18 @@ def test_run_scheduled_job_analyzes_only_changed_transcripts(
                 "archive_date": "2026-08-01",
                 "has_imported_transcript": True,
                 "has_analysis": True,
+                "has_search_index": True,
             },
             {
                 "feed_id": "45090",
                 "archive_date": "2026-08-02",
                 "has_imported_transcript": False,
                 "has_analysis": False,
+            },
+            {
+                "feed_id": "45090", "archive_date": "2026-08-03",
+                "has_imported_transcript": True, "has_analysis": True,
+                "has_search_index": False,
             },
         ],
     )
@@ -114,7 +121,7 @@ def test_run_scheduled_job_analyzes_only_changed_transcripts(
                     "job": {
                         "feed_id": "45090",
                         "start_date": "2026-08-01",
-                        "end_date": "2026-08-02",
+                        "end_date": "2026-08-03",
                         "output_dir": str(tmp_path),
                     },
                     "analyze": True,
@@ -124,12 +131,12 @@ def test_run_scheduled_job_analyzes_only_changed_transcripts(
     )
 
     assert run_scheduled_job() == 0
-    assert analyzed == ["2026-08-02"]
+    assert analyzed == ["2026-08-02", "2026-08-03"]
     assert any(
         "Skipped 1 already-current analysis day" in str(value)
         for value in events
     )
-    assert events[-1]["analyzed_dates"] == ["2026-08-02"]
+    assert events[-1]["analyzed_dates"] == ["2026-08-02", "2026-08-03"]
 
 
 def test_emit_is_safe_on_a_legacy_windows_console(

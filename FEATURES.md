@@ -1,6 +1,6 @@
 # Feature inventory
 
-Last updated: September 3, 2026
+Last updated: October 8, 2026
 
 Status labels: **Validated**, **Implemented**, **Evaluated**, **Foundation**, or
 **Planned**. Detailed behavior and retained validation evidence belong in
@@ -49,6 +49,7 @@ See [audio processing](docs/features/audio-processing.md),
 | Evidence-gated incidents | Validated | Exact citations, critical-concept support, bounded gaps, outcome rejection, category/priority correction. |
 | Cited-name private review | Validated | Spoken names preserved; inferred/normalized identities forbidden; high-risk identifiers masked. |
 | Daily and weekly briefs | Validated | Current-version incidents only, explicit coverage gaps and grounding checks. |
+| What changed | Implemented | Development draft: cited new/updated saved incidents, per-feed date range, explicit coverage gaps, stable revision bookmarks, and Windows-master browser relay. No model work or automatic marking on read. Execution and native layout verification deferred at the user's request. |
 | Range, monthly, and whole-feed Q&A | Validated | Friendly-name feed picker, visibly labeled responsive question-scope controls, one-click calendar-month or entire-downloaded-span scope, local downloaded/question-ready coverage preview that distinguishes complete local work from partial audio still needing acquisition, compact gap enforcement, date-diverse retrieved evidence, deterministic category/location/weekday/time-block pattern records with required E/I/P citations, backend-owned cited event dates/times (or an explicit archive offset when clock time is unavailable), deterministic withholding when any generated material statement lacks a valid inline citation, bounded multi-turn follow-ups, visible month/hotspot starters, and local Q&A audit persistence; New chat returns to scope selection instead of scrolling it away, and quantized Gemma 4 12B remains the default provider. |
 | Evidence clips and export | Validated | Exact hashed citation clip plus separately labeled surrounding context. |
 | External provider contracts | Validated | OpenAI Responses, compatible `/v1`, and saved-login Codex behind explicit transcript-sharing consent. |

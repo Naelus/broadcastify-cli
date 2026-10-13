@@ -1,5 +1,39 @@
 # Local Library and Review
 
+## What changed (development draft)
+
+The Review & Ask surface includes a **What changed** view for the selected
+retained feed and date range. It reads saved current-prompt incidents and their
+radio quotes without starting transcription, embeddings, or analysis. The
+default range is the last seven days; ranges are bounded to 366 days.
+
+Each record includes its archive date/time (or an explicit archive offset),
+category, priority, summary, location, and cited radio quote. **Review cited
+day and exact clips** opens the existing evidence review. Dates without saved
+analysis remain visible as coverage gaps; older indexed evidence remains
+readable while newer source files await processing. Neither an empty view nor
+a missing date proves that no activity occurred.
+
+Reading or refreshing does not mark records read. **Mark this batch caught
+up** acknowledges only the displayed batch, at most 100 records. Bookmarks
+use the incident fingerprint and displayed-content digest rather than row IDs
+or analysis timestamps. Identical reanalysis and confidence-only changes do
+not create new catch-up items. A changed title, summary, category, location,
+priority, timing, or cited quote can reappear as updated. Records changed after
+the view was loaded remain unread on a late acknowledgement; additional
+batches stay available. Removing an incident does not currently create a
+separate retraction notification.
+
+Bookmarks persist in the analysis database and are shared across the desktop
+and its trusted browser companion. TrueNAS followers read and acknowledge
+through the authenticated Windows-master relay. An unavailable master produces
+an explicit error; the follower does not start an independent model pipeline.
+Exact-clip availability still follows the existing retained-audio guards.
+
+This implementation has not yet passed execution or native-layout verification:
+tests and builds were deferred at the user's request to leave RAM/VRAM available
+for other work.
+
 ## Local Library
 
 The Library is a master/detail view over every retained feed-day. It shows:
@@ -199,6 +233,34 @@ Speaker labels are anonymous acoustic clusters. They provide conversation
 structure but do not identify officers, dispatchers, callers, or radio units.
 
 ## Durable UI state
+
+### Full catch-up visibility (development draft)
+
+The persistent status area distinguishes the complete retained work queue from
+the current worker step. It counts unfinished feed-days across all feeds and
+dates, with remaining source checks/downloads, combination, transcription,
+speaker labeling, import, incident analysis, and semantic indexing. Stage
+counts overlap when the same day needs several steps. Routine source checks
+of completed days, unavailable historical audio, and audio awaiting publication
+are separate; fresh source audio can add downstream work.
+
+The snapshot uses the existing resume planner. Imported days with missing
+embeddings remain incomplete, because saving a summary precedes search indexing.
+Resume reuses the saved summary and transcript and finishes missing embeddings;
+native and shared scheduled analysis no longer skip that remainder.
+Native status refreshes while Review is open without replacing the selected
+recording; the browser reads the Windows master's queue when configured as a
+follower and does not substitute its partial local archive if the master fails.
+
+An analysis-window counter and its measured pace describe only that day's
+extraction step. They are not a whole-queue percentage or finish estimate.
+The full queue currently reports why its finish time is unknown; durable
+end-to-end throughput measurement is still needed for a reliable overall ETA.
+Bounded model passes process the oldest unfinished retained date, independently
+of newest-first acquisition. Native scheduled model work selects one pending
+date rather than repeatedly traversing the whole historical range; remaining
+dates keep the saved schedule resumable. Download-only schedules skip that model
+pass. This draft has not been tested or built under the current resource hold.
 
 Native settings and last selections live under
 `AppData\Local\Broadcastify Desktop`. Settings are atomic and operation/crash

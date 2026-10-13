@@ -125,6 +125,27 @@ public sealed partial class MainWindow
         {
             _worker = new WorkerClient();
             _worker.SetLibraryDirectory(libraryRoot);
+            Environment.SetEnvironmentVariable("BROADCASTIFY_DESKTOP_PREVIEW", "1");
+            try
+            {
+                var blocked = false;
+                try
+                {
+                    await _worker.AnalyzeDayAsync(new AnalysisRequest
+                    {
+                        FeedId = "999992", ArchiveDate = "2026-01-01", OutputDirectory = libraryRoot,
+                    }, HandleWorkerMessage, CancellationToken.None);
+                }
+                catch (InvalidOperationException exception) when (exception.Message.Contains("Preview uses isolated sample data"))
+                {
+                    blocked = true;
+                }
+                Require(blocked, "Preview allowed a model worker to start.");
+            }
+            finally
+            {
+                Environment.SetEnvironmentVariable("BROADCASTIFY_DESKTOP_PREVIEW", null);
+            }
             _pipelineCancellation = pipeline;
             await RefreshVisibleStatusAsync();
             Require(LibraryAttentionCountText.Text == "0" && _libraryDays.Count == 0,
@@ -152,6 +173,23 @@ public sealed partial class MainWindow
             Require(ReferenceEquals(_libraryMediaPlayer.Source, playbackSource)
                     && ReferenceEquals(_selectedLibraryDay, selectedDay),
                 "A background refresh interrupted the selected recording.");
+            ShowPage("review");
+            _lastWorkflowRefreshUtc = DateTime.MinValue;
+            await RefreshVisibleStatusAsync();
+            Require(WorkflowSummaryText.Text.Contains("1 feed-days unfinished")
+                    && ReferenceEquals(_libraryMediaPlayer.Source, playbackSource)
+                    && ReferenceEquals(_selectedLibraryDay, selectedDay),
+                "Review did not refresh the whole queue without replacing playback selection.");
+            // Exercise the real event drain: completing acquisition must not
+            // leave a full bar when a day's analysis starts.
+            using (var progress = JsonDocument.Parse("{\"type\":\"complete\"}")) HandleWorkerMessage(progress.RootElement);
+            DrainWorkerMessages();
+            using (var progress = JsonDocument.Parse("{\"type\":\"progress\",\"stage\":\"analysis_windows\",\"current\":1,\"total\":12,\"elapsed_seconds\":30,\"estimated_remaining_seconds\":null}")) HandleWorkerMessage(progress.RootElement);
+            DrainWorkerMessages();
+            Require(JobProgress.Value == 1 && JobProgress.Maximum == 12
+                    && WorkflowSummaryText.Text.Contains("1 feed-days unfinished"),
+                "Current-day progress replaced whole-queue progress or inherited a completed bar.");
+            ShowPage("library");
             _libraryMediaPlayer.Source = null;
             var emptyDirectory = Path.Combine(libraryRoot, "999992", "20260102");
             Directory.CreateDirectory(emptyDirectory);

@@ -15,7 +15,7 @@ from typing import Any, Iterator
 
 import pytest
 
-from broadcastify_cli.analysis import PROMPT_VERSION
+from broadcastify_cli.analysis import DEFAULT_EMBEDDING_MODEL, PROMPT_VERSION
 from broadcastify_cli.lan_node import create_lan_node_server
 from broadcastify_cli.lan_sync import LanArchiveCatalog, LanArchiveSyncClient
 from broadcastify_cli.models import JobRequest
@@ -195,7 +195,49 @@ def _retained_analyzed_day(
         store.save_feed_catalog(
             [{"feed_id": feed_id, "name": f"Offline feed {feed_id}"}]
         )
+        store.save_embeddings("passage", [
+            (p["id"], hashlib.sha256(f"passage: {p['text']}".encode()).hexdigest(), 1, b"\0" * 4)
+            for p in store.passages_missing_embeddings(DEFAULT_EMBEDDING_MODEL)
+        ], DEFAULT_EMBEDDING_MODEL)
     return audio
+
+
+def test_activity_acknowledges_only_displayed_revisions_across_restarts(tmp_path: Path) -> None:
+    library = tmp_path / "archives"
+    database = library / "broadcastify-analysis.sqlite3"
+    first, second = date(2026, 7, 11), date(2026, 7, 12)
+    scope = {"feed_id": "90001", "start_date": first.isoformat(), "end_date": second.isoformat()}
+
+    def seed(day: date) -> None:
+        _retained_analyzed_day(library, database, "90001", day, location="Main and First", start_seconds=10)
+
+    def report() -> dict[str, Any]:
+        return _run_worker(tmp_path, library, database, "report-activity",
+            "--feed-id", "90001", "--start-date", first.isoformat(), "--end-date", second.isoformat())[-1]["report"]
+
+    def acknowledge(items: list[dict[str, Any]]) -> int:
+        return _run_worker(tmp_path, library, database, "mark-activity",
+            payload={**scope, "items": items})[-1]["result"]["acknowledged_count"]
+
+    seed(first)
+    initial = report()
+    assert initial["coverage"]["pending_dates"] == [second.isoformat()]
+    assert len(initial["items"]) == 1
+    assert initial["items"][0]["evidence_quote"]
+    assert acknowledge(initial["items"]) == 1
+    assert report()["items"] == []
+    # Replacing identical incidents changes IDs, not what the reader has seen.
+    seed(first)
+    assert report()["items"] == []
+    with AnalysisStore(database) as store, store.transaction():
+        store.connection.execute("UPDATE incidents SET summary='Dispatch updated the reported location.'")
+    updated = report()
+    assert updated["items"][0]["change_kind"] == "updated"
+    assert acknowledge(initial["items"]) == 0  # stale clicks cannot hide updates
+    seed(second)  # an arrival after the displayed batch must remain unread
+    assert acknowledge(updated["items"]) == 1
+    remaining = report()["items"]
+    assert len(remaining) == 1 and remaining[0]["archive_date"] == second.isoformat()
 
 
 def _audio_only_day(

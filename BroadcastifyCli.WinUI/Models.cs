@@ -1170,10 +1170,10 @@ public sealed record LibraryFeedCoverage
     public string TargetSummary => CatchUpSaved
         ? CatchUpThroughCurrent
             ? $"Saved catch-up {CatchUpStartDate} through today ({TargetEndDate})"
-                + (Scheduled ? " · daily schedule also active" : "")
+                + (Scheduled ? " · daily schedule also enabled" : "")
                 + $" · {RetainedDayCount}/{TargetDayCount} target days retained"
             : $"Saved catch-up {CatchUpStartDate} through {CatchUpEndDate}"
-            + (Scheduled ? " · daily schedule also active" : "")
+            + (Scheduled ? " · daily schedule also enabled" : "")
             + $" · {RetainedDayCount}/{TargetDayCount} target days retained"
         : Scheduled
             ? $"Scheduled {TargetStartDate} through {TargetEndDate} · {RetainedDayCount}/{TargetDayCount} days retained"
@@ -1240,6 +1240,9 @@ internal sealed record LibrarySummary
 
 internal sealed record LibraryResponse
 {
+    [JsonPropertyName("workflow")]
+    public LibraryWorkflow? Workflow { get; init; }
+
     [JsonPropertyName("days")]
     public List<LibraryDay> Days { get; init; } = [];
 
@@ -1248,6 +1251,36 @@ internal sealed record LibraryResponse
 
     [JsonPropertyName("summary")]
     public LibrarySummary Summary { get; init; } = new();
+}
+
+internal sealed record LibraryWorkflow
+{
+    [JsonPropertyName("pending_count")]
+    public int PendingCount { get; init; }
+    [JsonPropertyName("ready_count")]
+    public int ReadyCount { get; init; }
+    [JsonPropertyName("source_check_count")]
+    public int SourceCheckCount { get; init; }
+    [JsonPropertyName("source_unavailable_count")]
+    public int SourceUnavailableCount { get; init; }
+    [JsonPropertyName("awaiting_source_count")]
+    public int AwaitingSourceCount { get; init; }
+    [JsonPropertyName("stage_counts")]
+    public Dictionary<string, int> StageCounts { get; init; } = [];
+    [JsonPropertyName("finish_detail")]
+    public string FinishDetail { get; init; } = "";
+    [JsonPropertyName("feeds")]
+    public List<WorkflowFeed> Feeds { get; init; } = [];
+}
+
+internal sealed record WorkflowFeed
+{
+    [JsonPropertyName("feed_name")]
+    public string FeedName { get; init; } = "";
+    [JsonPropertyName("pending_count")]
+    public int PendingCount { get; init; }
+    [JsonPropertyName("pending_ranges")]
+    public List<string> PendingRanges { get; init; } = [];
 }
 
 internal sealed record LibraryResumePlan
@@ -1537,6 +1570,9 @@ public sealed record AnalysisDay
     [JsonPropertyName("transcript_import_required")]
     public bool TranscriptImportRequired { get; init; }
 
+    [JsonPropertyName("search_index_required")]
+    public bool SearchIndexRequired { get; init; }
+
     [JsonPropertyName("has_diarization")]
     public int HasDiarizationValue { get; init; }
 
@@ -1556,6 +1592,27 @@ public sealed record AnalysisDay
 
 public sealed record IncidentRecord
 {
+    [JsonPropertyName("feed_id")]
+    public string FeedId { get; init; } = "";
+
+    [JsonPropertyName("archive_date")]
+    public string ArchiveDate { get; init; } = "";
+
+    [JsonPropertyName("fingerprint")]
+    public string Fingerprint { get; init; } = "";
+
+    [JsonPropertyName("content_sha256")]
+    public string ContentSha256 { get; init; } = "";
+
+    [JsonPropertyName("change_kind")]
+    public string ChangeKind { get; init; } = "";
+
+    [JsonPropertyName("evidence_update_pending")]
+    public bool EvidenceUpdatePending { get; init; }
+
+    public string ActivityLabel => $"{ChangeKind} · {ArchiveDate} · feed {FeedId}"
+        + (EvidenceUpdatePending ? " · evidence refresh pending" : "");
+
     [JsonPropertyName("id")]
     public long Id { get; init; }
 
@@ -1597,6 +1654,45 @@ public sealed record IncidentRecord
     public string EvidenceQuoteDisplay => string.IsNullOrWhiteSpace(EvidenceQuote)
         ? ""
         : $"Cited radio: “{EvidenceQuote}”";
+}
+
+public sealed record ActivityCoverage
+{
+    [JsonPropertyName("total_days")]
+    public int TotalDays { get; init; }
+    [JsonPropertyName("analyzed_days")]
+    public int AnalyzedDays { get; init; }
+    [JsonPropertyName("pending_dates")]
+    public List<string> PendingDates { get; init; } = [];
+    [JsonPropertyName("updating_dates")]
+    public List<string> UpdatingDates { get; init; } = [];
+}
+
+public sealed record ActivityReport
+{
+    [JsonPropertyName("feed_id")]
+    public string FeedId { get; init; } = "";
+    [JsonPropertyName("start_date")]
+    public string StartDate { get; init; } = "";
+    [JsonPropertyName("end_date")]
+    public string EndDate { get; init; } = "";
+    [JsonPropertyName("items")]
+    public List<IncidentRecord> Items { get; init; } = [];
+    [JsonPropertyName("remaining_count")]
+    public int RemainingCount { get; init; }
+    [JsonPropertyName("coverage")]
+    public ActivityCoverage Coverage { get; init; } = new();
+
+    public string CoverageSummary => $"Feed {FeedId} · {StartDate} through {EndDate}. "
+        + $"Showing {Items.Count} of {RemainingCount} unread new or updated records. "
+        + $"{Coverage.AnalyzedDays}/{Coverage.TotalDays} days have saved analysis. "
+        + (Coverage.PendingDates.Count > 0
+            ? $"Dates without current saved analysis: {string.Join(", ", Coverage.PendingDates)}. "
+            : "")
+        + (Coverage.UpdatingDates.Count > 0
+            ? $"Saved evidence remains readable during updates: {string.Join(", ", Coverage.UpdatingDates)}. "
+            : "")
+        + "Missing coverage does not mean no activity occurred.";
 }
 
 public sealed record IncidentClip

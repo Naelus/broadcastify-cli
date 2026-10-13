@@ -116,7 +116,7 @@ def test_cached_jobs_load_no_models_and_process_only_changed_days(
     options = {"model_name": "tiny", "asr_engine": "openvino", "device": "cpu", "diarize": False}
     seed = LocalTranscriber(**options)
     sources: list[Path] = []
-    dates = [date(2026, 7, 1), date(2026, 7, 2)]
+    dates = [date(2026, 7, 1), date(2026, 7, 2), date(2026, 7, 3)]
     for day in dates:
         directory = tmp_path / "90001" / day.strftime("%Y%m%d")
         directory.mkdir(parents=True)
@@ -133,7 +133,7 @@ def test_cached_jobs_load_no_models_and_process_only_changed_days(
         raise AssertionError("A retained-only pass must not acquire audio")
 
     request = JobRequest(
-        feed_id="90001", start_date=dates[0], end_date=dates[1], output_dir=tmp_path,
+        feed_id="90001", start_date=dates[0], end_date=dates[-1], output_dir=tmp_path,
         model="tiny", asr_engine="openvino", device="cpu", transcribe=True,
         local_only=True, max_processing_days=1,
     )
@@ -153,14 +153,18 @@ def test_cached_jobs_load_no_models_and_process_only_changed_days(
             os.utime(source, ns=(original.st_atime_ns, original.st_mtime_ns))
         changed = runner.run()
         assert len(loaded) == 1
-        assert transcribed == [sources[1]]
-        assert changed["pending_processing_days"] == [dates[0].isoformat()]
+        assert transcribed == [sources[0]]
+        assert changed["pending_processing_days"] == [day.isoformat() for day in dates[1:]]
+        # New audio on the most recent day must not displace the middle day.
+        sources[-1].write_bytes(b"audio-new")
         resumed = runner.run()
         assert len(loaded) == 2
-        assert transcribed == [sources[1], sources[0]]
-        assert resumed["pending_processing_days"] == []
+        assert transcribed == sources[:2]
+        assert resumed["pending_processing_days"] == [dates[-1].isoformat()]
+        assert runner.run()["pending_processing_days"] == []
+        assert transcribed == sources
         runner.run()
-        assert len(loaded) == 2
+        assert len(loaded) == 3
         assert LocalTranscriber(**options, load_models=False).current_transcripts(sources) == [
             source.parent / "transcripts" / f"{source.stem}.json" for source in sources
         ]
@@ -235,13 +239,16 @@ def test_scheduled_processing_limit_queues_remaining_local_days(
     ).run()
 
     assert [value for value in calls if value.startswith("transcribe:")] == [
-        "transcribe:20260712"
+        "transcribe:20260710"
     ]
     assert result["pending_processing_days"] == [
         "2026-07-11",
-        "2026-07-10",
+        "2026-07-12",
     ]
     assert result["missing_days"] == []
+    assert [value for value in calls if value.startswith("download:")] == [
+        "download:2026-07-12", "download:2026-07-11", "download:2026-07-10",
+    ]
     assert all(calls.index(value) < calls.index("load") for value in calls if value.startswith("download:"))
     assert any(
         "return to archive acquisition" in str(event.get("message") or "")

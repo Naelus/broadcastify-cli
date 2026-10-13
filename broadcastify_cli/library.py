@@ -10,7 +10,7 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
-from .analysis import PROMPT_VERSION
+from .analysis import DEFAULT_EMBEDDING_MODEL, PROMPT_VERSION
 from .archive_cache import (
     ARCHIVE_CACHE_COMPLETION_FILENAME,
     ARCHIVE_CACHE_COMPLETION_SCHEMA_VERSION,
@@ -542,6 +542,100 @@ def build_library_resume_plan(
         "scope_through_current": bool(
             has_requested_range and requested_through_current
         ),
+    }
+
+
+def build_library_workflow(
+    days: list[dict[str, Any]],
+    schedules: list[dict[str, Any]] | None = None,
+    catchups: list[dict[str, Any]] | None = None,
+    *,
+    today: date | None = None,
+) -> dict[str, Any]:
+    """Describe the entire resume queue from the same retained snapshot.
+
+    Stage counts overlap: a day awaiting audio still needs downstream work.
+    Keep recurring checks of already finished audio separate from unfinished
+    processing, so an enabled schedule does not imply catch-up never finishes.
+    """
+    plan = build_library_resume_plan(days, {}, schedules, catchups, today=today)
+    stages = (
+        ("download", "source check/download"),
+        ("combine", "combine"),
+        ("transcribe", "transcribe"),
+        ("diarize", "speaker labels"),
+        ("import", "transcript import"),
+        ("analyze", "analysis"),
+        ("index", "search index"),
+    )
+    counts = {key: 0 for key, _ in stages}
+    pending = []
+    checks = []
+    queued = {(day["feed_id"], day["archive_date"]): day for day in plan["days"]}
+    for day in queued.values():
+        if not _pending_processing(day):
+            checks.append(day)
+            continue
+        remaining = {
+            "download": bool(day.get("needs_network")),
+            "combine": not day.get("has_combined"),
+            "transcribe": not day.get("has_transcript"),
+            "diarize": not day.get("has_diarization"),
+            "import": not day.get("has_imported_transcript"),
+            "analyze": not day.get("has_analysis"),
+            "index": not day.get("has_search_index", False),
+        }
+        for key in counts:
+            counts[key] += int(bool(remaining[key]))
+        pending.append({
+            "feed_id": day["feed_id"],
+            "archive_date": day["archive_date"],
+            "remaining_stages": [label for key, label in stages if remaining[key]],
+        })
+    feeds = []
+    for feed in plan["feeds"]:
+        feed_pending = [day for day in pending if day["feed_id"] == feed["feed_id"]]
+        feeds.append({
+            "feed_id": feed["feed_id"],
+            "feed_name": feed["feed_name"],
+            "pending_count": len(feed_pending),
+            "pending_ranges": compact_archive_date_ranges(
+                [day["archive_date"] for day in feed_pending]
+            ),
+        })
+    scheduled = {str(value.get("feed_id")): value for value in schedules or []}
+    processing_paused = bool(pending) and all(
+        day["feed_id"] in scheduled
+        and not scheduled[day["feed_id"]].get("analyze")
+        and not (scheduled[day["feed_id"]].get("job") or {}).get("transcribe")
+        for day in pending
+    )
+    if processing_paused:
+        finish_detail = "Model processing is paused. Downloads can continue; unfinished processing needs to be resumed."
+    elif counts["download"]:
+        finish_detail = (
+            "Finish time unknown: source checks/downloads still determine how much "
+            "audio remains; account quota may add waiting."
+        )
+    elif pending:
+        finish_detail = (
+            "Finish time unknown: no measured end-to-end rate is available for "
+            "the remaining work. One day's analysis windows cannot estimate this queue."
+        )
+    else:
+        finish_detail = "All currently available queued audio has finished processing and search indexing."
+    return {
+        "observed_at": datetime.now(timezone.utc).isoformat(),
+        "pending_count": len(pending),
+        "ready_count": sum(bool(day.get("is_complete")) for day in days),
+        "source_check_count": len(checks),
+        "source_unavailable_count": sum(bool(day.get("source_unavailable")) for day in days),
+        "awaiting_source_count": sum(bool(day.get("awaiting_source")) for day in days),
+        "stage_counts": counts,
+        "days": pending,
+        "feeds": feeds,
+        "finish_detail": finish_detail,
+        "scope_detail": "All feeds and queued dates; new source audio can add downstream work.",
     }
 
 
@@ -1218,6 +1312,11 @@ def _state_for_day(
         == str(stored.get("transcript_sha256") or "")
     )
     has_searchable_transcript, has_searchable_analysis = indexed_evidence_status(stored)
+    has_search_index = bool(
+        stored_matches_transcript and stored is not None
+        and stored.get("indexed_passage_count") is not None
+        and stored.get("indexed_passage_count") == stored.get("passage_count")
+    )
     evidence_update_pending = has_searchable_transcript and not (
         has_transcript and stored_matches_transcript
     )
@@ -1332,6 +1431,11 @@ def _state_for_day(
         action = "continue_local"
         status = "Speakers ready"
         status_detail = "Diarized transcript is ready for local analysis"
+    elif not has_search_index:
+        next_step = "Finish semantic search indexing"
+        action = "continue_local"
+        status = "Search index incomplete"
+        status_detail = "Saved transcript and analysis will be reused; only missing search embeddings need work"
     else:
         next_step = "Open review"
         action = "open_review"
@@ -1339,7 +1443,7 @@ def _state_for_day(
         status_detail = f"{incident_count} extracted incident{'s' if incident_count != 1 else ''}"
 
     completed_stages = sum(
-        [bool(raw_files or has_combined), has_combined, has_transcript, has_diarization, has_analysis]
+        [bool(raw_files or has_combined), has_combined, has_transcript, has_diarization, has_analysis and has_search_index]
     )
     stage_parts = [
         f"Audio {len(raw_files)} segment{'s' if len(raw_files) != 1 else ''}"
@@ -1386,6 +1490,7 @@ def _state_for_day(
         "has_transcript": has_transcript,
         "has_stale_transcript": has_stale_transcript,
         "has_imported_transcript": stored_matches_transcript,
+        "has_search_index": has_search_index,
         "has_searchable_transcript": has_searchable_transcript,
         "has_searchable_analysis": has_searchable_analysis,
         "indexed_segment_count": int(stored.get("segment_count") or 0) if has_searchable_transcript and stored else 0,
@@ -1415,7 +1520,7 @@ def _state_for_day(
         "next_step": next_step,
         "primary_action": action,
         "can_open_review": has_searchable_analysis,
-        "is_complete": has_diarization and has_analysis,
+        "is_complete": has_diarization and has_analysis and has_search_index,
         "source_unavailable": source_unavailable,
         "awaiting_source": awaiting_source,
         "needs_network": (
@@ -1452,6 +1557,7 @@ def scan_local_library(
             (str(value["feed_id"]), date.fromisoformat(str(value["archive_date"]))): value
             for value in store.list_days(
                 feed_id, start_date=start_date, end_date=end_date,
+                embedding_model=DEFAULT_EMBEDDING_MODEL,
             )
         }
         feed_names = _friendly_feed_names(store)

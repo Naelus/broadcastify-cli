@@ -6,6 +6,7 @@ namespace BroadcastifyCli.WinUI;
 
 internal sealed class WorkerClient
 {
+    internal static bool IsPreview => Environment.GetEnvironmentVariable("BROADCASTIFY_DESKTOP_PREVIEW") == "1";
     private static readonly Encoding Utf8WithoutBom =
         new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
 
@@ -732,6 +733,28 @@ internal sealed class WorkerClient
         return report;
     }
 
+    public async Task<ActivityReport?> GetActivityReportAsync(
+        string feedId, string startDate, string endDate, CancellationToken cancellationToken)
+    {
+        ActivityReport? report = null;
+        await RunWorkerAsync(
+            ["-m", "broadcastify_cli.worker", "report-activity",
+                "--feed-id", feedId, "--start-date", startDate, "--end-date", endDate],
+            null,
+            message =>
+            {
+                if (message.TryGetProperty("type", out var type) && type.GetString() == "activity_report")
+                {
+                    report = message.GetProperty("report").Deserialize<ActivityReport>(JsonOptions);
+                }
+            }, cancellationToken);
+        return report;
+    }
+
+    public Task MarkActivitySeenAsync(ActivityReport report, CancellationToken cancellationToken) =>
+        RunWorkerAsync(["-m", "broadcastify_cli.worker", "mark-activity"],
+            JsonSerializer.Serialize(report, JsonOptions), _ => { }, cancellationToken);
+
     public async Task<IncidentClip?> GetIncidentClipAsync(
         long incidentId,
         bool includeSurroundingContext,
@@ -1429,6 +1452,16 @@ internal sealed class WorkerClient
         bool redirectStreams = true,
         int? coordinatorPort = null)
     {
+        if (IsPreview)
+        {
+            if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(AppSettingsStore.TestDataRootEnvironment))
+                || arguments.Count < 3 || arguments[1] != "broadcastify_cli.worker"
+                || !new[] { "library", "analysis-days", "report-day", "report-activity",
+                    "mark-activity", "incident-clip", "question-coverage", "library-resume-plan" }.Contains(arguments[2]))
+            {
+                throw new InvalidOperationException("Preview uses isolated sample data. Archive requests, model jobs, and service changes are disabled.");
+            }
+        }
         var startInfo = new ProcessStartInfo
         {
             FileName = _python.FileName,

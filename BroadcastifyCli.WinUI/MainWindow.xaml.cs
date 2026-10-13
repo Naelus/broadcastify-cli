@@ -59,6 +59,10 @@ public sealed partial class MainWindow : Window
     private int _analysisRefreshVersion;
     private bool _preparingQuestion;
     private readonly ObservableCollection<IncidentRecord> _visibleIncidents = [];
+    private readonly ObservableCollection<IncidentRecord> _activityIncidents = [];
+    private ActivityReport? _activityReport;
+    private int _activityVersion;
+    private bool _activityBusy;
     private readonly ObservableCollection<LibraryDay> _libraryDays = [];
     private readonly ObservableCollection<LibraryDay> _visibleLibraryDays = [];
     private readonly ObservableCollection<LibraryFeedCoverage> _libraryFeeds = [];
@@ -93,7 +97,10 @@ public sealed partial class MainWindow : Window
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _systemActivityTimer;
     private bool _checkingFeedSchedule;
     private bool _refreshingSystemActivity;
+    private JsonElement? _timedProgress;
+    private readonly Stopwatch _progressAge = new();
     private bool _refreshingLibrary;
+    private DateTime _lastWorkflowRefreshUtc = DateTime.MinValue;
     private string _lastAreaProfileName = "";
     private string _lastReviewFeedId = "";
     private string _lastReviewDate = "";
@@ -210,6 +217,7 @@ public sealed partial class MainWindow : Window
         AnalysisFeedCombo.ItemsSource = _libraryFeeds;
         ArchiveChatList.ItemsSource = _archiveChatMessages;
         IncidentList.ItemsSource = _visibleIncidents;
+        ActivityIncidentList.ItemsSource = _activityIncidents;
         LibraryList.ItemsSource = _visibleLibraryDays;
         LibraryFeedCoverageList.ItemsSource = _libraryFeeds;
         HardwareProfileList.ItemsSource = _hardwareProfiles;
@@ -244,6 +252,8 @@ public sealed partial class MainWindow : Window
         QuestionEndDatePicker.Date = today;
         QuestionMonthPicker.Date = today;
         WeekEndingPicker.Date = today;
+        ActivityStartPicker.Date = today.AddDays(-6);
+        ActivityEndPicker.Date = today;
         AreaStartDatePicker.Date = today;
         AreaEndDatePicker.Date = today;
         TranscribeCheckBox.Checked += Transcription_Changed;
@@ -265,6 +275,13 @@ public sealed partial class MainWindow : Window
         {
             _worker = new WorkerClient(startupSettings.PythonRuntimePath);
             _worker.SetLibraryDirectory(OutputFolderBox.Text);
+            if (WorkerClient.IsPreview)
+            {
+                PreviewModeText.Visibility = Visibility.Visible;
+                _ = InitializePreviewAsync();
+                RefreshAboutPage();
+                return;
+            }
             PersistUserSettings(logFailure: true);
             AppendLog($"Worker: {_worker.PythonDisplayName}");
             PythonRuntimeStatusText.Text = _worker.PythonRuntimeWarning
@@ -292,6 +309,14 @@ public sealed partial class MainWindow : Window
             RefreshLibraryButton.IsEnabled = false;
         }
         RefreshAboutPage();
+    }
+
+    private async Task InitializePreviewAsync()
+    {
+        await RefreshLibraryAsync();
+        await RefreshAnalysisDaysAsync();
+        ConfigureSystemActivityTimer();
+        StatusText.Text = "Preview ready — browse Library or Review / What changed using the sample feeds.";
     }
 
     private async Task ConfigureLanSharingAsync()
@@ -763,7 +788,11 @@ public sealed partial class MainWindow : Window
         _systemActivityTimer = DispatcherQueue.CreateTimer();
         _systemActivityTimer.Interval = TimeSpan.FromSeconds(10);
         _systemActivityTimer.IsRepeating = true;
-        _systemActivityTimer.Tick += async (_, _) => await RefreshVisibleStatusAsync();
+        _systemActivityTimer.Tick += async (_, _) =>
+        {
+            UpdateProgressTiming();
+            await RefreshVisibleStatusAsync();
+        };
         _systemActivityTimer.Start();
     }
 
@@ -777,10 +806,16 @@ public sealed partial class MainWindow : Window
         {
             await RefreshSystemActivityAsync();
         }
-        else if (LibraryPage.Visibility == Visibility.Visible)
+        if (LibraryPage.Visibility == Visibility.Visible)
         {
             // Read retained progress during long jobs, not just at job completion.
             await RefreshLibraryAsync(background: true);
+        }
+        else if (DateTime.UtcNow - _lastWorkflowRefreshUtc >= TimeSpan.FromSeconds(30))
+        {
+            // Reuse the library snapshot, without rebuilding hidden lists or
+            // interrupting playback. Catch-up status matters on Review too.
+            await RefreshLibraryAsync(background: true, workflowOnly: true);
         }
     }
 
@@ -860,8 +895,11 @@ public sealed partial class MainWindow : Window
             }
 
             var processing = status.Activity.Processing;
+            var desktopWorking = _pipelineCancellation is not null || _exclusiveJobRunning;
             SystemProcessingText.Text = processing.Count == 0
-                ? "No coordinated model/day lease is active."
+                ? desktopWorking
+                    ? $"Desktop task: {StatusText.Text}"
+                    : "No local model task is reported."
                 : string.Join(
                     Environment.NewLine,
                     processing.Select(value =>
@@ -919,7 +957,9 @@ public sealed partial class MainWindow : Window
                     ? $"{processing.Count} model/day claim{(processing.Count == 1 ? " is" : "s are")} active"
                     : activeSchedule is not null
                         ? $"Feed {activeSchedule.FeedId} {activeSchedule.Phase} is active"
-                    : "Windows is between active jobs";
+                    : desktopWorking
+                        ? "Windows is working in this app"
+                        : "Windows is between active jobs";
             SystemActivityInfoBar.Severity = status.Connected
                 ? acquisition is not null
                     ? InfoBarSeverity.Success
@@ -4220,7 +4260,7 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private async Task RefreshLibraryAsync(bool background = false)
+    private async Task RefreshLibraryAsync(bool background = false, bool workflowOnly = false)
     {
         if (_worker is null || _windowClosed || _libraryMutationBusy || _refreshingLibrary)
         {
@@ -4237,6 +4277,12 @@ public sealed partial class MainWindow : Window
                 cancellation.Token);
             if (_windowClosed || _libraryMutationBusy
                 || !string.Equals(outputDirectory, PersistedOutputDirectory(), StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+            _lastWorkflowRefreshUtc = DateTime.UtcNow;
+            ShowWorkflow(result.Workflow);
+            if (workflowOnly)
             {
                 return;
             }
@@ -4273,6 +4319,13 @@ public sealed partial class MainWindow : Window
         catch (Exception exception)
         {
             AppendLog($"Library: {exception.Message}");
+            WorkflowFinishText.Text = "Queue refresh failed; displayed counts may be out of date. "
+                + (_lastWorkflowRefreshUtc == DateTime.MinValue ? "No snapshot yet."
+                    : $"Last updated {_lastWorkflowRefreshUtc.ToLocalTime():T}.");
+            if (workflowOnly)
+            {
+                return;
+            }
             LibraryEmptyText.Text = $"The local library could not be loaded: {exception.Message}";
             LibraryEmptyText.Visibility = Visibility.Visible;
         }
@@ -4281,6 +4334,33 @@ public sealed partial class MainWindow : Window
             _refreshingLibrary = false;
             UpdateCommandAvailability();
         }
+    }
+
+    private void ShowWorkflow(LibraryWorkflow? workflow)
+    {
+        if (workflow is null)
+        {
+            WorkflowSummaryText.Text = "Full catch-up status unavailable from this worker";
+            WorkflowStagesText.Text = "";
+            WorkflowFinishText.Text = "The current-step counter does not describe the full queue.";
+            return;
+        }
+        WorkflowSummaryText.Text = $"Whole catch-up · {workflow.PendingCount:N0} feed-days unfinished · "
+            + $"{workflow.Feeds.Count:N0} feeds · {workflow.ReadyCount:N0} retained days ready to review";
+        var labels = new (string Key, string Label)[] {
+            ("download", "source check/download"), ("combine", "combine"),
+            ("transcribe", "transcribe"), ("diarize", "speaker labels"),
+            ("import", "import"), ("analyze", "analysis"), ("index", "search index") };
+        WorkflowStagesText.Text = "Remaining: " + string.Join(" · ", labels.Select(stage =>
+            $"{workflow.StageCounts.GetValueOrDefault(stage.Key):N0} {stage.Label}"))
+            + ". Counts overlap when a day needs multiple steps.";
+        WorkflowFinishText.Text = workflow.FinishDetail
+            + $" Separate source monitoring: {workflow.SourceCheckCount:N0} checks due; "
+            + $"{workflow.SourceUnavailableCount:N0} unavailable, {workflow.AwaitingSourceCount:N0} awaiting publication. "
+            + $"New source audio can add work. Updated {DateTime.Now:T}.";
+        ToolTipService.SetToolTip(WorkflowSummaryText, string.Join("\n", workflow.Feeds.Select(feed =>
+            $"{feed.FeedName}: {feed.PendingCount} unfinished"
+            + (feed.PendingRanges.Count > 0 ? $" ({string.Join(", ", feed.PendingRanges)})" : ""))));
     }
 
     private void LibraryFilter_Changed(AutoSuggestBox sender, AutoSuggestBoxTextChangedEventArgs args) =>
@@ -6642,6 +6722,32 @@ public sealed partial class MainWindow : Window
             processingProfileId ??= profileIds[0];
             // Give all saved queues an acquisition turn before model work.
             acquisitionLimited |= await AcquireQueuedLibraryAsync(cancellationToken);
+            if (!processingJob.Transcribe && !schedule.Analyze)
+            {
+                // Downloads-only mode must not traverse the entire retained
+                // range again as a local processing job.
+                return (lastResult, acquisitionLimited, "", "Downloads-only pass finished; model processing is paused.");
+            }
+            var retainedPlan = await _worker.GetLibraryResumePlanAsync(
+                PersistedOutputDirectory(), cancellationToken);
+            var nextLocalDay = retainedPlan.Days
+                .Where(day => day.FeedId == schedule.FeedId && day.NeedsLocalProcessing
+                    && string.CompareOrdinal(day.ArchiveDate, processingJob.StartDate) >= 0
+                    && string.CompareOrdinal(day.ArchiveDate, processingJob.EndDate) <= 0)
+                .OrderBy(day => day.ArchiveDate, StringComparer.Ordinal)
+                .FirstOrDefault();
+            if (nextLocalDay is null)
+            {
+                return (lastResult, acquisitionLimited, "", "No retained model work is ready; acquisition will resume when eligible.");
+            }
+            // A bounded pass completes one unfinished day. Previously every
+            // pass combined/scanned the full historical range before analyzing
+            // its newest unfinished day, allowing growing days to starve it.
+            processingJob = processingJob with
+            {
+                StartDate = nextLocalDay.ArchiveDate,
+                EndDate = nextLocalDay.ArchiveDate,
+            };
             AppendLog(
                 "Processing retained audio locally; a separate sequential acquisition pass "
                 + "will keep checking available account allowance while model work continues.");
@@ -6654,6 +6760,23 @@ public sealed partial class MainWindow : Window
                     cancellationToken,
                     schedule.Analyze,
                     processingProfileId);
+                if (lastResult is not null)
+                {
+                    // Narrowing the worker range must not finalize the saved
+                    // schedule while other retained days still need a turn.
+                    var remainingPlan = await _worker.GetLibraryResumePlanAsync(
+                        PersistedOutputDirectory(), cancellationToken);
+                    foreach (var remaining in remainingPlan.Days.Where(day =>
+                        day.FeedId == schedule.FeedId && day.NeedsLocalProcessing
+                        && string.CompareOrdinal(day.ArchiveDate, schedule.Job.StartDate) >= 0
+                        && string.CompareOrdinal(day.ArchiveDate, schedule.Job.EndDate) <= 0))
+                    {
+                        if (!lastResult.PendingProcessingDays.Contains(remaining.ArchiveDate))
+                        {
+                            lastResult.PendingProcessingDays.Add(remaining.ArchiveDate);
+                        }
+                    }
+                }
             }
             finally
             {
@@ -6999,6 +7122,7 @@ public sealed partial class MainWindow : Window
                 var currentAnalysisDates = savedAnalysisDays
                     .Where(day => day.AnalysisCurrent
                         && !day.AnalysisUpdateRequired
+                        && !day.SearchIndexRequired
                         && !day.TranscriptImportRequired)
                     .Select(day => day.ArchiveDate)
                     .ToHashSet(StringComparer.Ordinal);
@@ -7022,6 +7146,8 @@ public sealed partial class MainWindow : Window
         }
         if (jobResult is not null && request.MaxProcessingDays is > 0)
         {
+            requiredTranscriptDays = requiredTranscriptDays
+                .OrderBy(day => day.ArchiveDate, StringComparer.Ordinal).ToList();
             var limit = request.MaxProcessingDays.Value;
             var deferredAnalysis = requiredTranscriptDays.Skip(limit)
                 .Select(day => day.ArchiveDate).ToList();
@@ -7322,6 +7448,10 @@ public sealed partial class MainWindow : Window
         }
         var feedId = AnalysisFeedBox.Text.Trim();
         var refreshVersion = ++_analysisRefreshVersion;
+        if (_activityReport is not null && _activityReport.FeedId != feedId)
+        {
+            ResetActivityView();
+        }
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         var days = await _worker.ListAnalysisDaysAsync(
             string.IsNullOrWhiteSpace(feedId) ? null : feedId, cancellation.Token);
@@ -8133,6 +8263,107 @@ public sealed partial class MainWindow : Window
         QuestionBox.Focus(FocusState.Programmatic);
     }
 
+    private void ResetActivityView()
+    {
+        ++_activityVersion;
+        _activityReport = null;
+        _activityIncidents.Clear();
+        if (MarkActivityButton is not null)
+        {
+            MarkActivityButton.IsEnabled = false;
+            ActivityCoverageText.Text = "Choose a feed and refresh. Missing analysis is not evidence of no activity.";
+        }
+    }
+
+    private void ActivityScope_Changed(object sender, DatePickerValueChangedEventArgs e) => ResetActivityView();
+
+    private async void RefreshActivity_Click(object sender, RoutedEventArgs e) => await RefreshActivityAsync();
+
+    private async Task RefreshActivityAsync()
+    {
+        if (_worker is null || _activityBusy) return;
+        var feedId = AnalysisFeedBox.Text.Trim();
+        if (string.IsNullOrWhiteSpace(feedId))
+        {
+            await ShowMessageAsync("Feed required", "Choose a retained feed on the left.");
+            return;
+        }
+        var start = ActivityStartPicker.Date.Date.ToString("yyyy-MM-dd");
+        var end = ActivityEndPicker.Date.Date.ToString("yyyy-MM-dd");
+        ResetActivityView();
+        var version = _activityVersion;
+        _activityBusy = true;
+        RefreshActivityButton.IsEnabled = false;
+        ActivityCoverageText.Text = "Reading saved incidents…";
+        try
+        {
+            using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            var report = await _worker.GetActivityReportAsync(feedId, start, end, cancellation.Token);
+            if (version != _activityVersion || feedId != AnalysisFeedBox.Text.Trim() || report is null) return;
+            _activityReport = report;
+            foreach (var item in report.Items) _activityIncidents.Add(item);
+            ActivityCoverageText.Text = report.CoverageSummary;
+        }
+        catch (Exception exception)
+        {
+            ActivityCoverageText.Text = "Could not read saved activity. No records were marked caught up.";
+            await ShowErrorAsync(exception);
+        }
+        finally
+        {
+            _activityBusy = false;
+            RefreshActivityButton.IsEnabled = true;
+            MarkActivityButton.IsEnabled = _activityReport?.Items.Count > 0;
+        }
+    }
+
+    private async void MarkActivity_Click(object sender, RoutedEventArgs e)
+    {
+        if (_worker is null || _activityBusy || _activityReport is not { } report) return;
+        _activityBusy = true;
+        RefreshActivityButton.IsEnabled = false;
+        MarkActivityButton.IsEnabled = false;
+        try
+        {
+            using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            await _worker.MarkActivitySeenAsync(report, cancellation.Token);
+        }
+        catch (Exception exception)
+        {
+            await ShowErrorAsync(exception);
+            return;
+        }
+        finally
+        {
+            _activityBusy = false;
+            RefreshActivityButton.IsEnabled = true;
+            MarkActivityButton.IsEnabled = _activityReport?.Items.Count > 0;
+        }
+        await RefreshActivityAsync();
+    }
+
+    private async void ReviewActivityIncident_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { DataContext: IncidentRecord incident }) return;
+        var day = _analysisDays.FirstOrDefault(value => value.FeedId == incident.FeedId && value.ArchiveDate == incident.ArchiveDate);
+        if (day is null)
+        {
+            await ShowMessageAsync("Refresh saved days", "This cited day is no longer in the displayed list. Refresh the saved days before opening it.");
+            return;
+        }
+        ReviewTabView.SelectedItem = DailyReviewTab;
+        if (AnalysisDaysList.SelectedItem is AnalysisDay selected && selected == day)
+        {
+            await LoadDayReportAsync(day);
+        }
+        else
+        {
+            // SelectionChanged owns loading. Do not start a second worker for
+            // the same day when navigating from a catch-up citation.
+            AnalysisDaysList.SelectedItem = day;
+        }
+    }
+
     private async void GenerateWeek_Click(object sender, RoutedEventArgs e)
     {
         if (_worker is null)
@@ -8933,7 +9164,10 @@ public sealed partial class MainWindow : Window
             }
             if (type == "progress")
             {
+                sawComplete = false;
                 sawProgress = true;
+                _timedProgress = message.Clone();
+                _progressAge.Restart();
                 progressCurrent = message.TryGetProperty(
                     "current", out var currentValue)
                     ? currentValue.GetInt32()
@@ -8943,9 +9177,41 @@ public sealed partial class MainWindow : Window
                     ? totalValue.GetInt32()
                     : 0;
             }
+            else if (type == "stage")
+            {
+                // Completion of acquisition is not completion of analysis.
+                // A new stage must never inherit the preceding stage's full bar.
+                var stage = message.TryGetProperty("stage", out var stageValue)
+                    ? stageValue.GetString() : "";
+                if (stage == "analysis" && _timedProgress is { } extraction
+                    && extraction.TryGetProperty("stage", out var extractionStage)
+                    && extractionStage.GetString() == "analysis_windows")
+                {
+                    continue; // Retry/subdivision prose is still the same extraction step.
+                }
+                sawComplete = false;
+                sawProgress = true;
+                progressCurrent = 0;
+                progressTotal = 0;
+                if (_timedProgress is not { } previous
+                    || !previous.TryGetProperty("stage", out var previousStage)
+                    || previousStage.GetString() != stage)
+                {
+                    _timedProgress = message.Clone();
+                    _progressAge.Restart();
+                }
+            }
             else if (type == "complete")
             {
                 sawComplete = true;
+                _timedProgress = null;
+                _progressAge.Reset();
+            }
+            else if (type == "analysis_complete")
+            {
+                sawComplete = true;
+                _timedProgress = null;
+                _progressAge.Reset();
             }
         }
 
@@ -8971,12 +9237,62 @@ public sealed partial class MainWindow : Window
             JobProgress.IsIndeterminate = false;
             JobProgress.Value = JobProgress.Maximum;
         }
+        UpdateProgressTiming();
 
         Interlocked.Exchange(ref _workerMessageDrainScheduled, 0);
         if (!_pendingWorkerMessages.IsEmpty)
         {
             ScheduleWorkerMessageDrain();
         }
+    }
+
+    private static string ProgressDuration(double seconds)
+    {
+        var duration = TimeSpan.FromSeconds(Math.Max(0, seconds));
+        return duration.TotalHours >= 1
+            ? $"{(int)duration.TotalHours}h {duration.Minutes}m"
+            : duration.TotalMinutes >= 1 ? $"{(int)duration.TotalMinutes}m" : "under 1m";
+    }
+
+    private void UpdateProgressTiming()
+    {
+        if (_timedProgress is not { } progress)
+        {
+            JobTimingText.Text = "";
+            return;
+        }
+        var sinceUpdate = _progressAge.Elapsed.TotalSeconds;
+        var detail = progress.TryGetProperty("elapsed_seconds", out var elapsedValue)
+            && elapsedValue.ValueKind == JsonValueKind.Number
+            && elapsedValue.TryGetDouble(out var seconds)
+            ? $"This step: {ProgressDuration(seconds + sinceUpdate)} elapsed"
+            : $"Last update {ProgressDuration(sinceUpdate)} ago";
+        if (progress.TryGetProperty("stage", out var stage) && stage.GetString() == "analysis_windows")
+        {
+            var current = progress.GetProperty("current").GetInt32();
+            var total = progress.GetProperty("total").GetInt32();
+            detail = $"{current}/{total} windows saved · {detail}";
+            if (current < total)
+            {
+                detail += progress.TryGetProperty("estimated_remaining_seconds", out var estimate)
+                    && estimate.ValueKind == JsonValueKind.Number
+                    && estimate.TryGetDouble(out var remaining)
+                    ? remaining > sinceUpdate
+                        ? $" · about {ProgressDuration(remaining - sinceUpdate)} left at this run's pace"
+                        : " · taking longer than the measured pace; estimate pending"
+                    : " · estimating after two new windows finish";
+            }
+            detail += " · summary and search indexing follow";
+        }
+        else
+        {
+            detail += " · finish time not yet estimated";
+        }
+        if (sinceUpdate >= 120)
+        {
+            detail += $" · last progress {ProgressDuration(sinceUpdate)} ago";
+        }
+        JobTimingText.Text = detail;
     }
 
     private void SetBusy(bool busy, string? status = null, bool jobRunning = false)
@@ -8989,6 +9305,11 @@ public sealed partial class MainWindow : Window
         }
         _exclusiveBusy = busy;
         _exclusiveJobRunning = busy && jobRunning;
+        if (!busy && _pipelineCancellation is null)
+        {
+            _timedProgress = null;
+            UpdateProgressTiming();
+        }
         if (status is not null)
         {
             StatusText.Text = status;
@@ -8998,6 +9319,11 @@ public sealed partial class MainWindow : Window
 
     private void SetPipelineBusy(bool busy, string? status = null)
     {
+        if (!busy && !_exclusiveJobRunning)
+        {
+            _timedProgress = null;
+            UpdateProgressTiming();
+        }
         if (busy)
         {
             _settingsSaveTimer?.Stop();

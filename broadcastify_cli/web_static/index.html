@@ -43,6 +43,13 @@
         <div class="topbar-status" id="topbarStatus"><span class="status-dot"></span>Ready</div>
       </header>
 
+      <section class="notice" aria-label="Whole catch-up status">
+        <strong id="workflowSummary">Checking the full catch-up queue…</strong>
+        <span id="workflowStages"></span>
+        <span id="workflowFeeds"></span>
+        <span id="workflowFinish"></span>
+      </section>
+
       <section class="view active" id="view-library" aria-labelledby="libraryTitle">
         <div class="page-heading">
           <div>
@@ -142,6 +149,19 @@
             <h1 id="reviewTitle">Review &amp; ask</h1>
             <p>Ask across a retained range or build a seven-day brief. Missing dates remain visible as missing coverage.</p>
           </div>
+        </div>
+        <div class="card padded">
+          <div class="section-heading"><div><h2>What changed</h2><p>Catch up on cited new and updated saved incidents. Reading this view does not run models or mark records as read.</p></div></div>
+          <form id="activityForm" class="form-stack">
+            <div class="form-grid three">
+              <label><span>Retained feed</span><select id="activityFeedId"><option value="">Choose a retained feed</option></select></label>
+              <label><span>From</span><input id="activityStartDate" type="date" required></label>
+              <label><span>Through</span><input id="activityEndDate" type="date" required></label>
+            </div>
+            <div class="button-row"><button class="button primary" id="refreshActivityButton" type="submit">Refresh what changed</button><button class="button secondary" id="markActivityButton" type="button" disabled>Mark this batch caught up</button></div>
+          </form>
+          <p id="activityCoverage" role="status">Choose a feed and refresh. Missing analysis is not evidence of no activity.</p>
+          <div id="activityList" class="incident-list"></div>
         </div>
         <div class="two-column review-columns">
           <div class="card padded">
@@ -405,12 +425,13 @@
     </button>
     <div class="job-body">
       <div class="job-progress"><div id="jobProgressBar"></div></div>
+      <p id="jobTiming" role="status"></p>
       <div class="job-log" id="jobLog"></div>
       <div class="button-row end"><button class="button danger small" id="cancelJobButton" disabled>Cancel job</button></div>
     </div>
   </aside>
 
   <div class="toast-region" id="toastRegion" aria-live="polite"></div>
-  <script src="/static/app.js?v=37" defer></script>
+  <script src="/static/app.js?v=39" defer></script>
 </body>
 </html>

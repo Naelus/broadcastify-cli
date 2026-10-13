@@ -19,6 +19,8 @@ from typing import Any, Mapping
 
 from dotenv import load_dotenv
 
+from .activity import acknowledge_activity, activity_report
+
 from .accelerators import (
     collect_accelerator_diagnostics,
     find_whisper_cpp,
@@ -81,6 +83,7 @@ from .library import (
     build_archive_question_coverage,
     build_library_feed_coverage,
     build_library_resume_plan,
+    build_library_workflow,
     completed_library_catchup_feed_ids,
     delete_local_library_feed,
     entire_archive_feed_range,
@@ -314,7 +317,7 @@ def _scheduled_analysis_dates(
             continue
         state = states.get(archive_date)
         if state and bool(state.get("has_imported_transcript")) and bool(
-            state.get("has_analysis")
+            state.get("has_analysis") and state.get("has_search_index")
         ):
             continue
         required.append(archive_date)
@@ -1431,6 +1434,7 @@ def analysis_days(feed_id: str | None) -> int:
         )
         analysis_current = bool(state and state["has_analysis"])
         day["analysis_current"] = analysis_current
+        day["search_index_required"] = bool(state and not state["has_search_index"])
         day["analysis_update_required"] = (
             bool(day.get("has_summary")) and not analysis_current
         )
@@ -1462,6 +1466,7 @@ def library_days(output_dir: str) -> int:
             "type": "library_days",
             "days": days,
             "feeds": feeds,
+            "workflow": build_library_workflow(days, schedules, catchups),
             "summary": {
                 "feed_count": len(feeds),
                 "day_count": len(days),
@@ -1643,6 +1648,21 @@ def report_day(feed_id: str, date_value: str) -> int:
     return 0
 
 
+def report_activity(feed_id: str, start_date: str, end_date: str) -> int:
+    report = activity_report(Path(DEFAULT_DATABASE), Path(DEFAULT_DATABASE).parent, {
+        "feed_id": feed_id, "start_date": start_date, "end_date": end_date,
+    })
+    emit({"type": "activity_report", "report": report})
+    return 0
+
+
+def mark_activity() -> int:
+    payload = json.load(sys.stdin)
+    result = acknowledge_activity(Path(DEFAULT_DATABASE), Path(DEFAULT_DATABASE).parent, payload)
+    emit({"type": "activity_acknowledged", "result": result})
+    return 0
+
+
 def _incident_clip(
     store: AnalysisStore,
     incident_id: int,
@@ -1773,6 +1793,7 @@ def _analyze_day_payload(payload: dict[str, Any]) -> tuple[dict[str, Any], int, 
             result = IncidentAnalyzer(
                 store,
                 client,
+                on_progress=emit,
                 progress=lambda message: emit(
                     {"type": "stage", "stage": "analysis", "message": message}
                 ),
@@ -2199,6 +2220,11 @@ def build_parser() -> argparse.ArgumentParser:
     report = subparsers.add_parser("report-day")
     report.add_argument("--feed-id", required=True)
     report.add_argument("--date", required=True)
+    activity = subparsers.add_parser("report-activity")
+    activity.add_argument("--feed-id", required=True)
+    activity.add_argument("--start-date", required=True)
+    activity.add_argument("--end-date", required=True)
+    subparsers.add_parser("mark-activity")
     clip = subparsers.add_parser("incident-clip")
     clip.add_argument("--incident-id", required=True, type=int)
     clip.add_argument("--context", action="store_true")
@@ -2379,6 +2405,10 @@ def main() -> int:
             return analysis_days(arguments.feed_id)
         if arguments.command == "report-day":
             return report_day(arguments.feed_id, arguments.date)
+        if arguments.command == "report-activity":
+            return report_activity(arguments.feed_id, arguments.start_date, arguments.end_date)
+        if arguments.command == "mark-activity":
+            return mark_activity()
         if arguments.command == "incident-clip":
             return incident_clip(
                 arguments.incident_id,

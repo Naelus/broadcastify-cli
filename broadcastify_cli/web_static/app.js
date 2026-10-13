@@ -55,6 +55,9 @@ const state = {
   selectedDayDetail: null,
   editingSchedule: null,
   incidentExpanded: false,
+  activityReport: null,
+  activityVersion: 0,
+  activityBusy: false,
   transcript: { segments: [], offset: 0, total: 0, hasMore: false, query: "" },
   selectedFeed: null,
   areaDiscovered: [],
@@ -852,6 +855,7 @@ async function refreshBootstrap({ preserveSelection = true } = {}) {
   setBusyLabel("Refreshing local records…");
   try {
     state.bootstrap = await api("/api/bootstrap");
+    renderWorkflow(state.bootstrap.workflow);
     applyRuntimeProcessingDefaults();
     renderMetrics();
     renderLibrary();
@@ -860,6 +864,7 @@ async function refreshBootstrap({ preserveSelection = true } = {}) {
     renderArchiveQuota();
     renderAccountProfiles();
     renderCatchUpFeeds();
+    renderActivityFeeds();
     renderFeedSchedules();
     renderCredentials();
     renderAbout();
@@ -998,7 +1003,88 @@ function syncReviewInputs(day) {
   byId("askEndDate").value = day.archive_date;
   byId("weekFeedId").value = day.feed_id;
   byId("weekEnding").value = day.archive_date;
+  if (byId("activityFeedId").value !== day.feed_id) {
+    byId("activityFeedId").value = day.feed_id;
+    resetActivityView();
+  }
 }
+
+function renderActivityFeeds() {
+  const select = byId("activityFeedId");
+  const previous = select.value;
+  select.innerHTML = '<option value="">Choose a retained feed</option>' + catchUpFeeds().map(feed =>
+    `<option value="${html(feed.feed_id)}">${html(feed.feed_name || `Feed ${feed.feed_id}`)}</option>`).join("");
+  select.value = previous;
+  if (previous && select.value !== previous) resetActivityView();
+}
+
+function resetActivityView() {
+  ++state.activityVersion;
+  state.activityReport = null;
+  byId("activityList").innerHTML = "";
+  byId("markActivityButton").disabled = true;
+  byId("activityCoverage").textContent = "Choose a feed and refresh. Missing analysis is not evidence of no activity.";
+}
+
+async function refreshActivity() {
+  if (state.activityBusy) return;
+  resetActivityView();
+  const version = state.activityVersion;
+  const params = new URLSearchParams({ feed_id: byId("activityFeedId").value,
+    start_date: byId("activityStartDate").value, end_date: byId("activityEndDate").value });
+  state.activityBusy = true;
+  byId("refreshActivityButton").disabled = true;
+  byId("activityCoverage").textContent = "Reading saved incidents…";
+  try {
+    const report = await api(`/api/activity?${params}`);
+    if (version !== state.activityVersion) return;
+    state.activityReport = report;
+    const coverage = report.coverage;
+    byId("activityCoverage").textContent = `${report.start_date} through ${report.end_date}. Showing ${report.items.length} of ${report.remaining_count} unread new or updated records. ${coverage.analyzed_days}/${coverage.total_days} days have saved analysis. `
+      + (coverage.pending_dates.length ? `Dates without current saved analysis: ${coverage.pending_dates.join(", ")}. ` : "")
+      + (coverage.updating_dates.length ? `Saved evidence remains readable during updates: ${coverage.updating_dates.join(", ")}. ` : "")
+      + "Missing coverage does not mean no activity occurred.";
+    byId("activityList").innerHTML = report.items.length ? report.items.map(item => `<article class="incident-card">
+      <div class="incident-title"><div><h3>${html(item.title)}</h3><div class="incident-meta">${html(words(item.change_kind))} · ${html(item.archive_date)} · ${html(item.archive_time)} · ${html(words(item.event_type))}${item.location ? ` · ${html(item.location)}` : ""} · I${item.id}${item.evidence_update_pending ? " · evidence refresh pending" : ""}</div></div><span class="priority${item.priority >= 4 ? " high" : ""}">P${item.priority}</span></div>
+      <p>${html(item.summary)}</p><p class="quote">Cited radio: “${html(item.evidence_quote)}”</p>
+      <button class="button secondary small" type="button" data-action="review-activity" data-feed-id="${html(item.feed_id)}" data-archive-date="${html(item.archive_date)}">Review cited day and exact clips</button>
+    </article>`).join("") : '<div class="empty-compact">No unread cited incidents in this range. Check coverage above before interpreting this as a quiet period.</div>';
+  } catch (error) {
+    if (version === state.activityVersion) byId("activityCoverage").textContent = `Saved activity is unavailable: ${error.message} No records were marked caught up.`;
+    toast(error.message, true);
+  } finally {
+    state.activityBusy = false;
+    byId("refreshActivityButton").disabled = false;
+    byId("markActivityButton").disabled = !state.activityReport?.items.length;
+  }
+}
+
+byId("activityForm").addEventListener("submit", async event => {
+  event.preventDefault();
+  await refreshActivity();
+});
+for (const id of ["activityFeedId", "activityStartDate", "activityEndDate"]) byId(id).addEventListener("change", resetActivityView);
+byId("markActivityButton").addEventListener("click", async () => {
+  if (state.activityBusy || !state.activityReport) return;
+  const report = state.activityReport;
+  state.activityBusy = true;
+  byId("refreshActivityButton").disabled = true;
+  byId("markActivityButton").disabled = true;
+  try {
+    await api("/api/activity/seen", { method: "POST", body: JSON.stringify({
+      feed_id: report.feed_id, start_date: report.start_date, end_date: report.end_date,
+      items: report.items.map(({archive_date, fingerprint, content_sha256}) => ({archive_date, fingerprint, content_sha256})),
+    }) });
+  } catch (error) {
+    toast(error.message, true);
+    return;
+  } finally {
+    state.activityBusy = false;
+    byId("refreshActivityButton").disabled = false;
+    byId("markActivityButton").disabled = !state.activityReport?.items.length;
+  }
+  await refreshActivity();
+});
 
 function stageCards(day) {
   const analysisDetail = day.has_analysis
@@ -1409,14 +1495,61 @@ async function pollJob() {
   state.jobTimer = setTimeout(pollJob, 900);
 }
 
+function renderWorkflow(workflow) {
+  if (!workflow) {
+    byId("workflowSummary").textContent = "Full catch-up status unavailable from the processing master";
+    byId("workflowStages").textContent = "";
+    byId("workflowFeeds").textContent = "";
+    byId("workflowFinish").textContent = "The current-step counter does not describe the full queue.";
+    return;
+  }
+  byId("workflowSummary").textContent = `Whole catch-up · ${workflow.pending_count} feed-days unfinished · ${workflow.ready_count} retained days ready to review`;
+  const labels = { download: "source check/download", combine: "combine", transcribe: "transcribe", diarize: "speaker labels", import: "import", analyze: "analysis", index: "search index" };
+  byId("workflowStages").textContent = "Remaining: " + Object.entries(labels).map(([key, label]) => `${workflow.stage_counts[key] || 0} ${label}`).join(" · ") + ". Counts overlap when a day needs multiple steps.";
+  byId("workflowFeeds").textContent = (workflow.feeds || []).map(feed => `${feed.feed_name}: ${feed.pending_count} unfinished${feed.pending_ranges.length ? ` (${feed.pending_ranges.join(", ")})` : ""}`).join(" · ");
+  byId("workflowFinish").textContent = `${workflow.finish_detail} Separate source monitoring: ${workflow.source_check_count} checks due; ${workflow.source_unavailable_count} unavailable, ${workflow.awaiting_source_count} awaiting publication. ${workflow.scope_detail} Updated ${new Date(workflow.observed_at).toLocaleTimeString()}.`;
+}
+
+async function refreshWorkflow() {
+  try {
+    if (!document.hidden) renderWorkflow((await api("/api/workflow")).workflow);
+  } catch {
+    byId("workflowFinish").textContent = "Queue refresh failed; displayed counts may be out of date. Waiting for the processing master.";
+  } finally {
+    // One in-flight refresh; avoid reloading evidence or stealing selection.
+    setTimeout(refreshWorkflow, 30000);
+  }
+}
+
 function renderJob(job) {
   const events = job.events || [];
   const last = events[events.length - 1];
   byId("jobSpinner").classList.toggle("running", ["queued", "running", "canceling"].includes(job.status));
   byId("jobMessage").textContent = last?.message || job.error || `${words(job.status)}.`;
-  const progress = [...events].reverse().find((event) => event.type === "progress" && Number(event.total) > 0);
-  const percentage = progress ? Math.max(0, Math.min(100, Number(progress.current) / Number(progress.total) * 100)) : job.status === "completed" ? 100 : 0;
+  let progress = null;
+  for (const event of events) {
+    if (event.type === "progress") progress = event;
+    else if (event.type === "stage" && !(event.stage === "analysis" && progress?.stage === "analysis_windows")) progress = null;
+  }
+  const running = ["queued", "running", "canceling"].includes(job.status);
+  const percentage = job.status === "completed" ? 100 : running && Number(progress?.total) > 0
+    ? Math.max(0, Math.min(100, Number(progress.current) / Number(progress.total) * 100)) : 0;
   byId("jobProgressBar").style.width = `${percentage}%`;
+  let timing = running ? "Current step only; the full catch-up queue is shown above." : "";
+  if (running && progress?.stage === "analysis_windows") {
+    const sinceUpdate = Math.max(0, Date.now() / 1000 - Number(progress.emitted_at_unix || Date.now() / 1000));
+    const duration = seconds => seconds >= 3600 ? `${Math.floor(seconds / 3600)}h ${Math.floor(seconds % 3600 / 60)}m` : `${Math.max(1, Math.ceil(seconds / 60))}m`;
+    timing = `${progress.current}/${progress.total} windows saved · ${duration(Number(progress.elapsed_seconds || 0) + sinceUpdate)} elapsed`;
+    if (progress.current < progress.total) {
+      const remaining = Number(progress.estimated_remaining_seconds) - sinceUpdate;
+      timing += progress.estimated_remaining_seconds == null ? " · estimating after two new windows finish"
+        : remaining > 0 ? ` · about ${duration(remaining)} left at this run's pace`
+        : " · taking longer than the measured pace; estimate pending";
+    }
+    timing += " · summary and search indexing follow";
+    if (sinceUpdate >= 120) timing += ` · last progress ${duration(sinceUpdate)} ago`;
+  }
+  byId("jobTiming").textContent = timing;
   byId("jobLog").innerHTML = events.slice(-80).map((event) => `<div>${html(event.message || `${event.type}: ${event.stage || "updated"}`)}</div>`).join("") || '<div>Waiting for the first progress update…</div>';
   byId("jobLog").scrollTop = byId("jobLog").scrollHeight;
 }
@@ -1759,6 +1892,13 @@ document.addEventListener("click", async (event) => {
     return;
   }
   const action = button.dataset.action;
+  if (action === "review-activity") {
+    const day = state.bootstrap.days.find(value => value.feed_id === button.dataset.feedId && value.archive_date === button.dataset.archiveDate);
+    if (!day) return toast("This cited day is not retained on this node. Open the Windows master's review to audit its exact clips.", true);
+    setView("library");
+    await selectDay(day);
+    return;
+  }
   if (action === "manage-huggingface") {
     state.settingsSection = "account";
     setView("settings");
@@ -2692,6 +2832,8 @@ byId("archiveEndDate").value = localToday;
 byId("areaStartDate").value = weekAgo;
 byId("areaEndDate").value = localToday;
 byId("weekEnding").value = localToday;
+byId("activityStartDate").value = weekAgo;
+byId("activityEndDate").value = localToday;
 byId("askMonth").value = localToday.slice(0, 7);
 byId("askStartDate").value = localToday;
 byId("askEndDate").value = localToday;
@@ -2703,3 +2845,4 @@ setViewFromLocation();
 refreshBootstrap({ preserveSelection: false }).then(async () => {
   if (state.bootstrap.days.length) await selectDay(state.bootstrap.days[0]);
 });
+setTimeout(refreshWorkflow, 30000);

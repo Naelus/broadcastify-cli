@@ -626,6 +626,11 @@ class JobRunner:
         ) -> list[Path]:
             return matching_transcripts(inputs)
 
+        # Acquisition follows newest-first quota policy. Bounded model turns
+        # must drain closed, older days first: a growing recent day must not
+        # repeatedly consume the only model slot and starve retained backlog.
+        if self.request.max_processing_days is not None:
+            downloaded_days.sort(key=lambda value: value[0])
         for archive_date, audio_files in downloaded_days:
             day_label = archive_date.isoformat()
             day_dir = (

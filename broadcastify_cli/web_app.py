@@ -29,6 +29,7 @@ from urllib.parse import parse_qs, quote, unquote, urlparse
 from dotenv import dotenv_values
 
 from . import __version__
+from .activity import acknowledge_activity, activity_report, activity_scope
 from .analysis import (
     PROMPT_VERSION,
     WEEKLY_PROMPT_VERSION,
@@ -54,6 +55,7 @@ from .lan_sync import (
 )
 from .library import (
     build_library_feed_coverage,
+    build_library_workflow,
     completed_library_catchup_feed_ids,
     require_current_range_evidence,
     scan_local_library,
@@ -1471,6 +1473,7 @@ def _library_payload(state: WebAppState) -> dict[str, Any]:
             catchups = store.list_library_catchups()
     return {
         "days": days,
+        "workflow": build_library_workflow(days, schedules, catchups),
         "feed_coverage": build_library_feed_coverage(
             days,
             schedules,
@@ -2171,6 +2174,19 @@ def create_server(
                     },
                 )
                 return
+            if parsed.path == "/api/workflow":
+                # Followers must describe the Windows queue, not their partial
+                # local copies. Never substitute local completion when offline.
+                if state.master_client is not None:
+                    workflow = state.master_client.master_library().get("workflow")
+                else:
+                    days = scan_local_library(state.output_dir, state.database_path)
+                    with AnalysisStore(state.database_path) as store:
+                        workflow = build_library_workflow(
+                            days, store.list_feed_schedules(), store.list_library_catchups()
+                        )
+                self._json(HTTPStatus.OK, {"workflow": workflow})
+                return
             if parsed.path == "/api/bootstrap":
                 library = _library_payload(state)
                 authoritative_library: dict[str, Any] | None = None
@@ -2202,6 +2218,12 @@ def create_server(
                     HTTPStatus.OK,
                     {
                         **library,
+                        "workflow": (
+                            authoritative_library.get("workflow")
+                            if authoritative_library is not None
+                            else None if state.master_client is not None
+                            else library["workflow"]
+                        ),
                         "authoritative_progress": (
                             authoritative_library.get("progress")
                             if authoritative_library is not None else None
@@ -2286,6 +2308,21 @@ def create_server(
             if parsed.path == "/api/day":
                 feed_id, archive_date = self._feed_date(query)
                 self._json(HTTPStatus.OK, _day_payload(state, feed_id, archive_date))
+                return
+            if parsed.path == "/api/activity":
+                payload = {key: str((query.get(key) or [""])[0]) for key in ("feed_id", "start_date", "end_date")}
+                try:
+                    activity_scope(payload)
+                    report = (
+                        state.master_client.master_activity(payload)
+                        if state.master_client is not None
+                        else activity_report(state.database_path, state.output_dir, payload)
+                    )
+                except LanRemoteRequestError as exc:
+                    raise WebRequestError(exc.status, str(exc)) from exc
+                except ValueError as exc:
+                    raise WebRequestError(HTTPStatus.BAD_REQUEST, str(exc)) from exc
+                self._json(HTTPStatus.OK, report)
                 return
             if parsed.path == "/api/transcript":
                 feed_id, archive_date = self._feed_date(query)
@@ -2436,6 +2473,21 @@ def create_server(
 
         def _post(self) -> None:
             parsed = urlparse(self.path)
+            if parsed.path == "/api/activity/seen":
+                payload = self._body()
+                try:
+                    activity_scope(payload)
+                    result = (
+                        state.master_client.acknowledge_master_activity(payload)
+                        if state.master_client is not None
+                        else acknowledge_activity(state.database_path, state.output_dir, payload)
+                    )
+                except LanRemoteRequestError as exc:
+                    raise WebRequestError(exc.status, str(exc)) from exc
+                except ValueError as exc:
+                    raise WebRequestError(HTTPStatus.BAD_REQUEST, str(exc)) from exc
+                self._json(HTTPStatus.OK, result)
+                return
             if parsed.path == "/api/credentials":
                 body = self._body()
                 kind = str(body.get("kind") or "").strip().lower()
