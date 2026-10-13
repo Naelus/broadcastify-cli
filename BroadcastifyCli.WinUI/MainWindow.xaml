@@ -762,7 +762,7 @@
                                     </ScrollViewer>
                                 </TabViewItem>
                                 <TabViewItem x:Name="WhatChangedTab" Header="What changed" IsClosable="False">
-                                    <ScrollViewer Padding="8">
+                                    <ScrollViewer x:Name="ActivityReviewScroll" Padding="8">
                                     <StackPanel Spacing="10">
                                         <StackPanel Spacing="6">
                                             <TextBlock Text="Catch up on new and updated saved incidents" Style="{StaticResource SubtitleTextBlockStyle}" TextWrapping="Wrap" />

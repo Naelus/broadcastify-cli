@@ -799,6 +799,12 @@ public sealed partial class MainWindow
         listResults["review_incidents"] = await ExerciseItemsScrollAsync(
             IncidentList,
             $"{size.Name}/review-incidents");
+        ReviewTabView.SelectedItem = WhatChangedTab;
+        await WaitForUiLayoutAsync();
+        RequireHorizontalBounds(size.Name, ActivityReviewScroll,
+            RefreshActivityButton, MarkActivityButton, ActivityIncidentList);
+        scrollResults["what_changed"] = await ExerciseScrollAsync(
+            ActivityReviewScroll, $"{size.Name}/what-changed");
         ReviewTabView.SelectedItem = WeeklyBriefTab;
         await WaitForUiLayoutAsync();
         RequireOnlyPageVisible("review");

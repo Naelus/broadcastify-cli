@@ -1761,8 +1761,11 @@ public sealed partial class MainWindow : Window
         // the space needed to read incidents.
         WorkflowSummaryText.MaxLines = shortCompact ? 1 : 2;
         WorkflowStagesText.MaxLines = shortCompact ? 1 : 2;
+        WorkflowStagesText.Visibility = shortCompact ? Visibility.Collapsed : Visibility.Visible;
         WorkflowFinishText.Visibility = shortCompact ? Visibility.Collapsed : Visibility.Visible;
         JobTimingText.MaxLines = shortCompact ? 1 : 3;
+        JobTimingText.Visibility = shortCompact ? Visibility.Collapsed : Visibility.Visible;
+        StatusText.MaxLines = shortCompact ? 1 : 2;
 
         var star = new GridLength(1, GridUnitType.Star);
         var zero = new GridLength(0);
@@ -4369,7 +4372,9 @@ public sealed partial class MainWindow : Window
             + $"New source audio can add work. Updated {DateTime.Now:T}.";
         ToolTipService.SetToolTip(WorkflowStagesText, WorkflowStagesText.Text
             + ". Counts overlap when a day needs multiple steps.\n" + WorkflowFinishText.Text);
-        ToolTipService.SetToolTip(WorkflowSummaryText, string.Join("\n", workflow.Feeds.Select(feed =>
+        ToolTipService.SetToolTip(WorkflowSummaryText, WorkflowSummaryText.Text + "\n"
+            + WorkflowStagesText.Text + "\n" + WorkflowFinishText.Text + "\n"
+            + string.Join("\n", workflow.Feeds.Select(feed =>
             $"{feed.FeedName}: {feed.PendingCount} unfinished"
             + (feed.PendingRanges.Count > 0 ? $" ({string.Join(", ", feed.PendingRanges)})" : ""))));
     }
