@@ -260,7 +260,10 @@ Bounded model passes process the oldest unfinished retained date, independently
 of newest-first acquisition. Native scheduled model work selects one pending
 date rather than repeatedly traversing the whole historical range; remaining
 dates keep the saved schedule resumable. Download-only schedules skip that model
-pass. This draft has not been tested or built under the current resource hold.
+pass. Offline scheduling and recovery checks pass. Native build and isolated
+preview checks are required for each candidate; follow the
+[pre-release review](../validation/pre-release-review.md). Production model
+processing remains paused until explicitly resumed.
 
 Native settings and last selections live under
 `AppData\Local\Broadcastify Desktop`. Settings are atomic and operation/crash

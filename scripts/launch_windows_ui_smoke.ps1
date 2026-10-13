@@ -12,9 +12,14 @@ if (-not $FeedId -or $FeedId -notmatch '^\d+$') {
     throw "FeedId must contain only digits."
 }
 if ([string]::IsNullOrWhiteSpace($Executable)) {
+    if ($WorkflowPreview) {
+        $Executable = Join-Path $PSScriptRoot "..\BroadcastifyCli.WinUI\bin\Release\net10.0-windows10.0.26100.0\win-x64\Broadcastify Desktop.exe"
+    }
+    else {
     $Executable = Join-Path $env:LOCALAPPDATA (
         "Programs\Broadcastify Desktop\Broadcastify Desktop.exe"
     )
+    }
 }
 $Executable = [System.IO.Path]::GetFullPath($Executable)
 if (-not (Test-Path -LiteralPath $Executable -PathType Leaf)) {

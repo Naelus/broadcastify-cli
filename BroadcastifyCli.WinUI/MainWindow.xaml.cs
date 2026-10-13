@@ -1746,9 +1746,7 @@ public sealed partial class MainWindow : Window
         var compact = width < 1_100 || _desktopDockManager?.IsDocked == true;
         var shortCompact = compact
             && WindowRoot.ActualHeight > 0
-            // Reserve room for the persistent whole-queue status as well as
-            // the current step before allocating the stacked Review selector.
-            && WindowRoot.ActualHeight < 1_000;
+            && WindowRoot.ActualHeight < 820;
         if (_compactLayoutApplied == compact
             && _shortCompactLayoutApplied == shortCompact)
         {
@@ -1833,17 +1831,18 @@ public sealed partial class MainWindow : Window
 
             ReviewContentGrid.ColumnDefinitions[0].Width = star;
             ReviewContentGrid.ColumnDefinitions[1].Width = zero;
-            ReviewContentGrid.RowDefinitions[0].Height = new GridLength(
-                shortCompact ? 170 : 280);
+            // Keep the stacked selector compact so queue status and evidence
+            // both retain usable space, even in a narrow 900-DIP window.
+            ReviewContentGrid.RowDefinitions[0].Height = new GridLength(170);
             ReviewContentGrid.RowDefinitions[1].Height = star;
             Grid.SetRow(ReviewTabView, 1);
             Grid.SetColumn(ReviewTabView, 0);
-            ReviewDaySelectorGrid.RowSpacing = shortCompact ? 4 : 10;
-            AnalysisFeedCombo.Header = shortCompact ? null : "Feed";
-            DailyReviewContentGrid.RowSpacing = shortCompact ? 4 : 9;
-            SummaryText.MaxHeight = shortCompact ? 40 : 126;
-            PlaybackStatusText.MaxLines = shortCompact ? 1 : 0;
-            IncidentPlayer.Height = shortCompact ? 44 : 72;
+            ReviewDaySelectorGrid.RowSpacing = 4;
+            AnalysisFeedCombo.Header = null;
+            DailyReviewContentGrid.RowSpacing = 4;
+            SummaryText.MaxHeight = 40;
+            PlaybackStatusText.MaxLines = 1;
+            IncidentPlayer.Height = 44;
 
             WeekControls.Orientation = Orientation.Vertical;
             QuestionScopeActions.Orientation = Orientation.Vertical;
