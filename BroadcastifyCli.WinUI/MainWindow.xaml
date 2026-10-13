@@ -707,7 +707,11 @@
 
                             <TabView x:Name="ReviewTabView" Grid.Column="1" IsAddTabButtonVisible="False">
                                 <TabViewItem x:Name="DailyReviewTab" Header="Daily review" IsClosable="False">
-                                    <Grid x:Name="DailyReviewContentGrid" Padding="4,8,4,4" RowSpacing="9">
+                                    <!-- Keep a usable evidence viewport when the stacked
+                                         selector and queue footer leave little height. -->
+                                    <ScrollViewer x:Name="DailyReviewScroll" VerticalScrollBarVisibility="Auto">
+                                    <Grid x:Name="DailyReviewContentGrid" Padding="4,8,4,4" RowSpacing="9"
+                                          MinHeight="320" Height="{Binding ActualHeight, ElementName=DailyReviewScroll}">
                                         <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                                         <TextBlock x:Name="SummaryText" Text="Choose a saved day." TextWrapping="Wrap" MaxHeight="126" />
                                         <Grid Grid.Row="1" ColumnSpacing="10">
@@ -755,6 +759,7 @@
                                                    TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                         <MediaPlayerElement x:Name="IncidentPlayer" Grid.Row="4" Height="72" AreTransportControlsEnabled="True" />
                                     </Grid>
+                                    </ScrollViewer>
                                 </TabViewItem>
                                 <TabViewItem x:Name="WhatChangedTab" Header="What changed" IsClosable="False">
                                     <ScrollViewer Padding="8">

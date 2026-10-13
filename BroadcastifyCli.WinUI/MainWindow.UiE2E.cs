@@ -83,6 +83,14 @@ public sealed partial class MainWindow
             report["passed"] = false;
             report["error"] = exception.Message;
             report["exception"] = exception.ToString();
+            report["rendered_layout"] = new FrameworkElement[] {
+                WindowRoot, ReviewPage, ReviewContentGrid, ReviewDaySelectorBorder,
+                AnalysisDaysList, ReviewTabView, DailyReviewScroll, DailyReviewContentGrid,
+                IncidentList, PersistentStatusGrid, WorkflowSummaryText, WorkflowStagesText
+            }.ToDictionary(element => element.Name, element => new {
+                width = element.ActualWidth, height = element.ActualHeight,
+                visibility = element.Visibility.ToString()
+            });
         }
         finally
         {
