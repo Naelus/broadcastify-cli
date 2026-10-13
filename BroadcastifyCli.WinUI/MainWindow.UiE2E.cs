@@ -189,7 +189,10 @@ public sealed partial class MainWindow
             Require(JobProgress.Value == 1 && JobProgress.Maximum == 12
                     && WorkflowSummaryText.Text.Contains("1 feed-days unfinished"),
                 "Current-day progress replaced whole-queue progress or inherited a completed bar.");
-            ShowPage("library");
+            // Restore visibility without starting ShowPage's fire-and-forget
+            // refresh before the next retained-file transition is written.
+            ReviewPage.Visibility = Visibility.Collapsed;
+            LibraryPage.Visibility = Visibility.Visible;
             _libraryMediaPlayer.Source = null;
             var emptyDirectory = Path.Combine(libraryRoot, "999992", "20260102");
             Directory.CreateDirectory(emptyDirectory);
