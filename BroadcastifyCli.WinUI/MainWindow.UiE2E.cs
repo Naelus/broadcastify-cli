@@ -238,7 +238,7 @@ public sealed partial class MainWindow
                 "import sys; from datetime import date; from broadcastify_cli.storage import AnalysisStore; "
                     + "from broadcastify_cli.analysis import PROMPT_VERSION; "
                     + "s=AnalysisStore(sys.argv[1]); d=s.import_transcript('999992',date(2026,1,1),sys.argv[2],sys.argv[3]); "
-                    + "ids=s.replace_incidents(d.day_id,[dict(fingerprint='cited',event_type='traffic',title='Retained cited incident',summary='Fixture evidence.',priority=2,start_seconds=0,end_seconds=1,evidence=[dict(segment_index=0,start_seconds=0,end_seconds=1,text='Retained dispatch.')])],model='fixture',prompt_version=PROMPT_VERSION); "
+                    + "ids=s.replace_incidents(d.day_id,[dict(fingerprint='cited',event_type='traffic',title='Retained cited incident',summary='Fixture evidence.',priority=2,confidence=1,start_seconds=0,end_seconds=1,evidence=[dict(segment_index=0,start_seconds=0,end_seconds=1,text='Retained dispatch.')])],model='fixture',prompt_version=PROMPT_VERSION); "
                     + "s.save_daily_summary(d.day_id,'Fixture summary.',ids,'fixture',PROMPT_VERSION,d.transcript_sha256); s.close()",
                 Path.Combine(libraryRoot, "broadcastify-analysis.sqlite3"), transcriptPath, audioPath })
             {
