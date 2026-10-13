@@ -1841,7 +1841,7 @@ public sealed partial class MainWindow : Window
             ReviewContentGrid.ColumnDefinitions[1].Width = zero;
             // Keep the stacked selector compact so queue status and evidence
             // both retain usable space, even in a narrow 900-DIP window.
-            ReviewContentGrid.RowDefinitions[0].Height = new GridLength(shortCompact ? 150 : 170);
+            ReviewContentGrid.RowDefinitions[0].Height = new GridLength(170);
             ReviewContentGrid.RowDefinitions[1].Height = star;
             Grid.SetRow(ReviewTabView, 1);
             Grid.SetColumn(ReviewTabView, 0);
