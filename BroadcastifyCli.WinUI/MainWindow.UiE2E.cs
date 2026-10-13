@@ -493,6 +493,11 @@ public sealed partial class MainWindow
                 EvidenceQuote = "Synthetic transcript evidence.",
             });
         }
+        _activityIncidents.Clear();
+        foreach (var incident in _visibleIncidents)
+        {
+            _activityIncidents.Add(incident);
+        }
         _areaStories.Clear();
         foreach (var index in Enumerable.Range(1, 34))
         {
