@@ -1756,6 +1756,14 @@ public sealed partial class MainWindow : Window
         _compactLayoutApplied = compact;
         _shortCompactLayoutApplied = shortCompact;
 
+        // At the minimum window size, keep queue counts visible and put the
+        // longer finish explanation in the stage tooltip instead of taking
+        // the space needed to read incidents.
+        WorkflowSummaryText.MaxLines = shortCompact ? 1 : 2;
+        WorkflowStagesText.MaxLines = shortCompact ? 1 : 2;
+        WorkflowFinishText.Visibility = shortCompact ? Visibility.Collapsed : Visibility.Visible;
+        JobTimingText.MaxLines = shortCompact ? 1 : 3;
+
         var star = new GridLength(1, GridUnitType.Star);
         var zero = new GridLength(0);
         var pagePadding = compact
@@ -1833,7 +1841,7 @@ public sealed partial class MainWindow : Window
             ReviewContentGrid.ColumnDefinitions[1].Width = zero;
             // Keep the stacked selector compact so queue status and evidence
             // both retain usable space, even in a narrow 900-DIP window.
-            ReviewContentGrid.RowDefinitions[0].Height = new GridLength(170);
+            ReviewContentGrid.RowDefinitions[0].Height = new GridLength(shortCompact ? 150 : 170);
             ReviewContentGrid.RowDefinitions[1].Height = star;
             Grid.SetRow(ReviewTabView, 1);
             Grid.SetColumn(ReviewTabView, 0);
@@ -4352,13 +4360,15 @@ public sealed partial class MainWindow : Window
             ("download", "source check/download"), ("combine", "combine"),
             ("transcribe", "transcribe"), ("diarize", "speaker labels"),
             ("import", "import"), ("analyze", "analysis"), ("index", "search index") };
-        WorkflowStagesText.Text = "Remaining: " + string.Join(" · ", labels.Select(stage =>
-            $"{workflow.StageCounts.GetValueOrDefault(stage.Key):N0} {stage.Label}"))
-            + ". Counts overlap when a day needs multiple steps.";
+        var remaining = labels.Where(stage => workflow.StageCounts.GetValueOrDefault(stage.Key) > 0)
+            .Select(stage => $"{workflow.StageCounts.GetValueOrDefault(stage.Key):N0} {stage.Label}");
+        WorkflowStagesText.Text = "Remaining: " + (remaining.Any() ? string.Join(" · ", remaining) : "none");
         WorkflowFinishText.Text = workflow.FinishDetail
             + $" Separate source monitoring: {workflow.SourceCheckCount:N0} checks due; "
             + $"{workflow.SourceUnavailableCount:N0} unavailable, {workflow.AwaitingSourceCount:N0} awaiting publication. "
             + $"New source audio can add work. Updated {DateTime.Now:T}.";
+        ToolTipService.SetToolTip(WorkflowStagesText, WorkflowStagesText.Text
+            + ". Counts overlap when a day needs multiple steps.\n" + WorkflowFinishText.Text);
         ToolTipService.SetToolTip(WorkflowSummaryText, string.Join("\n", workflow.Feeds.Select(feed =>
             $"{feed.FeedName}: {feed.PendingCount} unfinished"
             + (feed.PendingRanges.Count > 0 ? $" ({string.Join(", ", feed.PendingRanges)})" : ""))));

@@ -30,9 +30,10 @@ through the authenticated Windows-master relay. An unavailable master produces
 an explicit error; the follower does not start an independent model pipeline.
 Exact-clip availability still follows the existing retained-audio guards.
 
-This implementation has not yet passed execution or native-layout verification:
-tests and builds were deferred at the user's request to leave RAM/VRAM available
-for other work.
+This is a pre-release candidate. Offline execution checks cover durable
+acknowledgements and the authenticated relay. Use the isolated
+[pre-release review](../validation/pre-release-review.md) for native verification;
+no live model processing is required for that review.
 
 ## Local Library
 
