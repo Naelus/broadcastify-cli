@@ -1746,7 +1746,9 @@ public sealed partial class MainWindow : Window
         var compact = width < 1_100 || _desktopDockManager?.IsDocked == true;
         var shortCompact = compact
             && WindowRoot.ActualHeight > 0
-            && WindowRoot.ActualHeight < 820;
+            // Reserve room for the persistent whole-queue status as well as
+            // the current step before allocating the stacked Review selector.
+            && WindowRoot.ActualHeight < 1_000;
         if (_compactLayoutApplied == compact
             && _shortCompactLayoutApplied == shortCompact)
         {

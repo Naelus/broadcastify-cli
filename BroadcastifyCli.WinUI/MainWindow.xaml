@@ -1661,9 +1661,9 @@
                         <StackPanel Spacing="6">
                             <TextBlock x:Name="PreviewModeText" Visibility="Collapsed" FontWeight="SemiBold" TextWrapping="Wrap"
                                        Text="PRE-RELEASE PREVIEW · Isolated sample data · Downloads and model jobs disabled" />
-                            <TextBlock x:Name="WorkflowSummaryText" Text="Checking the full catch-up queue…" FontWeight="SemiBold" TextWrapping="Wrap" />
-                            <TextBlock x:Name="WorkflowStagesText" FontSize="12" TextWrapping="Wrap" />
-                            <TextBlock x:Name="WorkflowFinishText" FontSize="12" TextWrapping="Wrap"
+                            <TextBlock x:Name="WorkflowSummaryText" Text="Checking the full catch-up queue…" FontWeight="SemiBold" TextWrapping="Wrap" MaxLines="2" TextTrimming="CharacterEllipsis" />
+                            <TextBlock x:Name="WorkflowStagesText" FontSize="12" TextWrapping="Wrap" MaxLines="2" TextTrimming="CharacterEllipsis" ToolTipService.ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" />
+                            <TextBlock x:Name="WorkflowFinishText" FontSize="12" TextWrapping="Wrap" MaxLines="2" TextTrimming="CharacterEllipsis" ToolTipService.ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}"
                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                         <Grid x:Name="PersistentStatusGrid" ColumnSpacing="12" RowSpacing="6">
                             <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
