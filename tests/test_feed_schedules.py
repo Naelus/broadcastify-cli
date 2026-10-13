@@ -203,14 +203,32 @@ def test_historical_catch_up_survives_quota_wait_and_clears_only_when_complete(
         assert completed["backfill_start_date"] == ""
 
 
-def test_failed_schedule_retries_same_day_after_bounded_backoff(tmp_path: Path) -> None:
+def test_recurring_download_pass_rechecks_after_restart_and_recovers_failure(tmp_path: Path) -> None:
     database = tmp_path / "analysis.sqlite3"
     now = datetime(2026, 7, 23, 3, 0, tzinfo=timezone(timedelta(hours=-5)))
 
     with AnalysisStore(database) as store:
-        saved = store.save_feed_schedule(_payload())
+        payload = _payload()
+        payload.update(recurring_catch_up=True, analyze=False, backfill_start_date="2026-07-01")
+        payload["job"] = {"combine": False, "transcribe": False, "diarize": False}
+        saved = store.save_feed_schedule(payload)
         claimed = store.claim_due_feed_schedule(now=now)
         assert claimed is not None
+        complete = store.finish_feed_schedule(saved["id"], due_date="2026-07-23",
+            status="complete", now=now)
+        assert datetime.fromisoformat(complete["next_run_at"]) == now + timedelta(minutes=30)
+        assert not complete["due"]
+
+    # The next growing-source check survives process/store restart, without
+    # turning model processing back on or bypassing the ordinary claim lease.
+    with AnalysisStore(database) as store:
+        assert store.claim_due_feed_schedule(now=now + timedelta(minutes=29)) is None
+        now += timedelta(minutes=30)
+        claimed = store.claim_due_feed_schedule(now=now)
+        assert claimed is not None and not claimed["analyze"]
+        assert not claimed["job"]["transcribe"]
+        assert claimed["job"]["start_date"] == "2026-07-01"
+        assert store.claim_due_feed_schedule(now=now) is None
 
         failed = store.finish_feed_schedule(
             int(saved["id"]),
@@ -226,6 +244,9 @@ def test_failed_schedule_retries_same_day_after_bounded_backoff(tmp_path: Path) 
         retried = store.claim_due_feed_schedule(now=now + timedelta(minutes=16))
         assert retried is not None
         assert retried["due_date"] == "2026-07-23"
+        store.finish_feed_schedule(saved["id"], due_date="2026-07-23",
+            status="canceled", now=now + timedelta(minutes=17))
+        assert store.claim_due_feed_schedule(now=now + timedelta(hours=2)) is None
 
 
 def test_maintenance_defer_retries_but_explicit_cancel_is_final(

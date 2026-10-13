@@ -167,7 +167,7 @@ def analyze_day(
             console.print(result["summary"])
         if embeddings:
             indexer = SemanticIndexer(store, model=embedding_model)
-            indexed = indexer.index_missing()
+            indexed = indexer.index_missing(feed_id=feed_id, start_date=date_value, end_date=date_value)
             console.print(f"Indexed {indexed} new transcript passages for semantic search.")
 
 
@@ -263,7 +263,8 @@ def ask(
         indexer = None
         if semantic:
             indexer = SemanticIndexer(store, model=embedding_model)
-            indexed = indexer.index_missing()
+            indexed = indexer.index_missing(feed_id=feed_id, start_date=start_date, end_date=end_date,
+                archive_dates=coverage["question_ready_dates"])
             if indexed:
                 console.print(f"Indexed {indexed} new transcript passages.")
         with open_analysis_client(provider_settings) as client:

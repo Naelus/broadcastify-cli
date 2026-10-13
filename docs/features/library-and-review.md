@@ -257,6 +257,10 @@ An analysis-window counter and its measured pace describe only that day's
 extraction step. They are not a whole-queue percentage or finish estimate.
 The full queue currently reports why its finish time is unknown; durable
 end-to-end throughput measurement is still needed for a reliable overall ETA.
+Completing one day's analysis indexes only that feed-day. Asking a question
+indexes only the question-ready dates in the selected feed/range. Cached index
+checks do not load an embedding model. An interrupted index resumes from its
+committed batches without rerunning saved analysis or indexing unrelated feeds.
 Bounded model passes process the oldest unfinished retained date, independently
 of newest-first acquisition. Native scheduled model work selects one pending
 date rather than repeatedly traversing the whole historical range; remaining
@@ -265,6 +269,14 @@ pass. Offline scheduling and recovery checks pass. Native build and isolated
 preview checks are required for each candidate; follow the
 [pre-release review](../validation/pre-release-review.md). Production model
 processing remains paused until explicitly resumed.
+
+Completed **recurring catch-up** schedules recheck after 30 minutes, matching the
+recent-source listing freshness window. This also applies with model processing
+paused: acquisition can continue using the existing cache/LAN-first path and
+rolling quota guard. Ordinary daily schedules still wait for the next scheduled
+day, and an explicit Cancel suppresses further checks for that day. The next
+source-check time survives restart; a failure during that later pass retains the
+normal retry backoff rather than being hidden by the earlier completed pass.
 
 Native settings and last selections live under
 `AppData\Local\Broadcastify Desktop`. Settings are atomic and operation/crash

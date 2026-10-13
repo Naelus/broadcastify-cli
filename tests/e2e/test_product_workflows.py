@@ -240,6 +240,97 @@ def test_activity_acknowledges_only_displayed_revisions_across_restarts(tmp_path
     assert len(remaining) == 1 and remaining[0]["archive_date"] == second.isoformat()
 
 
+def test_retained_day_recovers_index_interruption_without_repeating_other_work(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+    from broadcastify_cli import worker
+    from broadcastify_cli.library import scan_local_library, build_library_workflow
+
+    library = tmp_path / "library"
+    database = library / "broadcastify-analysis.sqlite3"
+    day = date(2026, 7, 11)
+    audio = _retained_analyzed_day(library, database, "90001", day,
+        location="Main and First", start_seconds=10)
+    _retained_analyzed_day(library, database, "90001", day + timedelta(days=1),
+        location="Another day", start_seconds=10)
+    _retained_analyzed_day(library, database, "90002", day,
+        location="Another feed", start_seconds=10)
+    transcript = audio.parent / "transcripts" / f"{audio.stem}.json"
+    transcript.write_text(json.dumps({"duration": 21_500, "diarization_completed": True,
+        "segments": [{"start": i * 330, "end": i * 330 + 2, "speaker": "SPEAKER_00",
+            "text": f"Target dispatch status check {i}."} for i in range(65)]}), encoding="utf-8")
+    retained_hashes = {p: hashlib.sha256(p.read_bytes()).hexdigest() for p in (audio, transcript)}
+    with AnalysisStore(database) as store, store.transaction():
+        store.connection.execute("DELETE FROM embeddings")
+
+    generation_calls: list[str] = []
+    server_launches: list[bool] = []
+    embedded_batches: list[list[str]] = []
+    model_loads: list[str] = []
+
+    class OfflineGeneration:
+        def chat_json(self, *, schema_name: str, **_kwargs: Any) -> dict[str, Any]:
+            generation_calls.append(schema_name)
+            return {"incidents": []} if schema_name == "police_radio_incidents" else {"summary": "Routine status checks."}
+
+    @contextmanager
+    def offline_client(provider: Any, *, launch_local_server: bool) -> Iterator[Any]:
+        server_launches.append(launch_local_server)
+        client = OfflineGeneration()
+        client.model = provider.cache_model
+        yield client
+
+    class OfflineEmbedding:
+        def __init__(self, *, model_name: str) -> None:
+            model_loads.append(model_name)
+
+        def embed(self, texts: list[str]) -> list[list[float]]:
+            embedded_batches.append(texts)
+            assert all("Target dispatch" in text for text in texts), "A single-day finish indexed unrelated evidence"
+            if len(embedded_batches) == 2:
+                raise RuntimeError("interrupted after a saved embedding batch")
+            return [[1.0, 0.0] for _ in texts]
+
+    monkeypatch.setitem(sys.modules, "fastembed", SimpleNamespace(TextEmbedding=OfflineEmbedding))
+    monkeypatch.setattr(worker, "DEFAULT_DATABASE", database)
+    monkeypatch.setattr(worker, "open_analysis_client", offline_client)
+    events: list[dict[str, Any]] = []
+    monkeypatch.setattr(worker, "emit", events.append)
+    payload = {"feed_id": "90001", "archive_date": day.isoformat(), "output_dir": str(library)}
+
+    def run() -> None:
+        monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(payload)))
+        assert worker.analyze_day() == 0
+
+    with pytest.raises(RuntimeError, match="interrupted after a saved embedding batch"):
+        run()
+    calls_after_analysis = list(generation_calls)
+    assert calls_after_analysis
+    interrupted = scan_local_library(library, database)
+    selected = next(d for d in interrupted if d["feed_id"] == "90001" and d["archive_date"] == day.isoformat())
+    assert selected["has_analysis"] and not selected["has_search_index"] and not selected["is_complete"]
+    with AnalysisStore(database) as store:
+        assert len(store.passages_missing_embeddings(DEFAULT_EMBEDDING_MODEL,
+            feed_id="90001", start_date=day, end_date=day)) == 1
+
+    # Reopens the store through the real worker entry point. The saved summary
+    # and 64 committed embeddings survive the interrupted final stage.
+    run()
+    assert generation_calls == calls_after_analysis
+    assert [len(batch) for batch in embedded_batches] == [64, 1, 1]
+    finished = scan_local_library(library, database)
+    workflow = build_library_workflow(finished)
+    assert workflow["pending_count"] == 2 and workflow["ready_count"] == 1
+    assert {(d["feed_id"], d["archive_date"]) for d in workflow["days"]} == {
+        ("90001", "2026-07-12"), ("90002", "2026-07-11")}
+    run()  # A fully cached retry must load neither generation nor embedding models.
+    assert server_launches == [True, False, False]
+    assert len(model_loads) == 2 and len(embedded_batches) == 3
+    assert generation_calls == calls_after_analysis
+    assert all(hashlib.sha256(p.read_bytes()).hexdigest() == digest for p, digest in retained_hashes.items())
+
+
 def _audio_only_day(
     library_root: Path,
     feed_id: str,
@@ -734,7 +825,7 @@ def test_month_and_entire_feed_hotspot_question_is_coverage_grounded(
             self.store = store
             self.model = model
 
-        def index_missing(self) -> int:
+        def index_missing(self, **_scope: Any) -> int:
             return 0
 
         def search(

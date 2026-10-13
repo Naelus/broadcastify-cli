@@ -1810,7 +1810,8 @@ def _analyze_day_payload(payload: dict[str, Any]) -> tuple[dict[str, Any], int, 
                 "message": "Updating semantic search index…",
             }
         )
-        indexed = SemanticIndexer(store, model=DEFAULT_EMBEDDING_MODEL).index_missing()
+        indexed = SemanticIndexer(store, model=DEFAULT_EMBEDDING_MODEL).index_missing(
+            feed_id=feed_id, start_date=archive_date, end_date=archive_date)
         report = _day_report(store, feed_id, archive_date)
     return report, int(result["incidents"]), indexed
 
@@ -1951,7 +1952,8 @@ def ask_archive() -> int:
             archive_dates=coverage["question_ready_dates"],
         )
         indexer = SemanticIndexer(store, model=DEFAULT_EMBEDDING_MODEL)
-        indexer.index_missing()
+        indexer.index_missing(feed_id=feed_id, start_date=start_date, end_date=end_date,
+            archive_dates=coverage["question_ready_dates"])
         with open_analysis_client(provider) as client:
             result = RangeQuestionAnswerer(
                 store,

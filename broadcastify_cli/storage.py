@@ -16,6 +16,7 @@ from .quota import normalize_account_profile_id
 SCHEMA_VERSION = 1
 FEED_SCHEDULE_RETAINED_RECHECK = timedelta(minutes=5)
 FEED_SCHEDULE_FAILURE_RECHECK = timedelta(minutes=15)
+FEED_SCHEDULE_SOURCE_RECHECK = timedelta(minutes=30)
 
 
 def utc_now() -> str:
@@ -468,14 +469,27 @@ class AnalysisStore:
         running = str(row["state"]) == "running" and bool(
             lease_until and lease_until > current_utc
         )
+        completed_today = str(row["last_run_date"] or "") == current.date().isoformat()
+        finished_at = self._utc_value(str(row["last_finished_at"] or ""))
+        # A recurring catch-up monitors growing listings after one pass ends.
+        # A plain daily schedule and an explicit Cancel still wait until tomorrow.
+        source_recheck = (
+            finished_at + FEED_SCHEDULE_SOURCE_RECHECK
+            if completed_today and row["recurring_catch_up"]
+            and str(row["state"]) == "complete" and finished_at else None
+        )
         due = bool(row["enabled"]) and (
             current >= scheduled_today
-            and str(row["last_run_date"] or "") != current.date().isoformat()
+            and (not completed_today or source_recheck is not None)
+            and (source_recheck is None or source_recheck <= current_utc)
             and not running
             and (not_before is None or not_before <= current_utc)
         )
         if due:
             next_run = current
+        elif source_recheck is not None:
+            next_run = max(scheduled_today, source_recheck.astimezone(current.tzinfo),
+                (not_before or source_recheck).astimezone(current.tzinfo))
         elif not_before is not None and not_before > current_utc:
             next_run = max(scheduled_today, not_before.astimezone(current.tzinfo))
         elif running and lease_until is not None:
@@ -812,7 +826,7 @@ class AnalysisStore:
             self.connection.execute(
                 """
                 UPDATE feed_schedules
-                SET state='running', message='', last_started_at=?,
+                SET state='running', message='', last_run_date='', last_started_at=?,
                     lease_until=?, updated_at=?
                 WHERE id=?
                 """,
@@ -857,6 +871,7 @@ class AnalysisStore:
                 # legacy relative values there.
                 job["output_dir"] = str(self.path.resolve().parent)
         schedule["state"] = "running"
+        schedule["last_run_date"] = ""
         schedule["due"] = False
         schedule["due_date"] = due_date.isoformat()
         schedule["job"] = job
@@ -2474,15 +2489,36 @@ class AnalysisStore:
                 ),
             )
 
-    def passages_missing_embeddings(self, model: str) -> list[dict[str, Any]]:
+    def passages_missing_embeddings(
+        self, model: str, *, feed_id: str | None = None,
+        start_date: date | None = None, end_date: date | None = None,
+        archive_dates: Sequence[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        clauses: list[str] = []
+        parameters: list[Any] = [model]
+        for column, operator, value in (
+            ("feed_id", "=", feed_id), ("archive_date", ">=", start_date),
+            ("archive_date", "<=", end_date),
+        ):
+            if value is not None:
+                clauses.append(f"d.{column}{operator}?")
+                parameters.append(value.isoformat() if isinstance(value, date) else value)
+        if archive_dates is not None:
+            if not archive_dates:
+                return []
+            clauses.append("d.archive_date IN (" + ",".join("?" for _ in archive_dates) + ")")
+            parameters.extend(archive_dates)
+        where = " WHERE " + " AND ".join(clauses) if clauses else ""
         rows = self.connection.execute(
-            """
+            f"""
             SELECT p.*, e.text_sha256 AS embedding_sha256 FROM passages p
+            JOIN feed_days d ON d.id=p.day_id
             LEFT JOIN embeddings e
               ON e.entity_type='passage' AND e.entity_id=p.id AND e.model=?
+            {where}
             ORDER BY p.id
             """,
-            (model,),
+            parameters,
         ).fetchall()
         return [dict(row) for row in rows if row["embedding_sha256"] != hashlib.sha256(
             f"passage: {row['text']}".encode("utf-8")

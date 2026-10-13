@@ -2759,20 +2759,37 @@ class SemanticIndexer:
         store: AnalysisStore,
         model: str = DEFAULT_EMBEDDING_MODEL,
     ) -> None:
+        self.store = store
+        self.model_name = model
+        self._model: Any = None
+
+    @property
+    def model(self) -> Any:
+        if self._model is not None:
+            return self._model
         try:
             from fastembed import TextEmbedding
         except ModuleNotFoundError as exc:
             raise RuntimeError(
                 'Semantic search dependencies are missing. Install with: pip install -e ".[analysis]"'
             ) from exc
-        self.store = store
-        self.model_name = model
-        self.model = TextEmbedding(model_name=model)
+        self._model = TextEmbedding(model_name=self.model_name)
+        return self._model
 
-    def index_missing(self, batch_size: int = 64) -> int:
+    def index_missing(
+        self, batch_size: int = 64, *, feed_id: str | None = None,
+        start_date: date | None = None, end_date: date | None = None,
+        archive_dates: Sequence[str] | None = None,
+    ) -> int:
+        # A day's final stage must not silently index every other pending day.
+        # Query before loading the model so a cached retry costs no model load.
+        passages = self.store.passages_missing_embeddings(self.model_name,
+            feed_id=feed_id, start_date=start_date, end_date=end_date,
+            archive_dates=archive_dates)
+        if not passages:
+            return 0
         import numpy as np
 
-        passages = self.store.passages_missing_embeddings(self.model_name)
         saved = 0
         for offset in range(0, len(passages), batch_size):
             batch = passages[offset : offset + batch_size]
