@@ -8366,6 +8366,10 @@ public sealed partial class MainWindow : Window
             await ShowMessageAsync("Refresh saved days", "This cited day is no longer in the displayed list. Refresh the saved days before opening it.");
             return;
         }
+        // A citation is an explicit request to see this evidence. Stale search
+        // text or the default priority threshold must not hide the cited item.
+        PriorityFilterCombo.SelectedIndex = 3;
+        IncidentSearchBox.Text = "";
         ReviewTabView.SelectedItem = DailyReviewTab;
         if (AnalysisDaysList.SelectedItem is AnalysisDay selected && selected == day)
         {

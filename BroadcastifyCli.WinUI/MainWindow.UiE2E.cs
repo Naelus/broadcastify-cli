@@ -236,7 +236,10 @@ public sealed partial class MainWindow
             };
             foreach (var argument in new[] { "-c",
                 "import sys; from datetime import date; from broadcastify_cli.storage import AnalysisStore; "
-                    + "s=AnalysisStore(sys.argv[1]); s.import_transcript('999992',date(2026,1,1),sys.argv[2],sys.argv[3]); s.close()",
+                    + "from broadcastify_cli.analysis import PROMPT_VERSION; "
+                    + "s=AnalysisStore(sys.argv[1]); d=s.import_transcript('999992',date(2026,1,1),sys.argv[2],sys.argv[3]); "
+                    + "ids=s.replace_incidents(d.day_id,[dict(fingerprint='cited',event_type='traffic',title='Retained cited incident',summary='Fixture evidence.',priority=2,start_seconds=0,end_seconds=1,evidence=[dict(segment_index=0,start_seconds=0,end_seconds=1,text='Retained dispatch.')])],model='fixture',prompt_version=PROMPT_VERSION); "
+                    + "s.save_daily_summary(d.day_id,'Fixture summary.',ids,'fixture',PROMPT_VERSION,d.transcript_sha256); s.close()",
                 Path.Combine(libraryRoot, "broadcastify-analysis.sqlite3"), transcriptPath, audioPath })
             {
                 importInfo.ArgumentList.Add(argument);
@@ -260,6 +263,15 @@ public sealed partial class MainWindow
                 $"Background evidence progress changed chat: selected={AnalysisDaysList.SelectedItem is AnalysisDay}, "
                     + $"feed={AnalysisFeedBox.Text}, range={QuestionStartDatePicker.Date:yyyy-MM-dd}..{QuestionEndDatePicker.Date:yyyy-MM-dd}, "
                     + $"messages={_archiveChatMessages.Count}.");
+            var activity = await _worker.GetActivityReportAsync(
+                "999992", "2026-01-01", "2026-01-01", CancellationToken.None);
+            Require(activity?.Items.Count == 1, "The saved cited incident was absent from What changed.");
+            PriorityFilterCombo.SelectedIndex = 0;
+            IncidentSearchBox.Text = "unrelated search";
+            ReviewActivityIncident_Click(new Button { DataContext = activity!.Items[0] }, new RoutedEventArgs());
+            Require(await WaitForUiConditionAsync(() => _visibleIncidents.Any(
+                    incident => incident.Title == "Retained cited incident")),
+                "Opening a What changed citation left its evidence hidden behind Review filters.");
             // Use the native cancellation handler and real worker/database boundary.
             // Invoking an entire scheduled archive job here would require live acquisition.
             foreach (var explicitCancel in new[] { false, true })
