@@ -1265,9 +1265,13 @@ class AnalysisStore:
         # Count coverage without loading vectors or an embedding model.
         embedding_count = "NULL"
         if embedding_model is not None:
+            # Start with this day's passages, then probe each exact vector key.
+            # A join here lets SQLite scan every passage embedding once per day,
+            # making routine Library polling quadratic as the archive grows.
             embedding_count = """(SELECT COUNT(*) FROM passages p
-                JOIN embeddings e ON e.entity_type='passage'
-                    AND e.entity_id=p.id AND e.model=? WHERE p.day_id=d.id)"""
+                WHERE p.day_id=d.id AND EXISTS (
+                    SELECT 1 FROM embeddings e WHERE e.entity_type='passage'
+                        AND e.entity_id=p.id AND e.model=?))"""
             parameters.insert(0, embedding_model)
         rows = self.connection.execute(
             f"""

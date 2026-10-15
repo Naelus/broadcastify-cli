@@ -1,6 +1,6 @@
 import json
 import hashlib
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 from broadcastify_cli.storage import AnalysisStore
@@ -31,6 +31,37 @@ def make_transcript(path: Path) -> None:
         ),
         encoding="utf-8",
     )
+
+
+def test_library_index_coverage_does_not_rescan_all_embeddings_for_each_day(tmp_path: Path) -> None:
+    """Polling a retained library must not do days × total-embeddings work."""
+    transcript, audio = tmp_path / "transcript.json", tmp_path / "audio.mp3"
+    audio.write_bytes(b"retained audio")
+    transcript.write_text(json.dumps({"segments": [
+        {"start": index * 330, "end": index * 330 + 2, "text": f"Dispatch update {index}."}
+        for index in range(8)
+    ]}), encoding="utf-8")
+    with AnalysisStore(tmp_path / "analysis.sqlite3") as store:
+        for offset in range(120):
+            store.import_transcript("90001", date(2026, 1, 1) + timedelta(days=offset), transcript, audio)
+        store.save_embeddings("passage", [
+            (row["id"], hashlib.sha256(f"passage: {row['text']}".encode()).hexdigest(), 1, b"\0" * 4)
+            for row in store.passages_missing_embeddings("coverage-model")
+        ], "coverage-model")
+        # Bound actual SQLite work, not machine speed or a particular query plan.
+        # The old join revisited the whole vector index for every retained day.
+        ticks = 0
+        def budget() -> bool:
+            nonlocal ticks
+            ticks += 1
+            return ticks > 200
+        store.connection.set_progress_handler(budget, 1000)
+        try:
+            days = store.list_days(embedding_model="coverage-model")
+        finally:
+            store.connection.set_progress_handler(None, 0)
+        assert len(days) == 120
+        assert all(day["indexed_passage_count"] == day["passage_count"] == 8 for day in days)
 
 
 def test_import_is_idempotent_and_searchable(tmp_path: Path) -> None:
