@@ -78,6 +78,7 @@ public sealed partial class MainWindow : Window
     private bool _exclusiveJobRunning;
     private bool _libraryMutationBusy;
     private bool _libraryPlanning;
+    private int _libraryPlanningVersion;
     private readonly HashSet<string> _activePipelineFeedIds = new(StringComparer.Ordinal);
     private string _activeQuestionFeedId = "";
     private bool _syncingAnalysisFeedSelection;
@@ -3827,6 +3828,7 @@ public sealed partial class MainWindow : Window
             return;
         }
         _libraryPlanning = true;
+        var planningVersion = ++_libraryPlanningVersion;
         UpdateCommandAvailability();
         try
         {
@@ -3849,7 +3851,9 @@ public sealed partial class MainWindow : Window
         }
         finally
         {
-            _libraryPlanning = false;
+            // The prior plan's pipeline may finish while a newer catch-up
+            // dialog owns this flag. Only release our own interaction.
+            if (planningVersion == _libraryPlanningVersion) _libraryPlanning = false;
             if (!_windowClosed) UpdateCommandAvailability();
         }
     }
