@@ -115,6 +115,9 @@ input::placeholder, textarea::placeholder { color: #929b95; }
 .notice.success { background: var(--accent-soft); color: var(--accent-strong); }
 .notice.warning { background: var(--warning-soft); color: #79520d; }
 .notice.danger { background: var(--danger-soft); color: var(--danger); }
+/* Queue summaries contain several paragraphs; keep them readable at sidebar widths. */
+.notice.workflow-status { flex-direction: column; align-items: stretch; gap: 6px; margin: 16px 15px 0; background: var(--surface-muted); border: 1px solid var(--line); overflow-wrap: anywhere; }
+.workflow-status strong { white-space: normal; }
 .pipeline { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 7px; margin: 18px 0; }
 .stage { border: 1px solid var(--line); background: var(--surface-muted); border-radius: 10px; padding: 10px; min-height: 76px; }
 .stage .stage-index { display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: #d8ded9; color: #5f6963; font-size: 11px; font-weight: 700; }
