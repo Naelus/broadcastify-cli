@@ -64,7 +64,10 @@ portable-diarization = [
     "sherpa-onnx>=1.13.4,<2"
 ]
 dev = [
-    "pytest>=8,<10"
+    "pytest>=8,<10",
+    # Exercise real embedding serialization and interrupted index recovery
+    # without installing inference engines or downloading model weights.
+    "numpy>=1.26,<3"
 ]
 
 [project.scripts]
