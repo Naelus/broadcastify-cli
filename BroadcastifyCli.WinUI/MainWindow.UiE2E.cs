@@ -233,8 +233,8 @@ public sealed partial class MainWindow
             Require(_libraryPlanning && !ResumeAllLibraryButton.IsEnabled && !CatchUpFeedButton.IsEnabled,
                 "Resume remained clickable while its worker was planning.");
             await PrepareLibraryResumeAsync(catchUp: false);
-            Require(await WaitForUiConditionAsync(() => ResumeDialog() is not null),
-                "The real resume plan did not open its options dialog.");
+            Require(await WaitForUiConditionAsync(() => ResumeDialog() is not null, attempts: 1000),
+                $"The real resume plan did not open its options dialog (completed={planning.IsCompleted}, status={StatusText.Text}).");
             await PrepareLibraryResumeAsync(catchUp: true);
             ResumeDialog()!.Hide();
             await planning;
@@ -299,7 +299,7 @@ public sealed partial class MainWindow
             IncidentSearchBox.Text = "unrelated search";
             ReviewActivityIncident_Click(new Button { DataContext = activity!.Items[0] }, new RoutedEventArgs());
             Require(await WaitForUiConditionAsync(() => _visibleIncidents.Any(
-                    incident => incident.Title == "Retained cited incident")),
+                    incident => incident.Title == "Retained cited incident"), attempts: 1000),
                 "Opening a What changed citation left its evidence hidden behind Review filters.");
             // Use the native cancellation handler and real worker/database boundary.
             // Invoking an entire scheduled archive job here would require live acquisition.
@@ -1916,9 +1916,10 @@ public sealed partial class MainWindow
         });
     }
 
-    private async Task<bool> WaitForUiConditionAsync(Func<bool> condition)
+    private async Task<bool> WaitForUiConditionAsync(Func<bool> condition, int attempts = 30)
     {
-        const int attempts = 30;
+        // Layout settles quickly; real worker startup needs a separate bound
+        // on slower CI machines. Always return as soon as the outcome is visible.
         for (var attempt = 0; attempt < attempts; attempt++)
         {
             WindowRoot.UpdateLayout();
