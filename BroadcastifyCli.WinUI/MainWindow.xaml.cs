@@ -77,6 +77,7 @@ public sealed partial class MainWindow : Window
     private bool _exclusiveBusy;
     private bool _exclusiveJobRunning;
     private bool _libraryMutationBusy;
+    private bool _libraryPlanning;
     private readonly HashSet<string> _activePipelineFeedIds = new(StringComparer.Ordinal);
     private string _activeQuestionFeedId = "";
     private bool _syncingAnalysisFeedSelection;
@@ -3814,13 +3815,53 @@ public sealed partial class MainWindow : Window
     }
 
     private async void CatchUpFeed_Click(object sender, RoutedEventArgs e)
+        => await PrepareLibraryResumeAsync(catchUp: true);
+
+    private async Task PrepareLibraryResumeAsync(bool catchUp)
+    {
+        // Own the interaction before awaiting the worker. A second click must
+        // not race the first plan into another WinUI ContentDialog.
+        if (_worker is null || _windowClosed || _libraryPlanning || _exclusiveBusy
+            || _libraryMutationBusy || (!catchUp && _pipelineCancellation is not null))
+        {
+            return;
+        }
+        _libraryPlanning = true;
+        UpdateCommandAvailability();
+        try
+        {
+            if (catchUp) await CatchUpFeedAsync();
+            else await ResumeAllLibraryAsync();
+        }
+        catch (Exception) when (_windowClosed)
+        {
+            // A completed worker response cannot reopen a closing window.
+        }
+        catch (COMException exception) when (exception.HResult == unchecked((int)0x80000019))
+        {
+            // Another app dialog may have opened while the planner was reading.
+            // Do not try to report this by opening yet another modal dialog.
+            AppendLog("Resume deferred: finish the open dialog, then try again.");
+        }
+        catch (Exception exception)
+        {
+            await ShowErrorAsync(exception);
+        }
+        finally
+        {
+            _libraryPlanning = false;
+            if (!_windowClosed) UpdateCommandAvailability();
+        }
+    }
+
+    private async Task CatchUpFeedAsync()
     {
         if (_worker is null)
         {
             return;
         }
         var range = await ShowLibraryCatchUpRangeAsync();
-        if (range is null)
+        if (range is null || _windowClosed)
         {
             return;
         }
@@ -3846,6 +3887,7 @@ public sealed partial class MainWindow : Window
                 var existing = (await _worker.ListFeedSchedulesAsync(
                     CancellationToken.None))
                     .FirstOrDefault(value => value.FeedId == range.Feed.FeedId);
+                if (_windowClosed) return;
                 if (!await ShowFeedScheduleEditorAsync(
                         range.Feed.FeedId,
                         range.Feed.FeedName,
@@ -4042,6 +4084,9 @@ public sealed partial class MainWindow : Window
     }
 
     private async void ResumeAllLibrary_Click(object sender, RoutedEventArgs e)
+        => await PrepareLibraryResumeAsync(catchUp: false);
+
+    private async Task ResumeAllLibraryAsync()
     {
         if (_worker is null || _pipelineCancellation is not null)
         {
@@ -4069,7 +4114,7 @@ public sealed partial class MainWindow : Window
         LibraryCatchUpRange? catchUpRange = null)
     {
         var worker = _worker;
-        if (worker is null)
+        if (worker is null || _windowClosed)
         {
             return;
         }
@@ -4100,7 +4145,7 @@ public sealed partial class MainWindow : Window
         }
 
         var selection = await ShowResumeAllOptionsAsync(plan);
-        if (selection is null)
+        if (selection is null || _windowClosed)
         {
             return;
         }
@@ -4147,6 +4192,11 @@ public sealed partial class MainWindow : Window
             }
         }
 
+        if (_windowClosed) return;
+        // Planning is finished. The existing pipeline owns command availability
+        // from this point; ordinary review stays usable during background work.
+        _libraryPlanning = false;
+        UpdateCommandAvailability();
         if (_pipelineCancellation is not null)
         {
             var persisted = catchUpRange?.SaveForResume == true
@@ -6448,7 +6498,7 @@ public sealed partial class MainWindow : Window
         if (_worker is null
             || _checkingFeedSchedule
             || _pipelineCancellation is not null
-            || _exclusiveBusy)
+            || _exclusiveBusy || _libraryPlanning)
         {
             return;
         }
@@ -9374,7 +9424,7 @@ public sealed partial class MainWindow : Window
     private void UpdateCommandAvailability()
     {
         var ready = _worker is not null;
-        var interactive = ready && !_exclusiveBusy;
+        var interactive = ready && !_exclusiveBusy && !_libraryPlanning;
         var pipelineIdle = _pipelineCancellation is null;
         var selectedDay = _selectedLibraryDay;
 
@@ -9423,7 +9473,7 @@ public sealed partial class MainWindow : Window
         AreaProfileCombo.IsEnabled = interactive;
         RefreshLibraryButton.IsEnabled = interactive && !_refreshingLibrary;
         CatchUpFeedButton.IsEnabled = ready
-            && !_libraryMutationBusy
+            && !_libraryMutationBusy && !_libraryPlanning && !_exclusiveBusy
             && _libraryFeeds.Count > 0;
         ResumeAllLibraryButton.IsEnabled = interactive
             && pipelineIdle
@@ -9501,6 +9551,7 @@ public sealed partial class MainWindow : Window
 
     private async Task ShowErrorAsync(Exception exception)
     {
+        if (_windowClosed) return;
         StatusText.Text = "Error";
         AppendLog($"ERROR: {exception.Message}");
         await ShowMessageAsync("Processing error", exception.Message);
@@ -9508,6 +9559,7 @@ public sealed partial class MainWindow : Window
 
     private async Task ShowMessageAsync(string title, string message)
     {
+        if (_windowClosed) return;
         var dialog = new ContentDialog
         {
             XamlRoot = ((FrameworkElement)Content).XamlRoot,

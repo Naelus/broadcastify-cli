@@ -52,6 +52,12 @@ verification checks Review refresh without replacing playback selection,
 current-step progress without overwriting the full queue, preview model-command
 rejection, and the existing compact/docked layout matrix.
 
+Resume verification also invokes the real worker planner while repeating Resume
+and Catch up clicks. Only one options dialog may open; canceling it must start no
+work and restore the controls. A worker result arriving after window closure must
+not open a dialog or start processing. These checks protect the observed WinUI
+crashes from overlapping dialogs and late resume results.
+
 Record the source commit, suite result, native report, and manual preview outcome
 with the candidate. A green build is not evidence of real-world model speed or
 an overall ETA: end-to-end timing calibration remains outstanding. Do not resume

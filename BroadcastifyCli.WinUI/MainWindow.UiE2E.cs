@@ -220,6 +220,35 @@ public sealed partial class MainWindow
                     && LibraryDetailInfoBar.Title == "No archive available"
                     && LibraryBacklogSummaryText.Text.Contains("1 day(s) have no archive available"),
                 "An unavailable archive still offered processing or lacked a separate explanation.");
+            // Reproduce the real crash: two clicks while the worker is planning,
+            // followed by another click while its modal is open. Cancel must not
+            // start model/download work, and a late result after close is ignored.
+            ContentDialog? ResumeDialog() => VisualTreeHelper
+                .GetOpenPopupsForXamlRoot(WindowRoot.XamlRoot)
+                .Where(popup => popup.Child is not null)
+                .SelectMany(popup => popup.Child is ContentDialog dialog
+                    ? new[] { dialog } : FindVisualDescendants<ContentDialog>(popup.Child!))
+                .SingleOrDefault(dialog => dialog.Title?.ToString()?.StartsWith("Resume and prioritize") == true);
+            var planning = PrepareLibraryResumeAsync(catchUp: false);
+            Require(_libraryPlanning && !ResumeAllLibraryButton.IsEnabled && !CatchUpFeedButton.IsEnabled,
+                "Resume remained clickable while its worker was planning.");
+            await PrepareLibraryResumeAsync(catchUp: false);
+            Require(await WaitForUiConditionAsync(() => ResumeDialog() is not null),
+                "The real resume plan did not open its options dialog.");
+            await PrepareLibraryResumeAsync(catchUp: true);
+            ResumeDialog()!.Hide();
+            await planning;
+            Require(!_libraryPlanning && _pipelineCancellation is null && ResumeAllLibraryButton.IsEnabled,
+                "Canceling resume started work or left the planner locked.");
+            planning = PrepareLibraryResumeAsync(catchUp: false);
+            _windowClosed = true;
+            try
+            {
+                await planning;
+                Require(ResumeDialog() is null && !_libraryPlanning && _pipelineCancellation is null,
+                    "A late resume result opened a dialog or started work after close.");
+            }
+            finally { _windowClosed = false; UpdateCommandAvailability(); }
             var transcriptPath = Path.Combine(dayDirectory, "transcripts", "combined_999992_20260101.json");
             Directory.CreateDirectory(Path.GetDirectoryName(transcriptPath)!);
             await File.WriteAllTextAsync(transcriptPath,
@@ -333,6 +362,7 @@ public sealed partial class MainWindow
                 ["unavailable_excluded_from_backlog"] = true,
                 ["chat_scope_preserved"] = true,
                 ["scheduled_interruption_recovery"] = true,
+                ["resume_dialog_reentry_and_close"] = true,
             };
         }
         finally
