@@ -128,8 +128,20 @@ public sealed partial class MainWindow
         {
             var log = Path.Combine(launched.DataRoot, "activity.log");
             var ready = await WaitForUiConditionAsync(() =>
-                !child.HasExited && File.Exists(log)
-                && File.ReadAllText(log).Contains("Preview ready: 4 library days; 2 review days.", StringComparison.Ordinal), attempts: 1500);
+            {
+                if (child.HasExited || !File.Exists(log)) return false;
+                try
+                {
+                    // Read readiness while the child is still appending its
+                    // startup log; a transient writer lock is not UI failure.
+                    using var stream = new FileStream(log, FileMode.Open, FileAccess.Read,
+                        FileShare.ReadWrite | FileShare.Delete);
+                    using var reader = new StreamReader(stream);
+                    return reader.ReadToEnd().Contains(
+                        "Preview ready: 4 library days; 2 review days.", StringComparison.Ordinal);
+                }
+                catch (IOException) { return false; }
+            }, attempts: 1500);
             Require(ready, "The separately launched preview did not render its saved sample Library and Review days.");
             Require(!File.Exists(Path.Combine(launched.DataRoot, "archive-quota.sqlite3"))
                     && !File.Exists(Path.Combine(launched.DataRoot, "credentials.enc")),
