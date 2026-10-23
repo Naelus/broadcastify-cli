@@ -1549,7 +1549,6 @@ function renderJob(job) {
   let timing = running ? "Current step only; the full catch-up queue is shown above." : "";
   if (running && progress?.stage === "analysis_windows") {
     const sinceUpdate = Math.max(0, Date.now() / 1000 - Number(progress.emitted_at_unix || Date.now() / 1000));
-    const duration = seconds => seconds >= 3600 ? `${Math.floor(seconds / 3600)}h ${Math.floor(seconds % 3600 / 60)}m` : `${Math.max(1, Math.ceil(seconds / 60))}m`;
     timing = `${progress.current}/${progress.total} windows saved · ${duration(Number(progress.elapsed_seconds || 0) + sinceUpdate)} elapsed`;
     if (progress.current < progress.total) {
       const remaining = Number(progress.estimated_remaining_seconds) - sinceUpdate;
@@ -2867,6 +2866,12 @@ setTimeout(refreshWorkflow, 30000);
 
 let masterJobsTimer;
 let masterJobsBusy = false;
+// Shared by the current-step timer, whole-workflow ETA and stage budgets.
+function duration(seconds) {
+  seconds = Math.max(0, Number(seconds) || 0);
+  return seconds >= 3600 ? `${Math.floor(seconds / 3600)}h ${Math.floor(seconds % 3600 / 60)}m`
+    : seconds >= 60 ? `${Math.ceil(seconds / 60)}m` : `${Math.ceil(seconds)}s`;
+}
 function workflowEta(job) {
   const eta = job.eta;
   if (!eta) return "Full workflow: measuring remaining work";

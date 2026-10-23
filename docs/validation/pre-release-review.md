@@ -82,3 +82,8 @@ quota waits have no confident finish time. A green build or synthetic preview
 does not establish real-world processing speed or validate an installed
 release. Do not use production archive or model work solely to obtain timing
 samples.
+
+In the browser, also inspect a measured ETA and expand its remaining stage
+budgets, plus a learning/waiting estimate with some calibrated stages. A fresh
+profile with no timing samples does not exercise duration rendering. Confirm
+that a formatting error cannot masquerade as a master disconnect.
