@@ -137,7 +137,7 @@ public sealed partial class MainWindow
             message += $" · calibrated stages need {FormatEtaDuration(measuredLower)}–{FormatEtaDuration(measuredUpper)}; other work/waits excluded";
         if (state != "estimated")
             return string.IsNullOrWhiteSpace(message)
-                ? $"{prefix}: {string.IsNullOrWhiteSpace(state) ? "Estimate unavailable" : state}."
+                ? $"{prefix}: {(string.IsNullOrWhiteSpace(state) ? "Estimate unavailable" : state)}."
                 : $"{prefix}: {message}.";
 
         if (!DateTimeOffset.TryParse(SharedText(eta, "as_of"), CultureInfo.InvariantCulture,
