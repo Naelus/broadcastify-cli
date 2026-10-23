@@ -1,6 +1,6 @@
 # Local Library and Review
 
-## What changed (development draft)
+## What changed
 
 The Review & Ask surface includes a **What changed** view for the selected
 retained feed and date range. It reads saved current-prompt incidents and their
@@ -30,10 +30,10 @@ through the authenticated Windows-master relay. An unavailable master produces
 an explicit error; the follower does not start an independent model pipeline.
 Exact-clip availability still follows the existing retained-audio guards.
 
-This is a pre-release candidate. Offline execution checks cover durable
-acknowledgements and the authenticated relay. Use the isolated
-[pre-release review](../validation/pre-release-review.md) for native verification;
-no live model processing is required for that review.
+This view shipped in Broadcastify Desktop 0.4.93. Offline execution checks cover
+durable acknowledgements and the authenticated relay. The installed preview
+provides synthetic incidents for exploring this view without production data;
+see [pre-release review](../validation/pre-release-review.md).
 
 ## Local Library
 
@@ -235,7 +235,7 @@ structure but do not identify officers, dispatchers, callers, or radio units.
 
 ## Durable UI state
 
-### Full catch-up visibility (development draft)
+### Full catch-up visibility and measured ETA
 
 The persistent status area distinguishes the complete retained work queue from
 the current worker step. It counts unfinished feed-days across all feeds and
@@ -253,10 +253,22 @@ Native status refreshes while Review is open without replacing the selected
 recording; the browser reads the Windows master's queue when configured as a
 follower and does not substitute its partial local archive if the master fails.
 
-An analysis-window counter and its measured pace describe only that day's
-extraction step. They are not a whole-queue percentage or finish estimate.
-The full queue currently reports why its finish time is unknown; durable
-end-to-end throughput measurement is still needed for a reliable overall ETA.
+The persistent Library status includes a **Full workflow (all retained work)**
+estimate across retained and scheduled backlog, distinct from the current-stage
+counter. It uses recent successful local timing samples for the active machine
+and processing configuration, then combines estimates for unfinished stages.
+The estimate is a range, not a promise; the browser follower displays the
+Windows master's timestamped estimate. Per-job rows show a separate
+**Full workflow (requested scope)** estimate, including known queue delay.
+
+New machine/configuration profiles initially show a learning message until
+local measurements exist. Provisional input sizes are labeled. The estimate
+does not predict archive publication, website access, or future quota
+availability: source and quota waits appear as waiting states without a
+confident finish time. Paused/failed work and stale or disconnected master data
+also hide finish times; estimates older than two minutes are treated as stale.
+An estimate only describes remaining planned work and never determines whether
+a feed-day or saved evidence is complete.
 Completing one day's analysis indexes only that feed-day. Asking a question
 indexes only the question-ready dates in the selected feed/range. Cached index
 checks do not load an embedding model. An interrupted index resumes from its
@@ -265,10 +277,11 @@ Bounded model passes process the oldest unfinished retained date, independently
 of newest-first acquisition. Native scheduled model work selects one pending
 date rather than repeatedly traversing the whole historical range; remaining
 dates keep the saved schedule resumable. Download-only schedules skip that model
-pass. Offline scheduling and recovery checks pass. Native build and isolated
-preview checks are required for each candidate; follow the
-[pre-release review](../validation/pre-release-review.md). Production model
-processing remains paused until explicitly resumed.
+pass. Offline scheduling and recovery checks pass. The installed Windows app
+and browser About surfaces open an isolated synthetic-data preview; it has no
+production credentials, archive acquisition, model workers, scheduler, or LAN
+service. Candidate-specific build and release validation remain separate; see
+the [pre-release review](../validation/pre-release-review.md).
 
 Completed **recurring catch-up** schedules recheck after 30 minutes, matching the
 recent-source listing freshness window. This also applies with model processing

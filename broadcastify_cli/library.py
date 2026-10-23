@@ -20,6 +20,7 @@ from .archive_cache import (
     source_listing_check_due,
 )
 from .audio import combine_mp3_files, combined_output_is_current
+from .workflow_eta import workflow_scope, measure
 from .portable_diarization import (
     COMMUNITY_DIARIZATION_ENGINE,
     COMMUNITY_DIARIZATION_QUALITY,
@@ -1761,6 +1762,7 @@ class LocalProcessingRequest:
         )
 
 
+@workflow_scope
 def prepare_local_day(
     request: LocalProcessingRequest,
     progress: Callable[[str], None] | None = None,
@@ -1806,7 +1808,8 @@ def prepare_local_day(
                 f"Loading local transcription {request.model} "
                 f"for {request.archive_date}…"
             )
-        transcriber = LocalTranscriber(**shared)
+        with measure("audio_setup", day=request.archive_date):
+            transcriber = LocalTranscriber(**shared)
         transcript = transcriber.transcribe_file(audio, progress=progress)
         operation = "transcribed"
     elif request.diarize and not transcript_satisfies_diarization(
@@ -1817,7 +1820,8 @@ def prepare_local_day(
             progress(
                 "Loading the selected speaker model without reloading transcription…"
             )
-        transcriber = LocalTranscriber(**shared, load_asr=False)
+        with measure("audio_setup", day=request.archive_date):
+            transcriber = LocalTranscriber(**shared, load_asr=False)
         transcript = transcriber.diarize_existing_transcript(
             audio, transcript, progress=progress
         )

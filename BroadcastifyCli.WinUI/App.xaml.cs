@@ -28,6 +28,18 @@ public partial class App : Application
         {
             var arguments = Environment.GetCommandLineArgs().Skip(1).ToArray();
             var commandLine = arguments.ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var workflowPreviewRequested = commandLine.Contains("--workflow-preview");
+            var workflowPreviewEnabled = Environment.GetEnvironmentVariable(
+                "BROADCASTIFY_DESKTOP_PREVIEW") == "1";
+            if (workflowPreviewRequested != workflowPreviewEnabled)
+            {
+                throw new InvalidOperationException(
+                    "An isolated workflow preview must be started by the preview launcher.");
+            }
+            if (workflowPreviewRequested)
+            {
+                ValidateWorkflowPreviewEnvironment();
+            }
             string? uiEndToEndReportPath = null;
             for (var index = 0; index < arguments.Length; index++)
             {
@@ -63,6 +75,51 @@ public partial class App : Application
         {
             AppDiagnostics.AppendCrash(exception, "Window startup");
             throw;
+        }
+    }
+
+    private static void ValidateWorkflowPreviewEnvironment()
+    {
+        var dataRoot = Environment.GetEnvironmentVariable(
+            AppSettingsStore.TestDataRootEnvironment);
+        var libraryRoot = Environment.GetEnvironmentVariable("BROADCASTIFY_LIBRARY_ROOT");
+        var database = Environment.GetEnvironmentVariable("BROADCASTIFY_SECURE_ANALYSIS_DB");
+        var quotaLedger = Environment.GetEnvironmentVariable("BROADCASTIFY_QUOTA_LEDGER");
+        var credentials = Environment.GetEnvironmentVariable("BROADCASTIFY_CREDENTIAL_STORE");
+        if (Environment.GetEnvironmentVariable("BROADCASTIFY_DESKTOP_E2E_ISOLATED") != "1"
+            || string.IsNullOrWhiteSpace(dataRoot)
+            || string.IsNullOrWhiteSpace(libraryRoot)
+            || string.IsNullOrWhiteSpace(database)
+            || string.IsNullOrWhiteSpace(quotaLedger)
+            || string.IsNullOrWhiteSpace(credentials))
+        {
+            throw new InvalidOperationException(
+                "The workflow preview requires isolated settings, library, quota, and credential paths.");
+        }
+
+        var resolvedRoot = Path.GetFullPath(dataRoot);
+        var previewRoot = Directory.GetParent(resolvedRoot)?.FullName
+            ?? throw new InvalidOperationException("The isolated preview data root has no parent directory.");
+        RequireContainedPath(previewRoot, resolvedRoot);
+        RequireContainedPath(previewRoot, libraryRoot);
+        RequireContainedPath(previewRoot, database);
+        RequireContainedPath(resolvedRoot, quotaLedger);
+        RequireContainedPath(resolvedRoot, credentials);
+        RequireContainedPath(resolvedRoot, AppSettingsStore.SettingsPath);
+    }
+
+    private static void RequireContainedPath(string root, string candidate)
+    {
+        var fullPath = Path.GetFullPath(candidate);
+        var relative = Path.GetRelativePath(root, fullPath);
+        if (relative == "."
+            || Path.IsPathRooted(relative)
+            || relative.Equals("..", StringComparison.Ordinal)
+            || relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal)
+            || relative.StartsWith(".." + Path.AltDirectorySeparatorChar, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "Workflow preview paths must remain below their isolated data root.");
         }
     }
 }

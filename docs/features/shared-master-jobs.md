@@ -6,6 +6,17 @@ work, state, saved-stage counts, current worker step, and last report. Saved
 schedules are separate from actual running or queued jobs. A current-step
 counter describes that stage; it is not an estimate for the whole workflow.
 
+The persistent Library status and NAS workflow view show a separate full
+catch-up estimate across retained work. Job rows may also show an estimate for
+that job's requested scope; queued jobs include known work ahead of them. Both
+use a finish-time range based on recent successful local stage measurements
+for the active machine and profile. New profiles show a learning state until
+there is enough local timing data, and estimates based on provisional input
+sizes are labeled. Source publication and quota availability cannot be
+predicted, so those waits are shown without a confident finish time. Pause,
+failure, data older than two minutes, or master disconnection also suppress
+finish times. These estimates are advisory and do not change completion checks.
+
 ## Submit and control work
 
 Choose the followed feed, today or an explicit date range, and full workflow or
@@ -73,4 +84,4 @@ source proof supplied by another acquisition, and explicit pause across
 restart. Owned-process shutdown is checked with a real child/grandchild and a
 retained checkpoint. These checks use temporary data and no provider requests
 or live models. Native build/UI and installed two-machine verification remain
-release gates; offline success is not a model-speed or ETA measurement.
+release gates; offline success does not establish real-world processing speed.

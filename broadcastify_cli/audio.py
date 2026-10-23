@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 from .workfiles import work_file_owner_token
+from .workflow_eta import measure, skip_sample
 
 
 class AudioCombineError(RuntimeError):
@@ -367,7 +368,16 @@ def _publish_combined_audio(partial: Path, output: Path) -> None:
             time.sleep(COMBINED_PUBLISH_RETRY_SECONDS)
 
 
-def combine_mp3_files(
+def combine_mp3_files(directory, feed_id, archive_date, *, source_files=None,
+                      delete_sources=False, feed_name=""):
+    files = list(source_files) if source_files is not None else list_source_mp3s(Path(directory))
+    units = sum(Path(p).stat().st_size for p in files if Path(p).is_file())
+    with measure("combine", units, archive_date):
+        return _combine_mp3_files(directory, feed_id, archive_date, source_files=files,
+                                  delete_sources=delete_sources, feed_name=feed_name)
+
+
+def _combine_mp3_files(
     directory: str | Path,
     feed_id: str,
     archive_date: date,
@@ -386,6 +396,7 @@ def combine_mp3_files(
     source_starts = [archive_start_from_filename(path) for path in files]
     current = combined_output_is_current(output, manifest_path, files)
     if current:
+        skip_sample()
         try:
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             if not isinstance(manifest, dict):

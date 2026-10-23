@@ -31,7 +31,7 @@ internal sealed partial class WorkerClient
     public string PythonDisplayName => _python.DisplayName;
     public string? PythonRuntimeWarning { get; }
     public string BundledEnvironmentPath { get; }
-    public bool HasBundledEnvironment => File.Exists(BundledEnvironmentPath);
+    public bool HasBundledEnvironment => !IsPreview && File.Exists(BundledEnvironmentPath);
     public string BundledManagedRuntimeManifestPath { get; }
     public string BundledWorkerWheelPath { get; }
     public string ManagedRuntimeRoot { get; }
@@ -1564,7 +1564,7 @@ internal sealed partial class WorkerClient
             requestedProfileId = CredentialStore.NormalizeProfileId(
                 configuredProfileId);
         }
-        var savedProfile = CredentialStore.TryLoadBroadcastifyProfile(
+        var savedProfile = IsPreview ? null : CredentialStore.TryLoadBroadcastifyProfile(
             requestedProfileId);
         startInfo.Environment.Remove("BROADCASTIFY_SECURE_USERNAME");
         startInfo.Environment.Remove("BROADCASTIFY_SECURE_PASSWORD");
@@ -1575,7 +1575,7 @@ internal sealed partial class WorkerClient
             startInfo.Environment["BROADCASTIFY_SECURE_PASSWORD"] =
                 savedProfile.Password;
         }
-        var savedHuggingFaceToken = CredentialStore.TryLoadHuggingFaceToken();
+        var savedHuggingFaceToken = IsPreview ? null : CredentialStore.TryLoadHuggingFaceToken();
         if (savedHuggingFaceToken is not null)
         {
             startInfo.Environment["HUGGINGFACE_SECURE_TOKEN"] =
@@ -1654,6 +1654,7 @@ internal sealed partial class WorkerClient
 
     private string? ReadPrivateSetting(string name)
     {
+        if (IsPreview) return null;
         var inherited = Environment.GetEnvironmentVariable(name);
         if (!string.IsNullOrWhiteSpace(inherited))
         {

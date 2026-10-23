@@ -3108,6 +3108,7 @@ class LanArchiveSyncClient:
 
     def list_master_jobs(self) -> list[dict[str, Any]]:
         value = self._master_request("GET", "/api/lan/v1/jobs")
+        self.last_workflow_eta = dict(value.get("workflow_eta") or {})
         rows = value.get("jobs")
         if not isinstance(rows, list) or len(rows)>1000:
             raise LanSyncError("The master returned an invalid job list.")

@@ -20,6 +20,7 @@ from typing import Any, Mapping
 from dotenv import load_dotenv
 
 from .activity import acknowledge_activity, activity_report
+from .workflow_eta import workflow_scope, measure, timed_stage, skip_sample
 
 from .accelerators import (
     collect_accelerator_diagnostics,
@@ -1747,6 +1748,8 @@ def incident_clip(incident_id: int, *, include_surrounding_context: bool = False
     return 0
 
 
+@workflow_scope
+@timed_stage("analysis_setup")
 def _analyze_day_payload(payload: dict[str, Any]) -> tuple[dict[str, Any], int, int]:
     feed_id = str(payload["feed_id"])
     archive_date = date.fromisoformat(str(payload["archive_date"]))
@@ -1776,6 +1779,8 @@ def _analyze_day_payload(payload: dict[str, Any]) -> tuple[dict[str, Any], int, 
                 str(day["transcript_sha256"]),
             )
         )
+        if complete and not force and not force_summary:
+            skip_sample()
         emit(
             {
                 "type": "stage",

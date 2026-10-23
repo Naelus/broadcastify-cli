@@ -280,6 +280,10 @@ public sealed partial class MainWindow : Window
             if (WorkerClient.IsPreview)
             {
                 PreviewModeText.Visibility = Visibility.Visible;
+                OpenIsolatedPreviewButton.Visibility = Visibility.Collapsed;
+                PreviewModeText.Text =
+                    $"PRE-RELEASE PREVIEW · Broadcastify Desktop {InstalledVersion()} · "
+                    + $"{InstalledBuildIdentity()} · Synthetic sample data; downloads and model jobs are disabled.";
                 _ = InitializePreviewAsync();
                 RefreshAboutPage();
                 return;
@@ -319,6 +323,7 @@ public sealed partial class MainWindow : Window
         await RefreshAnalysisDaysAsync();
         ConfigureSystemActivityTimer();
         StatusText.Text = "Preview ready — browse Library or Review / What changed using the sample feeds.";
+        AppendLog($"Preview ready: {_libraryDays.Count} library days; {_analysisDays.Count} review days. Isolated sample data only.");
     }
 
     private async Task ConfigureLanSharingAsync()
@@ -602,6 +607,20 @@ public sealed partial class MainWindow : Window
         return version is null ? "Unknown" : version.ToString(3);
     }
 
+    private static string InstalledBuildIdentity()
+    {
+        var informational = Assembly.GetExecutingAssembly()
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()
+            ?.InformationalVersion;
+        var revision = informational?.Split('+', 2).LastOrDefault();
+        if (!string.IsNullOrWhiteSpace(revision))
+        {
+            var shortRevision = revision.Length > 12 ? revision[..12] : revision;
+            return $"source {shortRevision}";
+        }
+        return $"build {InstalledFileVersion()}";
+    }
+
     private static string InstalledFileVersion() =>
         Assembly.GetExecutingAssembly()
             .GetCustomAttribute<AssemblyFileVersionAttribute>()
@@ -677,6 +696,27 @@ public sealed partial class MainWindow : Window
 
     private async void AboutOpenData_Click(object sender, RoutedEventArgs e) =>
         await OpenAboutFolderAsync("Could not open app data", AppSettingsStore.LocalDataDirectory);
+
+    private async void OpenIsolatedPreview_Click(object sender, RoutedEventArgs e)
+    {
+        OpenIsolatedPreviewButton.IsEnabled = false;
+        AboutActionStatusText.Text = "Preparing an isolated preview with synthetic sample data…";
+        try
+        {
+            var result = await PreviewLauncher.LaunchAsync(_configuredPythonRuntimePath);
+            AboutActionStatusText.Text =
+                $"Preview opened in a separate window (process {result.ProcessId}). "
+                + $"Its isolated sample data is stored at {result.DataRoot}.";
+        }
+        catch (Exception exception)
+        {
+            AboutActionStatusText.Text = $"Could not open the isolated preview: {exception.Message}";
+        }
+        finally
+        {
+            OpenIsolatedPreviewButton.IsEnabled = true;
+        }
+    }
 
     private void AboutCopySupport_Click(object sender, RoutedEventArgs e)
     {

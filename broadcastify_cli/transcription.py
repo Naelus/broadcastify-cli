@@ -1,4 +1,5 @@
 from __future__ import annotations
+from .workflow_eta import measure, audio_seconds, timed_audio, skip_sample
 
 import gc
 import hashlib
@@ -950,226 +951,230 @@ class LocalTranscriber:
             # allocator. Release unused speaker workspace before ASR competes
             # for that VRAM; live model tensors remain allocated.
             torch.cuda.empty_cache()
-        words: list[TranscriptWord] = []
-        fallback_segments: list[TranscriptSegment] = []
-        language = "en"
-        language_probability = None
-        duration = None
-        asr_metadata: dict[str, object] = {}
-        if self._external_asr is not None:
-            if isinstance(self._external_asr, SherpaQwen3Asr):
-                result = self._external_asr.transcribe(
-                    audio_path,
-                    progress=progress,
-                    segment_hints=[
-                        (float(turn.start), float(turn.end)) for turn in turns
-                    ]
-                    or None,
-                )
-            else:
-                result = self._external_asr.transcribe(audio_path, progress=progress)
-            if result.backend:
-                self.backend_description = result.backend
-            language = result.language
-            language_probability = result.language_probability
-            duration = result.duration
-            asr_metadata = dict(result.metadata)
-            if (
-                isinstance(self._external_asr, SherpaQwen3Asr)
-                and turns
-                and getattr(
-                    self,
-                    "diarization_engine",
-                    COMMUNITY_DIARIZATION_ENGINE,
-                )
-                == PORTABLE_DIARIZATION_ENGINE
-            ):
-                asr_metadata["timestamp_source"] = (
-                    "sherpa-onnx-speaker-preview-turns"
-                )
-                asr_metadata["speaker_label_quality"] = (
-                    PORTABLE_DIARIZATION_QUALITY
-                )
-            for word in result.words:
-                words.append(
-                    TranscriptWord(
-                        start=float(word.start),
-                        end=float(word.end),
-                        text=str(word.text),
-                        speaker=speaker_for_interval(
-                            float(word.start), float(word.end), turns
-                        ),
+        with measure("transcribe", audio_seconds(audio_path), audio_path.parent.name) as timing:
+            words: list[TranscriptWord] = []
+            fallback_segments: list[TranscriptSegment] = []
+            language = "en"
+            language_probability = None
+            duration = None
+            asr_metadata: dict[str, object] = {}
+            if self._external_asr is not None:
+                if isinstance(self._external_asr, SherpaQwen3Asr):
+                    result = self._external_asr.transcribe(
+                        audio_path,
+                        progress=progress,
+                        segment_hints=[
+                            (float(turn.start), float(turn.end)) for turn in turns
+                        ]
+                        or None,
                     )
-                )
-            for segment in result.segments:
-                fallback_segments.append(
-                    TranscriptSegment(
-                        start=float(segment.start),
-                        end=float(segment.end),
-                        text=str(segment.text).strip(),
-                        speaker=speaker_for_interval(
-                            float(segment.start), float(segment.end), turns
-                        ),
+                else:
+                    result = self._external_asr.transcribe(audio_path, progress=progress)
+                if result.backend:
+                    self.backend_description = result.backend
+                language = result.language
+                language_probability = result.language_probability
+                duration = result.duration
+                asr_metadata = dict(result.metadata)
+                if asr_metadata.get("checkpoint_chunks_reused"):
+                    timing.skip = True
+                if (
+                    isinstance(self._external_asr, SherpaQwen3Asr)
+                    and turns
+                    and getattr(
+                        self,
+                        "diarization_engine",
+                        COMMUNITY_DIARIZATION_ENGINE,
                     )
-                )
-        else:
-            if progress:
-                progress(f"Running Whisper {self.model_name} on {audio_path.name}")
-            transcribe_args: dict[str, object] = {
-                "beam_size": 5,
-                "condition_on_previous_text": False,
-                "language": "en",
-                "word_timestamps": True,
-                "vad_filter": True,
-                "no_speech_threshold": 0.6,
-                "initial_prompt": "Police, fire, EMS, and public safety radio traffic.",
-            }
-            if self._batched:
-                transcribe_args["batch_size"] = self.batch_size
-            assert self._asr is not None
-            raw_segments, info = self._asr.transcribe(str(audio_path), **transcribe_args)
-            language = getattr(info, "language", "en")
-            language_probability = getattr(info, "language_probability", None)
-            duration = getattr(info, "duration", None)
-            for segment in raw_segments:
-                segment_text = str(segment.text).strip()
-
-                segment_words = getattr(segment, "words", None) or []
-                added_word = False
-                for word in segment_words:
-                    if word.start is None or word.end is None:
-                        continue
-                    speaker = speaker_for_interval(
-                        float(word.start), float(word.end), turns
+                    == PORTABLE_DIARIZATION_ENGINE
+                ):
+                    asr_metadata["timestamp_source"] = (
+                        "sherpa-onnx-speaker-preview-turns"
                     )
+                    asr_metadata["speaker_label_quality"] = (
+                        PORTABLE_DIARIZATION_QUALITY
+                    )
+                for word in result.words:
                     words.append(
                         TranscriptWord(
                             start=float(word.start),
                             end=float(word.end),
-                            text=str(word.word),
-                            speaker=speaker,
+                            text=str(word.text),
+                            speaker=speaker_for_interval(
+                                float(word.start), float(word.end), turns
+                            ),
                         )
                     )
-                    added_word = True
-
-                if not added_word and segment_text:
+                for segment in result.segments:
                     fallback_segments.append(
                         TranscriptSegment(
                             start=float(segment.start),
                             end=float(segment.end),
-                            text=segment_text,
+                            text=str(segment.text).strip(),
                             speaker=speaker_for_interval(
                                 float(segment.start), float(segment.end), turns
                             ),
                         )
                     )
+            else:
+                if progress:
+                    progress(f"Running Whisper {self.model_name} on {audio_path.name}")
+                transcribe_args: dict[str, object] = {
+                    "beam_size": 5,
+                    "condition_on_previous_text": False,
+                    "language": "en",
+                    "word_timestamps": True,
+                    "vad_filter": True,
+                    "no_speech_threshold": 0.6,
+                    "initial_prompt": "Police, fire, EMS, and public safety radio traffic.",
+                }
+                if self._batched:
+                    transcribe_args["batch_size"] = self.batch_size
+                assert self._asr is not None
+                raw_segments, info = self._asr.transcribe(str(audio_path), **transcribe_args)
+                language = getattr(info, "language", "en")
+                language_probability = getattr(info, "language_probability", None)
+                duration = getattr(info, "duration", None)
+                for segment in raw_segments:
+                    segment_text = str(segment.text).strip()
 
-        output_segments = group_words(words) if words else [
-            value for value in fallback_segments if value.text
-        ]
-        output_segments, discarded_segments = _discard_localized_repetition_segments(
-            output_segments
-        )
-        if discarded_segments and words:
-            discarded_intervals = [
-                (float(segment.start), float(segment.end))
-                for segment in discarded_segments
-            ]
-            words = [
-                word
-                for word in words
-                if not any(
-                    start <= (float(word.start) + float(word.end)) / 2.0 <= end
-                    for start, end in discarded_intervals
-                )
-            ]
-        quality = transcript_quality_report(
-            [segment.text for segment in output_segments]
-        )
-        if quality["status"] == "rejected":
-            raise TranscriptionQualityError(
-                "Transcription quality check rejected a repetitive or non-speech "
-                f"collapse: {quality['unique_normalized_segments']} unique segments "
-                f"across {quality['segment_count']}, with the most common output at "
-                f"{float(quality['dominant_segment_ratio']) * 100:.1f}%. No new "
-                "transcript or analysis was saved. Use a VAD-backed profile and Base "
-                "or larger Whisper model, then retry the retained audio."
-            )
-        transcript_dir.mkdir(parents=True, exist_ok=True)
+                    segment_words = getattr(segment, "words", None) or []
+                    added_word = False
+                    for word in segment_words:
+                        if word.start is None or word.end is None:
+                            continue
+                        speaker = speaker_for_interval(
+                            float(word.start), float(word.end), turns
+                        )
+                        words.append(
+                            TranscriptWord(
+                                start=float(word.start),
+                                end=float(word.end),
+                                text=str(word.word),
+                                speaker=speaker,
+                            )
+                        )
+                        added_word = True
 
-        actual_model = str(asr_metadata.get("model") or self.model_name)
-        rendered_text = _render_transcript_segments(output_segments)
-        payload = {
-            "audio_file": audio_path.name,
-            "audio_sha256": stable_file_sha256(audio_path),
-            "processing_fingerprint": self.processing_fingerprint,
-            "model": actual_model,
-            "requested_model": self.model_name,
-            "asr_engine": self.asr_engine,
-            "asr_backend": self.backend_description,
-            "device": self.device,
-            "compute_type": self.compute_type,
-            "language": language,
-            "language_probability": language_probability,
-            "duration": duration,
-            "text": " ".join(segment.text for segment in output_segments).strip(),
-            "segments": [asdict(segment) for segment in output_segments],
-            "words": [asdict(word) for word in words],
-            "speaker_turns": [asdict(turn) for turn in turns],
-            "diarization_requested": self.diarize,
-            "diarization_completed": self.diarize,
-            "diarization_engine": (
-                getattr(
-                    self,
-                    "diarization_engine",
-                    COMMUNITY_DIARIZATION_ENGINE,
-                )
-                if self.diarize
-                else None
-            ),
-            "diarization_model": (
-                getattr(self, "diarization_model", self.DIARIZATION_MODEL)
-                if self.diarize
-                else None
-            ),
-            "diarization_quality": (
-                getattr(
-                    self,
-                    "diarization_quality",
-                    COMMUNITY_DIARIZATION_QUALITY,
-                )
-                if self.diarize
-                else None
-            ),
-            "diarization_device": self.diarization_device,
-            "diarization_metadata": (
-                dict(getattr(self, "_diarization_details", {}))
-                if self.diarize
-                else {}
-            ),
-            "asr_metadata": asr_metadata,
-            "transcription_quality": quality,
-            "transcription_cleanup": _cleanup_metadata(discarded_segments),
-            "rendered_text_sha256": hashlib.sha256(
-                rendered_text.encode("utf-8")
-            ).hexdigest(),
-        }
-        json_temp = json_path.with_suffix(json_path.suffix + ".tmp")
-        txt_temp = txt_path.with_suffix(txt_path.suffix + ".tmp")
-        try:
-            txt_temp.write_text(rendered_text, encoding="utf-8", newline="\n")
-            json_temp.write_text(
-                json.dumps(payload, ensure_ascii=False, indent=2),
-                encoding="utf-8",
+                    if not added_word and segment_text:
+                        fallback_segments.append(
+                            TranscriptSegment(
+                                start=float(segment.start),
+                                end=float(segment.end),
+                                text=segment_text,
+                                speaker=speaker_for_interval(
+                                    float(segment.start), float(segment.end), turns
+                                ),
+                            )
+                        )
+
+            output_segments = group_words(words) if words else [
+                value for value in fallback_segments if value.text
+            ]
+            output_segments, discarded_segments = _discard_localized_repetition_segments(
+                output_segments
             )
-            txt_temp.replace(txt_path)
-            json_temp.replace(json_path)
-        finally:
-            txt_temp.unlink(missing_ok=True)
-            json_temp.unlink(missing_ok=True)
-        if isinstance(self._external_asr, WindowsMlWhisperAsr):
-            self._external_asr.finalize_checkpoint(audio_path)
-        return json_path
+            if discarded_segments and words:
+                discarded_intervals = [
+                    (float(segment.start), float(segment.end))
+                    for segment in discarded_segments
+                ]
+                words = [
+                    word
+                    for word in words
+                    if not any(
+                        start <= (float(word.start) + float(word.end)) / 2.0 <= end
+                        for start, end in discarded_intervals
+                    )
+                ]
+            quality = transcript_quality_report(
+                [segment.text for segment in output_segments]
+            )
+            if quality["status"] == "rejected":
+                raise TranscriptionQualityError(
+                    "Transcription quality check rejected a repetitive or non-speech "
+                    f"collapse: {quality['unique_normalized_segments']} unique segments "
+                    f"across {quality['segment_count']}, with the most common output at "
+                    f"{float(quality['dominant_segment_ratio']) * 100:.1f}%. No new "
+                    "transcript or analysis was saved. Use a VAD-backed profile and Base "
+                    "or larger Whisper model, then retry the retained audio."
+                )
+            transcript_dir.mkdir(parents=True, exist_ok=True)
+
+            timing.units = float(duration or timing.units)
+            actual_model = str(asr_metadata.get("model") or self.model_name)
+            rendered_text = _render_transcript_segments(output_segments)
+            payload = {
+                "audio_file": audio_path.name,
+                "audio_sha256": stable_file_sha256(audio_path),
+                "processing_fingerprint": self.processing_fingerprint,
+                "model": actual_model,
+                "requested_model": self.model_name,
+                "asr_engine": self.asr_engine,
+                "asr_backend": self.backend_description,
+                "device": self.device,
+                "compute_type": self.compute_type,
+                "language": language,
+                "language_probability": language_probability,
+                "duration": duration,
+                "text": " ".join(segment.text for segment in output_segments).strip(),
+                "segments": [asdict(segment) for segment in output_segments],
+                "words": [asdict(word) for word in words],
+                "speaker_turns": [asdict(turn) for turn in turns],
+                "diarization_requested": self.diarize,
+                "diarization_completed": self.diarize,
+                "diarization_engine": (
+                    getattr(
+                        self,
+                        "diarization_engine",
+                        COMMUNITY_DIARIZATION_ENGINE,
+                    )
+                    if self.diarize
+                    else None
+                ),
+                "diarization_model": (
+                    getattr(self, "diarization_model", self.DIARIZATION_MODEL)
+                    if self.diarize
+                    else None
+                ),
+                "diarization_quality": (
+                    getattr(
+                        self,
+                        "diarization_quality",
+                        COMMUNITY_DIARIZATION_QUALITY,
+                    )
+                    if self.diarize
+                    else None
+                ),
+                "diarization_device": self.diarization_device,
+                "diarization_metadata": (
+                    dict(getattr(self, "_diarization_details", {}))
+                    if self.diarize
+                    else {}
+                ),
+                "asr_metadata": asr_metadata,
+                "transcription_quality": quality,
+                "transcription_cleanup": _cleanup_metadata(discarded_segments),
+                "rendered_text_sha256": hashlib.sha256(
+                    rendered_text.encode("utf-8")
+                ).hexdigest(),
+            }
+            json_temp = json_path.with_suffix(json_path.suffix + ".tmp")
+            txt_temp = txt_path.with_suffix(txt_path.suffix + ".tmp")
+            try:
+                txt_temp.write_text(rendered_text, encoding="utf-8", newline="\n")
+                json_temp.write_text(
+                    json.dumps(payload, ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
+                txt_temp.replace(txt_path)
+                json_temp.replace(json_path)
+            finally:
+                txt_temp.unlink(missing_ok=True)
+                json_temp.unlink(missing_ok=True)
+            if isinstance(self._external_asr, WindowsMlWhisperAsr):
+                self._external_asr.finalize_checkpoint(audio_path)
+            return json_path
 
     def diarize_existing_transcript(
         self,
@@ -1375,6 +1380,7 @@ class LocalTranscriber:
             ),
         )
 
+    @timed_audio("speakers")
     def _diarize(
         self,
         audio_path: Path,
@@ -1382,6 +1388,7 @@ class LocalTranscriber:
     ) -> list[SpeakerTurn]:
         cached = self._load_diarization_cache(audio_path)
         if cached is not None:
+            skip_sample()
             if (
                 getattr(self, "diarization_engine", COMMUNITY_DIARIZATION_ENGINE)
                 == PORTABLE_DIARIZATION_ENGINE
@@ -1464,6 +1471,9 @@ class LocalTranscriber:
                 for value in portable_turns
             ]
             self._diarization_details = dict(portable.metadata)
+            if portable.metadata.get("checkpoint_chunks_reused"):
+                # The resumed fraction is not a full recording's timing sample.
+                skip_sample()
             self._save_diarization_cache(audio_path, turns)
             try:
                 checkpoint_path.unlink(missing_ok=True)

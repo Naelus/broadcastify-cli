@@ -1,4 +1,5 @@
 from __future__ import annotations
+from .workflow_eta import measure
 
 import hashlib
 import json
@@ -1792,23 +1793,24 @@ class IncidentAnalyzer:
                     )
                     report_windows(index - 1)
                     window_started = time.monotonic()
-                    checkpoint_incidents = self._extract_window_incidents(
-                        feed_id,
-                        archive_date,
-                        window,
-                        segment_by_index,
-                        prefer_split=reused_checkpoint_prefix,
-                    )
-                    reused_checkpoint_prefix = False
-                    self.store.save_analysis_window_checkpoint(
-                        day_id,
-                        self.client.model,
-                        checkpoint_prompt_version,
-                        transcript_sha256,
-                        index - 1,
-                        window_fingerprint,
-                        checkpoint_incidents,
-                    )
+                    with measure("analysis", len(prompt_text), archive_date):
+                        checkpoint_incidents = self._extract_window_incidents(
+                            feed_id,
+                            archive_date,
+                            window,
+                            segment_by_index,
+                            prefer_split=reused_checkpoint_prefix,
+                        )
+                        reused_checkpoint_prefix = False
+                        self.store.save_analysis_window_checkpoint(
+                            day_id,
+                            self.client.model,
+                            checkpoint_prompt_version,
+                            transcript_sha256,
+                            index - 1,
+                            window_fingerprint,
+                            checkpoint_incidents,
+                        )
                     extracted.extend(checkpoint_incidents)
                     measured_windows.append(time.monotonic() - window_started)
                     report_windows(index)
@@ -1844,11 +1846,11 @@ class IncidentAnalyzer:
             "elapsed_seconds": 0, "emitted_at_unix": time.time(),
             "message": f"Feed {feed_id} · {archive_date}: {'loading saved' if cached_summary is not None else 'writing'} daily summary",
         })
-        summary = (
-            str(cached_summary["summary"])
-            if cached_summary is not None
-            else self._summarize_day(feed_id, archive_date, saved_incidents)
-        )
+        if cached_summary is not None:
+            summary = str(cached_summary["summary"])
+        else:
+            with measure("summary", day=archive_date):
+                summary = self._summarize_day(feed_id, archive_date, saved_incidents)
         notable_ids = [
             int(incident["id"])
             for incident in saved_incidents
@@ -2793,21 +2795,22 @@ class SemanticIndexer:
         saved = 0
         for offset in range(0, len(passages), batch_size):
             batch = passages[offset : offset + batch_size]
-            texts = [f"passage: {value['text']}" for value in batch]
-            vectors = list(self.model.embed(texts))
-            values = []
-            for passage, text, vector in zip(batch, texts, vectors):
-                array = np.asarray(vector, dtype=np.float32)
-                values.append(
-                    (
-                        int(passage["id"]),
-                        hashlib.sha256(text.encode("utf-8")).hexdigest(),
-                        int(array.size),
-                        array.tobytes(),
+            with measure("index", len(batch), start_date or ""):
+                texts = [f"passage: {value['text']}" for value in batch]
+                vectors = list(self.model.embed(texts))
+                values = []
+                for passage, text, vector in zip(batch, texts, vectors):
+                    array = np.asarray(vector, dtype=np.float32)
+                    values.append(
+                        (
+                            int(passage["id"]),
+                            hashlib.sha256(text.encode("utf-8")).hexdigest(),
+                            int(array.size),
+                            array.tobytes(),
+                        )
                     )
-                )
-            self.store.save_embeddings("passage", values, self.model_name)
-            saved += len(values)
+                self.store.save_embeddings("passage", values, self.model_name)
+                saved += len(values)
         return saved
 
     def search(

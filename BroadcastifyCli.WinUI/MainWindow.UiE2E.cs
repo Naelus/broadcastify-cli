@@ -71,6 +71,7 @@ public sealed partial class MainWindow
         {
             report["startup_docking"] = await VerifyStartupDockRestoreAsync();
             report["library_live_refresh"] = await VerifyLibraryLiveRefreshAsync();
+            report["isolated_preview_launch"] = await VerifyIsolatedPreviewLaunchAsync();
             ConfigureUiEndToEndFixture();
             report["responsive_breakpoint"] = VerifyResponsiveBreakpointContract();
             report["layout_matrix"] = await RunUiLayoutMatrixAsync();
@@ -112,6 +113,37 @@ public sealed partial class MainWindow
             TitleBarCloseButton_Click(
                 TitleBarCloseButton,
                 new RoutedEventArgs());
+        }
+    }
+
+    private async Task<Dictionary<string, object?>> VerifyIsolatedPreviewLaunchAsync()
+    {
+        // Exercise the actual installed launcher, bundled seeder and second UI
+        // process. The child must render its isolated samples before we pass.
+        var launched = await PreviewLauncher.LaunchAsync(null);
+        using var child = System.Diagnostics.Process.GetProcessById(launched.ProcessId);
+        try
+        {
+            var log = Path.Combine(launched.DataRoot, "activity.log");
+            var ready = await WaitForUiConditionAsync(() =>
+                !child.HasExited && File.Exists(log)
+                && File.ReadAllText(log).Contains("Preview ready: 4 library days; 2 review days.", StringComparison.Ordinal), attempts: 1500);
+            Require(ready, "The separately launched preview did not render its saved sample Library and Review days.");
+            Require(!File.Exists(Path.Combine(launched.DataRoot, "archive-quota.sqlite3"))
+                    && !File.Exists(Path.Combine(launched.DataRoot, "credentials.enc")),
+                "Opening the sample preview created acquisition or credential state.");
+            return new Dictionary<string, object?> { ["separate_process_rendered"] = true,
+                ["library_days"] = 4, ["review_days"] = 2, ["no_acquisition_state"] = true };
+        }
+        finally
+        {
+            if (!child.HasExited)
+            {
+                child.CloseMainWindow();
+                using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                try { await child.WaitForExitAsync(stop.Token); }
+                catch (OperationCanceledException) { child.Kill(entireProcessTree: true); }
+            }
         }
     }
 
@@ -385,12 +417,17 @@ public sealed partial class MainWindow
         var worker = _worker
             ?? throw new InvalidOperationException("The isolated worker was unavailable.");
         var previousJobs = _sharedJobs;
+        var previousWorkflowEta = _sharedWorkflowEta;
         var previousButtonContent = SharedJobsButton.Content;
         var previousShowingJob = _showingSharedJob;
         var previousPanel = _sharedJobsPanel;
+        var previousPipeline = _pipelineCancellation;
+        var previousStatusText = StatusText.Text;
+        var previousEtaText = FullWorkflowEtaText.Text;
         WorkerClient.SharedJobObservation? observation = null;
         IDisposable? observationScope = null;
         ContentDialog? dialog = null;
+        CancellationTokenSource? probePipeline = null;
         using var portFinder = new System.Net.Sockets.TcpListener(
             System.Net.IPAddress.Loopback, 0);
         var feedId = $"9{Random.Shared.Next(10000, 99999)}";
@@ -462,6 +499,59 @@ public sealed partial class MainWindow
                         SharedText(row, "id") == jobId), "status") == "running",
                 "The native observer was not listed as the same running companion job.");
 
+            probePipeline = new CancellationTokenSource();
+            _pipelineCancellation = probePipeline;
+            using (var stageEvent = JsonDocument.Parse(JsonSerializer.Serialize(new
+            {
+                type = "stage",
+                stage = "transcription",
+                message = "Current stage fixture event: retained audio is being processed.",
+            })))
+            {
+                HandleWorkerMessage(stageEvent.RootElement);
+                DrainWorkerMessages();
+            }
+            await RefreshSharedJobsAsync();
+            var runningNativeRow = _sharedJobs.EnumerateArray().Single(row =>
+                SharedText(row, "id") == jobId && SharedText(row, "owner") == "desktop");
+            var rowEtaText = SharedJobEtaDescription(runningNativeRow);
+            Require(FullWorkflowEtaText.Text == SharedWorkflowEtaDescription(_sharedWorkflowEta)
+                    && FullWorkflowEtaText.Text.StartsWith(
+                        "Full workflow (all retained work)", StringComparison.Ordinal)
+                    && !string.Equals(FullWorkflowEtaText.Text, rowEtaText, StringComparison.Ordinal)
+                    && rowEtaText.StartsWith("Full workflow (requested scope):", StringComparison.Ordinal)
+                    && StatusText.Text == "Current stage fixture event: retained audio is being processed.",
+                "The whole-backlog ETA did not render separately from the native job scope and current-stage event.");
+            Require(FindVisualDescendants<TextBlock>((DependencyObject)dialog!.Content)
+                    .Any(text => text.Text?.StartsWith(
+                        "Full workflow (requested scope):", StringComparison.Ordinal) == true),
+                "The running native job row did not render its requested-scope ETA in the Jobs dialog.");
+
+            using (var staleEstimate = JsonDocument.Parse(JsonSerializer.Serialize(new
+            {
+                eta = new
+                {
+                    state = "estimated",
+                    as_of = DateTimeOffset.UtcNow.AddMinutes(-3).ToString("O"),
+                    lower_seconds = 60,
+                    upper_seconds = 120,
+                    finish_earliest = DateTimeOffset.UtcNow.AddMinutes(1).ToString("O"),
+                    finish_latest = DateTimeOffset.UtcNow.AddMinutes(2).ToString("O"),
+                    queue_lower_seconds = 0,
+                    queue_upper_seconds = 0,
+                    notes = new[] { "fixture input size" },
+                },
+            })))
+            {
+                FullWorkflowEtaText.Text = SharedWorkflowEtaDescription(
+                    staleEstimate.RootElement.GetProperty("eta"));
+                Require(FullWorkflowEtaText.Text.Contains("stale", StringComparison.OrdinalIgnoreCase)
+                        && !FullWorkflowEtaText.Text.Contains("estimated finish", StringComparison.OrdinalIgnoreCase)
+                        && !FullWorkflowEtaText.Text.Contains("remaining 1m", StringComparison.OrdinalIgnoreCase),
+                    "The rendered full-workflow line retained confident values from a stale estimate.");
+            }
+            await RefreshSharedJobsAsync();
+
             List<string> VisibleActions() => FindVisualDescendants<Button>(
                     (DependencyObject)dialog!.Content)
                 .Select(button => button.Content?.ToString() ?? "")
@@ -499,6 +589,12 @@ public sealed partial class MainWindow
             Require(SharedText(canceled, "status") == "canceled",
                 "Cancel did not persist against the paused job's original ID.");
 
+            worker.StopLanNode();
+            await RefreshSharedJobsAsync();
+            Require(FullWorkflowEtaText.Text.Contains("disconnected", StringComparison.OrdinalIgnoreCase)
+                    && !FullWorkflowEtaText.Text.Contains("estimated finish", StringComparison.OrdinalIgnoreCase),
+                "A disconnected master left a confident full-workflow estimate visible.");
+
             dialog.Hide();
             await WaitForUiConditionAsync(() => _sharedJobsPanel is null, attempts: 1000);
             return new Dictionary<string, object?>
@@ -509,6 +605,10 @@ public sealed partial class MainWindow
                 ["running_controls"] = new[] { "pause", "cancel" },
                 ["paused_controls"] = new[] { "resume", "cancel" },
                 ["cancel_persisted"] = true,
+                ["native_full_workflow_eta"] = true,
+                ["current_stage_preserved"] = true,
+                ["stale_eta_hidden"] = true,
+                ["disconnected_eta_hidden"] = true,
             };
         }
         finally
@@ -522,9 +622,14 @@ public sealed partial class MainWindow
             dialog?.Hide();
             worker.StopLanNode();
             _sharedJobs = previousJobs;
+            _sharedWorkflowEta = previousWorkflowEta;
             SharedJobsButton.Content = previousButtonContent;
             _showingSharedJob = previousShowingJob;
             _sharedJobsPanel = previousPanel;
+            _pipelineCancellation = previousPipeline;
+            probePipeline?.Dispose();
+            StatusText.Text = previousStatusText;
+            FullWorkflowEtaText.Text = previousEtaText;
         }
     }
 

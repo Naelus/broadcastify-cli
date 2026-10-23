@@ -1,4 +1,20 @@
-# Inspect a Windows candidate before release
+# Review the installed app and a committed candidate
+
+The installed Windows app provides **About & Support → Open isolated preview**.
+It opens a separate Broadcastify Desktop window seeded with synthetic sample
+data, using the bundled Python runtime and FFmpeg. The preview has its own fresh
+temporary Library and settings; model/archive commands, credentials, scheduler,
+and LAN services are unavailable. It does not replace or control the production
+window. The temporary sample directory is retained for inspection.
+
+The browser companion has the same **About → Open isolated preview** action. It
+opens a saved-data-only preview under a separate temporary preview URL. The
+preview allows browsing and acknowledging synthetic incidents; download/model,
+credential, schedule, and LAN routes are disabled. The browser preview runs
+inside the existing web listener and does not make provider calls.
+
+Use the following developer workflow only when validating a new committed
+candidate; ordinary users can use the installed About action above.
 
 Build a committed candidate locally, then open a separate preview window:
 
@@ -7,16 +23,16 @@ dotnet build .\BroadcastifyCli.WinUI\BroadcastifyCli.WinUI.csproj -c Release --n
 .\scripts\launch_windows_ui_smoke.ps1 -WorkflowPreview -Executable '.\BroadcastifyCli.WinUI\bin\Release\net10.0-windows10.0.26100.0\win-x64\Broadcastify Desktop.exe'
 ```
 
-The build runs the full offline suite and the native UI verification before it
-can pass. It does not publish a release or replace the installed app. The preview
-uses a fresh temporary settings directory, SQLite database and sample library.
-It disables archive/model worker commands and does not start the scheduler or
-LAN service. Closing the preview leaves the installed app running independently.
-FFmpeg is needed to generate two seconds of silent, playable sample audio.
+The build does not publish a release or replace the installed app. The script
+preview uses a fresh temporary settings directory, SQLite database and sample
+library. It disables archive/model worker commands and does not start the
+scheduler or LAN service. Closing the preview leaves the installed app running
+independently. FFmpeg is needed to generate two seconds of silent, playable
+sample audio.
 
-The launch command prints the preview's process ID and data directory and saves
+The script launch prints the preview's process ID and data directory and saves
 `smoke-session.json` there. Use that directory to identify the preview's files;
-the banner also identifies the window as a pre-release preview.
+the banner identifies the window as an isolated synthetic-data preview.
 
 ## Review these outcomes
 
@@ -59,6 +75,10 @@ not open a dialog or start processing. These checks protect the observed WinUI
 crashes from overlapping dialogs and late resume results.
 
 Record the source commit, suite result, native report, and manual preview outcome
-with the candidate. A green build is not evidence of real-world model speed or
-an overall ETA: end-to-end timing calibration remains outstanding. Do not resume
-paused production model processing merely to obtain that measurement.
+with the candidate. The full-workflow estimate is based on local successful
+timing samples for the current machine and processing profile. New profiles
+begin in a learning state; provisional input sizes are labeled, and source or
+quota waits have no confident finish time. A green build or synthetic preview
+does not establish real-world processing speed or validate an installed
+release. Do not use production archive or model work solely to obtain timing
+samples.

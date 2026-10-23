@@ -24,6 +24,7 @@ from .lan_sync import (
 from .models import JobRequest
 from .pipeline_sync import PipelineSyncStore
 from .transcription import LocalTranscriber
+from .workflow_eta import workflow_scope, measure
 
 
 EventCallback = Callable[[dict[str, Any]], None]
@@ -47,6 +48,7 @@ class JobRunner:
             discovery_enabled=request.lan_discovery_enabled,
         )
 
+    @workflow_scope
     def run(self) -> dict[str, Any]:
         dates = list(self.request.dates())
         follower = getattr(self.lan_sync, "role", "master") == "follower"
@@ -584,7 +586,8 @@ class JobRunner:
                     ),
                 }
             )
-            transcriber = LocalTranscriber(**transcription_options)
+            with measure("audio_setup"):
+                transcriber = LocalTranscriber(**transcription_options)
             self.emit(
                 {
                     "type": "log",

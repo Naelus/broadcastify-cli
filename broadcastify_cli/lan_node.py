@@ -368,7 +368,7 @@ def create_lan_node_server(
                 self._authorize()
                 if job_manager is None:
                     raise FileNotFoundError
-                self._json(HTTPStatus.OK, {"protocol":LAN_PROTOCOL,"jobs":job_manager.list()})
+                self._json(HTTPStatus.OK, {"protocol":LAN_PROTOCOL,"jobs":job_manager.list(),"workflow_eta":job_manager.overview()})
                 return
             job_prefix = "/api/lan/v1/jobs/"
             if parsed.path.startswith(job_prefix):

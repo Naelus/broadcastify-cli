@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Globalization;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 
@@ -7,6 +8,7 @@ namespace BroadcastifyCli.WinUI;
 public sealed partial class MainWindow
 {
     private JsonElement _sharedJobs;
+    private JsonElement _sharedWorkflowEta;
     private StackPanel? _sharedJobsPanel;
     private bool _refreshingSharedJobs;
     private bool _showingSharedJob;
@@ -30,14 +32,24 @@ public sealed partial class MainWindow
 
     private async Task RefreshSharedJobsAsync()
     {
-        if (_worker is null || WorkerClient.IsPreview || _refreshingSharedJobs) return;
+        if (_worker is null || _refreshingSharedJobs) return;
+        if (WorkerClient.IsPreview)
+        {
+            FullWorkflowEtaText.Text = "Full workflow (all retained work): Preview has no live estimate.";
+            return;
+        }
         _refreshingSharedJobs = true;
         try
         {
             var value = await _worker.SharedJobsRequestAsync("");
             _sharedJobs = value.GetProperty("jobs").Clone();
+            _sharedWorkflowEta = value.TryGetProperty("workflow_eta", out var workflowEta)
+                ? workflowEta.Clone() : default;
             var rows = _sharedJobs.EnumerateArray().ToList();
             var active = rows.FirstOrDefault(r => SharedText(r, "status") is "running" or "pausing" or "canceling");
+            FullWorkflowEtaText.Text = _sharedWorkflowEta.ValueKind == JsonValueKind.Object
+                ? SharedWorkflowEtaDescription(_sharedWorkflowEta)
+                : "Full workflow (all retained work): Whole-backlog estimate unavailable.";
             if (_pipelineCancellation is null && active.ValueKind == JsonValueKind.Object)
             {
                 _showingSharedJob = true;
@@ -58,6 +70,8 @@ public sealed partial class MainWindow
         catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or InvalidOperationException)
         {
             SharedJobsButton.Content = "Jobs";
+            FullWorkflowEtaText.Text = "Full workflow (all retained work): Master disconnected; the live estimate is hidden. "
+                + "Reconnect to refresh it.";
             if (_sharedJobsPanel is not null)
             {
                 _sharedJobsPanel.Children.Clear();
@@ -88,7 +102,97 @@ public sealed partial class MainWindow
             if (lastProgress.ValueKind == JsonValueKind.Object) text += $"\n{SharedText(lastProgress, "message")}";
         }
         if (!string.IsNullOrWhiteSpace(SharedText(row, "error"))) text += $"\n{SharedText(row, "error")}";
+        if (row.TryGetProperty("eta", out var eta) && eta.ValueKind == JsonValueKind.Object)
+            text += $"\n{SharedJobEtaDescription(row)}";
         return text;
+    }
+
+    private static string SharedJobEtaDescription(JsonElement row)
+    {
+        if (!row.TryGetProperty("eta", out var eta) || eta.ValueKind != JsonValueKind.Object)
+            return "Full workflow (requested scope): Estimate unavailable.";
+        return FormatEtaDescription(eta, "Full workflow (requested scope)");
+    }
+
+    private static string SharedWorkflowEtaDescription(JsonElement eta)
+    {
+        var prefix = "Full workflow (all retained work)";
+        if (eta.TryGetProperty("pending_days", out var pendingDays)
+            && pendingDays.TryGetInt32(out var count))
+            prefix += $" · {count:N0} feed-days unfinished";
+        return FormatEtaDescription(eta, prefix);
+    }
+
+    private static string FormatEtaDescription(JsonElement eta, string prefix)
+    {
+        if (eta.ValueKind != JsonValueKind.Object)
+            return $"{prefix}: Estimate unavailable.";
+        var state = SharedText(eta, "state");
+        var message = SharedText(eta, "message");
+        if (DateTimeOffset.TryParse(SharedText(eta, "next_start_at"), out var scheduled))
+            message += $" · scheduled {scheduled.ToLocalTime():g} local";
+        if (state is "learning" or "waiting_source" or "scheduled" or "paused"
+            && TryEtaSeconds(eta, "lower_seconds", out var measuredLower)
+            && TryEtaSeconds(eta, "upper_seconds", out var measuredUpper) && measuredUpper > 0)
+            message += $" · calibrated stages need {FormatEtaDuration(measuredLower)}–{FormatEtaDuration(measuredUpper)}; other work/waits excluded";
+        if (state != "estimated")
+            return string.IsNullOrWhiteSpace(message)
+                ? $"{prefix}: {string.IsNullOrWhiteSpace(state) ? "Estimate unavailable" : state}."
+                : $"{prefix}: {message}.";
+
+        if (!DateTimeOffset.TryParse(SharedText(eta, "as_of"), CultureInfo.InvariantCulture,
+                DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var asOf)
+            || Math.Abs((DateTimeOffset.UtcNow - asOf).TotalSeconds) > 120
+            || !DateTimeOffset.TryParse(SharedText(eta, "finish_earliest"), CultureInfo.InvariantCulture,
+                DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var earliest)
+            || !DateTimeOffset.TryParse(SharedText(eta, "finish_latest"), CultureInfo.InvariantCulture,
+                DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var latest)
+            || latest < DateTimeOffset.UtcNow)
+            return $"{prefix}: Estimate is stale; reconnect or refresh Jobs to update it.";
+
+        if (!TryEtaSeconds(eta, "lower_seconds", out var lower)
+            || !TryEtaSeconds(eta, "upper_seconds", out var upper))
+            return $"{prefix}: Estimate is unavailable until remaining work is measured.";
+
+        var text = $"{prefix}: estimated finish {earliest.ToLocalTime():g}–{latest.ToLocalTime():g} local"
+            + $" · remaining {FormatEtaDuration(lower)}–{FormatEtaDuration(upper)}";
+        if (TryEtaSeconds(eta, "queue_lower_seconds", out var queueLower)
+            && TryEtaSeconds(eta, "queue_upper_seconds", out var queueUpper)
+            && (queueLower > 0 || queueUpper > 0))
+            text += $" · queue delay {FormatEtaDuration(queueLower)}–{FormatEtaDuration(queueUpper)}";
+        if (eta.TryGetProperty("notes", out var notes) && notes.ValueKind == JsonValueKind.Array)
+        {
+            var noteText = string.Join("; ", notes.EnumerateArray()
+                .Where(note => note.ValueKind == JsonValueKind.String)
+                .Select(note => note.GetString())
+                .Where(note => !string.IsNullOrWhiteSpace(note)));
+            if (!string.IsNullOrWhiteSpace(noteText)) text += $" · provisional: {noteText}";
+            else text += " · estimate is provisional";
+        }
+        else text += " · estimate is provisional";
+        return text;
+    }
+
+    private static bool TryEtaSeconds(JsonElement eta, string name, out double seconds)
+    {
+        seconds = 0;
+        return eta.TryGetProperty(name, out var value)
+            && value.ValueKind == JsonValueKind.Number
+            && value.TryGetDouble(out seconds)
+            && double.IsFinite(seconds)
+            && seconds >= 0;
+    }
+
+    private static string FormatEtaDuration(double seconds)
+    {
+        var duration = TimeSpan.FromSeconds(Math.Min(seconds, TimeSpan.MaxValue.TotalSeconds));
+        if (duration.TotalDays >= 1)
+            return $"{(int)duration.TotalDays}d {duration.Hours}h";
+        if (duration.TotalHours >= 1)
+            return $"{(int)duration.TotalHours}h {duration.Minutes}m";
+        if (duration.TotalMinutes >= 1)
+            return $"{(int)duration.TotalMinutes}m";
+        return $"{Math.Max(0, (int)duration.TotalSeconds)}s";
     }
 
     private void RenderSharedJobs()

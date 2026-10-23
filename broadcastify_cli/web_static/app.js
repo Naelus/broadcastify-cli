@@ -1,6 +1,8 @@
 "use strict";
 
 const token = document.querySelector('meta[name="app-token"]').content;
+const PREVIEW_BASE = document.querySelector('meta[name="preview-base"]')?.content || "";
+const storageKey = (name) => PREVIEW_BASE ? `${PREVIEW_BASE}:${name}` : name;
 const byId = (id) => document.getElementById(id);
 const html = (value) => String(value ?? "")
   .replaceAll("&", "&amp;")
@@ -88,20 +90,20 @@ let applyingHardwareProfile = false;
 
 function loadSettings() {
   try {
-    return { ...DEFAULT_SETTINGS, ...JSON.parse(localStorage.getItem("radioArchiveSettings") || "{}") };
+    return { ...DEFAULT_SETTINGS, ...JSON.parse(localStorage.getItem(storageKey("radioArchiveSettings")) || "{}") };
   } catch {
     return { ...DEFAULT_SETTINGS };
   }
 }
 
 function loadSettingsSection() {
-  const saved = localStorage.getItem("radioArchiveSettingsSection") || "setup";
+  const saved = localStorage.getItem(storageKey("radioArchiveSettingsSection")) || "setup";
   return Object.hasOwn(SETTINGS_SECTIONS, saved) ? saved : "setup";
 }
 
 function saveSettings() {
   readSettingsForm();
-  localStorage.setItem("radioArchiveSettings", JSON.stringify(state.settings));
+  localStorage.setItem(storageKey("radioArchiveSettings"), JSON.stringify(state.settings));
   toast("Non-secret settings saved in this browser profile.");
 }
 
@@ -349,7 +351,7 @@ function applyRuntimeProcessingDefaults() {
   // every job boundary, so a deployment preset can be upgraded without a
   // browser silently turning the prior resolved preset into an explicit one.
   state.settings.hardwareProfile = "auto";
-  localStorage.setItem("radioArchiveSettings", JSON.stringify(state.settings));
+  localStorage.setItem(storageKey("radioArchiveSettings"), JSON.stringify(state.settings));
   applySettingsForm();
   toast(`${words(defaults.hardware_profile)} deployment defaults are active while Automatic remains selected.`);
   return true;
@@ -409,7 +411,7 @@ async function api(path, options = {}) {
       ...(request.headers || {}),
     };
   }
-  const response = await fetch(path, request);
+  const response = await fetch(PREVIEW_BASE + path, request);
   const payload = await response.json().catch(() => ({ error: `HTTP ${response.status}` }));
   if (
     response.status === 403
@@ -447,7 +449,7 @@ function closeNavigation() {
 function setSettingsSection(name, { focusTab = false, updateHistory = true } = {}) {
   const section = Object.hasOwn(SETTINGS_SECTIONS, name) ? name : "setup";
   state.settingsSection = section;
-  localStorage.setItem("radioArchiveSettingsSection", section);
+  localStorage.setItem(storageKey("radioArchiveSettingsSection"), section);
   document.querySelectorAll("[data-settings-section]").forEach((tab) => {
     const active = tab.dataset.settingsSection === section;
     tab.classList.toggle("active", active);
@@ -1516,7 +1518,7 @@ function renderWorkflow(workflow) {
   const labels = { download: "source check/download", combine: "combine", transcribe: "transcribe", diarize: "speaker labels", import: "import", analyze: "analysis", index: "search index" };
   byId("workflowStages").textContent = "Remaining: " + Object.entries(labels).map(([key, label]) => `${workflow.stage_counts[key] || 0} ${label}`).join(" · ") + ". Counts overlap when a day needs multiple steps.";
   byId("workflowFeeds").textContent = (workflow.feeds || []).map(feed => `${feed.feed_name}: ${feed.pending_count} unfinished${feed.pending_ranges.length ? ` (${feed.pending_ranges.join(", ")})` : ""}`).join(" · ");
-  byId("workflowFinish").textContent = `${workflow.finish_detail} Separate source monitoring: ${workflow.source_check_count} checks due; ${workflow.source_unavailable_count} unavailable, ${workflow.awaiting_source_count} awaiting publication. ${workflow.scope_detail} Updated ${new Date(workflow.observed_at).toLocaleTimeString()}.`;
+  byId("workflowFinish").textContent = `${state.wholeWorkflowEta ? workflowEta({eta:state.wholeWorkflowEta}).replace("Full workflow:","Whole catch-up:") : workflow.finish_detail} Separate source monitoring: ${workflow.source_check_count} checks due; ${workflow.source_unavailable_count} unavailable, ${workflow.awaiting_source_count} awaiting publication. ${workflow.scope_detail} Updated ${new Date(workflow.observed_at).toLocaleTimeString()}.`;
 }
 
 async function refreshWorkflow() {
@@ -1558,7 +1560,7 @@ function renderJob(job) {
     timing += " · summary and search indexing follow";
     if (sinceUpdate >= 120) timing += ` · last progress ${duration(sinceUpdate)} ago`;
   }
-  byId("jobTiming").textContent = timing;
+  byId("jobTiming").textContent = `${workflowEta(job)}${timing ? ` · Current step: ${timing}` : ""}`;
   byId("jobLog").innerHTML = events.slice(-80).map((event) => `<div>${html(event.message || `${event.type}: ${event.stage || "updated"}`)}</div>`).join("") || '<div>Waiting for the first progress update…</div>';
   byId("jobLog").scrollTop = byId("jobLog").scrollHeight;
 }
@@ -2407,7 +2409,7 @@ async function runAsrModelPreparation() {
       }
       byId("settingAsrModelPath").value = result.path;
       readSettingsForm();
-      localStorage.setItem("radioArchiveSettings", JSON.stringify(state.settings));
+      localStorage.setItem(storageKey("radioArchiveSettings"), JSON.stringify(state.settings));
       notice.querySelector("strong").textContent = result.reused
         ? "Matching model found; proving a decode"
         : "Model prepared; proving a decode";
@@ -2865,6 +2867,22 @@ setTimeout(refreshWorkflow, 30000);
 
 let masterJobsTimer;
 let masterJobsBusy = false;
+function workflowEta(job) {
+  const eta = job.eta;
+  if (!eta) return "Full workflow: measuring remaining work";
+  if (eta.state === "estimated") {
+    const stamp = Date.parse(eta.as_of), finish = Date.parse(eta.finish_latest);
+    if (!Number.isFinite(stamp) || Date.now()-stamp > 120000 || !Number.isFinite(finish) || finish < Date.now())
+      return "Full workflow: estimate needs a fresh measurement";
+    const format = (value) => new Date(value).toLocaleString([], {month:"short",day:"numeric",hour:"numeric",minute:"2-digit"});
+    const lower = Math.max(0,(Date.parse(eta.finish_earliest)-Date.now())/1000);
+    const upper = Math.max(0,(finish-Date.now())/1000);
+    return `Full workflow: about ${duration(lower)}–${duration(upper)} remaining; finish ${format(eta.finish_earliest)}–${format(eta.finish_latest)}${eta.queue_upper_seconds ? ` · includes ${duration(eta.queue_lower_seconds)}–${duration(eta.queue_upper_seconds)} queued` : ""}${eta.notes?.length ? " · provisional input sizes" : ""}`;
+  }
+  const measured = eta.upper_seconds > 0 && ["learning","waiting_source","scheduled","paused"].includes(eta.state)
+    ? ` · calibrated stages need ${duration(eta.lower_seconds)}–${duration(eta.upper_seconds)}; other work/waits excluded` : "";
+  return `Full workflow: ${eta.message || words(eta.state)}${measured}${eta.next_start_at ? ` · scheduled ${new Date(eta.next_start_at).toLocaleString()}` : ""}${eta.next_allowance_at ? ` · next allowance ${new Date(eta.next_allowance_at).toLocaleString()}` : ""}`;
+}
 function renderMasterJobFeeds() {
   const select = byId("masterJobFeeds");
   const selected = new Set([...select.selectedOptions].map(o => o.value));
@@ -2890,6 +2908,8 @@ async function refreshMasterJobs() {
   masterJobsBusy = true;
   try {
     const value = await api("/api/jobs");
+    state.wholeWorkflowEta = value.workflow_eta || null;
+    renderWorkflow(state.bootstrap.workflow);
     if (!state.activeJob) {
       const active = value.jobs.find(j => ["running","pausing","canceling"].includes(j.status));
       if (active) {
@@ -2907,7 +2927,7 @@ async function refreshMasterJobs() {
     state.sharedJobLabel = `${activeCount} active · ${queuedCount} queued`;
     setBusyLabel(state.sharedJobLabel);
     byId("masterJobsConnection").className = "notice success";
-    byId("masterJobsConnection").querySelector("strong").textContent = "Connected to Windows master";
+    byId("masterJobsConnection").querySelector("strong").textContent = PREVIEW_BASE ? "Isolated sample library" : "Connected to Windows master";
     byId("masterJobsConnection").querySelector("span").textContent = `Live records checked ${new Date().toLocaleTimeString()}. Pausing a job preserves checkpoints; automatic downloads can continue.`;
     byId("sharedJobsList").innerHTML = value.jobs.length ? value.jobs.map(job => {
       const scope = job.scope || {};
@@ -2918,16 +2938,21 @@ async function refreshMasterJobs() {
       const counts = job.scope_progress || {};
       return `<article class="card padded"><div class="section-heading"><div><h2>${html(scope.feed_name || `Feed ${job.feed_id || "—"}`)}</h2><p>${html(scope.start_date || "")} through ${html(scope.end_date || "")} · ${job.mode === "downloads" ? "Downloads only" : "Full workflow"} · ${html(job.id)}</p></div><strong class="status-chip">${html(words(job.status))}</strong></div>
         <p>${html(progress?.message || "Waiting for the next worker update")}</p>
+        <p class="workflow-eta">${html(workflowEta(job))}</p>
+        ${job.eta?.stages?.length ? `<details><summary>Remaining stage budgets</summary>${job.eta.stages.map(s => `<p>${html(s.day)} · ${html(s.label)}: ${s.state === "estimated" ? `${html(duration(s.lower_seconds))}–${html(duration(s.upper_seconds))}` : html(words(s.state))}</p>`).join("")}${(job.eta.notes || []).map(n => `<p>${html(n)}</p>`).join("")}</details>` : ""}
         ${counts.total_days ? `<p>${Number(counts.ready_days)} / ${Number(counts.total_days)} days ready for this job · ${Number(counts.source_days || 0)} need source checks/downloads · ${Number(counts.processing_days || 0)} need processing · ${Number(counts.unavailable_days || 0)} unavailable · ${Number(counts.awaiting_source_days || 0)} awaiting publication. Saved-stage counts update as phases finish; counters below describe the current stage.</p>` : ""}
         ${progress?.total ? `<p>${Number(progress.current || 0)} / ${Number(progress.total)} ${html(progress.stage || progress.phase || "current step")}</p>` : ""}
         <p>${html(job.error || "")} Last report: ${html(job.updated_at ? new Date(job.updated_at).toLocaleString() : "pending")}.</p><div class="button-row">${controls}</div></article>`;
     }).join("") : '<div class="card padded">No recorded jobs yet. Submit a catch-up above; desktop-started work also appears here.</div>';
   } catch (error) {
     state.sharedJobLabel = "Master disconnected";
+    state.wholeWorkflowEta = {state:"unavailable",message:"Master disconnected; previous finish estimate is stale"};
+    renderWorkflow(state.bootstrap.workflow);
     setBusyLabel(state.sharedJobLabel);
     byId("masterJobsConnection").className = "notice warning";
     byId("masterJobsConnection").querySelector("strong").textContent = "Windows master disconnected";
     byId("masterJobsConnection").querySelector("span").textContent = `${error.message} Displayed records are stale; no local replacement processing was started.`;
+    document.querySelectorAll(".workflow-eta").forEach(node => { node.textContent = "Full workflow: master disconnected; estimate is stale"; });
   } finally {
     masterJobsBusy = false;
     masterJobsTimer = setTimeout(refreshMasterJobs, document.hidden ? 15000 : 3000);
@@ -2964,3 +2989,17 @@ byId("sharedJobsList").addEventListener("click",async event => {
 });
 updateMasterJobPreview();
 refreshMasterJobs();
+if (PREVIEW_BASE) {
+  byId("previewBanner").hidden = false;
+  byId("openPreviewButton").hidden = true;
+  document.title = "Isolated preview · Radio Archive";
+}
+byId("openPreviewButton").addEventListener("click", async () => {
+  const tab = window.open("about:blank", "_blank");
+  byId("openPreviewButton").disabled = true;
+  try {
+    const preview = await api("/api/preview", {method:"POST",body:"{}"});
+    if (tab) tab.location.replace(preview.url); else location.assign(preview.url);
+  } catch (error) { tab?.close(); toast(error.message,true); }
+  finally { byId("openPreviewButton").disabled = false; }
+});

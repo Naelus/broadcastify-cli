@@ -35,6 +35,7 @@
     <button class="sidebar-scrim" id="sidebarScrim" type="button" aria-label="Close navigation"></button>
 
     <main class="main-content">
+      <div class="notice warning" id="previewBanner" hidden><strong>Isolated preview</strong><span>Synthetic sample data. No downloads, models, schedules or production changes.</span><a href="/#about">Return to installed app</a></div>
       <header class="topbar">
         <button class="menu-button" id="menuButton" aria-label="Toggle navigation" aria-expanded="false">☰</button>
         <div class="topbar-copy">
@@ -436,6 +437,8 @@
             <div class="runtime-facts" id="aboutFacts"><div class="runtime-fact"><span>Version</span><strong id="aboutVersion">Loading…</strong></div><div class="runtime-fact"><span>Source commit</span><strong id="aboutSourceCommit">Loading…</strong></div><div class="runtime-fact"><span>Runtime</span><strong id="aboutRuntime">Loading…</strong></div><div class="runtime-fact"><span>Access scope</span><strong id="aboutAccessScope">Loading…</strong></div></div>
             <div class="notice" id="aboutStorage"><strong>Storage paths</strong><span>Loading retained data locations…</span></div>
             <div class="notice" id="aboutLan"><strong>Shared archive pool</strong><span>Loading LAN reuse and coordination status…</span></div>
+            <div class="button-row"><button class="button secondary" id="openPreviewButton">Open isolated preview</button></div>
+            <p>Inspect this build with synthetic sample data in a separate tab. Your running jobs and retained library stay active.</p>
           </div>
         </div>
       </section>

@@ -11,6 +11,7 @@ import re
 import secrets
 import signal
 import socket
+import sqlite3
 import subprocess
 import sys
 import threading
@@ -29,6 +30,7 @@ from urllib.parse import parse_qs, quote, unquote, urlparse
 from dotenv import dotenv_values
 
 from .process_tree import WorkerProcessTree
+from .workflow_eta import remaining_work, estimate_work, decorate_queue
 from .shared_jobs import SharedJobs, WORKFLOW_COMMANDS, ACTIVE_STATES, process_alive, compact_event, workflow_result, safe_request
 from . import __version__
 from .activity import acknowledge_activity, activity_report, activity_scope
@@ -58,6 +60,7 @@ from .lan_sync import (
 from .library import (
     build_library_feed_coverage,
     build_library_workflow,
+    build_library_resume_plan,
     completed_library_catchup_feed_ids,
     require_current_range_evidence,
     scan_local_library,
@@ -632,6 +635,9 @@ class JobManager:
         self._condition = threading.Condition(self._lock)
         self._observed_scope_threads: set[str] = set()
         self._observed_scope_at: dict[str, float] = {}
+        self._overview = {"state":"learning", "message":"Inspecting the entire catch-up backlog"}
+        self._overview_at = 0.0
+        self._overview_busy = False
         # Recovery publishes the whole saved queue before any thread can claim it.
         with self._lock:
             self._restore_jobs()
@@ -697,11 +703,17 @@ class JobManager:
                     # scope. Reconcile saved evidence without restarting it.
                     self._refresh_observed_scope(row, self.shared.request(row["id"]), force=False)
             rows.update({j.id: j.snapshot() for j in self._jobs.values()})
+            for row in rows.values():
+                if row["status"] in ACTIVE_STATES or row["status"] in {"queued", "waiting_quota"}:
+                    self._refresh_observed_scope(row, self.shared.request(row["id"]), force=False)
             active = [r for r in rows.values() if r["status"] in ACTIVE_STATES or r["status"] in {"queued", "paused", "waiting_quota"}]
             recent = sorted((r for r in rows.values() if r not in active), key=lambda r:r["created_at"], reverse=True)[:30]
             keys = {"type","stage","phase","current","total","message","feed_id","date","received_at","event_index","elapsed_seconds","estimated_remaining_seconds"}
-            return [{**r,"result":None,"events":[{k:v for k,v in e.items() if k in keys}
-                for e in r.get("events",[])[-8:]]} for r in active+recent]
+            # Active owners run ahead of queued work even when a queue item was
+            # moved to the front. Preserve durable order within the queued set.
+            active.sort(key=lambda r: 0 if r["status"] in ACTIVE_STATES else 1)
+            return decorate_queue([{**r,"result":None,"events":[{k:v for k,v in e.items() if k in keys}
+                for e in r.get("events",[])[-8:]]} for r in active+recent], self.output_dir)
 
     def observe(self, value: dict[str, Any]) -> dict[str, Any]:
         with self._lock:
@@ -748,6 +760,62 @@ class JobManager:
             self._condition.notify_all()
             return record
 
+    def overview(self) -> dict[str, Any]:
+        """Include scheduled days that do not yet have a one-day native job ID."""
+        with self._lock:
+            if not self._closing and not self._overview_busy and time.monotonic()-self._overview_at >= 60:
+                self._overview_busy = True
+                def inspect():
+                    try:
+                        days = scan_local_library(self.output_dir, self.database_path)
+                        with AnalysisStore(self.database_path) as store:
+                            schedules = store.list_feed_schedules()
+                            catchups = store.list_library_catchups()
+                        workflow = build_library_workflow(days,schedules,catchups)
+                        pending_keys = {(d["feed_id"],d["archive_date"]) for d in workflow["days"]}
+                        plan = build_library_resume_plan(days,{},schedules,catchups)
+                        pending = [d for d in plan["days"] if (d["feed_id"],d["archive_date"]) in pending_keys]
+                        estimates, notes, paused, waiting_schedule = [], [], False, False
+                        next_starts = []
+                        records = self.shared.records()
+                        for feed in sorted({d["feed_id"] for d in pending}):
+                            schedule = next((s for s in schedules if s["feed_id"]==feed), {})
+                            current = next((r for r in records if r.get("feed_id")==feed and r["status"] in ACTIVE_STATES|{"queued"}), None)
+                            settings = dict((self.shared.request(current["id"]).get("job") if current else {}) or schedule.get("job") or {})
+                            settings.update(feed_id=feed,combine=True,transcribe=True,diarize=True)
+                            feed_days = [d for d in pending if d["feed_id"]==feed]
+                            work, item_notes = remaining_work(self.output_dir,self.database_path,settings,feed_days,True)
+                            estimates.append(estimate_work(self.output_dir,settings,work))
+                            notes.extend(item_notes)
+                            if not current:
+                                # Enabled is intent, not a running worker. Paused
+                                # jobs and future schedule times cannot promise a finish.
+                                held = any(r.get("feed_id")==feed and r["status"] in {"paused","pausing"} for r in records)
+                                paused |= held or not (schedule.get("enabled") and schedule.get("analyze"))
+                                waiting_schedule |= not held
+                                if schedule.get("next_run_at"):
+                                    next_starts.append(schedule["next_run_at"])
+                        aggregate = {"as_of":utc_now(),"lower_seconds":sum(e["lower_seconds"] for e in estimates),
+                            "upper_seconds":sum(e["upper_seconds"] for e in estimates),
+                            "unknown_stages":sorted({x for e in estimates for x in e["unknown_stages"]}),
+                            "stages":[s for e in estimates for s in e["stages"]]}
+                        row = {"status":"completed" if not pending else "paused" if paused else "scheduled" if waiting_schedule else "running",
+                            "next_start_at": min(next_starts) if next_starts else None,
+                            "scope_progress":{"source_days":workflow["stage_counts"]["download"],"estimate":aggregate,"estimate_notes":sorted(set(notes))}}
+                        result = decorate_queue([row],self.output_dir)[0]["eta"]
+                        result.update(pending_days=len(pending),scope="All unfinished feed-days, including scheduled work",awaiting_source_days=workflow["awaiting_source_count"],unavailable_days=workflow["source_unavailable_count"])
+                        with self._lock:
+                            self._overview = result
+                    except (OSError,ValueError,RuntimeError,KeyError,sqlite3.Error):
+                        with self._lock:
+                            self._overview = {"state":"unavailable","message":"Whole catch-up estimate needs a fresh retained-state check"}
+                    finally:
+                        with self._lock:
+                            self._overview_at = time.monotonic()
+                            self._overview_busy = False
+                threading.Thread(target=inspect,name="workflow-eta",daemon=True).start()
+            return dict(self._overview)
+
     def _refresh_observed_scope(self, record: dict[str, Any], request: dict[str, Any], *, force: bool) -> None:
         """Inspect saved native progress off the heartbeat/control response path."""
         job_id = record["id"]
@@ -768,9 +836,9 @@ class JobManager:
                 progress = self._scope_progress(scope, bool(request.get("analyze")), record["created_at"])
                 with self._lock:
                     latest = self.shared.get(job_id)
-                    if latest and latest.get("owner") == "desktop" and not self._closing:
+                    if latest and not self._closing:
                         latest["scope_progress"] = progress
-                        if latest["status"] == "waiting_quota" and not latest.get("control") and not (
+                        if latest.get("owner") == "desktop" and latest["status"] == "waiting_quota" and not latest.get("control") and not (
                             progress["source_days"] or progress["processing_days"]
                         ):
                             latest["status"] = "completed"
@@ -778,6 +846,8 @@ class JobManager:
                             latest["finished_at"] = utc_now()
                         latest["updated_at"] = utc_now()
                         self.shared.save(latest)
+                        if job_id in self._jobs:
+                            self._jobs[job_id].scope_progress = progress
             except (OSError, ValueError, RuntimeError):
                 pass  # Keep the last saved check; worker events remain live.
             finally:
@@ -934,10 +1004,10 @@ class JobManager:
         )) or bool(analyze and not (day.get("has_analysis") and day.get("has_search_index")))
 
     def _scope_progress(self, request: dict[str, Any], analyze: bool, requested_at: str,
-                        days: list[dict[str, Any]] | None = None) -> dict[str, int]:
+                        days: list[dict[str, Any]] | None = None) -> dict[str, Any]:
         days = self._scope_days(request) if days is None else days
         total = (date.fromisoformat(request["end_date"])-date.fromisoformat(request["start_date"])).days+1
-        return {
+        progress = {
             "total_days": total,
             "ready_days": sum(not self._needs_source(d, request, requested_at)
                 and not self._needs_processing(d, request, analyze)
@@ -947,6 +1017,13 @@ class JobManager:
             "unavailable_days": sum(bool(d.get("source_unavailable")) for d in days),
             "awaiting_source_days": sum(bool(d.get("awaiting_source")) for d in days),
         }
+        try:
+            work, notes = remaining_work(self.output_dir, self.database_path, request, days, analyze)
+            progress["estimate"] = estimate_work(self.output_dir, request, work)
+            progress["estimate_notes"] = notes
+        except (OSError, ValueError, RuntimeError, KeyError, sqlite3.Error):
+            progress["estimate"] = {"unknown_stages":["Remaining work could not be measured"]}
+        return progress
 
     def _scope_complete(self, request: dict[str, Any], analyze: bool, requested_at: str) -> bool:
         progress = self._scope_progress(request, analyze, requested_at)
@@ -1124,8 +1201,15 @@ class JobManager:
                 row = self.shared.get(job_id)
                 if row is None:
                     raise WebRequestError(HTTPStatus.NOT_FOUND, "That master job was not found.")
-                return row
-            return job.snapshot()
+                result = row
+            else:
+                result = job.snapshot()
+            # Preserve full worker events for the job drawer while reusing the
+            # same queued finish calculation as the two shared job lists.
+            listing = next((r for r in self.list() if r["id"] == job_id), None)
+            if listing:
+                result["eta"] = listing.get("eta", {})
+            return result
 
     def cancel(self, job_id: str) -> dict[str, Any]:
         with self._lock:
@@ -1505,6 +1589,9 @@ class RemoteMasterJobManager:
             HTTPStatus.SERVICE_UNAVAILABLE,
             f"The Windows master is unavailable: {exc}",
         ) from exc
+
+    def overview(self) -> dict[str, Any]:
+        return dict(getattr(self.client, "last_workflow_eta", {}) or {})
 
     def list(self) -> list[dict[str, Any]]:
         try:
@@ -2291,6 +2378,8 @@ def create_server(
         credential_store=credential_store,
         master_client=(master_client if remote_master_enabled else None),
     )
+    previews = {}
+    preview_lock = threading.Lock()
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "RadioArchiveLocal/0.3"
@@ -2340,6 +2429,28 @@ def create_server(
 
         def _get(self) -> None:
             parsed = urlparse(self.path)
+            if parsed.path.startswith("/preview/"):
+                key = parsed.path.removeprefix("/preview/").strip("/")
+                if key not in previews:
+                    raise WebRequestError(404, "Preview expired. Open a new isolated preview from About.")
+                markup = (state.static_dir/"index.html").read_text(encoding="utf-8").replace("__SESSION_TOKEN__",state.session_token)
+                markup = markup.replace("</head>",f'<meta name="preview-base" content="/api/preview/{key}"></head>')
+                self._bytes(200,markup.encode(),"text/html; charset=utf-8",cookie=True,no_store=True)
+                return
+            if parsed.path.startswith("/api/preview/"):
+                self._require_session(write=False)
+                preview, path = self._preview_route(parsed.path)
+                query = parse_qs(parsed.query)
+                if path == "/media":
+                    relative = (query.get("path") or [""])[0]
+                    root = preview.state.output_dir.resolve()
+                    media = (root/relative).resolve()
+                    if not media.is_relative_to(root) or media.suffix != ".mp3" or not media.is_file():
+                        raise WebRequestError(404,"Sample audio not found.")
+                    self._media(media)
+                else:
+                    self._json(200,preview.get(path,query))
+                return
             if parsed.path == "/health":
                 self._json(
                     HTTPStatus.OK,
@@ -2875,7 +2986,7 @@ def create_server(
                 )
                 return
             if parsed.path == "/api/jobs":
-                self._json(HTTPStatus.OK, {"jobs":state.jobs.list(), "updated_at":utc_now()})
+                self._json(HTTPStatus.OK, {"jobs":state.jobs.list(), "workflow_eta":state.jobs.overview(), "updated_at":utc_now()})
                 return
             if parsed.path.startswith("/api/jobs/"):
                 job_id = parsed.path.removeprefix("/api/jobs/")
@@ -3031,6 +3142,23 @@ def create_server(
 
         def _post(self) -> None:
             parsed = urlparse(self.path)
+            if parsed.path == "/api/preview":
+                self._body()
+                from .web_preview import WebPreview
+                with preview_lock:
+                    if len(previews) >= 4:
+                        # Reuse an existing sample context; never accumulate
+                        # an unbounded set of FFmpeg processes/temp libraries.
+                        preview = next(reversed(previews.values()))
+                    else:
+                        preview = WebPreview()
+                        previews[preview.key] = preview
+                self._json(201,{"url":f"/preview/{preview.key}/#library"})
+                return
+            if parsed.path.startswith("/api/preview/"):
+                preview, path = self._preview_route(parsed.path)
+                self._json(200,preview.post(path,self._body()))
+                return
             if parsed.path == "/api/activity/seen":
                 payload = self._body()
                 try:
@@ -3191,6 +3319,13 @@ def create_server(
                 self._json(HTTPStatus.OK, state.jobs.cancel(job_id))
                 return
             raise WebRequestError(HTTPStatus.NOT_FOUND, "Page not found.")
+
+        def _preview_route(self, path):
+            key, separator, rest = path.removeprefix("/api/preview/").partition("/")
+            preview = previews.get(key)
+            if preview is None or not separator:
+                raise WebRequestError(404,"Preview expired. Reopen it from About.")
+            return preview, "/"+rest
 
         def _post_lan_pipeline_request(self) -> None:
             if state.lan_catalog.role != "master":

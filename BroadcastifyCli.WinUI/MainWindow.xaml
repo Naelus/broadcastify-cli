@@ -1636,6 +1636,12 @@
                                             <Button x:Name="AboutCopySupportButton" Content="Copy support details" Click="AboutCopySupport_Click"
                                                     ToolTipService.ToolTip="Copies version, runtime, and local paths. Credentials and tokens are never included." />
                                         </StackPanel>
+                                        <StackPanel Spacing="6">
+                                            <Button x:Name="OpenIsolatedPreviewButton" Content="Open isolated preview" Click="OpenIsolatedPreview_Click"
+                                                    ToolTipService.ToolTip="Opens a separate window with synthetic sample data. It cannot download audio or run models." />
+                                            <TextBlock Text="The preview uses a fresh temporary library and does not change this installation’s settings, credentials, quota history, or retained archives."
+                                                       TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                        </StackPanel>
                                         <TextBlock x:Name="AboutActionStatusText" Text="Support details never include saved credentials or tokens."
                                                    TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite"
                                                    Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
@@ -1675,6 +1681,9 @@
                             <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="260" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                             <StackPanel VerticalAlignment="Center" Spacing="3">
+                                <TextBlock x:Name="FullWorkflowEtaText" Text="Full workflow (all retained work): Waiting for the backlog estimate."
+                                           TextWrapping="Wrap" MaxLines="3" FontSize="12"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                 <TextBlock Text="Current step" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                 <TextBlock x:Name="StatusText" Text="Ready" TextWrapping="Wrap" MaxLines="2" />
                                 <TextBlock x:Name="JobTimingText" TextWrapping="Wrap" MaxLines="3" FontSize="12"
