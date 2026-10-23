@@ -353,6 +353,7 @@ public sealed partial class MainWindow
                 }
             }
             _pipelineCancellation = pipeline;
+            var sharedJobs = await VerifySharedJobsCompanionAsync(libraryRoot);
             return new Dictionary<string, object?>
             {
                 ["initial_backlog"] = 0,
@@ -363,6 +364,7 @@ public sealed partial class MainWindow
                 ["chat_scope_preserved"] = true,
                 ["scheduled_interruption_recovery"] = true,
                 ["resume_dialog_reentry_and_close"] = true,
+                ["shared_jobs_companion"] = sharedJobs,
             };
         }
         finally
@@ -374,6 +376,141 @@ public sealed partial class MainWindow
             _visibleLibraryDays.Clear();
             _libraryFeeds.Clear();
             ShowLibraryDetails(null);
+        }
+    }
+
+    private async Task<Dictionary<string, object?>> VerifySharedJobsCompanionAsync(
+        string libraryRoot)
+    {
+        var worker = _worker
+            ?? throw new InvalidOperationException("The isolated worker was unavailable.");
+        var previousJobs = _sharedJobs;
+        var previousButtonContent = SharedJobsButton.Content;
+        var previousShowingJob = _showingSharedJob;
+        var previousPanel = _sharedJobsPanel;
+        WorkerClient.SharedJobObservation? observation = null;
+        IDisposable? observationScope = null;
+        ContentDialog? dialog = null;
+        using var portFinder = new System.Net.Sockets.TcpListener(
+            System.Net.IPAddress.Loopback, 0);
+        var feedId = $"9{Random.Shared.Next(10000, 99999)}";
+        try
+        {
+            portFinder.Start();
+            var port = ((System.Net.IPEndPoint)portFinder.LocalEndpoint).Port;
+            portFinder.Stop();
+            await worker.ConfigureLanNodeAsync(true, libraryRoot, port);
+
+            var job = CreateJobRequest(
+                feedId,
+                new DateTime(2026, 1, 1),
+                new DateTime(2026, 1, 1),
+                null,
+                null,
+                "Isolated shared-job fixture") with
+            {
+                Combine = true,
+                Transcribe = true,
+                Diarize = true,
+                LocalOnly = true,
+                ReuseCompletedSources = true,
+            };
+            observation = await worker.BeginSharedJobAsync(
+                job,
+                analyze: true,
+                accountProfile: "default",
+                automaticProfilePolicy: false,
+                cancellationToken: CancellationToken.None)
+                ?? throw new InvalidOperationException(
+                    "The isolated LAN companion did not accept a shared job.");
+            observationScope = worker.ObserveSharedJob(observation);
+
+            SharedJobs_Click(SharedJobsButton, new RoutedEventArgs());
+            ContentDialog? FindJobsDialog() => VisualTreeHelper
+                .GetOpenPopupsForXamlRoot(WindowRoot.XamlRoot)
+                .Where(popup => popup.Child is not null)
+                .SelectMany(popup => popup.Child is ContentDialog openDialog
+                    ? new[] { openDialog }
+                    : FindVisualDescendants<ContentDialog>(popup.Child!))
+                .FirstOrDefault(openDialog =>
+                    openDialog.Title?.ToString() == "Windows master jobs");
+
+            Require(await WaitForUiConditionAsync(
+                    () => FindJobsDialog() is not null, attempts: 1000),
+                "The native Jobs dialog did not open against the isolated companion.");
+            dialog = FindJobsDialog()
+                ?? throw new InvalidOperationException(
+                    "The native Jobs dialog closed before it could be inspected.");
+            var jobId = SharedText(_sharedJobs.EnumerateArray().Single(row =>
+                SharedText(row, "owner") == "desktop"
+                && SharedText(row, "feed_id") == feedId), "id");
+            Require(!string.IsNullOrWhiteSpace(jobId)
+                    && SharedText(_sharedJobs.EnumerateArray().Single(row =>
+                        SharedText(row, "id") == jobId), "status") == "running",
+                "The native observer was not listed as the same running companion job.");
+
+            List<string> VisibleActions() => FindVisualDescendants<Button>(
+                    (DependencyObject)dialog!.Content)
+                .Select(button => button.Content?.ToString() ?? "")
+                .ToList();
+            Require(await WaitForUiConditionAsync(
+                    () => VisibleActions().Contains("pause", StringComparer.OrdinalIgnoreCase)
+                        && VisibleActions().Contains("cancel", StringComparer.OrdinalIgnoreCase),
+                    attempts: 1000),
+                "The running shared-job row did not render its Pause and Cancel controls.");
+
+            await worker.SharedJobsRequestAsync($"/{jobId}/pause", new { });
+            await observation.PublishAsync("running");
+            Require(observation.Token.IsCancellationRequested,
+                "The native observer did not receive the companion's Pause control.");
+            await observation.FinishAsync("paused", "");
+            observation = null;
+            observationScope.Dispose();
+            observationScope = null;
+
+            await RefreshSharedJobsAsync();
+            var paused = _sharedJobs.EnumerateArray().Single(row =>
+                SharedText(row, "id") == jobId);
+            Require(SharedText(paused, "status") == "paused",
+                "The observer did not retain its original ID after Pause.");
+            Require(await WaitForUiConditionAsync(
+                    () => VisibleActions().Contains("resume", StringComparer.OrdinalIgnoreCase)
+                        && VisibleActions().Contains("cancel", StringComparer.OrdinalIgnoreCase),
+                    attempts: 1000),
+                "The paused shared-job row did not render Resume and Cancel controls.");
+
+            await worker.SharedJobsRequestAsync($"/{jobId}/cancel", new { });
+            await RefreshSharedJobsAsync();
+            var canceled = _sharedJobs.EnumerateArray().Single(row =>
+                SharedText(row, "id") == jobId);
+            Require(SharedText(canceled, "status") == "canceled",
+                "Cancel did not persist against the paused job's original ID.");
+
+            dialog.Hide();
+            await WaitForUiConditionAsync(() => _sharedJobsPanel is null, attempts: 1000);
+            return new Dictionary<string, object?>
+            {
+                ["port"] = port,
+                ["same_job_id_after_pause"] = true,
+                ["running_controls"] = new[] { "pause", "cancel" },
+                ["paused_controls"] = new[] { "resume", "cancel" },
+                ["cancel_persisted"] = true,
+            };
+        }
+        finally
+        {
+            if (observation is not null)
+            {
+                try { await observation.FinishAsync("canceled", "Probe cleanup."); }
+                catch (Exception) { }
+            }
+            observationScope?.Dispose();
+            dialog?.Hide();
+            worker.StopLanNode();
+            _sharedJobs = previousJobs;
+            SharedJobsButton.Content = previousButtonContent;
+            _showingSharedJob = previousShowingJob;
+            _sharedJobsPanel = previousPanel;
         }
     }
 
