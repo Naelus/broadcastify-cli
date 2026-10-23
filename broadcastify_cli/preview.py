@@ -4,7 +4,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import shutil
 import subprocess
 import tempfile
 import time
@@ -14,6 +13,7 @@ from pathlib import Path
 from typing import Sequence
 
 from .analysis import DEFAULT_EMBEDDING_MODEL, PROMPT_VERSION
+from .audio import find_ffmpeg
 from .storage import AnalysisStore
 
 
@@ -57,7 +57,9 @@ def _within(root: Path, relative: str) -> Path:
 
 def _resolve_ffmpeg(executable: str | Path | None) -> Path:
     candidates = [Path(executable).expanduser() if executable else None]
-    configured = shutil.which("ffmpeg")
+    # Use the application's resolver so packaged/build runtimes work without
+    # a user-installed FFmpeg on PATH.
+    configured = find_ffmpeg()
     candidates.append(Path(configured) if configured else None)
     for candidate in candidates:
         if candidate is not None and candidate.is_file():

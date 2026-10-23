@@ -120,6 +120,11 @@ def test_measured_remaining_work_survives_restart_and_never_times_cache_or_pause
 
 
 def test_browser_preview_reviews_saved_samples_and_cannot_touch_production(tmp_path, monkeypatch):
+    from broadcastify_cli.audio import find_ffmpeg
+    ffmpeg = find_ffmpeg()
+    assert ffmpeg, "The preview verification requires the packaged FFmpeg runtime."
+    monkeypatch.setenv("FFMPEG_PATH", ffmpeg)
+    monkeypatch.setenv("PATH", "")  # A clean installation need not have FFmpeg on PATH.
     root = tmp_path/"production"
     database = root/"broadcastify-analysis.sqlite3"
     audio = _retained_analyzed_day(root,database,"90001",date(2026,7,12),location="Private retained place",start_seconds=10)

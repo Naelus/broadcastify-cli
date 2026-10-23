@@ -201,6 +201,11 @@ internal static class PreviewLauncher
         {
             return bundled;
         }
+        var configured = Environment.GetEnvironmentVariable("FFMPEG_PATH");
+        if (!string.IsNullOrWhiteSpace(configured) && File.Exists(configured))
+        {
+            return Path.GetFullPath(configured);
+        }
         var path = Environment.GetEnvironmentVariable("PATH") ?? "";
         foreach (var directory in path.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
         {
