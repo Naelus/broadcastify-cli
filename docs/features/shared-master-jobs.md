@@ -41,7 +41,9 @@ periodic refresh interval. Later source publication belongs to another catch-up
 or the recurring schedule. Confirmed unavailable days and recently empty days
 awaiting publication are shown separately and are not counted as analyzed.
 Quota waits retain the job and resume when eligible allowance or newly retained
-source proof resolves the missing work.
+source proof resolves the missing work. Newly available local processing does
+not wait for provider allowance. Older native quota-wait records reconcile
+against saved completion from later runs without launching another worker.
 
 The existing pipeline journal stores job requests and records without embedded
 credentials. Master restart resumes queued/interrupted work from retained

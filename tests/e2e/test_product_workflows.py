@@ -195,6 +195,12 @@ def test_shared_catchup_waits_for_source_proof_and_preserves_pause(tmp_path, mon
     checked_waiting = threading.Event()
     def execute(job, args, payload, profile):
         calls.append((job.id, profile))
+        if args == ["run-scheduled"] and (audio.parent / ".broadcastify-archive-complete.json").exists():
+            with AnalysisStore(database) as store:
+                store.save_embeddings("passage", [
+                    (p["id"], hashlib.sha256(f"passage: {p['text']}".encode()).hexdigest(), 1, b"\0" * 4)
+                    for p in store.passages_missing_embeddings(DEFAULT_EMBEDDING_MODEL)
+                ], DEFAULT_EMBEDDING_MODEL)
         job.result = {"result":{"download_limited":True}}
         job.phase_status = "completed"
         job.status = "running"
@@ -214,6 +220,12 @@ def test_shared_catchup_waits_for_source_proof_and_preserves_pause(tmp_path, mon
         assert checked_waiting.wait(3)
         assert manager.get(job["id"])["status"] == "waiting_quota"
         assert manager.get(job["id"])["scope_progress"]["source_days"] == 1
+        native = manager.observe({"id":"fedcba9876543210", "command":"run-scheduled",
+            "owner_pid":os.getpid(), "status":"waiting_quota", "request":payload})
+        deadline = time.monotonic()+3
+        while native["id"] in manager._observed_scope_threads and time.monotonic()<deadline:
+            time.sleep(.01)
+        assert manager.get(native["id"])["status"] == "waiting_quota"
         # Another authorized acquisition can satisfy the waiting job. It must
         # finish using that persisted proof without another provider worker.
         remember_complete_archive_day(audio.parent, "90001", date(2026, 7, 12), [])
@@ -222,18 +234,41 @@ def test_shared_catchup_waits_for_source_proof_and_preserves_pause(tmp_path, mon
             time.sleep(.01)
         assert manager.get(job["id"])["status"] == "completed"
         assert calls == [(job["id"], "default")]
+        # Native history must also reflect later saved completion instead of
+        # remaining quota-blocked forever after the desktop starts another run.
+        manager._observed_scope_at[native["id"]] = 0
+        manager.list()
+        deadline = time.monotonic()+3
+        while manager.get(native["id"])["status"] != "completed" and time.monotonic()<deadline:
+            time.sleep(.01)
+        assert manager.get(native["id"])["status"] == "completed"
+        assert calls == [(job["id"], "default")]
+        (audio.parent / ".broadcastify-archive-complete.json").unlink()
+        with sqlite3.connect(database) as connection:
+            connection.execute("DELETE FROM embeddings")
+        checked_waiting.clear()
+        processing = manager.start("run-scheduled", {**payload, "analyze":True})
+        assert checked_waiting.wait(3)
+        assert manager.get(processing["id"])["status"] == "waiting_quota"
+        remember_complete_archive_day(audio.parent, "90001", date(2026, 7, 12), [])
+        deadline = time.monotonic()+3
+        while manager.get(processing["id"])["status"] != "completed" and time.monotonic()<deadline:
+            time.sleep(.01)
+        assert manager.get(processing["id"])["status"] == "completed"
+        assert manager.get(processing["id"])["scope_progress"]["processing_days"] == 0
         (audio.parent / ".broadcastify-archive-complete.json").unlink()
         checked_waiting.clear()
         paused = manager.start("run-scheduled", payload)
         assert checked_waiting.wait(3)
         assert manager.action(paused["id"], "pause")["status"] == "paused"
+        launch_count = len(calls)
     finally:
         manager.close()
     restored = JobManager(root, database, tmp_path)
     try:
         assert restored.get(paused["id"])["status"] == "paused"
         assert restored.cancel(paused["id"])["status"] == "canceled"
-        assert len(calls) == 2  # Explicit pause did not launch work on restart.
+        assert len(calls) == launch_count  # Explicit pause did not launch work on restart.
     finally:
         restored.close()
 

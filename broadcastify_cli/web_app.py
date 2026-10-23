@@ -692,6 +692,10 @@ class JobManager:
                     if row["status"] == "interrupted" or not process_alive(int(row.get("owner_pid") or 0)):
                         self._adopt_desktop_job(row)
                         row.update(self.shared.get(row["id"]) or {})
+                elif row.get("owner") == "desktop" and row["status"] == "waiting_quota":
+                    # A later acquisition or scheduled run may finish this
+                    # scope. Reconcile saved evidence without restarting it.
+                    self._refresh_observed_scope(row, self.shared.request(row["id"]), force=False)
             rows.update({j.id: j.snapshot() for j in self._jobs.values()})
             active = [r for r in rows.values() if r["status"] in ACTIVE_STATES or r["status"] in {"queued", "paused", "waiting_quota"}]
             recent = sorted((r for r in rows.values() if r not in active), key=lambda r:r["created_at"], reverse=True)[:30]
@@ -755,6 +759,13 @@ class JobManager:
                     latest = self.shared.get(job_id)
                     if latest and latest.get("owner") == "desktop" and not self._closing:
                         latest["scope_progress"] = progress
+                        if latest["status"] == "waiting_quota" and not latest.get("control") and not (
+                            progress["source_days"] or progress["processing_days"]
+                        ):
+                            latest["status"] = "completed"
+                            latest["error"] = ""
+                            latest["finished_at"] = utc_now()
+                        latest["updated_at"] = utc_now()
                         self.shared.save(latest)
             except (OSError, ValueError, RuntimeError):
                 pass  # Keep the last saved check; worker events remain live.
@@ -855,7 +866,10 @@ class JobManager:
                         job.error = ""
                         job.finished_at = utc_now()
                         break
-                    if self._allowance_for_unfinished(job, request):
+                    days = self._scope_days(request)
+                    local_ready = any(not day.get("needs_network") and self._needs_processing(
+                        day, request, bool((payload or {}).get("analyze"))) for day in days)
+                    if local_ready or self._allowance_for_unfinished(job, request, days):
                         job.status = "queued"
                         self._save(job)
                 if job.status == "completed":
@@ -934,8 +948,9 @@ class JobManager:
                     and (automatic or p["id"] == job.account_profile_id)]
         return sorted(profiles, key=lambda p: (not p["quota"].get("available"), -int(p["quota"].get("remaining") or 0)))
 
-    def _allowance_for_unfinished(self, job: JobRecord, request: dict[str, Any]) -> bool:
-        days = self._scope_days(request)
+    def _allowance_for_unfinished(self, job: JobRecord, request: dict[str, Any],
+                                  days: list[dict[str, Any]] | None = None) -> bool:
+        days = self._scope_days(request) if days is None else days
         retained = {d["archive_date"] for d in days}
         start, end = date.fromisoformat(request["start_date"]), date.fromisoformat(request["end_date"])
         needed = [start+timedelta(days=i) for i in range((end-start).days+1)
