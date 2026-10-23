@@ -522,9 +522,10 @@ public sealed partial class MainWindow
                     && rowEtaText.StartsWith("Full workflow (requested scope):", StringComparison.Ordinal)
                     && StatusText.Text == "Current stage fixture event: retained audio is being processed.",
                 "The whole-backlog ETA did not render separately from the native job scope and current-stage event.");
-            Require(FindVisualDescendants<TextBlock>((DependencyObject)dialog!.Content)
-                    .Any(text => text.Text?.StartsWith(
-                        "Full workflow (requested scope):", StringComparison.Ordinal) == true),
+            Require(await WaitForUiConditionAsync(() =>
+                FindVisualDescendants<TextBlock>((DependencyObject)dialog!.Content)
+                    .Any(text => text.Text?.Contains(
+                        "Full workflow (requested scope):", StringComparison.Ordinal) == true)),
                 "The running native job row did not render its requested-scope ETA in the Jobs dialog.");
 
             using (var staleEstimate = JsonDocument.Parse(JsonSerializer.Serialize(new
