@@ -1921,7 +1921,10 @@ public sealed partial class MainWindow : Window
             Grid.SetRow(AreaStoryDetailBorder, 1);
             Grid.SetColumn(AreaStoryDetailBorder, 0);
             AreaStoriesContentGrid.RowSpacing = shortCompact ? 4 : 10;
-            AreaSummaryScroll.MaxHeight = shortCompact ? 64 : 150;
+            // Bound the expanded header and its content together. Otherwise
+            // Auto rows can consume the incident pane at minimum height.
+            AreaSummaryExpander.MaxHeight = shortCompact ? 88 : double.PositiveInfinity;
+            AreaSummaryScroll.MaxHeight = shortCompact ? 32 : 150;
 
             RuntimeControls.Orientation = Orientation.Vertical;
             CredentialButtons.Orientation = Orientation.Vertical;

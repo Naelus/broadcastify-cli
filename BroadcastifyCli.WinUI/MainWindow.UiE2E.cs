@@ -87,7 +87,9 @@ public sealed partial class MainWindow
             report["rendered_layout"] = new FrameworkElement[] {
                 WindowRoot, ReviewPage, ReviewContentGrid, ReviewDaySelectorBorder,
                 AnalysisDaysList, ReviewTabView, DailyReviewScroll, DailyReviewContentGrid,
-                IncidentList, PersistentStatusGrid, WorkflowSummaryText, WorkflowStagesText
+                IncidentList, PersistentStatusGrid, WorkflowSummaryText, WorkflowStagesText,
+                AreaStoriesContentGrid, AreaSummaryExpander, AreaSummaryScroll,
+                AreaStoryContentGrid, AreaStoryDetailBorder, AreaStoryDetailScroll
             }.ToDictionary(element => element.Name, element => new {
                 width = element.ActualWidth, height = element.ActualHeight,
                 visibility = element.Visibility.ToString()
