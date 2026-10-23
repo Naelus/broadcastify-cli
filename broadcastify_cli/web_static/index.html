@@ -21,6 +21,7 @@
       </div>
       <nav class="nav-list">
         <button class="nav-item active" data-view="library" aria-current="page"><span aria-hidden="true">▥</span>Local library</button>
+        <button class="nav-item" data-view="jobs"><span aria-hidden="true">≡</span>Master jobs</button>
         <button class="nav-item" data-view="archive"><span aria-hidden="true">↓</span>New archive</button>
         <button class="nav-item" data-view="review"><span aria-hidden="true">⌕</span>Review &amp; ask</button>
         <button class="nav-item" data-view="area"><span aria-hidden="true">⌖</span>Area watch</button>
@@ -76,6 +77,30 @@
             <div class="empty-state"><div class="empty-icon">▥</div><h2>Select a retained day</h2><p>Its processing timeline, evidence, audio, and transcript will appear here.</p></div>
           </article>
         </div>
+      </section>
+
+      <section class="view" id="view-jobs" aria-labelledby="jobsTitle">
+        <div class="page-heading"><div><p class="eyebrow">Shared Windows queue</p><h1 id="jobsTitle">Master jobs</h1>
+          <p>Send work to Windows and follow the same jobs from either machine. Closing this tab does not stop work.</p></div>
+          <button class="button secondary" id="refreshJobsButton">Refresh jobs</button></div>
+        <div class="notice" id="masterJobsConnection" role="status"><strong>Connecting to the master…</strong><span>Job state is never inferred from this NAS copy.</span></div>
+        <details id="sendMasterJobDetails" class="card padded">
+          <summary><strong>Send catch-up to Windows</strong></summary>
+        <form id="sendMasterJobForm" class="form-stack compact-top">
+          <p>Full workflow includes transcripts, speaker labels, incidents and search. Windows uses each feed's saved profile.</p>
+          <div class="form-grid two">
+            <label><span>Feeds (select one or more)</span><select id="masterJobFeeds" multiple size="3" required></select></label>
+            <label><span>Work</span><select id="masterJobMode"><option value="full">Full workflow</option><option value="downloads">Download audio only</option></select></label>
+            <label><span>Dates</span><select id="masterJobScope"><option value="today">Today only</option><option value="range">Exact date range</option></select></label>
+            <label><span>Start</span><input id="masterJobStart" type="date" required></label>
+            <label><span>End</span><input id="masterJobEnd" type="date" required></label>
+          </div>
+          <p id="masterJobPreview">Choose feeds. Windows uses their saved processing profiles and reuses completed work.</p>
+          <button class="button primary" type="submit" id="sendMasterJobButton">Queue on Windows</button>
+        </form>
+        </details>
+        <div id="sharedJobsList" class="form-stack" aria-live="polite"></div>
+        <div class="card padded"><h2>Saved schedules</h2><p>Recurring intentions, separate from the actual jobs above. Edit schedules under New archive.</p><div id="jobsScheduleSummary"></div></div>
       </section>
 
       <section class="view" id="view-archive" aria-labelledby="archiveTitle">

@@ -4,6 +4,28 @@ The Codex project is **Broadcastify AI Assistant**. The shipped Windows product
 name remains **Broadcastify Desktop**. Keep the existing repository and release
 identity unchanged.
 
+## Subagent delegation
+
+- Use `gpt-6-luna` subagents for useful, independent, narrowly scoped work:
+  code-path exploration, documentation lookup, log/test triage, summaries, and
+  small targeted fixes after the failure is understood. Start at `high`
+  reasoning effort. Do not spawn agents for work too small to benefit.
+- Prefer read-heavy parallel tasks. Give each agent a concrete question,
+  relevant files, an explicit read-only or edit scope, and the evidence to
+  return. Assign disjoint files when delegating edits; do not duplicate work.
+- Keep ambiguous design, cross-cutting correctness decisions, integration,
+  production operations, and final verification with the primary agent. Review
+  findings and changes before accepting them; a subagent summary is not proof
+  that the shipped behavior works.
+- Subagents follow the same data, quota, resource, and verification rules.
+  Do not delegate live provider/GPU tests or independent production changes.
+  Return concise findings with file references, not raw logs. Stop work that
+  is no longer useful and avoid nested delegation unless explicitly assigned.
+- This is a standing request to delegate suitable work, following
+  [OpenAI's subagent guidance](https://learn.chatgpt.com/docs/agent-configuration/subagents)
+  (reviewed October 22, 2026), including its Luna model guidance and caution
+  about concurrent edits.
+
 ## Change discipline
 
 - Preserve retained archives, transcripts, checkpoints, analysis databases,

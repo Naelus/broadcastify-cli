@@ -479,6 +479,7 @@ function setView(name) {
   });
   const labels = {
     library: ["Local library", "Retained evidence stays on this computer"],
+    jobs: ["Master jobs", "Shared queue, controls and live progress from Windows"],
     archive: ["New archive", "Quota-safe website archive acquisition"],
     review: ["Review & ask", "Evidence-grounded summaries and questions"],
     area: ["Area watch", "Regional profiles and local story leads"],
@@ -825,7 +826,7 @@ function setViewFromLocation() {
   if (Object.hasOwn(SETTINGS_SECTIONS, requestedSettingsSection)) {
     state.settingsSection = requestedSettingsSection;
   }
-  const view = requestedView in { library: 1, archive: 1, review: 1, area: 1, system: 1, settings: 1, about: 1 }
+  const view = requestedView in { library: 1, jobs: 1, archive: 1, review: 1, area: 1, system: 1, settings: 1, about: 1 }
     ? requestedView
     : "library";
   setView(view);
@@ -866,13 +867,14 @@ async function refreshBootstrap({ preserveSelection = true } = {}) {
     renderCatchUpFeeds();
     renderActivityFeeds();
     renderFeedSchedules();
+    renderMasterJobFeeds();
     renderCredentials();
     renderAbout();
     if (preserveSelection && state.selectedDay) {
       const replacement = state.bootstrap.days.find((value) => value.feed_id === state.selectedDay.feed_id && value.archive_date === state.selectedDay.archive_date);
       if (replacement) await selectDay(replacement, false);
     }
-    setBusyLabel("Ready");
+    setBusyLabel(state.sharedJobLabel || "Ready");
   } catch (error) {
     setBusyLabel("Service error");
     toast(error.message, true);
@@ -1125,14 +1127,14 @@ function renderDayDetail(activeTab = "incidents") {
   if (!detail) return;
   const day = detail.state;
   const master = masterDayProgress(day);
-  const primaryLabel = master?.is_complete ? "Complete on Windows" : day.primary_action === "open_review" ? "Review evidence" : day.next_step;
-  const actionDisabled = master?.is_complete || day.primary_action === "none" ? "disabled" : "";
+  const primaryLabel = day.primary_action === "open_review" ? "Review evidence" : day.next_step;
+  const actionDisabled = day.primary_action === "none" ? "disabled" : "";
   byId("dayDetail").innerHTML = `
     <div class="detail-head"><div><h2>${html(day.feed_name)}</h2><p>Feed ${html(day.feed_id)} · ${html(day.archive_date)} · ${dayStorage(day)}</p></div>
       <div class="button-row">${day.speaker_upgrade_available ? '<button class="button secondary" data-action="upgrade-speakers" title="Replace fast preview labels with Community-1 without repeating transcription.">Improve speakers</button>' : ""}
       <button class="button ${day.is_complete ? "secondary" : "primary"}" data-action="primary-day" ${actionDisabled}>${html(primaryLabel)}</button></div></div>
     <div class="notice ${day.is_complete ? "success" : day.needs_network || day.has_stale_combined || day.has_stale_transcript || day.has_stale_analysis ? "warning" : "success"}"><strong>${html(day.status)}</strong><span>${html(day.status_detail)}. Next: ${html(day.next_step)}.</span></div>
-    ${master ? `<div class="notice success"><strong>Windows master: ${html(master.status)}</strong><span>Next: ${html(master.next_step)}. The stages below describe this NAS copy. Event analysis stays on Windows and is not copied to the NAS.</span></div>` : ""}
+    ${master ? `<div class="notice success"><strong>Windows master: ${html(master.status)}</strong><span>Next: ${html(master.next_step)}. ${html(detail.copy_state || "Results available from Windows")}. These are saved master results; opening them does not rerun processing.</span></div>` : ""}
     <div class="pipeline">${stageCards(day)}</div>
     ${detail.audio_url ? `<div class="audio-block"><audio id="dayAudio" controls preload="metadata" src="${html(detail.audio_url)}"></audio><small>Retained continuous recording. Incident play buttons jump to the cited time without contacting Broadcastify.</small></div>` : ""}
     ${day.evidence_update_pending ? '<div class="notice warning"><strong>New audio is being processed</strong><span>Chat and transcript search use the last indexed transcript. Newer activity will appear after processing finishes; clips pause while the recording is updated.</span></div>' : ""}
@@ -1441,12 +1443,17 @@ function updateProviderNotice(message = "") {
 }
 
 async function startJob(command, payload = {}, options = {}) {
-  if (state.activeJob) {
+  if (state.activeJob && !["run","run-scheduled","continue-local","analyze-day"].includes(command)) {
     toast(state.bootstrap.runtime?.lan_sync?.remote_master_jobs ? "Another Windows master job is already active." : "Another local job is already active.", true);
     return null;
   }
   try {
     const job = await api("/api/jobs", { method: "POST", body: JSON.stringify({ command, payload }) });
+    if (state.activeJob) {
+      toast(`Queued on Windows (${job.id}). Follow it under Master jobs.`);
+      await refreshMasterJobs();
+      return job;
+    }
     state.activeJob = job;
     state.jobCallback = options.onComplete || null;
     state.jobFailureCallback = options.onFailure || null;
@@ -1469,8 +1476,9 @@ async function pollJob() {
   try {
     const job = await api(`/api/jobs/${state.activeJob.id}`);
     state.activeJob = job;
+    state.jobConnectionError = false;
     renderJob(job);
-    if (["completed", "failed", "canceled"].includes(job.status)) {
+    if (["completed", "failed", "canceled", "paused", "waiting_quota"].includes(job.status)) {
       clearTimeout(state.jobTimer);
       const callback = state.jobCallback;
       const failureCallback = state.jobFailureCallback;
@@ -1490,9 +1498,10 @@ async function pollJob() {
       return;
     }
   } catch (error) {
-    toast(error.message, true);
+    if (!state.jobConnectionError) toast(`Master connection lost: ${error.message}`, true);
+    state.jobConnectionError = true;
   }
-  state.jobTimer = setTimeout(pollJob, 900);
+  state.jobTimer = setTimeout(pollJob, state.jobConnectionError ? 5000 : 900);
 }
 
 function renderWorkflow(workflow) {
@@ -1596,7 +1605,7 @@ function renderAnswer(result) {
 }
 
 function archiveJobResult(job) {
-  return eventOf(job, "complete")?.result
+  return job.result?.result || eventOf(job, "complete")?.result
     || eventOf(job, "area_complete")?.result
     || eventOf(job, "scheduled_complete")?.result
     || {};
@@ -1607,6 +1616,11 @@ function hasUntriedAccount(attempted) {
 }
 
 async function startPooledArchiveJob(command, payload, options = {}, attempted = []) {
+  if (command === "run") {
+    const { account_profile_id, analyze, ...job } = payload;
+    return startJob("run-scheduled", { job: { ...job, ...providerPayload() },
+      analyze: Boolean(analyze), account_profile_id: account_profile_id || selectedArchiveProfile() }, options);
+  }
   const requested = payload.account_profile_id || selectedArchiveProfile();
   const automatic = requested === "automatic";
   const runPayload = {
@@ -2088,6 +2102,7 @@ byId("catchUpMissingDaysButton").addEventListener("click", async () => {
     feed_name: feed.feed_name,
     start_date: startDate,
     end_date: localToday,
+    analyze,
     combine: byId("archiveCombine").checked,
     transcribe: byId("archiveTranscribe").checked,
     diarize: byId("archiveDiarize").checked,
@@ -2099,7 +2114,7 @@ byId("catchUpMissingDaysButton").addEventListener("click", async () => {
       await refreshBootstrap({ preserveSelection: false });
       const result = archiveJobResult(job);
       const transcriptDates = (result.days || []).filter((day) => (day.transcripts || []).length).map((day) => day.date);
-      if (analyze && transcriptDates.length) await queueAnalyses(feed.feed_id, transcriptDates);
+
     },
   });
 });
@@ -2127,6 +2142,7 @@ byId("archiveForm").addEventListener("submit", async (event) => {
     feed_name: state.selectedFeed?.name || "",
     start_date: byId("archiveStartDate").value,
     end_date: byId("archiveEndDate").value,
+    analyze,
     combine: byId("archiveCombine").checked,
     transcribe: byId("archiveTranscribe").checked,
     diarize: byId("archiveDiarize").checked,
@@ -2138,7 +2154,7 @@ byId("archiveForm").addEventListener("submit", async (event) => {
       await refreshBootstrap({ preserveSelection: false });
       const result = eventOf(job, "complete")?.result;
       const transcriptDates = (result?.days || []).filter((day) => (day.transcripts || []).length).map((day) => day.date);
-      if (analyze && transcriptDates.length) await queueAnalyses(feedId, transcriptDates);
+
     },
   });
 });
@@ -2846,3 +2862,105 @@ refreshBootstrap({ preserveSelection: false }).then(async () => {
   if (state.bootstrap.days.length) await selectDay(state.bootstrap.days[0]);
 });
 setTimeout(refreshWorkflow, 30000);
+
+let masterJobsTimer;
+let masterJobsBusy = false;
+function renderMasterJobFeeds() {
+  const select = byId("masterJobFeeds");
+  const selected = new Set([...select.selectedOptions].map(o => o.value));
+  select.innerHTML = catchUpFeeds().map(f => `<option value="${html(f.feed_id)}" ${selected.has(f.feed_id) ? "selected" : ""}>${html(f.feed_name || f.feed_id)}</option>`).join("");
+  byId("jobsScheduleSummary").textContent = (state.bootstrap.schedules || []).map(s => `${s.feed_name}: ${s.enabled ? "enabled" : "disabled"}, ${words(s.state)}`).join(" · ");
+  updateMasterJobPreview();
+}
+function updateMasterJobPreview() {
+  const today = new Date();
+  const value = new Date(today.getTime()-today.getTimezoneOffset()*60000).toISOString().slice(0,10);
+  const fixed = byId("masterJobScope").value === "today";
+  for (const id of ["masterJobStart", "masterJobEnd"]) {
+    byId(id).disabled = fixed;
+    byId(id).max = value;
+    if (fixed || !byId(id).value) byId(id).value = value;
+  }
+  const count = byId("masterJobFeeds").selectedOptions.length;
+  byId("masterJobPreview").textContent = `${count} feed(s), ${byId("masterJobStart").value} through ${byId("masterJobEnd").value}, ${byId("masterJobMode").value === "full" ? "full workflow" : "downloads only"}. Target: Windows master. Completed work is reused; saved Windows profiles stay in control.`;
+}
+async function refreshMasterJobs() {
+  if (masterJobsBusy) return;
+  clearTimeout(masterJobsTimer);
+  masterJobsBusy = true;
+  try {
+    const value = await api("/api/jobs");
+    if (!state.activeJob) {
+      const active = value.jobs.find(j => ["running","pausing","canceling"].includes(j.status));
+      if (active) {
+        state.activeJob = active;
+        state.jobCallback = null;
+        state.jobFailureCallback = null;
+        byId("jobTitle").textContent = `Windows master · feed ${active.feed_id || "—"}`;
+        byId("cancelJobButton").disabled = false;
+        renderJob(active);
+        pollJob();
+      }
+    }
+    const activeCount = value.jobs.filter(j => ["running","pausing","canceling"].includes(j.status)).length;
+    const queuedCount = value.jobs.filter(j => j.status === "queued").length;
+    state.sharedJobLabel = `${activeCount} active · ${queuedCount} queued`;
+    setBusyLabel(state.sharedJobLabel);
+    byId("masterJobsConnection").className = "notice success";
+    byId("masterJobsConnection").querySelector("strong").textContent = "Connected to Windows master";
+    byId("masterJobsConnection").querySelector("span").textContent = `Live records checked ${new Date().toLocaleTimeString()}. Pausing a job preserves checkpoints; automatic downloads can continue.`;
+    byId("sharedJobsList").innerHTML = value.jobs.length ? value.jobs.map(job => {
+      const scope = job.scope || {};
+      const progress = [...(job.events || [])].reverse().find(e => ["stage","progress"].includes(e.type));
+      const canResume = ["paused","failed","canceled","waiting_quota"].includes(job.status);
+      const canStop = ["queued","running","paused","waiting_quota"].includes(job.status);
+      const controls = `${canResume ? `<button class="button secondary small" data-shared-job="${html(job.id)}" data-job-action="resume">Resume unfinished work</button>` : ""}${job.status === "queued" ? `<button class="button secondary small" data-shared-job="${html(job.id)}" data-job-action="next">Run next</button>` : ""}${["queued","running"].includes(job.status) ? `<button class="button secondary small" data-shared-job="${html(job.id)}" data-job-action="pause">Pause job</button>` : ""}${canStop ? `<button class="button subtle small" data-shared-job="${html(job.id)}" data-job-action="cancel">Cancel</button>` : ""}`;
+      const counts = job.scope_progress || {};
+      return `<article class="card padded"><div class="section-heading"><div><h2>${html(scope.feed_name || `Feed ${job.feed_id || "—"}`)}</h2><p>${html(scope.start_date || "")} through ${html(scope.end_date || "")} · ${job.mode === "downloads" ? "Downloads only" : "Full workflow"} · ${html(job.id)}</p></div><strong class="status-chip">${html(words(job.status))}</strong></div>
+        <p>${html(progress?.message || "Waiting for the next worker update")}</p>
+        ${counts.total_days ? `<p>${Number(counts.ready_days)} / ${Number(counts.total_days)} days ready for this job · ${Number(counts.source_days || 0)} need source checks/downloads · ${Number(counts.processing_days || 0)} need processing · ${Number(counts.unavailable_days || 0)} unavailable · ${Number(counts.awaiting_source_days || 0)} awaiting publication. Saved-stage counts update as phases finish; counters below describe the current stage.</p>` : ""}
+        ${progress?.total ? `<p>${Number(progress.current || 0)} / ${Number(progress.total)} ${html(progress.stage || progress.phase || "current step")}</p>` : ""}
+        <p>${html(job.error || "")} Last report: ${html(job.updated_at ? new Date(job.updated_at).toLocaleString() : "pending")}.</p><div class="button-row">${controls}</div></article>`;
+    }).join("") : '<div class="card padded">No recorded jobs yet. Submit a catch-up above; desktop-started work also appears here.</div>';
+  } catch (error) {
+    state.sharedJobLabel = "Master disconnected";
+    setBusyLabel(state.sharedJobLabel);
+    byId("masterJobsConnection").className = "notice warning";
+    byId("masterJobsConnection").querySelector("strong").textContent = "Windows master disconnected";
+    byId("masterJobsConnection").querySelector("span").textContent = `${error.message} Displayed records are stale; no local replacement processing was started.`;
+  } finally {
+    masterJobsBusy = false;
+    masterJobsTimer = setTimeout(refreshMasterJobs, document.hidden ? 15000 : 3000);
+  }
+}
+for (const id of ["masterJobFeeds","masterJobMode","masterJobScope","masterJobStart","masterJobEnd"]) byId(id).addEventListener("change",updateMasterJobPreview);
+byId("refreshJobsButton").addEventListener("click",refreshMasterJobs);
+byId("sendMasterJobForm").addEventListener("submit",async event => {
+  event.preventDefault();
+  const feeds = [...byId("masterJobFeeds").selectedOptions].map(o => o.value);
+  const start = byId("masterJobStart").value, end = byId("masterJobEnd").value;
+  if (!feeds.length || start > end) return toast("Select feeds and a valid date range.", true);
+  byId("sendMasterJobButton").disabled = true;
+  const full = byId("masterJobMode").value === "full";
+  try {
+    for (const feed_id of feeds) {
+      const job = await api("/api/jobs", {method:"POST",body:JSON.stringify({command:"run-scheduled",payload:{
+        account_profile_id:"automatic",use_saved_profile:true,analyze:full,
+        job:{feed_id,start_date:start,end_date:end,combine:full,transcribe:full,diarize:full},
+      }})});
+      toast(`${feed_id}: ${words(job.status)} on Windows (${job.id}).`);
+    }
+    byId("sendMasterJobDetails").open = false;
+    await refreshMasterJobs();
+  } catch (error) { toast(`Not all work was accepted: ${error.message} Check the job list before retrying.`, true); }
+  finally { byId("sendMasterJobButton").disabled = false; }
+});
+byId("sharedJobsList").addEventListener("click",async event => {
+  const button = event.target.closest("[data-shared-job]");
+  if (!button) return;
+  button.disabled = true;
+  try { await api(`/api/jobs/${button.dataset.sharedJob}/${button.dataset.jobAction}`,{method:"POST",body:"{}"}); await refreshMasterJobs(); }
+  catch (error) { toast(error.message,true); button.disabled = false; }
+});
+updateMasterJobPreview();
+refreshMasterJobs();

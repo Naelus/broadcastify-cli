@@ -238,6 +238,7 @@
                             </StackPanel>
                             <StackPanel x:Name="LibraryHeaderActions" Grid.Column="1" Orientation="Horizontal" Spacing="8"
                                         VerticalAlignment="Center">
+                                <Button x:Name="SharedJobsButton" Content="Jobs" Click="SharedJobs_Click" ToolTipService.ToolTip="The same master jobs and controls shown on the NAS" />
                                 <Button x:Name="CatchUpFeedButton" Content="Catch up missing feed days…"
                                         Click="CatchUpFeed_Click"
                                         ToolTipService.ToolTip="Choose an existing feed and a prior start date. Only absent or unfinished days through today are queued behind the rolling request guard." />

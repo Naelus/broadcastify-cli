@@ -3106,6 +3106,18 @@ class LanArchiveSyncClient:
             raise LanSyncError("The Windows master did not return a job snapshot.")
         return dict(job)
 
+    def list_master_jobs(self) -> list[dict[str, Any]]:
+        value = self._master_request("GET", "/api/lan/v1/jobs")
+        rows = value.get("jobs")
+        if not isinstance(rows, list) or len(rows)>1000:
+            raise LanSyncError("The master returned an invalid job list.")
+        return [dict(row) for row in rows if isinstance(row,Mapping)]
+
+    def control_master_job(self, job_id: str, action: str) -> dict[str, Any]:
+        if action not in {"pause","resume","retry","next","cancel"}:
+            raise ValueError("Unsupported job control.")
+        return dict(self._master_request("POST", f"/api/lan/v1/jobs/{quote(job_id,safe='')}/{action}",{} )["job"])
+
     def cancel_master_job(self, job_id: str) -> dict[str, Any]:
         value = self._master_request(
             "POST",
@@ -3123,6 +3135,33 @@ class LanArchiveSyncClient:
         if not isinstance(library, Mapping):
             raise LanSyncError("The Windows master did not return its library state.")
         return dict(library)
+
+    def master_review(self, kind: str, params: Mapping[str, Any]) -> dict[str, Any]:
+        from urllib.parse import urlencode
+        if kind not in {"day", "transcript"}:
+            raise ValueError("Unsupported review resource.")
+        return self._master_request("GET", f"/api/lan/v1/review/{kind}?" + urlencode(params))
+
+    def open_master_media(self, path: str, byte_range: str = ""):
+        from contextlib import contextmanager
+
+        @contextmanager
+        def stream():
+            if self.role != "follower" or not self.master_url:
+                raise LanRemoteRequestError(503, "The Windows master is unavailable.")
+            headers = self._headers()
+            if byte_range:
+                headers["Range"] = byte_range
+            with self._lan_session() as session:
+                with session.get(
+                    self.master_url + "/api/lan/v1/review/media", params={"path": path},
+                    headers=headers, timeout=(self.connect_timeout, self.read_timeout),
+                    stream=True, allow_redirects=False,
+                ) as response:
+                    if response.status_code not in {200, 206, 416}:
+                        raise LanRemoteRequestError(503, "Master audio is unavailable; no local reprocessing was started.")
+                    yield response
+        return stream()
 
     def master_info(self) -> dict[str, Any]:
         return self._master_request("GET", "/api/lan/v1/info")

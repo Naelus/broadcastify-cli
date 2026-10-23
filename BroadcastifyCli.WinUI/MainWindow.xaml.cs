@@ -804,6 +804,7 @@ public sealed partial class MainWindow : Window
         {
             return;
         }
+        await RefreshSharedJobsAsync();
         if (SystemPage.Visibility == Visibility.Visible)
         {
             await RefreshSystemActivityAsync();
@@ -5811,6 +5812,33 @@ public sealed partial class MainWindow : Window
                 acquisitionOnly ? HandleAcquisitionMessage : null);
         }
 
+        var localJob = CreateJobRequest(
+            day.FeedId,
+            archiveDate,
+            archiveDate,
+            minimumSpeakers,
+            maximumSpeakers,
+            string.Equals(day.FeedName, $"Feed {day.FeedId}", StringComparison.Ordinal)
+                ? null
+                : day.FeedName) with
+        {
+            Combine = true,
+            Transcribe = true,
+            Diarize = true,
+            DownloadJobs = 1,
+            LocalOnly = true,
+            ReuseCompletedSources = true,
+        };
+        var shared = await _worker.BeginSharedJobAsync(
+            localJob,
+            analyze: true,
+            accountProfile: accountProfileId,
+            automaticProfilePolicy: false,
+            cancellationToken: cancellationToken);
+        using var sharedScope = _worker.ObserveSharedJob(shared);
+        if (shared is not null) cancellationToken = shared.Token;
+        var sharedStatus = "completed";
+        var sharedError = "";
         using var acquisitionCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         Task acquisition = Task.CompletedTask;
         try
@@ -5875,10 +5903,23 @@ public sealed partial class MainWindow : Window
             await RefreshAnalysisDaysAsync();
             return null;
         }
+        catch (OperationCanceledException)
+        {
+            sharedStatus = shared?.Control == "pause" ? "paused" : _windowClosed ? "interrupted" : "canceled";
+            if (shared?.Control == "cancel") _scheduledCancellationRequestedByUser = true;
+            throw;
+        }
+        catch (Exception exception)
+        {
+            sharedStatus = "failed";
+            sharedError = exception.Message;
+            throw;
+        }
         finally
         {
             acquisitionCancellation.Cancel();
-            await acquisition;
+            try { await acquisition; }
+            finally { if (shared is not null) await shared.FinishAsync(sharedStatus, sharedError); }
         }
     }
 
@@ -6500,6 +6541,7 @@ public sealed partial class MainWindow : Window
     private async Task CheckDueFeedScheduleAsync()
     {
         if (_worker is null
+            || _windowClosed
             || _checkingFeedSchedule
             || _pipelineCancellation is not null
             || _exclusiveBusy || _libraryPlanning)
@@ -6523,6 +6565,12 @@ public sealed partial class MainWindow : Window
         var ownsOperation = false;
         try
         {
+            if (await SharedJobsOwnProcessingAsync())
+            {
+                if (!_windowClosed) await AcquireQueuedLibraryAsync(CancellationToken.None);
+                return;
+            }
+            if (_windowClosed) return;
             schedule = await _worker.ClaimDueFeedScheduleAsync(CancellationToken.None);
             if (schedule is null)
             {
@@ -6740,7 +6788,8 @@ public sealed partial class MainWindow : Window
                     cancellationToken,
                     false,
                     status.AccountProfileId,
-                    HandleWorkerMessage);
+                    HandleWorkerMessage,
+                    automaticProfilePolicy: automatic);
                 processingProfileId = status.AccountProfileId;
                 if (lastResult?.DownloadLimited != true)
                 {
@@ -6824,7 +6873,8 @@ public sealed partial class MainWindow : Window
                     processingJob,
                     cancellationToken,
                     schedule.Analyze,
-                    processingProfileId);
+                    processingProfileId,
+                    automaticProfilePolicy: automatic);
                 if (lastResult is not null)
                 {
                     // Narrowing the worker range must not finalize the saved
@@ -7042,7 +7092,8 @@ public sealed partial class MainWindow : Window
         CancellationToken cancellationToken,
         bool? analyzeOverride = null,
         string accountProfileId = "default",
-        Action<JsonElement>? onMessage = null)
+        Action<JsonElement>? onMessage = null,
+        bool automaticProfilePolicy = false)
     {
         if (_worker is null)
         {
@@ -7055,6 +7106,13 @@ public sealed partial class MainWindow : Window
         // Make the local source-block node reachable before the worker decides
         // whether this PC can own the shared LAN acquisition lease.
         await ConfigureLanSharingAsync();
+        var shared = await _worker.BeginSharedJobAsync(ApplyAnalysisProvider(request),
+            analyzeOverride ?? AnalyzeAfterJobCheckBox.IsChecked == true, accountProfileId,
+            automaticProfilePolicy, cancellationToken);
+        using var sharedScope = _worker.ObserveSharedJob(shared);
+        if (shared is not null) cancellationToken = shared.Token;
+        var sharedStatus = "completed";
+        var sharedError = "";
         using var acquisitionCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         Task acquisition = Task.CompletedTask;
         try
@@ -7074,12 +7132,27 @@ public sealed partial class MainWindow : Window
                 jobResult,
                 cancellationToken,
                 analyzeOverride);
+            if (jobResult?.DownloadLimited == true || jobResult?.PendingProcessingDays.Count > 0)
+                sharedStatus = "waiting_quota";
             return jobResult;
+        }
+        catch (OperationCanceledException)
+        {
+            sharedStatus = shared?.Control == "pause" ? "paused" : _windowClosed ? "interrupted" : "canceled";
+            if (shared?.Control == "cancel") _scheduledCancellationRequestedByUser = true;
+            throw;
+        }
+        catch (Exception exception)
+        {
+            sharedStatus = "failed";
+            sharedError = exception.Message;
+            throw;
         }
         finally
         {
             acquisitionCancellation.Cancel();
-            await acquisition;
+            try { await acquisition; }
+            finally { if (shared is not null) await shared.FinishAsync(sharedStatus, sharedError); }
         }
     }
 

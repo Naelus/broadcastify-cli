@@ -28,6 +28,8 @@ from urllib.parse import parse_qs, quote, unquote, urlparse
 
 from dotenv import dotenv_values
 
+from .process_tree import WorkerProcessTree
+from .shared_jobs import SharedJobs, WORKFLOW_COMMANDS, ACTIVE_STATES, process_alive, compact_event, workflow_result
 from . import __version__
 from .activity import acknowledge_activity, activity_report, activity_scope
 from .analysis import (
@@ -69,6 +71,7 @@ from .quota import (
     normalize_archive_request_id,
 )
 from .pipeline_sync import PipelineSyncStore, normalize_pipeline_role
+from .models import JobRequest
 from .storage import AnalysisStore
 
 
@@ -528,6 +531,14 @@ class JobRecord:
     process: subprocess.Popen[str] | None = field(default=None, repr=False)
     thread: threading.Thread | None = field(default=None, repr=False)
     event_count: int = 0
+    request: dict[str, Any] = field(default_factory=dict, repr=False)
+    owner: str = "master"
+    owner_pid: int = 0
+    control: str = ""
+    phase_status: str = ""
+    scope_progress: dict[str, Any] = field(default_factory=dict)
+    updated_at: str = field(default_factory=utc_now)
+    saved_at: float = 0.0
 
     def snapshot(self) -> dict[str, Any]:
         return {
@@ -539,9 +550,16 @@ class JobRecord:
             "created_at": self.created_at,
             "started_at": self.started_at,
             "finished_at": self.finished_at,
-            "events": list(self.events),
-            "result": self.result,
+            "events": [compact_event(e) for e in self.events[-200:]] if self.command == "run-scheduled" else list(self.events),
+            "result": workflow_result(self.result) if self.command == "run-scheduled" else self.result,
             "error": self.error,
+            "owner": self.owner,
+            "owner_pid": self.owner_pid,
+            "control": self.control,
+            "scope_progress": self.scope_progress,
+            "mode": "full" if self.request.get("analyze") or (self.request.get("job") or self.request).get("transcribe") else "downloads",
+            "scope": {k: (self.request.get("job") or self.request).get(k) for k in ("feed_id", "feed_name", "start_date", "end_date")},
+            "updated_at": self.updated_at,
         }
 
 
@@ -610,9 +628,389 @@ class JobManager:
         self._jobs: dict[str, JobRecord] = {}
         self._lock = threading.RLock()
         self._closing = False
+        self.shared = SharedJobs(output_dir)
+        self._condition = threading.Condition(self._lock)
+        self._observed_scope_threads: set[str] = set()
+        self._observed_scope_at: dict[str, float] = {}
+        # Recovery publishes the whole saved queue before any thread can claim it.
+        with self._lock:
+            self._restore_jobs()
+
+    def _save(self, job: JobRecord) -> None:
+        job.updated_at = utc_now()
+        if job.command in WORKFLOW_COMMANDS:
+            self.shared.save(job.snapshot(), job.request)
+        job.saved_at = time.monotonic()
+
+    def _restore_jobs(self) -> None:
+        for row in self.shared.records():
+            if row.get("owner") == "desktop":
+                if row["status"] == "interrupted" or (row["status"] in ACTIVE_STATES and not process_alive(int(row.get("owner_pid") or 0))):
+                    self._adopt_desktop_job(row)
+                continue
+            job = JobRecord(id=row["id"], command=row["command"],
+                request=self.shared.request(row["id"]))
+            for key in ("feed_id", "account_profile_id", "created_at", "started_at", "finished_at", "events", "result", "error", "event_count", "control", "scope_progress"):
+                if key in row:
+                    setattr(job, key, row[key])
+            job.event_count = max((e.get("event_index", 0) for e in job.events), default=-1) + 1
+            job.status = ("paused" if job.control == "pause" else "canceled" if job.control == "cancel"
+                          else "queued") if row["status"] in ACTIVE_STATES else row["status"]
+            job.control = ""
+            if row["status"] in ACTIVE_STATES:
+                job.error = "Master restarted; resuming saved checkpoints."
+            self._jobs[job.id] = job
+            self._save(job)
+            if job.status in {"queued", "waiting_quota"}:
+                self._launch(job)
+
+    def _adopt_desktop_job(self, row: dict[str, Any]) -> None:
+        if self._closing or row["id"] in self._jobs:
+            return
+        if row.get("control") in {"pause", "cancel"}:
+            row["status"] = "paused" if row["control"] == "pause" else "canceled"
+            self.shared.save(row)
+            return
+        job = JobRecord(id=row["id"],command=row["command"],feed_id=row.get("feed_id", ""),
+            request=self.shared.request(row["id"]),account_profile_id=row.get("account_profile_id","default"),
+            created_at=row["created_at"],events=row.get("events",[]),
+            event_count=max((e.get("event_index",0) for e in row.get("events",[])),default=-1)+1,
+            error="Desktop session ended; resuming its saved work on the master.")
+        self._jobs[job.id] = job
+        self._save(job)
+        self._launch(job)
+
+    def list(self) -> list[dict[str, Any]]:
+        with self._lock:
+            finished = sorted((j for j in self._jobs.values() if j.status in {"completed","failed","canceled"}
+                and j.thread is None),key=lambda j:j.created_at,reverse=True)
+            for old in finished[50:]:
+                self._jobs.pop(old.id,None)
+            rows = {row["id"]: row for row in self.shared.records()}
+            for row in rows.values():
+                if row.get("owner") == "desktop" and (row["status"] in ACTIVE_STATES or row["status"] == "interrupted"):
+                    if row["status"] == "interrupted" or not process_alive(int(row.get("owner_pid") or 0)):
+                        self._adopt_desktop_job(row)
+                        row.update(self.shared.get(row["id"]) or {})
+            rows.update({j.id: j.snapshot() for j in self._jobs.values()})
+            active = [r for r in rows.values() if r["status"] in ACTIVE_STATES or r["status"] in {"queued", "paused", "waiting_quota"}]
+            recent = sorted((r for r in rows.values() if r not in active), key=lambda r:r["created_at"], reverse=True)[:30]
+            keys = {"type","stage","phase","current","total","message","feed_id","date","received_at","event_index","elapsed_seconds","estimated_remaining_seconds"}
+            return [{**r,"result":None,"events":[{k:v for k,v in e.items() if k in keys}
+                for e in r.get("events",[])[-8:]]} for r in active+recent]
+
+    def observe(self, value: dict[str, Any]) -> dict[str, Any]:
+        with self._lock:
+            job_id = str(value.get("id") or "")
+            if not re.fullmatch(r"[0-9a-f]{16}", job_id):
+                raise WebRequestError(400, "Invalid desktop job identity.")
+            previous = self.shared.get(job_id)
+            if previous is not None and previous.get("owner") != "desktop":
+                raise WebRequestError(409, "This job has transferred to the master queue.")
+            request = dict(value.get("request") or {})
+            command = str(value.get("command") or "run-scheduled")
+            if command not in WORKFLOW_COMMANDS:
+                raise WebRequestError(400, "Only workflow jobs can be observed.")
+            if previous is None and bool(request.get("analyze") or (request.get("job") or request).get("transcribe")):
+                if any(r["owner"] == "master" and r["status"] in ACTIVE_STATES for r in self.list()):
+                    raise WebRequestError(409, "A shared job is using the master. Inspect Jobs before starting another model run.")
+            record = {**(previous or {}), **value, "command": command, "owner": "desktop", "updated_at": utc_now()}
+            record.pop("request", None)
+            record.setdefault("created_at", utc_now())
+            record.setdefault("started_at", utc_now())
+            record.setdefault("events", [])
+            record.setdefault("feed_id", str((request.get("job") or request).get("feed_id") or ""))
+            record["mode"] = "full" if request.get("analyze") or (request.get("job") or request).get("transcribe") else "downloads"
+            record["scope"] = {k:(request.get("job") or request).get(k) for k in ("feed_id", "feed_name", "start_date", "end_date")}
+            record["control"] = str((previous or {}).get("control") or "")
+            if record["status"] not in ACTIVE_STATES and record["control"] in {"pause", "cancel"}:
+                record["status"] = "paused" if record["control"] == "pause" else "canceled"
+            self.shared.save(record, request if request else None)
+            previous_event = max((e.get("event_index", -1) for e in (previous or {}).get("events", [])), default=-1)
+            phase_finished = any(e.get("event_index", -1) > previous_event and e.get("type")
+                in {"complete", "scheduled_complete", "analysis_complete", "day_report"} for e in record["events"])
+            self._refresh_observed_scope(record, request, force=phase_finished or record["status"] not in ACTIVE_STATES)
+            self._condition.notify_all()
+            return record
+
+    def _refresh_observed_scope(self, record: dict[str, Any], request: dict[str, Any], *, force: bool) -> None:
+        """Inspect saved native progress off the heartbeat/control response path."""
+        job_id = record["id"]
+        if force:
+            self._observed_scope_at[job_id] = 0
+        if self._closing or job_id in self._observed_scope_threads:
+            return
+        if time.monotonic() - self._observed_scope_at.get(job_id, 0) < 60:
+            return
+        scope = request.get("job") or {}
+        if not all(scope.get(k) for k in ("feed_id", "start_date", "end_date")):
+            return
+        self._observed_scope_threads.add(job_id)
+        self._observed_scope_at[job_id] = time.monotonic()
+
+        def inspect() -> None:
+            try:
+                progress = self._scope_progress(scope, bool(request.get("analyze")), record["created_at"])
+                with self._lock:
+                    latest = self.shared.get(job_id)
+                    if latest and latest.get("owner") == "desktop" and not self._closing:
+                        latest["scope_progress"] = progress
+                        self.shared.save(latest)
+            except (OSError, ValueError, RuntimeError):
+                pass  # Keep the last saved check; worker events remain live.
+            finally:
+                with self._lock:
+                    self._observed_scope_threads.discard(job_id)
+                    if self._observed_scope_at.get(job_id) == 0:
+                        self._refresh_observed_scope(record, request, force=False)
+
+        threading.Thread(target=inspect, name=f"job-progress-{job_id}", daemon=True).start()
+
+    def action(self, job_id: str, action: str) -> dict[str, Any]:
+        with self._lock:
+            row = self.get(job_id)
+            if action == "next":
+                if row["status"] != "queued":
+                    raise WebRequestError(409, "Only queued jobs can move next.")
+                self.shared.move_next(job_id)
+            elif action in {"pause", "cancel"}:
+                if row["status"] in {"completed", "failed", "canceled"}:
+                    return row
+                job = self._jobs.get(job_id)
+                if job is not None:
+                    job.control = action
+                    if job.status in {"queued", "waiting_quota", "paused"}:
+                        job.status = "paused" if action == "pause" else "canceled"
+                        job.cancel_requested = True
+                        self._save(job)
+                    else:
+                        self.cancel(job_id)
+                else:
+                    row["control"] = action
+                    if row["status"] in ACTIVE_STATES:
+                        row["status"] = "pausing" if action == "pause" else "canceling"
+                    else:
+                        row["status"] = "paused" if action == "pause" else "canceled"
+                    self.shared.save(row)
+            elif action in {"resume", "retry"}:
+                if row["status"] not in {"paused", "failed", "canceled", "waiting_quota"}:
+                    raise WebRequestError(409, "Wait for the job to stop before resuming.")
+                request = self.shared.request(job_id)
+                job = self._jobs.get(job_id) or JobRecord(id=job_id,command=row["command"],request=request,
+                    feed_id=row.get("feed_id", ""),created_at=row["created_at"])
+                job.status = "queued"
+                job.finished_at = ""
+                job.error = ""
+                job.owner = "master"
+                job.control = ""
+                job.cancel_requested = False
+                self._jobs[job.id] = job
+                self._save(job)
+                if job.thread is None or not job.thread.is_alive():
+                    self._launch(job)
+            else:
+                raise WebRequestError(400, "Unsupported job action.")
+            self._condition.notify_all()
+            return self.get(job_id)
+
+    def _launch(self, job: JobRecord) -> None:
+        arguments, payload = self._worker_request(job.command, job.request)
+        job.thread = threading.Thread(target=self._run,
+            args=(job, arguments, payload, job.account_profile_id), daemon=True,
+            name=f"radio-job-{job.id}")
+        job.thread.start()
+
+    def _run(self, job: JobRecord, arguments: list[str], payload: dict[str, Any] | None, profile: str) -> None:
+        try:
+            while not self._closing and not job.cancel_requested:
+                with self._condition:
+                    while not self._closing and not job.cancel_requested:
+                        rows = self.list()
+                        queued = [r for r in rows if r["status"] == "queued"]
+                        active = [r for r in rows if r["id"] != job.id and r["status"] in ACTIVE_STATES]
+                        if not active and (not queued or queued[0]["id"] == job.id):
+                            job.status = "running"
+                            self._save(job)
+                            break
+                        self._condition.wait(timeout=1)
+                    if job.cancel_requested or self._closing:
+                        return
+                if job.command == "run-scheduled" and payload is not None:
+                    self._catch_up(job, payload)
+                else:
+                    self._execute(job, arguments, payload, profile)
+                if job.status != "waiting_quota":
+                    break
+                # Keep the saved workflow alive across browser disconnects.
+                # Other jobs and the native downloader may run during this wait.
+                while job.status == "waiting_quota" and not self._closing and not job.cancel_requested:
+                    with self._condition:
+                        self._condition.wait(timeout=30)
+                    if self._closing or job.cancel_requested or job.status != "waiting_quota":
+                        break
+                    request = dict((payload or {}).get("job") or {})
+                    if self._scope_complete(request, bool((payload or {}).get("analyze")), job.created_at):
+                        job.scope_progress = self._scope_progress(request, bool((payload or {}).get("analyze")), job.created_at)
+                        job.status = "completed"
+                        job.error = ""
+                        job.finished_at = utc_now()
+                        break
+                    if self._allowance_for_unfinished(job, request):
+                        job.status = "queued"
+                        self._save(job)
+                if job.status == "completed":
+                    break
+        except Exception as exc:
+            job.status = "failed"
+            job.error = str(exc)
+        finally:
+            with self._condition:
+                if job.cancel_requested:
+                    job.status = "canceled"
+                if job.control == "shutdown":
+                    job.status = "queued"
+                    job.cancel_requested = False
+                    job.control = ""
+                if job.control == "pause":
+                    job.status = "paused"
+                    job.error = "Processing paused; saved checkpoints will be reused."
+                self._save(job)
+                job.thread = None
+                # Resume can arrive after a paused thread has decided to exit
+                # but before it releases its slot. Do not leave that job stranded.
+                if job.status == "queued" and not self._closing and not job.cancel_requested:
+                    self._launch(job)
+                self._condition.notify_all()
+
+    def _scope_days(self, request: dict[str, Any]) -> list[dict[str, Any]]:
+        return scan_local_library(self.output_dir, self.database_path, feed_id=str(request["feed_id"]),
+            start_date=date.fromisoformat(request["start_date"]),end_date=date.fromisoformat(request["end_date"]))
+
+    @staticmethod
+    def _needs_source(day: dict[str, Any], request: dict[str, Any], requested_at: str) -> bool:
+        if request.get("local_only"):
+            return False
+        if day.get("needs_network"):
+            return True
+        # A long analysis must not keep reopening today's completed acquisition.
+        # A source check made since submission satisfies this fixed-scope job;
+        # later periodic discovery belongs to the recurring schedule.
+        checked = str(day.get("source_checked_at") or "")
+        checked_for_job = bool(checked and requested_at and
+            datetime.fromisoformat(checked) >= datetime.fromisoformat(requested_at))
+        return bool(day.get("source_check_due") and not checked_for_job)
+
+    @staticmethod
+    def _needs_processing(day: dict[str, Any], request: dict[str, Any], analyze: bool) -> bool:
+        if day.get("source_unavailable") or day.get("awaiting_source"):
+            return False
+        return any(request.get(flag) and not day.get(saved) for flag, saved in (
+            ("combine", "has_combined"), ("transcribe", "has_transcript"), ("diarize", "has_diarization")
+        )) or bool(analyze and not (day.get("has_analysis") and day.get("has_search_index")))
+
+    def _scope_progress(self, request: dict[str, Any], analyze: bool, requested_at: str,
+                        days: list[dict[str, Any]] | None = None) -> dict[str, int]:
+        days = self._scope_days(request) if days is None else days
+        total = (date.fromisoformat(request["end_date"])-date.fromisoformat(request["start_date"])).days+1
+        return {
+            "total_days": total,
+            "ready_days": sum(not self._needs_source(d, request, requested_at)
+                and not self._needs_processing(d, request, analyze)
+                and not (d.get("source_unavailable") or d.get("awaiting_source")) for d in days),
+            "source_days": max(0, total-len(days)) + sum(self._needs_source(d, request, requested_at) for d in days),
+            "processing_days": sum(self._needs_processing(d, request, analyze) for d in days),
+            "unavailable_days": sum(bool(d.get("source_unavailable")) for d in days),
+            "awaiting_source_days": sum(bool(d.get("awaiting_source")) for d in days),
+        }
+
+    def _scope_complete(self, request: dict[str, Any], analyze: bool, requested_at: str) -> bool:
+        progress = self._scope_progress(request, analyze, requested_at)
+        return not (progress["source_days"] or progress["processing_days"])
+
+    def _eligible_profiles(self, job: JobRecord, *, allow_cached: bool = False) -> list[dict[str, Any]]:
+        pool = _account_pool_profiles(self.working_dir, self.credential_store)
+        automatic = job.request.get("account_profile_id") == "automatic" and pool.get("authorized", False)
+        profiles = [p for p in pool["profiles"] if p.get("configured") and (allow_cached or p["quota"].get("available"))
+                    and (automatic or p["id"] == job.account_profile_id)]
+        return sorted(profiles, key=lambda p: (not p["quota"].get("available"), -int(p["quota"].get("remaining") or 0)))
+
+    def _allowance_for_unfinished(self, job: JobRecord, request: dict[str, Any]) -> bool:
+        days = self._scope_days(request)
+        retained = {d["archive_date"] for d in days}
+        start, end = date.fromisoformat(request["start_date"]), date.fromisoformat(request["end_date"])
+        needed = [start+timedelta(days=i) for i in range((end-start).days+1)
+                  if (start+timedelta(days=i)).isoformat() not in retained]
+        needed.extend(date.fromisoformat(d["archive_date"]) for d in days
+                      if self._needs_source(d, request, job.created_at))
+        cutoff = date.today()-timedelta(days=2)
+        return bool(needed) and any(not p["quota"].get("current_only") or any(d >= cutoff for d in needed)
+                                   for p in self._eligible_profiles(job))
+
+    def _catch_up(self, job: JobRecord, payload: dict[str, Any]) -> None:
+        request = dict(payload.get("job") or {})
+        analyze = bool(payload.get("analyze"))
+        # Even an exhausted account can restore cached/LAN source audio. The
+        # worker's persistent guard still decides whether a website turn is legal.
+        profiles = self._eligible_profiles(job, allow_cached=True)
+        job.scope_progress = self._scope_progress(request, analyze, job.created_at)
+        self._save(job)
+        limited = not profiles and not request.get("local_only")
+        for profile in ([] if request.get("local_only") else profiles):
+            if job.cancel_requested:
+                return
+            job.status = "running"
+            self._execute(job, ["run"], {**request, "combine":False,"transcribe":False,"diarize":False,
+                "reuse_completed_sources":True,"newest_first":True}, profile["id"])
+            if job.phase_status != "completed":
+                return
+            result = (job.result or {}).get("result") or {}
+            limited = bool(result.get("download_limited"))
+            if not limited:
+                break
+        if any(request.get(flag) for flag in ("combine", "transcribe", "diarize")) or analyze:
+            days = self._scope_days(request)
+            job.scope_progress = self._scope_progress(request, analyze, job.created_at, days)
+            self._save(job)
+            for day in sorted(days,key=lambda d:d["archive_date"]):
+                if job.cancel_requested:
+                    return
+                # scan_local_library exposes retained stage flags, not the
+                # planner-only needs_local_processing field. Using that absent
+                # field silently skipped every model phase of remote catch-up.
+                if day.get("needs_network") or not self._needs_processing(day, request, analyze):
+                    continue
+                job.status = "running"
+                self._append(job, {"type":"stage","stage":"processing","feed_id":request["feed_id"],
+                    "date":day["archive_date"],"message":f"Finishing retained {request['feed_id']} / {day['archive_date']}"})
+                self._execute(job,["run-scheduled"],{**payload,"job":{**request,
+                    "start_date":day["archive_date"],"end_date":day["archive_date"],"local_only":True}},job.account_profile_id)
+                if job.phase_status != "completed":
+                    return
+                # Refresh only the changed day between phases; rescanning a
+                # multi-month scope after every day would repeat archive I/O.
+                refreshed = self._scope_days({**request, "start_date":day["archive_date"], "end_date":day["archive_date"]})
+                days = [d for d in days if d["archive_date"] != day["archive_date"]] + refreshed
+                job.scope_progress = self._scope_progress(request, analyze, job.created_at, days)
+                self._save(job)
+        job.scope_progress = self._scope_progress(request, analyze, job.created_at)
+        limited = limited and bool(job.scope_progress["source_days"])
+        unfinished = bool(job.scope_progress["source_days"] or job.scope_progress["processing_days"])
+        job.status = "waiting_quota" if limited else "failed" if unfinished else "completed"
+        job.finished_at = utc_now() if not limited else ""
+        job.error = ("Waiting for eligible archive allowance. Saved local work is retained." if limited else
+                     "The worker stopped with unfinished source or processing stages. Resume to retry saved work." if unfinished else "")
+        job.result = {"type":"scheduled_complete","result":{"feed_id":request["feed_id"],
+            "requested_days":job.scope_progress["total_days"],"completed_days":job.scope_progress["ready_days"],"download_limited":limited}}
 
     def start(self, command: str, payload: dict[str, Any]) -> dict[str, Any]:
         request_payload = dict(payload)
+        if command == "run-scheduled" and request_payload.pop("use_saved_profile", False):
+            selected = dict(request_payload.get("job") or {})
+            with AnalysisStore(self.database_path) as store:
+                template = next((s for s in store.list_feed_schedules() if s["feed_id"] == str(selected.get("feed_id"))), None)
+            if template is None:
+                raise WebRequestError(400, "This feed has no saved Windows processing profile. Configure its schedule first.")
+            request_payload["job"] = {**template["job"], **selected, "feed_name":template["feed_name"]}
         requested_profile_id = str(
             request_payload.pop("account_profile_id", "default") or "default"
         )
@@ -636,10 +1034,15 @@ class JobManager:
             ),
         )
         arguments, stdin_payload = self._worker_request(command, request_payload)
+        if command == "run-scheduled":
+            try:
+                JobRequest.from_dict((stdin_payload or {})["job"])
+            except (KeyError, TypeError, ValueError) as exc:
+                raise WebRequestError(400, f"Invalid catch-up scope: {exc}") from exc
         with self._lock:
             if self._closing:
                 raise WebRequestError(HTTPStatus.SERVICE_UNAVAILABLE, "The app is shutting down.")
-            if any(job.status in {"queued", "running", "canceling"} for job in self._jobs.values()):
+            if command not in WORKFLOW_COMMANDS and any(job.status in {"queued", "running", "canceling"} for job in self._jobs.values()):
                 raise WebRequestError(
                     HTTPStatus.CONFLICT,
                     "Another archive or model job is already active. Wait for it or cancel it first.",
@@ -647,10 +1050,12 @@ class JobManager:
             job = JobRecord(
                 id=secrets.token_hex(8),
                 command=command,
-                feed_id=str(request_payload.get("feed_id") or "")[:40],
+                feed_id=str((request_payload.get("job") or request_payload).get("feed_id") or "")[:40],
+                request={**(stdin_payload or request_payload),"account_profile_id":requested_profile_id},
                 account_profile_id=account_profile_id,
             )
             self._jobs[job.id] = job
+            self._save(job)
             # Register and start under the same lock so shutdown cannot miss a
             # worker between accepting its job and creating its thread.
             job.thread = threading.Thread(
@@ -667,53 +1072,48 @@ class JobManager:
             self._closing = True
             jobs = list(self._jobs.values())
         for job in jobs:
-            if job.status in {"queued", "running", "canceling"}:
+            if job.status in {"running", "canceling"}:
+                if job.command in WORKFLOW_COMMANDS and not job.cancel_requested:
+                    job.control = "shutdown"
                 self.cancel(job.id)
+            elif job.status == "queued" and job.command not in WORKFLOW_COMMANDS:
+                self.cancel(job.id)
+        with self._condition:
+            self._condition.notify_all()
         deadline = time.monotonic() + 15
         for job in jobs:
-            if job.thread is not None:
-                job.thread.join(timeout=max(0, deadline - time.monotonic()))
+            thread = job.thread
+            if thread is not None:
+                thread.join(timeout=max(0, deadline - time.monotonic()))
 
     def status(self) -> dict[str, Any]:
-        with self._lock:
-            active = next(
-                (
-                    job
-                    for job in reversed(list(self._jobs.values()))
-                    if job.status in {"queued", "running", "canceling"}
-                ),
-                None,
-            )
-            return {
-                "enabled": True,
-                "active": (
-                    {
-                        "id": active.id,
-                        "command": active.command,
-                        "phase": active.command,
-                        "feed_id": active.feed_id,
-                        "status": active.status,
-                        "account_profile_id": active.account_profile_id,
-                        "created_at": active.created_at,
-                        "started_at": active.started_at,
-                    }
-                    if active is not None
-                    else None
-                ),
-            }
+        rows = self.list()
+        return {"enabled":True,"active":next((r for r in rows if r["status"] in ACTIVE_STATES),None),
+                "queued_count":sum(r["status"] == "queued" for r in rows)}
 
     def get(self, job_id: str) -> dict[str, Any]:
         with self._lock:
             job = self._jobs.get(job_id)
             if job is None:
-                raise WebRequestError(HTTPStatus.NOT_FOUND, "That local job was not found.")
+                row = self.shared.get(job_id)
+                if row is None:
+                    raise WebRequestError(HTTPStatus.NOT_FOUND, "That master job was not found.")
+                return row
             return job.snapshot()
 
     def cancel(self, job_id: str) -> dict[str, Any]:
         with self._lock:
             job = self._jobs.get(job_id)
             if job is None:
-                raise WebRequestError(HTTPStatus.NOT_FOUND, "That local job was not found.")
+                return self.action(job_id, "cancel")
+            if job.status in {"waiting_quota", "paused"}:
+                job.control = "cancel"
+                job.cancel_requested = True
+                job.status = "canceled"
+                job.finished_at = utc_now()
+                self._save(job)
+                self._condition.notify_all()
+                return job.snapshot()
             if job.status not in {"queued", "running", "canceling"}:
                 return job.snapshot()
             if job.cancel_requested:
@@ -771,13 +1171,15 @@ class JobManager:
                 event = {**event, "result": result}
             event = {**event, "event_index": job.event_count, "received_at": utc_now()}
             job.event_count += 1
-            job.events.append(event)
+            job.events.append(compact_event(event) if job.command == "run-scheduled" else event)
             if len(job.events) > MAX_EVENTS:
                 job.events = job.events[-MAX_EVENTS:]
             if event.get("type") not in {"stage", "progress", "log"}:
                 job.result = event
+            if time.monotonic() - job.saved_at >= 0.5 or event.get("type") not in {"progress", "log"}:
+                self._save(job)
 
-    def _run(
+    def _execute(
         self,
         job: JobRecord,
         arguments: list[str],
@@ -785,15 +1187,19 @@ class JobManager:
         account_profile_id: str,
     ) -> None:
         process = None
+        process_tree = None
         stderr_lines: list[str] = []
         try:
             with self._lock:
+                job.phase_status = ""
+                job.result = None
                 if job.cancel_requested:
                     job.status = "canceled"
                     job.finished_at = utc_now()
                     return
                 job.status = "running"
-                job.started_at = utc_now()
+                job.started_at = job.started_at or utc_now()
+                job.finished_at = ""
             environment = os.environ.copy()
             environment["BROADCASTIFY_ANALYSIS_DB"] = str(self.database_path)
             environment["BROADCASTIFY_SECURE_ANALYSIS_DB"] = str(
@@ -842,7 +1248,14 @@ class JobManager:
                     creationflags=creation_flags,
                     start_new_session=start_new_session,
                 )
+                process_tree = WorkerProcessTree(process)
                 job.process = process
+                # A child may inherit stdout even after Python exits. Reap its
+                # owned tree independently of draining that pipe.
+                def reap_children() -> None:
+                    process.wait()
+                    process_tree.close()
+                threading.Thread(target=reap_children, daemon=True).start()
 
             def read_stderr() -> None:
                 assert process.stderr is not None
@@ -877,7 +1290,8 @@ class JobManager:
                     job.status = "canceled"
                     job.error = "Canceled by the user. Completed files remain resumable."
                 elif return_code == 0:
-                    job.status = "completed"
+                    job.phase_status = "completed"
+                    job.status = "running" if job.command == "run-scheduled" else "completed"
                 else:
                     job.status = "failed"
                     error_event = next(
@@ -892,7 +1306,7 @@ class JobManager:
                         (error_event or {}).get("message")
                         or (stderr_lines[-1] if stderr_lines else "The Python worker failed.")
                     )
-                job.finished_at = utc_now()
+                job.finished_at = "" if job.status == "running" else utc_now()
                 job.process = None
         except Exception as exc:
             # A broken stdin/stdout pipe must not release the single-job slot
@@ -911,12 +1325,15 @@ class JobManager:
                 job.error = str(exc)
                 job.finished_at = utc_now()
         finally:
+            if process_tree is not None:
+                process_tree.close()
             if process is not None:
                 for pipe in (process.stdin, process.stdout, process.stderr):
                     if pipe is not None:
                         pipe.close()
             with self._lock:
                 job.process = None
+                self._save(job)
 
     def _worker_request(
         self, command: str, raw_payload: dict[str, Any]
@@ -1011,6 +1428,8 @@ class JobManager:
         if command in {"run", "continue-local", "analyze-day", "ask"}:
             payload["output_dir"] = str(self.output_dir)
         if command in {"run", "run-scheduled", "run-area"}:
+            if command == "run-scheduled":
+                payload.setdefault("analyze", True)
             if command == "run":
                 job_payload = payload
             else:
@@ -1034,6 +1453,17 @@ class JobManager:
         return [command], payload
 
 
+def _remote_media_payload(value: Any) -> Any:
+    """Keep citations on the master; stream their audio through this origin."""
+    if isinstance(value, dict):
+        return {key: _remote_media_payload(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_remote_media_payload(item) for item in value]
+    if isinstance(value, str) and value.startswith("/media?"):
+        return value.replace("/media?", "/master-media?", 1)
+    return value
+
+
 class RemoteMasterJobManager:
     """Relay browser jobs to the authoritative Windows worker."""
 
@@ -1050,16 +1480,30 @@ class RemoteMasterJobManager:
             f"The Windows master is unavailable: {exc}",
         ) from exc
 
+    def list(self) -> list[dict[str, Any]]:
+        try:
+            return _remote_media_payload(self.client.list_master_jobs())
+        except (LanSyncError, OSError) as exc:
+            self._raise_web_error(exc)
+        raise AssertionError("unreachable")
+
+    def action(self, job_id: str, action: str) -> dict[str, Any]:
+        try:
+            return _remote_media_payload(self.client.control_master_job(job_id, action))
+        except (LanSyncError, OSError) as exc:
+            self._raise_web_error(exc)
+        raise AssertionError("unreachable")
+
     def start(self, command: str, payload: dict[str, Any]) -> dict[str, Any]:
         try:
-            return self.client.start_master_job(command, payload)
+            return _remote_media_payload(self.client.start_master_job(command, payload))
         except (LanSyncError, OSError) as exc:
             self._raise_web_error(exc)
         raise AssertionError("unreachable")
 
     def get(self, job_id: str) -> dict[str, Any]:
         try:
-            return self.client.get_master_job(job_id)
+            return _remote_media_payload(self.client.get_master_job(job_id))
         except (LanSyncError, OSError) as exc:
             self._raise_web_error(exc)
         raise AssertionError("unreachable")
@@ -1177,7 +1621,7 @@ class FeedScheduleCoordinator:
         if self._active is not None:
             job_id, schedule, attempted_profile_ids, phase = self._active
             snapshot = self.jobs.get(job_id)
-            if snapshot["status"] in {"queued", "running", "canceling"}:
+            if snapshot["status"] in {"queued", "running", "canceling", "pausing", "paused", "waiting_quota"}:
                 return
             selected_profile_id = normalize_account_profile_id(
                 str(snapshot.get("account_profile_id") or "default")
@@ -1456,6 +1900,50 @@ def _safe_media_path(state: WebAppState, relative_value: str) -> Path:
     if not candidate.is_file():
         raise WebRequestError(HTTPStatus.NOT_FOUND, "That retained media file was not found.")
     return candidate
+
+
+def _serve_retained_media(self: BaseHTTPRequestHandler, path: Path) -> None:
+    size = path.stat().st_size
+    start = 0
+    end = max(0, size - 1)
+    status = HTTPStatus.OK
+    range_value = self.headers.get("Range", "")
+    if range_value:
+        match = re.fullmatch(r"bytes=(\d*)-(\d*)", range_value.strip())
+        if not match:
+            raise WebRequestError(HTTPStatus.REQUESTED_RANGE_NOT_SATISFIABLE, "Unsupported media range.")
+        first, last = match.groups()
+        if first:
+            start = int(first)
+            end = int(last) if last else end
+        elif last:
+            suffix = int(last)
+            start = max(0, size - suffix)
+        if start >= size or end < start:
+            raise WebRequestError(HTTPStatus.REQUESTED_RANGE_NOT_SATISFIABLE, "Media range is outside the file.")
+        end = min(end, size - 1)
+        status = HTTPStatus.PARTIAL_CONTENT
+    length = max(0, end - start + 1)
+    self.send_response(status)
+    self.send_header("Content-Type", mimetypes.guess_type(path.name)[0] or "audio/mpeg")
+    self.send_header("Content-Length", str(length))
+    self.send_header("Accept-Ranges", "bytes")
+    self.send_header("Last-Modified", formatdate(path.stat().st_mtime, usegmt=True))
+    self.send_header("Cache-Control", "private, no-store")
+    self.send_header("X-Content-Type-Options", "nosniff")
+    self.send_header("Cross-Origin-Resource-Policy", "same-origin")
+    if status == HTTPStatus.PARTIAL_CONTENT:
+        self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+    self.end_headers()
+    with path.open("rb") as handle:
+        handle.seek(start)
+        remaining = length
+        while remaining:
+            chunk = handle.read(min(256 * 1024, remaining))
+            if not chunk:
+                break
+            self.wfile.write(chunk)
+            remaining -= len(chunk)
 
 
 def _media_url(state: WebAppState, path_value: str | Path | None) -> str:
@@ -2214,6 +2702,17 @@ def create_server(
                         account_pool = remote_account_pool
                 elif state.master_client is not None:
                     schedules = []
+                if authoritative_library is not None:
+                    local_days = {(d["feed_id"],d["archive_date"]):d for d in library["days"]}
+                    merged = []
+                    for progress in authoritative_library.get("progress") or []:
+                        local = local_days.pop((progress["feed_id"],progress["archive_date"]),{})
+                        merged.append({**local,**progress,
+                            "storage_bytes":local.get("storage_bytes",0),
+                            "working_storage_bytes":local.get("working_storage_bytes",0),
+                            "copy_state":"Local transcript available" if local.get("has_transcript") else "NAS copy syncing",
+                            "result_owner":"Windows master"})
+                    library["days"] = sorted(merged+list(local_days.values()),key=lambda d:(d["archive_date"],d["feed_id"]),reverse=True)
                 self._json(
                     HTTPStatus.OK,
                     {
@@ -2307,7 +2806,18 @@ def create_server(
                 return
             if parsed.path == "/api/day":
                 feed_id, archive_date = self._feed_date(query)
-                self._json(HTTPStatus.OK, _day_payload(state, feed_id, archive_date))
+                if state.master_client is not None:
+                    value = state.master_client.master_review("day", {"feed_id": feed_id, "date": archive_date.isoformat()})
+                    value = _remote_media_payload(value)
+                    try:
+                        local = _local_day_state(state, feed_id, archive_date)
+                    except WebRequestError:
+                        local = None
+                    value["copy_state"] = "Local transcript available" if local and local.get("has_transcript") else "NAS copy syncing"
+                    value["result_owner"] = "Windows master"
+                else:
+                    value = _day_payload(state, feed_id, archive_date)
+                self._json(HTTPStatus.OK, value)
                 return
             if parsed.path == "/api/activity":
                 payload = {key: str((query.get(key) or [""])[0]) for key in ("feed_id", "start_date", "end_date")}
@@ -2331,8 +2841,15 @@ def create_server(
                 search = str((query.get("q") or [""])[0])[:200]
                 self._json(
                     HTTPStatus.OK,
+                    state.master_client.master_review("transcript", {
+                        "feed_id": feed_id, "date": archive_date.isoformat(),
+                        "offset": offset, "limit": limit, "q": search,
+                    }) if state.master_client is not None else
                     _transcript_payload(state, feed_id, archive_date, offset, limit, search),
                 )
+                return
+            if parsed.path == "/api/jobs":
+                self._json(HTTPStatus.OK, {"jobs":state.jobs.list(), "updated_at":utc_now()})
                 return
             if parsed.path.startswith("/api/jobs/"):
                 job_id = parsed.path.removeprefix("/api/jobs/")
@@ -2462,6 +2979,21 @@ def create_server(
                     HTTPStatus.OK,
                     {"result": result, "stale": stale},
                 )
+                return
+            if parsed.path == "/master-media":
+                if state.master_client is None:
+                    raise WebRequestError(HTTPStatus.NOT_FOUND, "No processing master configured.")
+                with state.master_client.open_master_media(
+                    str((query.get("path") or [""])[0]), self.headers.get("Range", ""),
+                ) as response:
+                    self.send_response(response.status_code)
+                    for name in ("Content-Type", "Content-Length", "Content-Range", "Accept-Ranges"):
+                        if name in response.headers:
+                            self.send_header(name, response.headers[name])
+                    self.send_header("Cache-Control", "private, no-store")
+                    self.end_headers()
+                    for chunk in response.iter_content(256 * 1024):
+                        self.wfile.write(chunk)
                 return
             if parsed.path == "/media":
                 media_value = str((query.get("path") or [""])[0])
@@ -2622,6 +3154,11 @@ def create_server(
                 if not deleted:
                     raise WebRequestError(HTTPStatus.NOT_FOUND, "That feed schedule was not found.")
                 self._json(HTTPStatus.OK, {"deleted": True})
+                return
+            if parsed.path.startswith("/api/jobs/") and parsed.path.rsplit("/",1)[-1] in {"pause","resume","retry","next"}:
+                job_id, action = parsed.path.removeprefix("/api/jobs/").split("/",1)
+                self._body()
+                self._json(HTTPStatus.OK, state.jobs.action(job_id, action))
                 return
             if parsed.path.startswith("/api/jobs/") and parsed.path.endswith("/cancel"):
                 job_id = parsed.path.removeprefix("/api/jobs/").removesuffix("/cancel")
@@ -2973,47 +3510,7 @@ def create_server(
             self.wfile.write(body)
 
         def _media(self, path: Path) -> None:
-            size = path.stat().st_size
-            start = 0
-            end = max(0, size - 1)
-            status = HTTPStatus.OK
-            range_value = self.headers.get("Range", "")
-            if range_value:
-                match = re.fullmatch(r"bytes=(\d*)-(\d*)", range_value.strip())
-                if not match:
-                    raise WebRequestError(HTTPStatus.REQUESTED_RANGE_NOT_SATISFIABLE, "Unsupported media range.")
-                first, last = match.groups()
-                if first:
-                    start = int(first)
-                    end = int(last) if last else end
-                elif last:
-                    suffix = int(last)
-                    start = max(0, size - suffix)
-                if start >= size or end < start:
-                    raise WebRequestError(HTTPStatus.REQUESTED_RANGE_NOT_SATISFIABLE, "Media range is outside the file.")
-                end = min(end, size - 1)
-                status = HTTPStatus.PARTIAL_CONTENT
-            length = max(0, end - start + 1)
-            self.send_response(status)
-            self.send_header("Content-Type", mimetypes.guess_type(path.name)[0] or "audio/mpeg")
-            self.send_header("Content-Length", str(length))
-            self.send_header("Accept-Ranges", "bytes")
-            self.send_header("Last-Modified", formatdate(path.stat().st_mtime, usegmt=True))
-            self.send_header("Cache-Control", "private, no-store")
-            self.send_header("X-Content-Type-Options", "nosniff")
-            self.send_header("Cross-Origin-Resource-Policy", "same-origin")
-            if status == HTTPStatus.PARTIAL_CONTENT:
-                self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
-            self.end_headers()
-            with path.open("rb") as handle:
-                handle.seek(start)
-                remaining = length
-                while remaining:
-                    chunk = handle.read(min(256 * 1024, remaining))
-                    if not chunk:
-                        break
-                    self.wfile.write(chunk)
-                    remaining -= len(chunk)
+            _serve_retained_media(self, path)
 
         def _lan_block(self, path: Path, sha256: str) -> None:
             size = path.stat().st_size

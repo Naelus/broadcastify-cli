@@ -8,6 +8,9 @@ import os
 import subprocess
 import sys
 import threading
+import time
+import re
+import sqlite3
 from contextlib import contextmanager
 from datetime import date, timedelta
 from pathlib import Path
@@ -21,6 +24,218 @@ from broadcastify_cli.lan_sync import LanArchiveCatalog, LanArchiveSyncClient
 from broadcastify_cli.models import JobRequest
 from broadcastify_cli.storage import AnalysisStore
 from broadcastify_cli.web_app import create_server
+
+
+def test_nas_reads_finished_master_evidence_and_rediscoverable_queue(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import requests
+    from broadcastify_cli.archive_cache import remember_complete_archive_day
+
+    for name in list(os.environ):
+        if name.startswith("BROADCASTIFY_"):
+            monkeypatch.delenv(name)
+    monkeypatch.setenv("BROADCASTIFY_QUOTA_LEDGER", str(tmp_path / "quota.sqlite3"))
+    root = tmp_path / "master"
+    database = root / "broadcastify-analysis.sqlite3"
+    audio = _retained_analyzed_day(root, database, "90001", date(2026,7,12), location="Main Street", start_seconds=10)
+    retained = {p:hashlib.sha256(p.read_bytes()).hexdigest() for p in root.rglob("*") if p.is_file() and p.suffix in {".mp3",".json"}}
+    work = tmp_path / "master-work"
+    work.mkdir()
+    (work / "cookies.json").write_text("{}")
+    master = create_lan_node_server(root,host="127.0.0.1",port=0,working_dir=work,database_path=database,
+        role="master",job_relay_enabled=True,discovery_enabled=False)
+    master.quiet = True
+    manager = master.job_manager
+    # A native-owned job is the current model owner. Remote submissions must queue.
+    observed = {"id":"0123456789abcdef","command":"run-scheduled","owner_pid":os.getpid(),"status":"running",
+        "request":{"job":{"feed_id":"90001","start_date":"2026-07-12","end_date":"2026-07-12","transcribe":True,
+            "analysis_api_key":"private-provider-value", "huggingface_token":"private-model-value", "analysis_api_key_env":"OPENAI_API_KEY"},"analyze":True},
+        "events":[{"type":"progress","stage":"analysis","current":1,"total":2,"message":"One window saved"}]}
+    manager.observe(observed)
+    saved_request = manager.shared.request(observed["id"])
+    assert "private-provider-value" not in json.dumps(saved_request)
+    assert "private-model-value" not in json.dumps(saved_request)
+    assert saved_request["job"]["analysis_api_key_env"] == "OPENAI_API_KEY"
+    launches = []
+    phases = []
+    save_index = False
+    ready, release = threading.Event(), threading.Event()
+    def execute(job, arguments, payload, profile):
+        launches.append(job.id)
+        phases.append((list(arguments),dict(payload or {})))
+        if arguments == ["run"]:
+            # The fake provider completed a real persisted listing; legacy
+            # combined evidence is retained even when that listing is empty.
+            remember_complete_archive_day(audio.parent, "90001", date(2026,7,12), [])
+        elif arguments == ["run-scheduled"] and save_index:
+            with AnalysisStore(database) as store:
+                store.save_embeddings("passage", [
+                    (p["id"], hashlib.sha256(f"passage: {p['text']}".encode()).hexdigest(), 1, b"\0" * 4)
+                    for p in store.passages_missing_embeddings(DEFAULT_EMBEDDING_MODEL)
+                ], DEFAULT_EMBEDDING_MODEL)
+        job.result = {"type":"complete","result":{"download_limited":False}}
+        manager._append(job,{"type":"stage","stage":"analysis","message":"Resuming saved checkpoint"})
+        ready.set()
+        assert release.wait(3)
+        job.phase_status = "completed"
+        job.status = "running" if job.command == "run-scheduled" else "completed"
+    monkeypatch.setattr(manager,"_execute",execute)
+    threading.Thread(target=master.serve_forever,daemon=True).start()
+    follower_work = tmp_path / "nas-work"
+    follower_work.mkdir()
+    (follower_work / ".env").write_text(f"BROADCASTIFY_LAN_SHARING=true\nBROADCASTIFY_LAN_ROLE=follower\nBROADCASTIFY_LAN_DISCOVERY_ENABLED=false\nBROADCASTIFY_LAN_MASTER_URL=http://127.0.0.1:{master.server_port}\n")
+    follower = create_server(tmp_path / "nas",port=0,working_dir=follower_work,background_sync_enabled=False)
+    follower.quiet = True
+    threading.Thread(target=follower.serve_forever,daemon=True).start()
+    base = f"http://127.0.0.1:{follower.server_port}"
+    client = requests.Session()
+    try:
+        page = client.get(base+"/",timeout=5)
+        client.headers["X-Radio-Archive-Token"] = re.search(r'name="app-token" content="([^"]+)"',page.text).group(1)
+        bootstrap = client.get(base+"/api/bootstrap",timeout=5).json()
+        assert bootstrap["days"][0]["is_complete"]
+        assert bootstrap["days"][0]["copy_state"] == "NAS copy syncing"
+        detail = client.get(base+"/api/day?feed_id=90001&date=2026-07-12",timeout=5).json()
+        assert detail["state"]["is_complete"] and detail["summary"] and detail["incidents"][0]["quote"]
+        transcript = client.get(base+"/api/transcript?feed_id=90001&date=2026-07-12&q=Main",timeout=5).json()
+        assert transcript["total"] == 1 and "Main" in transcript["segments"][0]["text"]
+        media = client.get(base+detail["audio_url"],headers={"Range":"bytes=0-2"},timeout=5)
+        assert media.status_code == 206 and media.content == audio.read_bytes()[:3]
+        denied = client.get(base+"/master-media?path=../master-work/cookies.json",timeout=5)
+        assert denied.status_code >= 400
+        assert launches == []  # Reading finished evidence never starts processing.
+        response = client.post(base+"/api/jobs",json={"command":"continue-local","payload":{"feed_id":"90001","archive_date":"2026-07-12","analyze":False}},timeout=5)
+        assert response.status_code == 202,response.text
+        queued = response.json()
+        assert queued["status"] == "queued" and launches == []
+        # A fresh browser session discovers the same native and queued jobs.
+        other = requests.Session()
+        other.get(base+"/",timeout=5)
+        rows = other.get(base+"/api/jobs",timeout=5).json()["jobs"]
+        assert {r["id"] for r in rows} == {observed["id"],queued["id"]}
+        assert client.post(base+f"/api/jobs/{queued['id']}/pause",json={},timeout=5).json()["status"] == "paused"
+        manager.observe({**observed,"status":"completed"})
+        client.post(base+f"/api/jobs/{queued['id']}/resume",json={},timeout=5).raise_for_status()
+        assert ready.wait(3)
+        assert len(launches)==1
+        release.set()
+        deadline=time.monotonic()+3
+        while manager.get(queued["id"])["status"] != "completed" and time.monotonic()<deadline:
+            time.sleep(.01)
+        assert manager.get(queued["id"])["status"] == "completed"
+        with AnalysisStore(database) as store:
+            store.save_feed_schedule({"feed_id":"90001","feed_name":"Saved Windows feed","run_time_local":"00:00","lookback_days":1,
+                "enabled":False,"job":{"model":"saved-master-model","device":"cuda","combine":True,"transcribe":True,"diarize":True}})
+        complete_job = client.post(base+"/api/jobs",json={"command":"run-scheduled","payload":{
+            "account_profile_id":"automatic","use_saved_profile":True,"analyze":True,
+            "job":{"feed_id":"90001","start_date":"2026-07-12","end_date":"2026-07-12"}}},timeout=5)
+        assert complete_job.status_code == 202,complete_job.text
+        finished_id = complete_job.json()["id"]
+        deadline=time.monotonic()+3
+        while manager.get(finished_id)["status"] not in {"completed","failed"} and time.monotonic()<deadline:
+            time.sleep(.01)
+        assert manager.get(finished_id)["status"] == "completed"
+        # The only additional child is cache/source acquisition. No ASR or
+        # analysis child is launched for the already-finished Windows day.
+        assert len(phases)==2 and phases[-1][0]==["run"]
+        assert phases[-1][1]["model"]=="saved-master-model" and phases[-1][1]["device"]=="cuda"
+        # Losing the index must launch local continuation. A zero exit code
+        # without saved results must never turn an unfinished day green.
+        with sqlite3.connect(database) as connection:
+            connection.execute("DELETE FROM embeddings")
+        unfinished = client.post(base+"/api/jobs", json={"command":"run-scheduled", "payload":{
+            "account_profile_id":"automatic", "use_saved_profile":True, "analyze":True,
+            "job":{"feed_id":"90001", "start_date":"2026-07-12", "end_date":"2026-07-12"}}}, timeout=5).json()
+        deadline = time.monotonic()+3
+        while manager.get(unfinished["id"])["status"] not in {"completed", "failed"} and time.monotonic()<deadline:
+            time.sleep(.01)
+        assert manager.get(unfinished["id"])["status"] == "failed"
+        assert phases[-1][0] == ["run-scheduled"] and phases[-1][1]["job"]["local_only"]
+        assert not client.get(base+"/api/day?feed_id=90001&date=2026-07-12", timeout=5).json()["state"]["is_complete"]
+        save_index = True
+        client.post(base+f"/api/jobs/{unfinished['id']}/resume", json={}, timeout=5).raise_for_status()
+        deadline = time.monotonic()+3
+        while manager.get(unfinished["id"])["status"] not in {"completed", "failed"} and time.monotonic()<deadline:
+            time.sleep(.01)
+        assert manager.get(unfinished["id"])["status"] == "completed"
+        assert manager.get(unfinished["id"])["scope_progress"]["ready_days"] == 1
+        assert client.get(base+"/api/day?feed_id=90001&date=2026-07-12", timeout=5).json()["state"]["is_complete"]
+        assert all(hashlib.sha256(p.read_bytes()).hexdigest()==h for p,h in retained.items())
+    finally:
+        release.set()
+        client.close()
+        follower.shutdown();follower.server_close()
+        master.shutdown();master.server_close()
+    # Master history survives its process/service recreation; no job restarts.
+    from broadcastify_cli.web_app import JobManager
+    reopened = JobManager(root,database,work)
+    try:
+        assert reopened.get(queued["id"])["status"] == "completed"
+        assert reopened.get(observed["id"])["status"] == "completed"
+    finally:
+        reopened.close()
+
+
+def test_shared_catchup_waits_for_source_proof_and_preserves_pause(tmp_path, monkeypatch):
+    from broadcastify_cli.archive_cache import remember_complete_archive_day
+    from broadcastify_cli.web_app import JobManager
+
+    for name in list(os.environ):
+        if name.startswith("BROADCASTIFY_"):
+            monkeypatch.delenv(name)
+    root = tmp_path / "master"
+    database = root / "broadcastify-analysis.sqlite3"
+    audio = _retained_analyzed_day(root, database, "90001", date(2026, 7, 12), location="Main", start_seconds=10)
+    # Retained analysis exists, but there is no authenticated source proof.
+    # The fake exhausted provider cannot fill that gap or spend live requests.
+    pool = {"authorized":True, "configured_profile_ids":["default"], "profiles":[
+        {"id":"default", "configured":True, "quota":{"available":False, "remaining":0}}]}
+    monkeypatch.setattr("broadcastify_cli.web_app._account_pool_profiles", lambda *a: pool)
+    manager = JobManager(root, database, tmp_path)
+    calls = []
+    checked_waiting = threading.Event()
+    def execute(job, args, payload, profile):
+        calls.append((job.id, profile))
+        job.result = {"result":{"download_limited":True}}
+        job.phase_status = "completed"
+        job.status = "running"
+    monkeypatch.setattr(manager, "_execute", execute)
+    wait = manager._condition.wait
+    monkeypatch.setattr(manager._condition, "wait", lambda timeout=None: wait(min(timeout or 1, .02)))
+    complete = manager._scope_complete
+    def checked(*args):
+        result = complete(*args)
+        checked_waiting.set()
+        return result
+    monkeypatch.setattr(manager, "_scope_complete", checked)
+    payload = {"account_profile_id":"default", "analyze":False,
+        "job":{"feed_id":"90001", "start_date":"2026-07-12", "end_date":"2026-07-12"}}
+    try:
+        job = manager.start("run-scheduled", payload)
+        assert checked_waiting.wait(3)
+        assert manager.get(job["id"])["status"] == "waiting_quota"
+        assert manager.get(job["id"])["scope_progress"]["source_days"] == 1
+        # Another authorized acquisition can satisfy the waiting job. It must
+        # finish using that persisted proof without another provider worker.
+        remember_complete_archive_day(audio.parent, "90001", date(2026, 7, 12), [])
+        deadline = time.monotonic()+3
+        while manager.get(job["id"])["status"] != "completed" and time.monotonic()<deadline:
+            time.sleep(.01)
+        assert manager.get(job["id"])["status"] == "completed"
+        assert calls == [(job["id"], "default")]
+        (audio.parent / ".broadcastify-archive-complete.json").unlink()
+        checked_waiting.clear()
+        paused = manager.start("run-scheduled", payload)
+        assert checked_waiting.wait(3)
+        assert manager.action(paused["id"], "pause")["status"] == "paused"
+    finally:
+        manager.close()
+    restored = JobManager(root, database, tmp_path)
+    try:
+        assert restored.get(paused["id"])["status"] == "paused"
+        assert restored.cancel(paused["id"])["status"] == "canceled"
+        assert len(calls) == 2  # Explicit pause did not launch work on restart.
+    finally:
+        restored.close()
 
 
 ROOT = Path(__file__).resolve().parents[2]

@@ -1286,7 +1286,9 @@ def test_follower_web_relays_selected_feed_work_and_saved_intent_to_windows_mast
         assert response.status == 200
         assert bootstrap["runtime"]["lan_sync"]["remote_master_jobs"] is True
         assert bootstrap["runtime"]["lan_sync"]["remote_master_connected"] is True
-        assert bootstrap["days"] == []
+        assert len(bootstrap["days"]) == 1
+        assert bootstrap["days"][0]["result_owner"] == "Windows master"
+        assert bootstrap["days"][0]["copy_state"] == "NAS copy syncing"
         progress = bootstrap["authoritative_progress"]
         assert len(progress) == 1
         assert progress[0]["feed_id"] == "90002"
@@ -1724,9 +1726,10 @@ def test_web_cancel_during_credential_load_never_launches_worker(tmp_path, monke
         release.set()
         manager.close()
     assert manager.get(job.id)["status"] == "canceled"
-    assert not job.thread.is_alive()
+    assert job.thread is None or not job.thread.is_alive()
 
-    # Credential failures must release the active-job slot as well.
+    # Credential failures must release the active-job slot as well, in a live manager.
+    manager = JobManager(tmp_path, tmp_path / "analysis.sqlite3", tmp_path)
     def unavailable(_profile):
         raise OSError("Credential store is unavailable")
     monkeypatch.setattr(manager.credential_store, "worker_environment", unavailable)
@@ -1746,8 +1749,10 @@ def test_web_shutdown_reaps_worker_after_retained_checkpoint(tmp_path, monkeypat
     # Use a real isolated process, with no model or network dependency. Its
     # checkpoint proves the manager delivered a graceful stop before reaping it.
     program = r"""
-import json, signal, sys, time
+import json, signal, sys, time, subprocess
 from pathlib import Path
+child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])
+Path(sys.argv[1]+'.child').write_text(str(child.pid))
 def stop(*args):
     Path(sys.argv[1]).write_text('retained checkpoint')
     raise SystemExit(0)
@@ -1782,7 +1787,9 @@ while True:
         manager.close()
     assert checkpoint.read_text() == "retained checkpoint"
     assert processes[0].poll() == 0
+    from broadcastify_cli.shared_jobs import process_alive
+    assert not process_alive(int(Path(str(checkpoint)+".child").read_text()))
     assert manager.get(job.id)["status"] == "canceled"
-    assert not job.thread.is_alive()
+    assert job.thread is None or not job.thread.is_alive()
     with pytest.raises(WebRequestError, match="shutting down"):
         manager.start("diagnostics", {})

@@ -4,7 +4,7 @@ using System.Text.Json;
 
 namespace BroadcastifyCli.WinUI;
 
-internal sealed class WorkerClient
+internal sealed partial class WorkerClient
 {
     internal static bool IsPreview => Environment.GetEnvironmentVariable("BROADCASTIFY_DESKTOP_PREVIEW") == "1";
     private static readonly Encoding Utf8WithoutBom =
@@ -1388,6 +1388,13 @@ internal sealed class WorkerClient
         {
             throw new InvalidOperationException("Unable to start the Python worker.");
         }
+        using var processLifetime = new WorkerProcessLifetime(process);
+        _ = Task.Run(async () =>
+        {
+            try { await process.WaitForExitAsync().ConfigureAwait(false); }
+            catch (InvalidOperationException) { }
+            finally { processLifetime.Dispose(); }
+        });
 
         using var registration = cancellationToken.Register(() =>
         {
@@ -1424,6 +1431,7 @@ internal sealed class WorkerClient
                 }
                 using var document = JsonDocument.Parse(line);
                 var message = document.RootElement.Clone();
+                _sharedObservation.Value?.Report(message);
                 if (message.TryGetProperty("type", out var type)
                     && type.GetString() == "error")
                 {

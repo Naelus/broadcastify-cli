@@ -9,6 +9,7 @@ import re
 import socket
 import threading
 import time
+from types import SimpleNamespace
 from datetime import date
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -45,6 +46,10 @@ from .web_app import (
     WebRequestError,
     _account_pool_profiles,
     _select_account_profile,
+    _day_payload,
+    _transcript_payload,
+    _safe_media_path,
+    _serve_retained_media,
 )
 
 
@@ -272,6 +277,29 @@ def create_lan_node_server(
                 report = activity_report(relay_database_path, catalog.output_dir, payload)
                 self._json(HTTPStatus.OK, {"protocol": LAN_PROTOCOL, "report": report})
                 return
+            if parsed.path.startswith("/api/lan/v1/review/"):
+                self._authorize()
+                library = SimpleNamespace(output_dir=catalog.output_dir, database_path=relay_database_path)
+                query = parse_qs(parsed.query)
+                kind = parsed.path.rsplit("/", 1)[-1]
+                if kind == "media":
+                    _serve_retained_media(self, _safe_media_path(library, str((query.get("path") or [""])[0])))
+                    return
+                feed = str((query.get("feed_id") or [""])[0])
+                if not feed.isdigit():
+                    raise LanSyncError("A numeric feed ID is required.")
+                day = _date_value(str((query.get("date") or [""])[0]))
+                if kind == "day":
+                    value = _day_payload(library, feed, day)
+                elif kind == "transcript":
+                    value = _transcript_payload(library, feed, day,
+                        max(0, int((query.get("offset") or [0])[0])),
+                        min(1000, max(1, int((query.get("limit") or [250])[0]))),
+                        str((query.get("q") or [""])[0])[:200])
+                else:
+                    raise FileNotFoundError
+                self._json(HTTPStatus.OK, {"protocol": LAN_PROTOCOL, **value})
+                return
             if parsed.path == "/api/lan/v1/library":
                 if job_manager is None:
                     raise FileNotFoundError
@@ -315,7 +343,11 @@ def create_lan_node_server(
                         {key: day.get(key) for key in (
                             "feed_id", "archive_date", "status", "next_step",
                             "pipeline_percent", "is_complete", "source_check_due",
-                            "source_unavailable", "awaiting_source",
+                            "source_unavailable", "awaiting_source", "feed_name", "status_detail",
+                            "primary_action", "raw_file_count", "has_combined", "has_transcript",
+                            "has_diarization", "has_analysis", "has_search_index", "has_imported_transcript",
+                            "has_searchable_transcript", "has_searchable_analysis", "segment_count", "incident_count",
+                            "needs_network", "needs_local_processing", "evidence_update_pending",
                         )}
                         for day in days
                     ],
@@ -331,6 +363,12 @@ def create_lan_node_server(
                     HTTPStatus.OK,
                     {"protocol": LAN_PROTOCOL, "library": library},
                 )
+                return
+            if parsed.path == "/api/lan/v1/jobs":
+                self._authorize()
+                if job_manager is None:
+                    raise FileNotFoundError
+                self._json(HTTPStatus.OK, {"protocol":LAN_PROTOCOL,"jobs":job_manager.list()})
                 return
             job_prefix = "/api/lan/v1/jobs/"
             if parsed.path.startswith(job_prefix):
@@ -574,6 +612,19 @@ def create_lan_node_server(
                 self._json(HTTPStatus.OK, {"protocol": LAN_PROTOCOL, **result})
                 return
             parsed = urlparse(self.path)
+            if parsed.path == "/api/lan/v1/jobs/observe":
+                if job_manager is None or not ipaddress.ip_address(self.client_address[0]).is_loopback:
+                    raise PermissionError("Desktop observations are local only.")
+                value = job_manager.observe(self._body())
+                self._json(HTTPStatus.OK,{"protocol":LAN_PROTOCOL,"job":value})
+                return
+            if parsed.path.startswith("/api/lan/v1/jobs/") and parsed.path.rsplit("/",1)[-1] in {"pause","resume","retry","next"}:
+                if job_manager is None:
+                    raise FileNotFoundError
+                job_id,action = parsed.path.removeprefix("/api/lan/v1/jobs/").split("/",1)
+                self._body()
+                self._json(HTTPStatus.OK,{"protocol":LAN_PROTOCOL,"job":job_manager.action(job_id,action)})
+                return
             if parsed.path == "/api/lan/v1/jobs":
                 if job_manager is None:
                     raise FileNotFoundError
