@@ -1682,9 +1682,10 @@
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="260" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                             <StackPanel VerticalAlignment="Center" Spacing="3">
                                 <TextBlock x:Name="FullWorkflowEtaText" Text="Full workflow (all retained work): Waiting for the backlog estimate."
-                                           TextWrapping="Wrap" MaxLines="3" FontSize="12"
+                                           TextWrapping="Wrap" MaxLines="3" FontSize="12" TextTrimming="CharacterEllipsis"
+                                           ToolTipService.ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}"
                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                <TextBlock Text="Current step" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                <TextBlock x:Name="CurrentStepCaption" Text="Current step" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                 <TextBlock x:Name="StatusText" Text="Ready" TextWrapping="Wrap" MaxLines="2" />
                                 <TextBlock x:Name="JobTimingText" TextWrapping="Wrap" MaxLines="3" FontSize="12"
                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}" />

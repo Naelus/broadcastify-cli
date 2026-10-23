@@ -1805,6 +1805,8 @@ public sealed partial class MainWindow : Window
         WorkflowStagesText.MaxLines = shortCompact ? 1 : 2;
         WorkflowStagesText.Visibility = shortCompact ? Visibility.Collapsed : Visibility.Visible;
         WorkflowFinishText.Visibility = shortCompact ? Visibility.Collapsed : Visibility.Visible;
+        FullWorkflowEtaText.MaxLines = shortCompact ? 1 : 3;
+        CurrentStepCaption.Visibility = shortCompact ? Visibility.Collapsed : Visibility.Visible;
         JobTimingText.MaxLines = shortCompact ? 1 : 3;
         JobTimingText.Visibility = shortCompact ? Visibility.Collapsed : Visibility.Visible;
         StatusText.MaxLines = shortCompact ? 1 : 2;
