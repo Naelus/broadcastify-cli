@@ -190,6 +190,20 @@ internal static class PreviewLauncher
         {
             return sourcePython;
         }
+        // Clean source checkouts may use a prepared system interpreter rather
+        // than a repository .venv. Installed previews always use the bundle.
+        if (sourceRoot is not null)
+        {
+            foreach (var directory in (Environment.GetEnvironmentVariable("PATH") ?? "")
+                .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
+            {
+                var candidate = Path.Combine(directory.Trim('"'), "python.exe");
+                if (File.Exists(candidate))
+                {
+                    return candidate;
+                }
+            }
+        }
         throw new FileNotFoundException(
             "The preview requires the installed bundled Python runtime. A source build can use its configured worker runtime.");
     }
