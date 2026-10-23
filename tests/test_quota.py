@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from datetime import datetime, timedelta
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
@@ -46,6 +47,51 @@ def test_provider_archive_id_accepts_current_ids_without_allowing_paths() -> Non
     for value in ("", "../archive", "archive/id", "x" * 201):
         with pytest.raises(ValueError):
             normalize_archive_request_id(value)
+
+
+def test_tertiary_historical_turns_stop_at_reserve_and_reopen_as_slots_age(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("BROADCASTIFY_AUTHORIZED_ACCOUNT_POOL", "true")
+    monkeypatch.setenv("BROADCASTIFY_ACCOUNT_PROFILES", "secondary,tertiary")
+    now = [datetime(2026, 9, 10, 12).timestamp()]
+    today = datetime.fromtimestamp(now[0]).date().isoformat()
+    history = "2026-09-01"
+    path = tmp_path / "quota.sqlite3"
+
+    def reopen() -> ArchiveRequestLedger:
+        return ArchiveRequestLedger(
+            path, account_profile_id="tertiary", clock=lambda: now[0], window_seconds=100,
+        )
+
+    ledger = reopen()
+    for index in range(199):
+        if index == 2:
+            now[0] += 10
+        ledger.reserve(feed_id="90001", archive_date=today, archive_id=str(index))
+
+    def historical_turn(index: int) -> bool:
+        try:
+            reopen().reserve(feed_id="90001", archive_date=history, archive_id=f"old-{index}")
+            return True
+        except ArchiveRequestBudgetExceeded:
+            return False
+
+    # Even overlapping clients cannot spend the last historical slot twice.
+    with ThreadPoolExecutor(max_workers=2) as workers:
+        assert sorted(workers.map(historical_turn, (1, 2))) == [False, True]
+    assert reopen().status()["remaining"] == 50
+    assert reopen().status()["current_only"] is True
+    ledger.reserve(feed_id="90001", archive_date=today, archive_id="recent")
+    assert reopen().status()["remaining"] == 49
+    assert historical_turn(3) is False
+
+    # Two oldest slots expire, reopening one historical turn without resetting usage.
+    now[0] += 90
+    assert reopen().status()["historical_remaining"] == 1
+    assert historical_turn(4) is True
+    assert historical_turn(5) is False
+    assert reopen().status()["remaining"] == 50
 
 
 def test_instance_ledger_mints_stable_identity_and_reserves_user_capacity(

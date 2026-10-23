@@ -24,16 +24,17 @@ ARCHIVE_REQUEST_WINDOW_SECONDS = 24 * 60 * 60.0
 RATE_LIMIT_RELEASE_GRACE_SECONDS = 5.0
 DEFAULT_ARCHIVE_QUOTA_FILENAME = ".broadcastify-archive-quota.sqlite3"
 DEFAULT_ACCOUNT_PROFILE_ID = "default"
+RECENT_ARCHIVE_REQUEST_RESERVE = 50
 _ACCOUNT_PROFILE_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 _ARCHIVE_REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9_.-]{1,200}$")
 
 
-def current_only_account(profile_id: str) -> bool:
-    """Protect third-and-later authorized accounts from historical work."""
+def recent_coverage_reserve(profile_id: str) -> int:
+    """Keep headroom for recent audio without stranding historical allowance."""
     if str(os.getenv("BROADCASTIFY_AUTHORIZED_ACCOUNT_POOL") or "").lower() not in {
         "1", "true", "yes", "on",
     }:
-        return False
+        return 0
     profiles = {"default"}
     profiles.update(
         value.lower() for value in re.split(
@@ -43,7 +44,7 @@ def current_only_account(profile_id: str) -> bool:
     ordered = sorted(profiles, key=lambda value: (
         0 if value == "default" else 1 if value == "secondary" else 2, value,
     ))
-    return profile_id in ordered[2:]
+    return RECENT_ARCHIVE_REQUEST_RESERVE if profile_id in ordered[2:] else 0
 
 
 class ArchiveRequestBudgetExceeded(RuntimeError):
@@ -306,13 +307,16 @@ class ArchiveRequestLedger:
                 capacity_available_at or blocked_until_value,
             )
         remaining = max(0, self.limit - used)
+        recent_reserve = min(self.limit, recent_coverage_reserve(self.account_profile_id))
         return {
             "account_profile_id": self.account_profile_id,
             "instance_id": str(state["instance_id"] if state else ""),
             "provider_limit": self.provider_limit,
             "automated_limit": self.limit,
             "user_reserve": self.user_reserve,
-            "current_only": current_only_account(self.account_profile_id),
+            "recent_reserve": recent_reserve,
+            "historical_remaining": max(0, remaining - recent_reserve),
+            "current_only": recent_reserve > 0 and remaining <= recent_reserve,
             "window_seconds": int(self.window_seconds),
             "used": used,
             "remaining": remaining,
@@ -399,14 +403,7 @@ class ArchiveRequestLedger:
         archive_id: str,
     ) -> int:
         archive_id = normalize_archive_request_id(archive_id)
-        if current_only_account(self.account_profile_id):
-            today = datetime.fromtimestamp(self.clock()).date()
-            if date.fromisoformat(str(archive_date)) < today - timedelta(days=2):
-                raise ArchiveRequestBudgetExceeded(
-                    f"Account profile {self.account_profile_id} is reserved for "
-                    "current coverage (today and the previous two days). "
-                    "Historical catch-up must use the first two accounts."
-                )
+        requested_date = date.fromisoformat(str(archive_date))
         while True:
             now = float(self.clock())
             connection = self._connect()
@@ -441,6 +438,18 @@ class ArchiveRequestLedger:
                             f"{status['next_request_at']}."
                         )
                     raise ArchiveRequestBudgetExceeded(message)
+                # Enforce the floor inside the reservation transaction so two
+                # workers cannot spend the same historical headroom.
+                historical = requested_date < (
+                    datetime.fromtimestamp(now).date() - timedelta(days=2)
+                )
+                if historical and status["current_only"]:
+                    raise ArchiveRequestBudgetExceeded(
+                        f"Account profile {self.account_profile_id} has "
+                        f"{status['remaining']} requests reserved for current "
+                        "coverage (today and the previous two days). "
+                        "Historical catch-up will resume as rolling slots free."
+                    )
                 if self.request_spacing_seconds > 0:
                     latest = connection.execute(
                         "SELECT MAX(requested_at) AS latest "
@@ -644,11 +653,16 @@ class RemoteArchiveRequestLedger:
                 "available": False,
                 "blocked": True,
                 "remaining": 0,
+                "historical_remaining": 0,
                 "blocked_reason": str(exc),
                 "coordinator_url": self.coordinator_url,
                 "coordinated": True,
             }
         available = bool(remote.get("available")) and bool(local.get("available"))
+        remaining = min(int(remote.get("remaining") or 0), int(local.get("remaining") or 0))
+        recent_reserve = max(
+            int(remote.get("recent_reserve") or 0), int(local.get("recent_reserve") or 0),
+        )
         reasons = [
             str(value).strip()
             for value in (remote.get("blocked_reason"), local.get("blocked_reason"))
@@ -656,9 +670,13 @@ class RemoteArchiveRequestLedger:
         ]
         return {
             **remote,
-            "remaining": min(
-                int(remote.get("remaining") or 0),
-                int(local.get("remaining") or 0),
+            "remaining": remaining,
+            "recent_reserve": recent_reserve,
+            "historical_remaining": (
+                0 if remote.get("current_only") else max(0, remaining - recent_reserve)
+            ),
+            "current_only": bool(remote.get("current_only")) or (
+                recent_reserve > 0 and remaining <= recent_reserve
             ),
             "available": available,
             "blocked": not available,

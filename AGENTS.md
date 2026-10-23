@@ -15,7 +15,8 @@ identity unchanged.
 - Keep archive requests sequential and behind the persistent rolling guard:
   248 for the primary account and 250 for each additional account. Preserve all
   recorded usage and stop immediately on provider throttling. In an authorized
-  pool, reserve third-and-later accounts for today and the previous two days;
+  pool, third-and-later accounts may serve historical work while keeping 50
+  rolling requests reserved for today and the previous two days;
   check current coverage across followed feeds before historical work. Cached/LAN reuse and
   local processing must happen before a website request.
 - Destructive Library actions require a clear non-default confirmation, strict

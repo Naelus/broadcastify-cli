@@ -42,6 +42,7 @@ from broadcastify_cli.lan_node import (
 )
 from broadcastify_cli.quota import (
     ArchiveQuotaCoordinatorUnavailable,
+    ArchiveRequestBudgetExceeded,
     ArchiveRequestLedger,
     RemoteArchiveRequestLedger,
 )
@@ -612,6 +613,30 @@ def test_remote_quota_ledger_counts_once_at_the_lan_coordinator_and_fails_closed
         assert status["used"] == 1
         assert status["remaining"] == 247
         assert status["coordinated"] is True
+
+        monkeypatch.setenv("BROADCASTIFY_AUTHORIZED_ACCOUNT_POOL", "true")
+        monkeypatch.setenv("BROADCASTIFY_ACCOUNT_PROFILES", "secondary,tertiary")
+        tertiary = RemoteArchiveRequestLedger(
+            coordinator,
+            local_path=tmp_path / "tertiary-mirror.sqlite3",
+            account_profile_id="tertiary",
+            sync_key="shared-test-key",
+        )
+        shared_tertiary = ArchiveRequestLedger(central_path, account_profile_id="tertiary")
+        for index in range(199):
+            tertiary.local.reserve(feed_id="90001", archive_date=date.today().isoformat(), archive_id=str(index))
+            if index < 198:
+                shared_tertiary.reserve(feed_id="90001", archive_date=date.today().isoformat(), archive_id=str(index))
+        assert tertiary.status()["historical_remaining"] == 1
+        tertiary.reserve(feed_id="90001", archive_date="2026-07-12", archive_id="historical")
+        assert tertiary.status()["current_only"] is True
+        assert tertiary.status()["historical_remaining"] == 0
+        with pytest.raises(ArchiveRequestBudgetExceeded, match="reserved for current"):
+            tertiary.reserve(feed_id="90001", archive_date="2026-07-12", archive_id="past-floor")
+        assert shared_tertiary.status()["remaining"] == 50
+        assert tertiary.local.status()["remaining"] == 50
+        tertiary.reserve(feed_id="90001", archive_date=date.today().isoformat(), archive_id="recent")
+        assert tertiary.status()["remaining"] == 49
 
         rejected = RemoteArchiveRequestLedger(
             coordinator,

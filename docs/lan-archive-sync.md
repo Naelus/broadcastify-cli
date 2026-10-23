@@ -25,8 +25,10 @@ Desktop Resume all drains the selected download queue before local processing;
 scheduled runs also give every saved catch-up range an acquisition turn before
 model work. While local work runs, a sequential producer rechecks queued dates
 and rolling allowance each minute. Exhausted accounts hand off to the next
-eligible profile, and third-and-later accounts remain reserved for today and the
-previous two days. No allowance bypass or concurrent provider requests are used.
+eligible profile. Third-and-later accounts can serve historical work with their
+allowance above a 50-request rolling reserve for today and the previous two days.
+The shared ledger enforces that reserve atomically. No allowance bypass or
+concurrent provider requests are used.
 Manual Desktop archive, retained-day processing, and standalone analysis also
 keep this producer active. Nested model operations share the existing producer; explicitly choosing
 local-only Resume all does not start it. A successful local processing pass does

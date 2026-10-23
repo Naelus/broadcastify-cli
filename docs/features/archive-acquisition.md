@@ -196,9 +196,12 @@ the independent budgets: 248 primary plus 250 per additional account.
 
 Windows checks today and the previous two days for every enabled followed feed
 before starting a historical acquisition turn. All authorized accounts can
-serve this current range. The first two profiles also serve historical work;
-third-and-later profiles are reserved for current coverage, enforced at the
-shared quota reservation boundary so manual jobs cannot drain that reserve.
+serve this current range. All profiles can also serve historical work;
+third-and-later profiles keep 50 rolling requests reserved for current coverage.
+Historical requests stop at that floor, while recent requests may use it. The
+shared quota reservation transaction enforces the floor across nodes and workers.
+Status reports historical headroom separately from the recent reserve; it marks
+an account current-only only while its remaining allowance is at or below the floor.
 Profile ordering is primary, secondary when present, then other IDs sorted
 alphabetically. The reserve prevents history from spending future current
 capacity; it does not reset requests that an account has already consumed.

@@ -2004,6 +2004,12 @@ public sealed record ArchiveQuotaStatus
     [JsonPropertyName("current_only")]
     public bool CurrentOnly { get; init; }
 
+    [JsonPropertyName("recent_reserve")]
+    public int RecentReserve { get; init; }
+
+    [JsonPropertyName("historical_remaining")]
+    public int HistoricalRemaining { get; init; }
+
     [JsonPropertyName("used")]
     public int Used { get; init; }
 

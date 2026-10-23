@@ -747,7 +747,7 @@ public sealed partial class MainWindow : Window
                     : "All authorized account profiles are waiting";
                 ArchiveQuotaInfoBar.Message =
                     $"{statuses.Count} profiles × each account's standard limit · {totalUsed} used in their independent rolling 24-hour windows · {totalReserve} total held for manual use. "
-                    + $"{statuses.Count(value => value.CurrentOnly)} profile(s) reserved for current coverage. Downloads remain sequential and spaced."
+                    + $"{statuses.Sum(value => Math.Min(value.RecentReserve, value.Remaining))} requests held for recent coverage; {statuses.Sum(value => value.HistoricalRemaining)} available for historical catch-up. Downloads remain sequential and spaced."
                     + (nextPoolSlot is not null
                         ? $" Next pool slot: {nextPoolSlot.Value.ToLocalTime():g}."
                         : "");
@@ -6657,7 +6657,7 @@ public sealed partial class MainWindow : Window
         {
             var today = DateTime.Today;
             var followed = await _worker.ListFeedSchedulesAsync(cancellationToken);
-            AppendLog("Checking current coverage for every followed feed before historical catch-up. Third and later accounts are reserved for today and the previous two days.");
+            AppendLog("Checking current coverage for every followed feed before historical catch-up. Third and later accounts keep a request reserve for today and the previous two days.");
             foreach (var recent in followed.Where(value => value.Enabled))
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -6692,10 +6692,6 @@ public sealed partial class MainWindow : Window
             {
                 automatic ? "default" : schedule.AccountProfileId,
             };
-        if (!currentCoverageOnly && automatic && profileIds.Count > 2)
-        {
-            profileIds = profileIds.Take(2).ToList();
-        }
         var processingJob = schedule.Job with
         {
             MaxProcessingDays = 1,
@@ -6724,7 +6720,7 @@ public sealed partial class MainWindow : Window
             }
         }
         var eligible = statuses
-            .Where(value => value.Available)
+            .Where(value => value.Available && (currentCoverageOnly || !value.CurrentOnly))
             .OrderByDescending(value => value.Remaining)
             .ThenBy(value => value.AccountProfileId, StringComparer.OrdinalIgnoreCase)
             .ToList();
@@ -6888,7 +6884,7 @@ public sealed partial class MainWindow : Window
             ?.ToString("O") ?? "";
         var accountCount = profileIds.Count;
         var message = automatic && _worker.AuthorizedAccountPoolEnabled
-            ? $"All {accountCount} authorized account profile{(accountCount == 1 ? "" : "s")} are waiting for their next rolling archive-request slot."
+            ? $"Catch-up is waiting for eligible allowance across {accountCount} authorized account profile{(accountCount == 1 ? "" : "s")}; reserved recent coverage can continue."
             : $"Account profile {profileIds[0]} is waiting for its next rolling archive-request slot.";
         return (lastResult, true, nextRequestAt, message);
     }
