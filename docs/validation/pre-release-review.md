@@ -51,9 +51,9 @@ the banner identifies the window as an isolated synthetic-data preview.
    Production settings, quota history, credentials and archive files are outside
    this preview. No inference or Broadcastify requests are needed for this review.
 
-To reopen the same preview, launch its recorded executable with the same
+To reopen the same preview, launch its recorded executable with `--workflow-preview` and the same
 `BROADCASTIFY_DESKTOP_TEST_DATA_ROOT`, `BROADCASTIFY_LIBRARY_ROOT`,
-`BROADCASTIFY_SECURE_ANALYSIS_DB`, `BROADCASTIFY_QUOTA_LEDGER`,
+`BROADCASTIFY_SECURE_ANALYSIS_DB`, `BROADCASTIFY_QUOTA_LEDGER`, `BROADCASTIFY_CREDENTIAL_STORE`,
 `BROADCASTIFY_DESKTOP_E2E_ISOLATED=1`, and `BROADCASTIFY_DESKTOP_PREVIEW=1` process
 environment values from the launch script. A fresh launch command creates fresh
 samples, so its acknowledgements intentionally start over.

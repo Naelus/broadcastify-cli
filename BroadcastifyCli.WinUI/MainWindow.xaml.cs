@@ -55,6 +55,7 @@ public sealed partial class MainWindow : Window
     private readonly ObservableCollection<AreaProfile> _areaProfiles = [];
     private readonly ObservableCollection<AreaStory> _areaStories = [];
     private readonly ObservableCollection<AnalysisDay> _analysisDays = [];
+    private string _workflowFinishDetail = "";
     private bool _refreshingAnalysisDays;
     private int _analysisRefreshVersion;
     private bool _preparingQuestion;
@@ -1804,9 +1805,7 @@ public sealed partial class MainWindow : Window
         WorkflowSummaryText.MaxLines = shortCompact ? 1 : 2;
         WorkflowStagesText.MaxLines = shortCompact ? 1 : 2;
         WorkflowStagesText.Visibility = shortCompact ? Visibility.Collapsed : Visibility.Visible;
-        WorkflowFinishText.Visibility = shortCompact ? Visibility.Collapsed : Visibility.Visible;
-        FullWorkflowEtaText.MaxLines = shortCompact ? 1 : 3;
-        CurrentStepCaption.Visibility = shortCompact ? Visibility.Collapsed : Visibility.Visible;
+        FullWorkflowEtaText.MaxLines = shortCompact ? 1 : 2;
         JobTimingText.MaxLines = shortCompact ? 1 : 3;
         JobTimingText.Visibility = shortCompact ? Visibility.Collapsed : Visibility.Visible;
         StatusText.MaxLines = shortCompact ? 1 : 2;
@@ -4427,7 +4426,7 @@ public sealed partial class MainWindow : Window
         catch (Exception exception)
         {
             AppendLog($"Library: {exception.Message}");
-            WorkflowFinishText.Text = "Queue refresh failed; displayed counts may be out of date. "
+            _workflowFinishDetail = "Queue refresh failed; displayed counts may be out of date. "
                 + (_lastWorkflowRefreshUtc == DateTime.MinValue ? "No snapshot yet."
                     : $"Last updated {_lastWorkflowRefreshUtc.ToLocalTime():T}.");
             if (workflowOnly)
@@ -4450,7 +4449,7 @@ public sealed partial class MainWindow : Window
         {
             WorkflowSummaryText.Text = "Full catch-up status unavailable from this worker";
             WorkflowStagesText.Text = "";
-            WorkflowFinishText.Text = "The current-step counter does not describe the full queue.";
+            _workflowFinishDetail = "The current-step counter does not describe the full queue.";
             return;
         }
         WorkflowSummaryText.Text = $"Whole catch-up · {workflow.PendingCount:N0} feed-days unfinished · "
@@ -4462,14 +4461,14 @@ public sealed partial class MainWindow : Window
         var remaining = labels.Where(stage => workflow.StageCounts.GetValueOrDefault(stage.Key) > 0)
             .Select(stage => $"{workflow.StageCounts.GetValueOrDefault(stage.Key):N0} {stage.Label}");
         WorkflowStagesText.Text = "Remaining: " + (remaining.Any() ? string.Join(" · ", remaining) : "none");
-        WorkflowFinishText.Text = workflow.FinishDetail
+        _workflowFinishDetail = workflow.FinishDetail
             + $" Separate source monitoring: {workflow.SourceCheckCount:N0} checks due; "
             + $"{workflow.SourceUnavailableCount:N0} unavailable, {workflow.AwaitingSourceCount:N0} awaiting publication. "
             + $"New source audio can add work. Updated {DateTime.Now:T}.";
         ToolTipService.SetToolTip(WorkflowStagesText, WorkflowStagesText.Text
-            + ". Counts overlap when a day needs multiple steps.\n" + WorkflowFinishText.Text);
+            + ". Counts overlap when a day needs multiple steps.\n" + _workflowFinishDetail);
         ToolTipService.SetToolTip(WorkflowSummaryText, WorkflowSummaryText.Text + "\n"
-            + WorkflowStagesText.Text + "\n" + WorkflowFinishText.Text + "\n"
+            + WorkflowStagesText.Text + "\n" + _workflowFinishDetail + "\n"
             + string.Join("\n", workflow.Feeds.Select(feed =>
             $"{feed.FeedName}: {feed.PendingCount} unfinished"
             + (feed.PendingRanges.Count > 0 ? $" ({string.Join(", ", feed.PendingRanges)})" : ""))));

@@ -1675,18 +1675,14 @@
                                        Text="PRE-RELEASE PREVIEW · Isolated sample data · Downloads and model jobs disabled" />
                             <TextBlock x:Name="WorkflowSummaryText" Text="Checking the full catch-up queue…" FontWeight="SemiBold" TextWrapping="Wrap" MaxLines="2" TextTrimming="CharacterEllipsis" />
                             <TextBlock x:Name="WorkflowStagesText" FontSize="12" TextWrapping="Wrap" MaxLines="2" TextTrimming="CharacterEllipsis" ToolTipService.ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" />
-                            <TextBlock x:Name="WorkflowFinishText" FontSize="12" TextWrapping="Wrap" MaxLines="2" TextTrimming="CharacterEllipsis" ToolTipService.ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}"
+                            <TextBlock x:Name="FullWorkflowEtaText" Text="Full workflow (all retained work): Waiting for the backlog estimate."
+                                       FontSize="12" TextWrapping="Wrap" MaxLines="2" TextTrimming="CharacterEllipsis" ToolTipService.ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}"
                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                         <Grid x:Name="PersistentStatusGrid" ColumnSpacing="12" RowSpacing="6">
                             <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="260" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                             <StackPanel VerticalAlignment="Center" Spacing="3">
-                                <TextBlock x:Name="FullWorkflowEtaText" Text="Full workflow (all retained work): Waiting for the backlog estimate."
-                                           TextWrapping="Wrap" MaxLines="3" FontSize="12" TextTrimming="CharacterEllipsis"
-                                           ToolTipService.ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}"
-                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                <TextBlock x:Name="CurrentStepCaption" Text="Current step" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                <TextBlock x:Name="StatusText" Text="Ready" TextWrapping="Wrap" MaxLines="2" />
+                                <TextBlock x:Name="StatusText" Text="Ready" TextWrapping="Wrap" MaxLines="2" ToolTipService.ToolTip="Current processing step; the full workflow estimate is shown above." />
                                 <TextBlock x:Name="JobTimingText" TextWrapping="Wrap" MaxLines="3" FontSize="12"
                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                             </StackPanel>

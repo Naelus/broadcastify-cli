@@ -139,7 +139,7 @@ if ($WorkflowPreview) {
 foreach ($entry in $workerEnvironment.GetEnumerator()) {
     $startInfo.Environment[$entry.Key] = $entry.Value
 }
-if ($WorkflowPreview) { $startInfo.ArgumentList.Add("--workflow-preview") }
+if ($WorkflowPreview) { $startInfo.Arguments = "--workflow-preview" }
 $process = [System.Diagnostics.Process]::Start($startInfo)
 if ($null -eq $process) {
     throw "The isolated desktop smoke process did not start."
