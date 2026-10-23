@@ -425,6 +425,19 @@ public sealed partial class MainWindow
                     "The isolated LAN companion did not accept a shared job.");
             observationScope = worker.ObserveSharedJob(observation);
 
+            var first = await worker.SharedJobsRequestAsync("");
+            var originalId = SharedText(first.GetProperty("jobs").EnumerateArray().Single(), "id");
+            await observation.FinishAsync("waiting_quota", "");
+            observationScope.Dispose();
+            observationScope = null;
+            observation = null;
+            observation = await worker.BeginSharedJobAsync(job, true, "default", false, CancellationToken.None)
+                ?? throw new InvalidOperationException("The native quota retry was not registered.");
+            observationScope = worker.ObserveSharedJob(observation);
+            var retried = await worker.SharedJobsRequestAsync("");
+            Require(SharedText(retried.GetProperty("jobs").EnumerateArray().Single(), "id") == originalId,
+                "A native quota retry created a duplicate unfinished job.");
+
             SharedJobs_Click(SharedJobsButton, new RoutedEventArgs());
             ContentDialog? FindJobsDialog() => VisualTreeHelper
                 .GetOpenPopupsForXamlRoot(WindowRoot.XamlRoot)
@@ -492,6 +505,7 @@ public sealed partial class MainWindow
             {
                 ["port"] = port,
                 ["same_job_id_after_pause"] = true,
+                ["same_job_id_after_quota_retry"] = true,
                 ["running_controls"] = new[] { "pause", "cancel" },
                 ["paused_controls"] = new[] { "resume", "cancel" },
                 ["cancel_persisted"] = true,

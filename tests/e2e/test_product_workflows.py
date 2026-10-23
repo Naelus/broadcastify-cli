@@ -226,6 +226,11 @@ def test_shared_catchup_waits_for_source_proof_and_preserves_pause(tmp_path, mon
         while native["id"] in manager._observed_scope_threads and time.monotonic()<deadline:
             time.sleep(.01)
         assert manager.get(native["id"])["status"] == "waiting_quota"
+        retried = manager.observe({"id":"abcdef0123456789", "command":"run-scheduled",
+            "owner_pid":os.getpid(), "status":"waiting_quota", "request":payload})
+        assert retried["id"] == native["id"]
+        assert retried["created_at"] == native["created_at"]
+        assert manager.shared.get("abcdef0123456789") is None
         # Another authorized acquisition can satisfy the waiting job. It must
         # finish using that persisted proof without another provider worker.
         remember_complete_archive_day(audio.parent, "90001", date(2026, 7, 12), [])

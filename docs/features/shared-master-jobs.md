@@ -44,6 +44,8 @@ Quota waits retain the job and resume when eligible allowance or newly retained
 source proof resolves the missing work. Newly available local processing does
 not wait for provider allowance. Older native quota-wait records reconcile
 against saved completion from later runs without launching another worker.
+Native account handoffs and quota retries of the same saved request reuse its
+original identity rather than accumulating duplicate unfinished jobs.
 
 The existing pipeline journal stores job requests and records without embedded
 credentials. Master restart resumes queued/interrupted work from retained

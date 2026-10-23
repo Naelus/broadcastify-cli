@@ -64,8 +64,8 @@ internal sealed partial class WorkerClient
         private readonly CancellationTokenSource _work;
         private Task _task = Task.CompletedTask;
         private long _eventIndex;
-        private readonly string _id = Guid.NewGuid().ToString("N")[..16];
-        private readonly string _created = DateTimeOffset.UtcNow.ToString("O");
+        private string _id = Guid.NewGuid().ToString("N")[..16];
+        private string _created = DateTimeOffset.UtcNow.ToString("O");
         private readonly string _profile;
         private readonly string _feed;
         public string Control { get; private set; } = "";
@@ -112,6 +112,10 @@ internal sealed partial class WorkerClient
                 events, error,
             }).ConfigureAwait(false);
             var job = response.GetProperty("job");
+            // The master reuses an unfinished native request across account
+            // handoffs and quota retries. All subsequent reports use that ID.
+            _id = job.GetProperty("id").GetString()!;
+            _created = job.GetProperty("created_at").GetString()!;
             Control = job.TryGetProperty("control", out var control) ? control.GetString() ?? "" : "";
             if (Control is "pause" or "cancel") _work.Cancel();
         }

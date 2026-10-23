@@ -29,7 +29,7 @@ from urllib.parse import parse_qs, quote, unquote, urlparse
 from dotenv import dotenv_values
 
 from .process_tree import WorkerProcessTree
-from .shared_jobs import SharedJobs, WORKFLOW_COMMANDS, ACTIVE_STATES, process_alive, compact_event, workflow_result
+from .shared_jobs import SharedJobs, WORKFLOW_COMMANDS, ACTIVE_STATES, process_alive, compact_event, workflow_result, safe_request
 from . import __version__
 from .activity import acknowledge_activity, activity_report, activity_scope
 from .analysis import (
@@ -715,7 +715,18 @@ class JobManager:
             command = str(value.get("command") or "run-scheduled")
             if command not in WORKFLOW_COMMANDS:
                 raise WebRequestError(400, "Only workflow jobs can be observed.")
-            if previous is None and bool(request.get("analyze") or (request.get("job") or request).get("transcribe")):
+            if previous is None:
+                # Native account handoffs and recurring quota retries are
+                # attempts of the same unfinished request, not new queue work.
+                for saved in self.shared.records():
+                    if (saved.get("owner") == "desktop" and saved["status"] == "waiting_quota"
+                        and not saved.get("control") and saved["command"] == command
+                        and self.shared.request(saved["id"]) == safe_request(request)):
+                        previous = saved
+                        job_id = saved["id"]
+                        value = {**value, "id":job_id, "created_at":saved["created_at"]}
+                        break
+            if (previous is None or previous["status"] not in ACTIVE_STATES) and bool(request.get("analyze") or (request.get("job") or request).get("transcribe")):
                 if any(r["owner"] == "master" and r["status"] in ACTIVE_STATES for r in self.list()):
                     raise WebRequestError(409, "A shared job is using the master. Inspect Jobs before starting another model run.")
             record = {**(previous or {}), **value, "command": command, "owner": "desktop", "updated_at": utc_now()}
