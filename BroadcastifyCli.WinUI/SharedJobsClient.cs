@@ -1,4 +1,5 @@
 using System.Net.Http.Json;
+using System.Text;
 using System.Text.Json;
 
 namespace BroadcastifyCli.WinUI;
@@ -15,8 +16,12 @@ internal sealed partial class WorkerClient
         var key = ReadPrivateSetting("BROADCASTIFY_LAN_SYNC_KEY");
         if (!string.IsNullOrWhiteSpace(key)) client.DefaultRequestHeaders.Add("X-Radio-Archive-LAN-Key", key);
         var url = $"http://127.0.0.1:{port}/api/lan/v1/jobs{path}";
-        using var response = value is null ? await client.GetAsync(url).ConfigureAwait(false)
-            : await client.PostAsJsonAsync(url, value).ConfigureAwait(false);
+        // The bounded LAN reader requires Content-Length; PostAsJsonAsync
+        // streams chunked JSON, which that endpoint deliberately does not read.
+        using var body = value is null ? null : new StringContent(
+            JsonSerializer.Serialize(value), Encoding.UTF8, "application/json");
+        using var response = body is null ? await client.GetAsync(url).ConfigureAwait(false)
+            : await client.PostAsync(url, body).ConfigureAwait(false);
         var result = await response.Content.ReadFromJsonAsync<JsonElement>().ConfigureAwait(false);
         if (!response.IsSuccessStatusCode)
             throw new InvalidOperationException(result.TryGetProperty("error", out var error)
