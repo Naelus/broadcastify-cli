@@ -29,7 +29,10 @@ try {
   if ($definition.Settings.ExecutionTimeLimit -ne 'PT0S') { throw 'Long catch-up must have no task time limit.' }
   if ($definition.Settings.Priority -ne 4) { throw 'Interactive catch-up must retain normal I/O priority.' }
   if ($definition.Settings.RestartCount -ne 3 -or $definition.Settings.RestartInterval -ne 'PT1M') { throw 'Crash recovery policy is missing.' }
-  if (Get-ItemPropertyValue HKCU:\Software\Microsoft\Windows\CurrentVersion\Run -Name 'Broadcastify Desktop' -ErrorAction SilentlyContinue) { throw 'Legacy startup would launch a duplicate.' }
+  $legacyRun=[Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Software\Microsoft\Windows\CurrentVersion\Run')
+  try {
+    if ($legacyRun -and $legacyRun.GetValue('Broadcastify Desktop')) { throw 'Legacy startup would launch a duplicate.' }
+  } finally { if ($legacyRun) { $legacyRun.Dispose() } }
   Configure-Startup disabled
   if ($folder.GetTask('Broadcastify Desktop').Enabled) { throw 'Disabling startup left recovery enabled.' }
   Configure-Startup preserve
