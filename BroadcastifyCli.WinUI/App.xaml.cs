@@ -30,6 +30,14 @@ public partial class App : Application
             var commandLine = arguments.ToHashSet(StringComparer.OrdinalIgnoreCase);
             var isolated = !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(
                 AppSettingsStore.TestDataRootEnvironment));
+            if (commandLine.Contains("--verify-desktop-recovery"))
+            {
+                if (!isolated || Environment.GetEnvironmentVariable("BROADCASTIFY_DESKTOP_E2E_ISOLATED") != "1")
+                    throw new InvalidOperationException("Recovery verification requires isolated desktop data.");
+                MainWindow.VerifyDesktopProcessRecovery(AppSettingsStore.LocalDataDirectory);
+                Exit();
+                return;
+            }
             if (!isolated && arguments.Any(argument =>
                 argument.Equals("--ui-e2e-report", StringComparison.OrdinalIgnoreCase)
                 || argument.StartsWith("--ui-e2e-report=", StringComparison.OrdinalIgnoreCase)))
@@ -64,9 +72,19 @@ public partial class App : Application
             {
                 ValidateWorkflowPreviewEnvironment();
             }
+            if (commandLine.Contains("--scheduled-host"))
+            {
+                if (isolated || workflowPreviewRequested)
+                    throw new InvalidOperationException("A preview cannot host production processing.");
+                AppDiagnostics.AppendLifecycle("desktop supervisor started");
+                Environment.ExitCode = DesktopProcessSupervisor.RunDesktop();
+                AppDiagnostics.AppendLifecycle($"desktop supervisor ended: {Environment.ExitCode}");
+                Exit();
+                return;
+            }
             // A scheduled host is independent of the installer/editor process
             // tree. Windows can restart a failed host without a new sign-in.
-            if (!isolated && !workflowPreviewRequested)
+            if (!isolated && !workflowPreviewRequested && !commandLine.Contains("--desktop-session"))
             {
                 try
                 {

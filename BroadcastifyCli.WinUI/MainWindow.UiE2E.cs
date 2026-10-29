@@ -13,6 +13,35 @@ namespace BroadcastifyCli.WinUI;
 
 public sealed partial class MainWindow
 {
+    internal static void VerifyDesktopProcessRecovery(string root)
+    {
+        // Actual OS processes prove crash recovery and intentional close. The
+        // retry delay is not the subject, so the isolated probe does not wait
+        // through production backoff intervals or start an archive worker.
+        Directory.CreateDirectory(root);
+        var shell = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "cmd.exe");
+        var script = Path.Combine(root, "recover.cmd");
+        var recovered = Path.Combine(root, "recovered.txt");
+        File.WriteAllText(script, "@echo off\r\nif exist \"%~1\" (\r\n echo recovered>>\"%~1\"\r\n exit /b 0\r\n)\r\necho failed>\"%~1\"\r\nexit /b 73\r\n");
+        var arguments = $"/d /c \"\"{script}\" \"{recovered}\"\"";
+        Require(DesktopProcessSupervisor.Run(shell, arguments, TimeSpan.Zero) == 0
+            && File.ReadAllLines(recovered).Length == 2,
+            "A failed desktop process was not recovered exactly once.");
+        var bounded = Path.Combine(root, "bounded.txt");
+        File.WriteAllText(script, "@echo off\r\necho failed>>\"%~1\"\r\nexit /b 73\r\n");
+        arguments = $"/d /c \"\"{script}\" \"{bounded}\"\"";
+        Require(DesktopProcessSupervisor.Run(shell, arguments, TimeSpan.Zero) == 73
+            && File.ReadAllLines(bounded).Length == 4,
+            "Repeated failures did not stop after three retries.");
+        var normal = Path.Combine(root, "normal.txt");
+        File.WriteAllText(script, "@echo off\r\necho closed>>\"%~1\"\r\nexit /b 0\r\n");
+        arguments = $"/d /c \"\"{script}\" \"{normal}\"\"";
+        Require(DesktopProcessSupervisor.Run(shell, arguments, TimeSpan.Zero) == 0
+            && File.ReadAllLines(normal).Length == 1,
+            "An intentional normal close reopened the desktop.");
+        File.WriteAllText(Path.Combine(root, "desktop-recovery-report.json"),
+            JsonSerializer.Serialize(new { passed = true, recovered_starts = 2, normal_starts = 1, bounded_starts = 4 }));
+    }
     private sealed record UiProbeSize(
         string Name,
         double WidthDips,

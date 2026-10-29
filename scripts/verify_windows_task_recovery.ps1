@@ -13,14 +13,6 @@ $folder=$service.GetFolder('\')
 $probeName='Broadcastify recovery probe '+[guid]::NewGuid().ToString('N')
 $probeRoot=Join-Path $env:RUNNER_TEMP $probeName
 New-Item -ItemType Directory -Path $probeRoot | Out-Null
-$probeScript=Join-Path $probeRoot 'exit.ps1'
-$record=Join-Path $probeRoot 'runs.txt'
-@'
-param([string]$Record)
-Add-Content -LiteralPath $Record -Value $PID
-if (@(Get-Content -LiteralPath $Record).Count -eq 1) { exit 73 }
-exit 0
-'@ | Set-Content -LiteralPath $probeScript
 try {
   Configure-Startup enabled
   $actual=$folder.GetTask('Broadcastify Desktop')
@@ -38,33 +30,25 @@ try {
   Configure-Startup preserve
   if ($folder.GetTask('Broadcastify Desktop').Enabled) { throw 'Upgrade did not preserve disabled startup.' }
   Configure-Startup remove
-  # Exercise the shipped scheduler policy with a disposable executable instead
-  # of any archive/model worker. First exit fails; its retry exits normally.
-  $definition.Triggers.Clear()
-  $definition.Actions.Clear()
-  $action=$definition.Actions.Create(0)
-  $action.Path=(Get-Command powershell.exe).Source
-  $action.Arguments='-NoProfile -NonInteractive -WindowStyle Hidden -File "'+$probeScript+'" -Record "'+$record+'"'
-  $action.WorkingDirectory=$probeRoot
-  $probe=$folder.RegisterTaskDefinition($probeName,$definition,6,$null,$null,3,$null)
-  $null=$probe.Run($null)
-  $deadline=[datetime]::UtcNow.AddSeconds(100)
-  do {
-    $runs=@(Get-Content -LiteralPath $record -ErrorAction SilentlyContinue)
-    if ($runs.Count -ge 2) { break }
-    Start-Sleep -Milliseconds 500
-  } while ([datetime]::UtcNow -lt $deadline)
-  if ($runs.Count -ne 2) { throw 'Windows did not restart the failed independent task.' }
-  # The minute is the behavior under test: normal close must not retry again.
-  $deadline=[datetime]::UtcNow.AddSeconds(65)
-  do {
-    if (@(Get-Content -LiteralPath $record).Count -ne 2) { throw 'Normal close unexpectedly restarted the app.' }
-    Start-Sleep -Milliseconds 500
-  } while ([datetime]::UtcNow -lt $deadline)
-  if ($folder.GetTask($probeName).LastTaskResult -ne 0) { throw 'The recovered process did not finish normally.' }
-  Write-Output 'PASS: failed detached task restarted; normal close stayed closed; startup opt-out survived migration.'
+  # Windows accepted RestartOnFailure but did not retry a successfully started
+  # process exiting nonzero in our live checks. Exercise the explicit shipped
+  # supervisor with real disposable OS processes and no production backoff.
+  $oldRoot=$env:BROADCASTIFY_DESKTOP_TEST_DATA_ROOT
+  $oldIsolated=$env:BROADCASTIFY_DESKTOP_E2E_ISOLATED
+  try {
+    $env:BROADCASTIFY_DESKTOP_TEST_DATA_ROOT=$probeRoot
+    $env:BROADCASTIFY_DESKTOP_E2E_ISOLATED='1'
+    $process=Start-Process -FilePath $Executable -ArgumentList '--verify-desktop-recovery' -WindowStyle Hidden -Wait -PassThru
+    if ($process.ExitCode -ne 0) { throw 'Desktop supervisor behavior probe failed.' }
+    $report=Get-Content (Join-Path $probeRoot 'desktop-recovery-report.json') -Raw | ConvertFrom-Json
+    if (!$report.passed) { throw 'Desktop supervisor behavior report did not pass.' }
+    $report | ConvertTo-Json
+  } finally {
+    $env:BROADCASTIFY_DESKTOP_TEST_DATA_ROOT=$oldRoot
+    $env:BROADCASTIFY_DESKTOP_E2E_ISOLATED=$oldIsolated
+  }
+  Write-Output 'PASS: failed desktop recovered; normal close stayed closed; failure retries bounded; startup opt-out preserved.'
 }
 finally {
-  try { $folder.DeleteTask($probeName,0) } catch {}
   Configure-Startup remove
 }

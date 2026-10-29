@@ -65,8 +65,11 @@ prompts the user to open Credentials; scheduled jobs wait until that setup is
 ready.
 
 When enabled, Windows Task Scheduler owns the desktop process independently of
-the installer or coding terminal. A failed process is retried up to three times,
-one minute apart, while this user is signed in. There is no task time limit or
+the installer or coding terminal. Its small headless host waits for the desktop
+process and explicitly retries a failure up to three times, one minute apart,
+while this user is signed in. We observed that Task Scheduler's failure policy
+alone did not restart a process that exited nonzero after starting successfully,
+so the host handles that boundary directly. There is no task time limit or
 stored Windows password. The existing login preference migrates automatically;
 the old Run entry is removed to avoid duplicate launches. Normal window close
 still stops catch-up and does not trigger recovery. This is an interactive
