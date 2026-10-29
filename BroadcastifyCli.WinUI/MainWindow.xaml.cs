@@ -396,7 +396,7 @@ public sealed partial class MainWindow : Window
             var enabled = WindowsStartupManager.IsEnabled();
             StartWithWindowsToggle.IsOn = enabled;
             WindowsStartupStatusText.Text = enabled
-                ? "Enabled for this Windows account. Login launches are minimized after setup checks; interrupted schedules resume from retained work."
+                ? "Enabled for this Windows account. Windows runs a supervised desktop task after sign-in and retries an unexpected failure up to three times. Normal close stops work."
                 : "Off. Scheduled jobs run only while you open Broadcastify Desktop yourself.";
         }
         catch (Exception exception)
@@ -422,7 +422,7 @@ public sealed partial class MainWindow : Window
         {
             WindowsStartupManager.SetEnabled(StartWithWindowsToggle.IsOn);
             WindowsStartupStatusText.Text = StartWithWindowsToggle.IsOn
-                ? "Enabled for this Windows account. Broadcastify Desktop will start minimized after sign-in and keep scheduled feeds current."
+                ? "Enabled for this Windows account. Windows starts the desktop task after sign-in and retries an unexpected failure up to three times. Normal close stops work."
                 : "Off. Existing schedules remain saved and will run the next time the app is open.";
             AppendLog(
                 StartWithWindowsToggle.IsOn
@@ -2053,6 +2053,7 @@ public sealed partial class MainWindow : Window
 
     private void MainWindow_Closed(object sender, WindowEventArgs args)
     {
+        AppDiagnostics.AppendLifecycle("window closed; stopping workers and saving resumable work");
         _windowClosed = true;
         _settingsSaveTimer?.Stop();
         _feedScheduleTimer?.Stop();

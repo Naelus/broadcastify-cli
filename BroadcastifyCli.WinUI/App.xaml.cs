@@ -28,6 +28,30 @@ public partial class App : Application
         {
             var arguments = Environment.GetCommandLineArgs().Skip(1).ToArray();
             var commandLine = arguments.ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var isolated = !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(
+                AppSettingsStore.TestDataRootEnvironment));
+            if (!isolated && arguments.Any(argument =>
+                argument.Equals("--ui-e2e-report", StringComparison.OrdinalIgnoreCase)
+                || argument.StartsWith("--ui-e2e-report=", StringComparison.OrdinalIgnoreCase)))
+                throw new InvalidOperationException("The UI probe requires isolated desktop data.");
+            var startupConfiguration = arguments.FirstOrDefault(argument =>
+                argument.StartsWith("--configure-startup=", StringComparison.OrdinalIgnoreCase));
+            if (startupConfiguration is not null)
+            {
+                if (isolated || Environment.GetEnvironmentVariable("BROADCASTIFY_DESKTOP_PREVIEW") == "1")
+                    throw new InvalidOperationException("Isolated previews and probes cannot change Windows startup.");
+                try
+                {
+                    WindowsStartupManager.Configure(startupConfiguration.Split('=', 2)[1]);
+                }
+                catch (Exception exception)
+                {
+                    AppDiagnostics.AppendCrash(exception, "Windows startup configuration");
+                    Environment.ExitCode = 1;
+                }
+                Exit();
+                return;
+            }
             var workflowPreviewRequested = commandLine.Contains("--workflow-preview");
             var workflowPreviewEnabled = Environment.GetEnvironmentVariable(
                 "BROADCASTIFY_DESKTOP_PREVIEW") == "1";
@@ -40,6 +64,29 @@ public partial class App : Application
             {
                 ValidateWorkflowPreviewEnvironment();
             }
+            // A scheduled host is independent of the installer/editor process
+            // tree. Windows can restart a failed host without a new sign-in.
+            if (!isolated && !workflowPreviewRequested)
+            {
+                try
+                {
+                    WindowsStartupManager.Configure("preserve");
+                    if (WindowsStartupManager.IsEnabled()
+                        && !commandLine.Contains("--scheduled-host"))
+                    {
+                        WindowsStartupManager.Start();
+                        Exit();
+                        return;
+                    }
+                }
+                catch (Exception exception)
+                {
+                    // A disabled/unavailable Windows service must not prevent
+                    // the user from opening the app and recovering work.
+                    AppDiagnostics.AppendActivity($"Windows task recovery unavailable: {exception.Message}");
+                }
+            }
+            AppDiagnostics.AppendLifecycle("started");
             string? uiEndToEndReportPath = null;
             for (var index = 0; index < arguments.Length; index++)
             {
@@ -74,6 +121,7 @@ public partial class App : Application
         catch (Exception exception)
         {
             AppDiagnostics.AppendCrash(exception, "Window startup");
+            Environment.ExitCode = 1;
             throw;
         }
     }

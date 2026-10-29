@@ -84,6 +84,12 @@ jobs:
             -Version $env:RELEASE_VERSION `
             -BuildPython (Get-Command python.exe).Source
 
+      - name: Verify independent startup and crash recovery
+        shell: pwsh
+        run: |
+          .\scripts\verify_windows_task_recovery.ps1 `
+            -Executable (Resolve-Path '.\.tmp\windows-installer\${{ steps.version.outputs.value }}\app\Broadcastify Desktop.exe')
+
       - name: Exercise installer lifecycle
         shell: pwsh
         env:

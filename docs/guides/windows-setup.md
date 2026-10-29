@@ -64,6 +64,18 @@ Community-1 model access is not configured, the window stays visible and
 prompts the user to open Credentials; scheduled jobs wait until that setup is
 ready.
 
+When enabled, Windows Task Scheduler owns the desktop process independently of
+the installer or coding terminal. A failed process is retried up to three times,
+one minute apart, while this user is signed in. There is no task time limit or
+stored Windows password. The existing login preference migrates automatically;
+the old Run entry is removed to avoid duplicate launches. Normal window close
+still stops catch-up and does not trigger recovery. This is an interactive
+desktop task, so it does not process before sign-in or after sign-out.
+
+`lifecycle.log` in the working data directory records starts, normal closes and
+managed exceptions independently of the activity log. A start without a prior
+close indicates an abrupt stop; it does not identify the terminating process.
+
 Silent installation is deliberately opt-in: without custom flags it neither
 adds startup on a fresh install nor launches the app, and an upgrade preserves
 an existing startup preference. The recommended unattended install is:

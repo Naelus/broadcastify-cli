@@ -135,6 +135,7 @@ internal static class AppDiagnostics
 
     internal static void AppendCrash(Exception exception, string source)
     {
+        AppendLifecycle($"unhandled exception: {source}");
         try
         {
             lock (LogLock)
@@ -158,6 +159,26 @@ internal static class AppDiagnostics
         {
             // Never hide the original failure with a diagnostic failure.
         }
+    }
+
+    internal static void AppendLifecycle(string state)
+    {
+        // Keep lifecycle evidence separate from the high-volume worker log.
+        // A new start without a preceding close identifies an abrupt stop;
+        // it cannot identify which external process terminated the app.
+        try
+        {
+            lock (LogLock)
+            {
+                Directory.CreateDirectory(AppSettingsStore.LocalDataDirectory);
+                var path = Path.Combine(AppSettingsStore.LocalDataDirectory, "lifecycle.log");
+                if (File.Exists(path) && new FileInfo(path).Length > 128 * 1024)
+                    File.Move(path, path + ".previous", overwrite: true);
+                File.AppendAllText(path,
+                    $"[{DateTimeOffset.Now:O}] PID {Environment.ProcessId}: {state}{Environment.NewLine}");
+            }
+        }
+        catch { /* Diagnostics must not prevent recovery. */ }
     }
 
     private static void RotateActivityLogIfNeeded()

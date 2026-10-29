@@ -1,8 +1,8 @@
 #ifndef MyAppVersion
-  #define MyAppVersion "0.4.97"
+  #define MyAppVersion "0.4.98"
 #endif
 #ifndef MyAppVersionNumeric
-  #define MyAppVersionNumeric "0.4.97.0"
+  #define MyAppVersionNumeric "0.4.98.0"
 #endif
 #ifndef SourceDir
   #error SourceDir must point to the prepared Windows application directory.
@@ -147,23 +147,14 @@ end;
 
 procedure SaveStartupPreference(const Enabled: Boolean);
 var
-  Command: String;
+  ResultCode: Integer;
+  Mode: String;
 begin
-  if Enabled then
-  begin
-    Command :=
-      '"' + ExpandConstant('{app}\{#MyAppExeName}') +
-      '" --startup --prompt-setup';
-    if not RegWriteStringValue(
-             HKCU,
-             StartupRunKey,
-             StartupRunValue,
-             Command) then
-      RaiseException('Windows could not enable start with sign-in.');
-  end
-  else
-    RegDeleteValue(HKCU, StartupRunKey, StartupRunValue);
-
+  if Enabled then Mode := 'enabled' else Mode := 'disabled';
+  if not Exec(ExpandConstant('{app}\{#MyAppExeName}'),
+      '--configure-startup=' + Mode, '', SW_HIDE, ewWaitUntilTerminated, ResultCode)
+      or (ResultCode <> 0) then
+    RaiseException('Windows could not configure the desktop recovery task.');
   if not RegWriteDWordValue(
            HKCU,
            StartupPreferenceKey,
@@ -173,6 +164,8 @@ begin
 end;
 
 procedure CurStepChanged(const CurStep: TSetupStep);
+var
+  SavedPreference: Cardinal;
 begin
   if CurStep <> ssPostInstall then
     Exit;
@@ -182,7 +175,12 @@ begin
     if HasCommandLineFlag('ENABLESTARTUP') then
       SaveStartupPreference(True)
     else if HasCommandLineFlag('DISABLESTARTUP') then
-      SaveStartupPreference(False);
+      SaveStartupPreference(False)
+    else if RegQueryDWordValue(HKCU, StartupPreferenceKey,
+        StartupPreferenceValue, SavedPreference) then
+      SaveStartupPreference(SavedPreference <> 0)
+    else if RegValueExists(HKCU, StartupRunKey, StartupRunValue) then
+      SaveStartupPreference(True);
     { With neither flag, a silent install preserves an existing preference
       and leaves startup disabled on a fresh install. }
   end
@@ -197,9 +195,17 @@ begin
 end;
 
 procedure CurUninstallStepChanged(const CurUninstallStep: TUninstallStep);
+var
+  ResultCode: Integer;
 begin
   if CurUninstallStep = usUninstall then
+  begin
+    if not Exec(ExpandConstant('{app}\{#MyAppExeName}'),
+        '--configure-startup=remove', '', SW_HIDE, ewWaitUntilTerminated, ResultCode)
+        or (ResultCode <> 0) then
+      RaiseException('Windows could not remove the desktop recovery task.');
     RegDeleteValue(HKCU, StartupRunKey, StartupRunValue);
+  end;
 end;
 
 [UninstallDelete]
