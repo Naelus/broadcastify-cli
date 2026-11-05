@@ -948,7 +948,7 @@ class JobManager:
                         job.finished_at = utc_now()
                         break
                     days = self._scope_days(request)
-                    local_ready = any(not day.get("needs_network") and self._needs_processing(
+                    local_ready = any(not day.get("needs_network") and not self._processing_batched(day, request) and self._needs_processing(
                         day, request, bool((payload or {}).get("analyze"))) for day in days)
                     if local_ready or self._allowance_for_unfinished(job, request, days):
                         job.status = "queued"
@@ -976,6 +976,16 @@ class JobManager:
                 if job.status == "queued" and not self._closing and not job.cancel_requested:
                     self._launch(job)
                 self._condition.notify_all()
+
+    @staticmethod
+    def _processing_batched(day: dict[str, Any], request: dict[str, Any]) -> bool:
+        if not request.get("diarize") or request.get("diarization_engine", "community-1") != "community-1":
+            return False
+        try:
+            due = datetime.fromisoformat(str(day.get("automatic_processing_not_before") or ""))
+            return due > datetime.now().astimezone()
+        except (ValueError, TypeError):
+            return False
 
     def _scope_days(self, request: dict[str, Any]) -> list[dict[str, Any]]:
         return scan_local_library(self.output_dir, self.database_path, feed_id=str(request["feed_id"]),
@@ -1080,7 +1090,8 @@ class JobManager:
                 # scan_local_library exposes retained stage flags, not the
                 # planner-only needs_local_processing field. Using that absent
                 # field silently skipped every model phase of remote catch-up.
-                if day.get("needs_network") or not self._needs_processing(day, request, analyze):
+                if (day.get("needs_network") or self._processing_batched(day, request)
+                        or not self._needs_processing(day, request, analyze)):
                     continue
                 job.status = "running"
                 self._append(job, {"type":"stage","stage":"processing","feed_id":request["feed_id"],
@@ -1098,9 +1109,12 @@ class JobManager:
         job.scope_progress = self._scope_progress(request, analyze, job.created_at)
         limited = limited and bool(job.scope_progress["source_days"])
         unfinished = bool(job.scope_progress["source_days"] or job.scope_progress["processing_days"])
-        job.status = "waiting_quota" if limited else "failed" if unfinished else "completed"
-        job.finished_at = utc_now() if not limited else ""
-        job.error = ("Waiting for eligible archive allowance. Saved local work is retained." if limited else
+        batched = any(self._processing_batched(day, request) for day in self._scope_days(request))
+        waiting = limited or (batched and unfinished)
+        job.status = "waiting_quota" if waiting else "failed" if unfinished else "completed"
+        job.finished_at = "" if waiting else utc_now()
+        job.error = ("New current-day audio is retained for the next automatic speaker/transcript update; downloads continue independently." if batched and unfinished else
+                     "Waiting for eligible archive allowance. Saved local work is retained." if limited else
                      "The worker stopped with unfinished source or processing stages. Resume to retry saved work." if unfinished else "")
         job.result = {"type":"scheduled_complete","result":{"feed_id":request["feed_id"],
             "requested_days":job.scope_progress["total_days"],"completed_days":job.scope_progress["ready_days"],"download_limited":limited}}

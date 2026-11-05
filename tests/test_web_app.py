@@ -6,7 +6,7 @@ import os
 import re
 import threading
 import time
-from datetime import date
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -27,6 +27,7 @@ from broadcastify_cli.pipeline_sync import PipelineSyncStore
 from broadcastify_cli.web_app import (
     FeedScheduleCoordinator,
     JobManager,
+    JobRecord,
     WebRequestError,
     _area_stories_for_web,
     _select_account_profile,
@@ -1633,6 +1634,102 @@ def test_web_jobs_resolve_automatic_against_the_installed_deployment(
     assert custom is not None
     assert custom["model"] == "base.en"
     assert custom["device"] == "cpu"
+
+
+def test_scheduled_catch_up_batches_current_community_update_but_processes_older_day(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = JobManager(tmp_path, tmp_path / "analysis.sqlite3", tmp_path)
+    now = datetime.now().astimezone()
+    older_date = date.today() - timedelta(days=1)
+    current_date = date.today()
+    days = [
+        {
+            "feed_id": "90001",
+            "archive_date": older_date.isoformat(),
+            "needs_network": False,
+            "has_combined": True,
+            "has_transcript": True,
+            "has_diarization": False,
+        },
+        {
+            "feed_id": "90001",
+            "archive_date": current_date.isoformat(),
+            "needs_network": False,
+            "has_combined": True,
+            "has_transcript": True,
+            "has_diarization": False,
+            "automatic_processing_not_before": (
+                now + timedelta(hours=1)
+            ).isoformat(),
+        },
+    ]
+    processed: list[str] = []
+    request = {
+        "feed_id": "90001",
+        "start_date": older_date.isoformat(),
+        "end_date": current_date.isoformat(),
+        "combine": True,
+        "transcribe": True,
+        "diarize": True,
+        "diarization_engine": "community-1",
+    }
+
+    def scope_days(scoped_request: dict[str, object]) -> list[dict[str, object]]:
+        start = str(scoped_request["start_date"])
+        end = str(scoped_request["end_date"])
+        return [day for day in days if start <= str(day["archive_date"]) <= end]
+
+    def scope_progress(
+        scoped_request: dict[str, object],
+        analyze: bool,
+        requested_at: str,
+        scoped_days: list[dict[str, object]] | None = None,
+    ) -> dict[str, int]:
+        current = scope_days(scoped_request) if scoped_days is None else scoped_days
+        processing = sum(
+            manager._needs_processing(day, scoped_request, analyze)  # noqa: SLF001
+            for day in current
+        )
+        return {
+            "total_days": 2,
+            "ready_days": len(current) - processing,
+            "source_days": 0,
+            "processing_days": processing,
+        }
+
+    def execute(
+        job: JobRecord,
+        arguments: list[str],
+        payload: dict[str, object] | None,
+        profile: str,
+    ) -> None:
+        assert arguments == ["run-scheduled"]
+        assert payload is not None
+        assert payload["job"]["local_only"] is True  # type: ignore[index]
+        target = str(payload["job"]["start_date"])  # type: ignore[index]
+        processed.append(target)
+        next(day for day in days if day["archive_date"] == target)["has_diarization"] = True
+        job.phase_status = "completed"
+
+    monkeypatch.setattr(manager, "_eligible_profiles", lambda job, allow_cached=False: [])
+    monkeypatch.setattr(manager, "_scope_days", scope_days)
+    monkeypatch.setattr(manager, "_scope_progress", scope_progress)
+    monkeypatch.setattr(manager, "_execute", execute)
+    job = JobRecord(
+        id="0123456789abcdef",
+        command="run-scheduled",
+        feed_id="90001",
+        request={"job": request, "analyze": False},
+    )
+
+    manager._catch_up(job, {"job": request, "analyze": False})  # noqa: SLF001
+
+    assert processed == [older_date.isoformat()]
+    assert job.status == "waiting_quota"
+    assert job.finished_at == ""
+    assert "next automatic speaker/transcript update" in job.error
 
 
 @pytest.mark.parametrize("command", ["run-area", "run-scheduled"])

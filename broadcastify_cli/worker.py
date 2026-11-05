@@ -328,6 +328,9 @@ def _scheduled_analysis_dates(
 def run_scheduled_job() -> int:
     payload = json.load(sys.stdin)
     job_payload = dict(payload.get("job") or {})
+    # Durable follower requests use this entry point too. Give their local
+    # passes the same batching/day bound as the native scheduler.
+    job_payload.setdefault("max_processing_days", 1)
     request = JobRequest.from_dict(job_payload)
     if request.feed_name:
         with AnalysisStore(DEFAULT_DATABASE) as store:
