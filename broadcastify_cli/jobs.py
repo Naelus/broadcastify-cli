@@ -8,7 +8,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
-from .audio import combine_mp3_files
+from .audio import combine_mp3_files, combined_output_is_current
 from .broadcastify import BroadcastifyClient, DownloadLimitExceeded
 from .lan_sync import (
     LanArchiveCatalog,
@@ -608,6 +608,7 @@ class JobRunner:
 
         day_results: list[dict[str, Any]] = []
         pending_processing_days: list[str] = []
+        batched_processing_days: set[str] = set()
         processing_roles = {
             "leader": 0,
             "completed": 0,
@@ -667,6 +668,28 @@ class JobRunner:
                 continue
 
             combined = None
+            if (self.request.max_processing_days is not None
+                    and self.request.transcribe and self.request.diarize
+                    and self.request.diarization_engine == "community-1"):
+                from .library import current_day_processing_not_before
+                stem = f"combined_{self.request.feed_id}_{archive_date:%Y%m%d}"
+                previous_audio = day_dir / f"{stem}.mp3"
+                transcript = day_dir / "transcripts" / f"{stem}.json"
+                due = current_day_processing_not_before(transcript, archive_date)
+                if due and not combined_output_is_current(
+                    previous_audio, day_dir / f"{stem}.manifest.json", audio_files,
+                ):
+                    pending_processing_days.append(day_label)
+                    batched_processing_days.add(day_label)
+                    self.emit({"type": "log", "stage": "transcribe", "message": (
+                        f"New audio for {day_label} is retained; automatic speaker/"
+                        f"transcript rebuilding is batched until {due}. "
+                        "Finish locally can update it now."
+                    )})
+                    day_results.append({"date": day_label,
+                        "audio_files": [str(path) for path in audio_files],
+                        "transcripts": [], "combined_file": str(previous_audio)})
+                    continue
             if self.request.combine and audio_files:
                 self.emit(
                     {
@@ -904,6 +927,9 @@ class JobRunner:
             still_pending: list[str] = []
             by_date = {value["date"]: value for value in day_results}
             for day_label in pending_processing_days:
+                if day_label in batched_processing_days:
+                    still_pending.append(day_label)
+                    continue
                 value = by_date[day_label]
                 inputs = (
                     [Path(value["combined_file"])]

@@ -6891,12 +6891,28 @@ public sealed partial class MainWindow : Window
                 PersistedOutputDirectory(), cancellationToken);
             var nextLocalDay = retainedPlan.Days
                 .Where(day => day.FeedId == schedule.FeedId && day.NeedsLocalProcessing
+                    && !day.AutomaticProcessingDeferred
                     && string.CompareOrdinal(day.ArchiveDate, processingJob.StartDate) >= 0
                     && string.CompareOrdinal(day.ArchiveDate, processingJob.EndDate) <= 0)
                 .OrderBy(day => day.ArchiveDate, StringComparer.Ordinal)
                 .FirstOrDefault();
             if (nextLocalDay is null)
             {
+                var batched = retainedPlan.Days.Where(day =>
+                    day.FeedId == schedule.FeedId && day.NeedsLocalProcessing
+                    && day.AutomaticProcessingDeferred
+                    && string.CompareOrdinal(day.ArchiveDate, processingJob.StartDate) >= 0
+                    && string.CompareOrdinal(day.ArchiveDate, processingJob.EndDate) <= 0).ToList();
+                if (batched.Count > 0)
+                {
+                    lastResult ??= new JobRunResult();
+                    foreach (var day in batched)
+                    {
+                        if (!lastResult.PendingProcessingDays.Contains(day.ArchiveDate))
+                            lastResult.PendingProcessingDays.Add(day.ArchiveDate);
+                        AppendLog($"New audio for {day.FeedName} on {day.ArchiveDate} is retained. Next automatic speaker/transcript update: {day.AutomaticProcessingNotBefore}. Finish locally can update it now.");
+                    }
+                }
                 return (lastResult, acquisitionLimited, "", "No retained model work is ready; acquisition will resume when eligible.");
             }
             // A bounded pass completes one unfinished day. Previously every

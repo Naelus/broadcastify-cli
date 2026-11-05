@@ -81,6 +81,14 @@ visible without mistaking cache reuse for a new request.
 
 ## Quota behavior
 
+Today's growing recording continues acquiring new blocks independently of local
+model work. After a completed Community speaker/transcript pass, scheduled
+rebuilds that incorporate additional audio are batched until two hours after
+that transcript was saved. Pending work and the last indexed evidence remain
+available; the Library shows the next automatic update time. Manual **Finish
+locally** bypasses batching. The first pass, incomplete attempts, and finished
+calendar days are not delayed. Portable preview retains its append-resume path.
+
 Operational account guidance describes a 250-request rolling 24-hour allowance
 that counts archive play and download requests. Each configured account profile
 mints a stable local ledger identity. The primary account admits 248 requests

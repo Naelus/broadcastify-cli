@@ -92,6 +92,58 @@ def test_combined_audio_is_created_before_one_transcription_pass(
     assert combined_feed_names == ["Example Public Safety"]
 
 
+def test_growing_today_is_batched_without_losing_downloads_or_pending_work(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    from dataclasses import replace
+    from broadcastify_cli.library import scan_local_library, build_library_resume_plan, current_day_processing_not_before
+    import time as clock
+    today = date.today()
+    day_dir = tmp_path / "90001" / today.strftime("%Y%m%d")
+    day_dir.mkdir(parents=True)
+    source = day_dir / f"{today:%Y%m%d}0000-123-90001.mp3"
+    source.write_bytes(b"new-source")
+    remember_archive_identity(day_dir, "90001", today, "123", source)
+    assert remember_complete_archive_day(day_dir, "90001", today, ["123"])
+    audio = day_dir / f"combined_90001_{today:%Y%m%d}.mp3"
+    audio.write_bytes(b"previous-audio")
+    transcript = day_dir / "transcripts" / f"{audio.stem}.json"
+    transcript.parent.mkdir()
+    transcript.write_text(json.dumps({
+        "diarization_completed": True, "diarization_engine": "community-1",
+        "segments": [{"start": 0, "end": 1, "text": "Retained report"}],
+    }), encoding="utf-8")
+    original = audio.read_bytes()
+    assert current_day_processing_not_before(
+        transcript, today, now=datetime.combine(today+timedelta(days=1), time(0, 1)).astimezone(),
+    ) == ""  # Midnight releases the finished day without waiting two hours.
+    calls = []
+    request = JobRequest(feed_id="90001", start_date=today, end_date=today,
+        output_dir=tmp_path, combine=True, transcribe=True, diarize=True,
+        max_processing_days=1)
+
+    def stop_at_combine(*args, **kwargs):
+        raise RuntimeError("eligible for processing")
+    monkeypatch.setattr("broadcastify_cli.jobs.combine_mp3_files", stop_at_combine)
+    for _ in range(2):
+        result = JobRunner(request, client=FakeClient([source], calls)).run()
+        assert result["pending_processing_days"] == [today.isoformat()]
+        assert result["days"][0]["transcripts"] == []
+        assert audio.read_bytes() == original
+        assert source.read_bytes() == b"new-source"
+    state = scan_local_library(tmp_path, tmp_path / "analysis.sqlite3")[0]
+    assert state["automatic_processing_not_before"]
+    plan = build_library_resume_plan([state], {"available": True, "remaining": 10})
+    assert plan["days"][0]["needs_local_processing"]
+    # Manual work can update immediately. Once the batch matures, automatic
+    # work also proceeds rather than postponing forever with each queue scan.
+    with pytest.raises(RuntimeError, match="eligible for processing"):
+        JobRunner(replace(request, max_processing_days=None), client=FakeClient([source], calls)).run()
+    os.utime(transcript, (clock.time()-7201, clock.time()-7201))
+    with pytest.raises(RuntimeError, match="eligible for processing"):
+        JobRunner(request, client=FakeClient([source], calls)).run()
+
+
 def test_cached_jobs_load_no_models_and_process_only_changed_days(
     monkeypatch, tmp_path: Path,
 ) -> None:

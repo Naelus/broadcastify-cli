@@ -1016,6 +1016,13 @@ public sealed record LibraryDay
     [JsonPropertyName("needs_local_processing")]
     public bool NeedsLocalProcessing { get; init; }
 
+    [JsonPropertyName("automatic_processing_not_before")]
+    public string AutomaticProcessingNotBefore { get; init; } = "";
+
+    public bool AutomaticProcessingDeferred =>
+        DateTimeOffset.TryParse(AutomaticProcessingNotBefore, out var due)
+        && due > DateTimeOffset.Now;
+
     [JsonPropertyName("known_source_count")]
     public int KnownSourceCount { get; init; }
 

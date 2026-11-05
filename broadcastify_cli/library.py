@@ -43,6 +43,29 @@ PENDING_DELETE_PATTERN = re.compile(r"^\.deleting-\d+-[0-9a-f]{32}$")
 DELETE_DETACH_RETRY_SECONDS = (0.0, 0.15, 0.3, 0.6, 1.0, 1.5)
 
 
+def current_day_processing_not_before(
+    transcript: Path, archive_date: date, *, now: datetime | None = None,
+) -> str:
+    """Batch growing-day speaker rebuilds; explicit local work may bypass this."""
+    current = now or datetime.now().astimezone()
+    if archive_date != current.date():
+        return ""
+    try:
+        payload = json.loads(transcript.read_text(encoding="utf-8"))
+        if (not payload.get("diarization_completed")
+                or payload.get("diarization_engine") != COMMUNITY_DIARIZATION_ENGINE
+                or not isinstance(payload.get("segments"), list)
+                or payload.get("transcription_quality", {}).get("status") == "rejected"):
+            return ""
+        completed = datetime.fromtimestamp(transcript.stat().st_mtime, current.tzinfo)
+        due = completed + timedelta(hours=2)
+        if completed <= current < due:
+            return due.isoformat(timespec="seconds")
+    except (OSError, ValueError, TypeError, AttributeError):
+        pass
+    return ""
+
+
 def _pending_processing(day: dict[str, Any]) -> bool:
     # An authenticated empty listing is a coverage gap, not a model job.
     return not any(day.get(key) for key in (
@@ -1321,6 +1344,10 @@ def _state_for_day(
     evidence_update_pending = has_searchable_transcript and not (
         has_transcript and stored_matches_transcript
     )
+    processing_not_before = (
+        current_day_processing_not_before(transcript, archive_date)
+        if has_stale_combined or has_stale_transcript else ""
+    )
     has_stale_analysis = bool(
         has_transcript and has_saved_analysis and not has_analysis
     )
@@ -1476,6 +1503,11 @@ def _state_for_day(
         storage_bytes, working_storage_bytes = directory_storage_usage(
             day_directory
         )
+    if processing_not_before:
+        status_detail += (
+            f". New audio is retained; the next automatic speaker/transcript "
+            f"update is after {processing_not_before}. Finish locally runs it now."
+        )
     return {
         "feed_id": feed_id,
         "feed_name": resolved_feed_name or f"Feed {feed_id}",
@@ -1496,6 +1528,7 @@ def _state_for_day(
         "has_searchable_analysis": has_searchable_analysis,
         "indexed_segment_count": int(stored.get("segment_count") or 0) if has_searchable_transcript and stored else 0,
         "evidence_update_pending": evidence_update_pending,
+        "automatic_processing_not_before": processing_not_before,
         "has_diarization": has_diarization,
         "diarization_engine": diarization_engine,
         "diarization_quality": (
