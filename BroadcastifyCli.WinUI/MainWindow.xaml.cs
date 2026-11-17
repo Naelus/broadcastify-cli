@@ -1782,6 +1782,36 @@ public sealed partial class MainWindow : Window
     private void WindowRoot_SizeChanged(object sender, SizeChangedEventArgs e) =>
         ApplyResponsiveLayout(e.NewSize.Width);
 
+    private void ReviewViewport_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        // ActualHeight is not a notifying binding source. SizeChanged follows
+        // the real viewport after tab switches, resizing and docking instead.
+        if (sender == DailyReviewScroll)
+        {
+            DailyReviewContentGrid.Height = Math.Max(
+                DailyReviewContentGrid.MinHeight, DailyReviewScroll.ActualHeight);
+            return;
+        }
+
+        var scroll = sender == ActivityReviewScroll || sender == ActivityReviewContent
+            ? ActivityReviewScroll : ArchiveChatScroll;
+        if (scroll?.Content is not StackPanel panel || scroll.ActualHeight <= 0)
+            return;
+        var list = panel.Children.OfType<ListView>().FirstOrDefault();
+        if (list is null) return;
+        var children = panel.Children.OfType<FrameworkElement>()
+            .Where(child => child.Visibility == Visibility.Visible).ToArray();
+        var occupied = children.Where(child => child != list)
+            .Sum(child => child.ActualHeight + child.Margin.Top + child.Margin.Bottom)
+            + panel.Spacing * Math.Max(0, children.Length - 1)
+            + panel.Padding.Top + panel.Padding.Bottom
+            + scroll.Padding.Top + scroll.Padding.Bottom;
+        // Let evidence use the spare height, but retain a usable minimum and
+        // the outer scroller when controls cannot fit in a small docked window.
+        var height = Math.Max(list.MinHeight, scroll.ActualHeight - occupied);
+        if (Math.Abs(list.Height - height) > 0.5) list.Height = height;
+    }
+
     private void ApplyResponsiveLayout(double width)
     {
         // The navigation pane, page padding, and widest master/detail surface

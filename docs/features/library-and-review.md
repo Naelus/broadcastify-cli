@@ -1,5 +1,17 @@
 # Local Library and Review
 
+## Desktop space and scrolling
+
+Daily review follows the rendered viewport after resizing, tab changes and
+docking; the incident list uses the height above playback instead of retaining
+its startup height. What changed and archive chat allocate spare viewport
+height to evidence, with minimum list heights and outer scrolling when a small
+window cannot fit the controls. Review/chat and System activity use the
+available width; settings and support prose retain readable form widths.
+
+The native layout gate checks evidence space utilization as well as scroll
+reachability at compact, wide and tall sizes using isolated sample records.
+
 ## What changed
 
 The Review & Ask surface includes a **What changed** view for the selected

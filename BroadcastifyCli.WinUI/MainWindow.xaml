@@ -15,6 +15,9 @@
     <Grid x:Name="WindowRoot"
           Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
         <Grid.Resources>
+            <Style TargetType="ListViewItem">
+                <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+            </Style>
             <Style x:Key="TitleChromeButtonStyle" TargetType="Button">
                 <Setter Property="MinWidth" Value="0" />
                 <Setter Property="MinHeight" Value="0" />
@@ -513,7 +516,7 @@
                                     VerticalAlignment="Center" Click="RefreshSystemActivity_Click" />
                         </Grid>
                         <ScrollViewer x:Name="SystemActivityScroll" Grid.Row="1" HorizontalScrollBarVisibility="Disabled">
-                            <StackPanel Spacing="14" MaxWidth="980" HorizontalAlignment="Left" Padding="0,2,12,18">
+                            <StackPanel Spacing="14" HorizontalAlignment="Stretch" Padding="0,2,12,18">
                                 <InfoBar x:Name="SystemActivityInfoBar" IsOpen="True" IsClosable="False"
                                          Severity="Informational" Title="Checking coordinated work"
                                          Message="The app is reading non-secret state from this Windows master's local coordinator." />
@@ -710,9 +713,9 @@
                                 <TabViewItem x:Name="DailyReviewTab" Header="Daily review" IsClosable="False">
                                     <!-- Keep a usable evidence viewport when the stacked
                                          selector and queue footer leave little height. -->
-                                    <ScrollViewer x:Name="DailyReviewScroll" VerticalScrollBarVisibility="Auto">
+                                    <ScrollViewer x:Name="DailyReviewScroll" VerticalScrollBarVisibility="Auto" SizeChanged="ReviewViewport_SizeChanged">
                                     <Grid x:Name="DailyReviewContentGrid" Padding="4,8,4,4" RowSpacing="9"
-                                          MinHeight="320" Height="{Binding ActualHeight, ElementName=DailyReviewScroll}">
+                                          MinHeight="320">
                                         <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                                         <TextBlock x:Name="SummaryText" Text="Choose a saved day." TextWrapping="Wrap" MaxHeight="126" />
                                         <Grid Grid.Row="1" ColumnSpacing="10">
@@ -763,8 +766,8 @@
                                     </ScrollViewer>
                                 </TabViewItem>
                                 <TabViewItem x:Name="WhatChangedTab" Header="What changed" IsClosable="False">
-                                    <ScrollViewer x:Name="ActivityReviewScroll" Padding="8">
-                                    <StackPanel Spacing="10">
+                                    <ScrollViewer x:Name="ActivityReviewScroll" Padding="8" SizeChanged="ReviewViewport_SizeChanged">
+                                    <StackPanel x:Name="ActivityReviewContent" Spacing="10" SizeChanged="ReviewViewport_SizeChanged">
                                         <StackPanel Spacing="6">
                                             <TextBlock Text="Catch up on new and updated saved incidents" Style="{StaticResource SubtitleTextBlockStyle}" TextWrapping="Wrap" />
                                             <TextBlock Text="Uses saved analysis for the feed selected on the left. No models run. Opening the view leaves records unread; marking this batch caught up remembers only the revisions shown here." TextWrapping="Wrap" />
@@ -776,7 +779,7 @@
                                             <Button x:Name="MarkActivityButton" Content="Mark this batch caught up" IsEnabled="False" Click="MarkActivity_Click" />
                                         </StackPanel>
                                         <TextBlock x:Name="ActivityCoverageText" Text="Choose a feed and refresh. Missing analysis is not evidence of no activity." TextWrapping="Wrap" IsTextSelectionEnabled="True" />
-                                        <ListView x:Name="ActivityIncidentList" MinHeight="160" MaxHeight="600" SelectionMode="None">
+                                        <ListView x:Name="ActivityIncidentList" MinHeight="160" Height="160" SelectionMode="None">
                                             <ListView.ItemTemplate>
                                                 <DataTemplate x:DataType="local:IncidentRecord">
                                                     <StackPanel Padding="8" Spacing="4">
@@ -796,7 +799,7 @@
                                 </TabViewItem>
                                 <TabViewItem x:Name="WeeklyBriefTab" Header="Weekly brief" IsClosable="False">
                                     <ScrollViewer x:Name="WeeklyBriefScroll" Padding="8">
-                                        <StackPanel Spacing="14" MaxWidth="900" HorizontalAlignment="Left">
+                                        <StackPanel Spacing="14" HorizontalAlignment="Stretch">
                                             <TextBlock Text="Seven-day activity brief" Style="{StaticResource SubtitleTextBlockStyle}" />
                                             <TextBlock Text="Uses saved daily incidents and clearly reports missing days." Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                             <StackPanel x:Name="WeekControls" Orientation="Horizontal" Spacing="10">
@@ -810,8 +813,8 @@
                                     </ScrollViewer>
                                 </TabViewItem>
                                 <TabViewItem x:Name="ArchiveQuestionTab" Header="Ask the archive" IsClosable="False">
-                                    <ScrollViewer x:Name="ArchiveChatScroll" Padding="8">
-                                        <StackPanel Spacing="12" MaxWidth="900" HorizontalAlignment="Stretch">
+                                    <ScrollViewer x:Name="ArchiveChatScroll" Padding="8" SizeChanged="ReviewViewport_SizeChanged">
+                                        <StackPanel x:Name="ArchiveChatContent" Spacing="12" HorizontalAlignment="Stretch" SizeChanged="ReviewViewport_SizeChanged">
                                             <Grid ColumnSpacing="10">
                                                 <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                                                 <StackPanel Spacing="3">
@@ -863,7 +866,7 @@
                                                     <Button Content="Find whole-feed hot spots" Click="AskFeedHotspotsExample_Click" />
                                                 </StackPanel>
                                             </StackPanel>
-                                            <ListView x:Name="ArchiveChatList" SelectionMode="None" MinHeight="240" MaxHeight="440">
+                                            <ListView x:Name="ArchiveChatList" SelectionMode="None" MinHeight="240" Height="240">
                                                 <ListView.ItemTemplate>
                                                     <DataTemplate x:DataType="local:ArchiveChatMessage">
                                                         <Border Margin="0,3" Padding="12,9" CornerRadius="8"

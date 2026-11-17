@@ -1021,6 +1021,7 @@ public sealed partial class MainWindow
             new UiProbeSize("threshold-above", 1101, 760, false),
             new UiProbeSize("reference", 1240, 900, false),
             new UiProbeSize("large", 1600, 1000, false),
+            new UiProbeSize("wide-tall", 2560, 1400, false),
         };
         var results = new List<Dictionary<string, object?>>();
         foreach (var size in sizes)
@@ -1140,6 +1141,9 @@ public sealed partial class MainWindow
             ReviewTabView,
             AnalysisDaysList,
             IncidentList);
+        Require(Math.Abs(DailyReviewContentGrid.ActualHeight
+                - Math.Max(320, DailyReviewScroll.ActualHeight)) <= 2,
+            $"{size.Name}: daily evidence did not fill the resized viewport.");
         listResults["review_days"] = await ExerciseItemsScrollAsync(
             AnalysisDaysList,
             $"{size.Name}/review-days");
@@ -1150,6 +1154,9 @@ public sealed partial class MainWindow
         await WaitForUiLayoutAsync();
         RequireHorizontalBounds(size.Name, ActivityReviewScroll,
             RefreshActivityButton, MarkActivityButton, ActivityIncidentList);
+        RequireEvidenceFillsViewport(ActivityReviewScroll, ActivityReviewContent, ActivityIncidentList, size.Name);
+        listResults["changed_incidents"] = await ExerciseItemsScrollAsync(
+            ActivityIncidentList, $"{size.Name}/changed-incidents");
         scrollResults["what_changed"] = await ExerciseScrollAsync(
             ActivityReviewScroll, $"{size.Name}/what-changed");
         ReviewTabView.SelectedItem = WeeklyBriefTab;
@@ -1178,6 +1185,9 @@ public sealed partial class MainWindow
             QuestionStarterSecondary,
             QuestionSendGrid,
             AskButton);
+        RequireEvidenceFillsViewport(ArchiveChatScroll, ArchiveChatContent, ArchiveChatList, size.Name);
+        Require(ArchiveChatContent.ActualWidth >= ArchiveChatScroll.ActualWidth - 36,
+            $"{size.Name}: archive chat left usable viewport width empty.");
         scrollResults["archive_chat"] = await ExerciseScrollAsync(
             ArchiveChatScroll,
             $"{size.Name}/archive-chat");
@@ -2355,9 +2365,16 @@ public sealed partial class MainWindow
         Require(
             scrollViewer.ScrollableWidth <= 2,
             $"{label}: content introduced unintended horizontal scrolling.");
-        Require(
-            scrollableHeight > 1,
-            $"{label}: content did not expose a vertical scroll range.");
+        // A large viewport may fit the whole fixture. Requiring overflow in
+        // that case would reward the cramped layout this probe must prevent.
+        if (scrollableHeight <= 1)
+        {
+            Require(scrollViewer.ActualHeight > 0
+                    && scrollViewer.Content is FrameworkElement content
+                    && content.ActualHeight <= scrollViewer.ActualHeight + 2,
+                $"{label}: content was clipped without a usable scroll range.");
+            return 0;
+        }
         scrollViewer.ChangeView(null, scrollableHeight, null, true);
         Require(
             await WaitForScrollOffsetAsync(
@@ -2369,6 +2386,16 @@ public sealed partial class MainWindow
             await WaitForScrollOffsetAsync(scrollViewer, offset => offset <= 1),
             $"{label}: scrolling back to the start did not restore the top.");
         return Math.Round(scrollableHeight, 1);
+    }
+
+    private static void RequireEvidenceFillsViewport(
+        ScrollViewer viewport, StackPanel content, ListView evidence, string label)
+    {
+        Require(content.ActualHeight >= viewport.ActualHeight
+                - viewport.Padding.Top - viewport.Padding.Bottom - 2,
+            $"{label}: evidence left unused space below its content.");
+        Require(evidence.ActualHeight >= evidence.MinHeight,
+            $"{label}: evidence lost its usable minimum height.");
     }
 
     private static async Task<bool> WaitForScrollOffsetAsync(
