@@ -1786,14 +1786,14 @@ public sealed partial class MainWindow : Window
     {
         // ActualHeight is not a notifying binding source. SizeChanged follows
         // the real viewport after tab switches, resizing and docking instead.
-        if (sender == DailyReviewScroll)
+        if (ReferenceEquals(sender, DailyReviewScroll))
         {
             DailyReviewContentGrid.Height = Math.Max(
                 DailyReviewContentGrid.MinHeight, DailyReviewScroll.ActualHeight);
             return;
         }
 
-        var scroll = sender == ActivityReviewScroll || sender == ActivityReviewContent
+        var scroll = ReferenceEquals(sender, ActivityReviewScroll) || ReferenceEquals(sender, ActivityReviewContent)
             ? ActivityReviewScroll : ArchiveChatScroll;
         if (scroll?.Content is not StackPanel panel || scroll.ActualHeight <= 0)
             return;
